@@ -56,15 +56,25 @@ func (s *Store) ensureJSON(name string, value any) error {
 
 func (s *Store) readJSON(name string, value any) error {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	data, err := os.ReadFile(filepath.Join(s.dir, name))
+	s.mu.RUnlock()
 	if err != nil {
 		return err
 	}
 	if len(data) == 0 {
 		return errors.New("empty config file: " + name)
 	}
-	return json.Unmarshal(data, value)
+	if err := json.Unmarshal(data, value); err != nil {
+		bakData, bakErr := os.ReadFile(filepath.Join(s.dir, name+".bak"))
+		if bakErr != nil {
+			return err
+		}
+		if bakErr := json.Unmarshal(bakData, value); bakErr != nil {
+			return err
+		}
+		_ = os.WriteFile(filepath.Join(s.dir, name), bakData, 0600)
+	}
+	return nil
 }
 
 func (s *Store) writeJSON(name string, value any) error {
@@ -75,10 +85,14 @@ func (s *Store) writeJSON(name string, value any) error {
 		return err
 	}
 	tmp := filepath.Join(s.dir, name+".tmp")
+	path := filepath.Join(s.dir, name)
+	if existing, err := os.ReadFile(path); err == nil && len(existing) > 0 {
+		_ = os.WriteFile(filepath.Join(s.dir, name+".bak"), existing, 0600)
+	}
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, filepath.Join(s.dir, name))
+	return os.Rename(tmp, path)
 }
 
 func (s *Store) ListProfiles() ([]types.Profile, error) {

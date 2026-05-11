@@ -46,6 +46,8 @@ export function ReadLogs(arg1:number):Promise<Array<types.LogEntry>>;
 
 export function Reconnect(arg1:string):Promise<types.SessionInfo>;
 
+export function ReconnectWithSecrets(arg1:string,arg2:string,arg3:string):Promise<types.SessionInfo>;
+
 export function RenameRemoteFile(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void>;

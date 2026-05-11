@@ -91,13 +91,15 @@ func (m *Manager) Latest(sessionID string) types.Metrics {
 
 func (m *Manager) collectAndEmit(sessionID string) {
 	start := time.Now()
-	script := `printf '__UPTIME__\n'; uptime -p 2>/dev/null || uptime 2>/dev/null
-printf '__LOAD__\n'; cat /proc/loadavg 2>/dev/null
-printf '__MEM__\n'; cat /proc/meminfo 2>/dev/null
-printf '__DISK__\n'; df -kP / 2>/dev/null | tail -n 1
-printf '__CPU__\n'; head -n 1 /proc/stat 2>/dev/null
-printf '__NET__\n'; cat /proc/net/dev 2>/dev/null
-printf '__PROC__\n'; ps aux --sort=-%mem 2>/dev/null | head -n 6`
+	script := `gx_section() { printf 'GX_BEGIN_%s_9b7c2d\n' "$1"; sh -c "$2"; printf 'GX_END_%s_9b7c2d\n' "$1"; }
+gx_section UPTIME 'uptime -p 2>/dev/null || uptime 2>/dev/null'
+gx_section LOAD 'cat /proc/loadavg 2>/dev/null'
+gx_section MEM 'cat /proc/meminfo 2>/dev/null'
+gx_section DISK 'df -kP / 2>/dev/null | tail -n 1'
+gx_section CPU 'head -n 1 /proc/stat 2>/dev/null'
+gx_section DEFAULT_IFACE "ip route get 1.1.1.1 2>/dev/null | awk '\''{for(i=1;i<=NF;i++) if(\$i==\"dev\") {print \$(i+1); exit}}'\''"
+gx_section NET 'cat /proc/net/dev 2>/dev/null'
+gx_section PROC 'ps aux --sort=-%mem 2>/dev/null | head -n 6'`
 	out, err := m.exec.Exec(sessionID, script, 5*time.Second)
 	metrics := parseMetrics(sessionID, out)
 	metrics.Online = err == nil
@@ -108,7 +110,7 @@ printf '__PROC__\n'; ps aux --sort=-%mem 2>/dev/null | head -n 6`
 	}
 
 	m.mu.Lock()
-	if cpu, ok := parseCPU(section(out, "__CPU__")); ok {
+	if cpu, ok := parseCPU(section(out, "CPU")); ok {
 		if prev, exists := m.lastCPU[sessionID]; exists {
 			totalDelta := cpu.total - prev.total
 			idleDelta := cpu.idle - prev.idle
@@ -118,7 +120,7 @@ printf '__PROC__\n'; ps aux --sort=-%mem 2>/dev/null | head -n 6`
 		}
 		m.lastCPU[sessionID] = cpu
 	}
-	if netNow, ok := parseNet(section(out, "__NET__")); ok {
+	if netNow, ok := parseNet(section(out, "NET"), strings.TrimSpace(section(out, "DEFAULT_IFACE"))); ok {
 		if prev, exists := m.lastNet[sessionID]; exists {
 			seconds := netNow.at.Sub(prev.at).Seconds()
 			if seconds > 0 {
@@ -135,29 +137,31 @@ printf '__PROC__\n'; ps aux --sort=-%mem 2>/dev/null | head -n 6`
 
 func parseMetrics(sessionID, out string) types.Metrics {
 	metrics := types.Metrics{SessionID: sessionID}
-	metrics.Uptime = strings.TrimSpace(section(out, "__UPTIME__"))
-	load := strings.Fields(section(out, "__LOAD__"))
+	metrics.Uptime = strings.TrimSpace(section(out, "UPTIME"))
+	load := strings.Fields(section(out, "LOAD"))
 	if len(load) >= 3 {
 		metrics.LoadAverage = strings.Join(load[:3], " ")
 	}
-	parseMem(section(out, "__MEM__"), &metrics)
-	parseDisk(section(out, "__DISK__"), &metrics)
-	metrics.TopProcesses = parseProcesses(section(out, "__PROC__"))
+	parseMem(section(out, "MEM"), &metrics)
+	parseDisk(section(out, "DISK"), &metrics)
+	metrics.TopProcesses = parseProcesses(section(out, "PROC"))
 	return metrics
 }
 
-func section(out, marker string) string {
-	start := strings.Index(out, marker)
+func section(out, name string) string {
+	begin := "GX_BEGIN_" + name + "_9b7c2d"
+	end := "GX_END_" + name + "_9b7c2d"
+	start := strings.Index(out, begin)
 	if start < 0 {
 		return ""
 	}
-	start += len(marker)
+	start += len(begin)
 	rest := out[start:]
-	next := strings.Index(rest, "__")
-	if next >= 0 {
-		return strings.TrimSpace(rest[:next])
+	stop := strings.Index(rest, end)
+	if stop < 0 {
+		return strings.TrimSpace(rest)
 	}
-	return strings.TrimSpace(rest)
+	return strings.TrimSpace(rest[:stop])
 }
 
 func parseMem(text string, metrics *types.Metrics) {
@@ -228,7 +232,7 @@ func parseCPU(text string) (cpuSample, bool) {
 	return cpuSample{idle: nums[3], total: total}, true
 }
 
-func parseNet(text string) (netSample, bool) {
+func parseNet(text string, defaultIface string) (netSample, bool) {
 	var rx, tx uint64
 	for _, line := range strings.Split(text, "\n") {
 		if !strings.Contains(line, ":") {
@@ -236,7 +240,10 @@ func parseNet(text string) (netSample, bool) {
 		}
 		parts := strings.SplitN(line, ":", 2)
 		iface := strings.TrimSpace(parts[0])
-		if iface == "lo" {
+		if defaultIface != "" && iface != defaultIface {
+			continue
+		}
+		if shouldIgnoreInterface(iface) {
 			continue
 		}
 		fields := strings.Fields(parts[1])
@@ -249,6 +256,19 @@ func parseNet(text string) (netSample, bool) {
 		tx += t
 	}
 	return netSample{rx: rx, tx: tx, at: time.Now()}, rx > 0 || tx > 0
+}
+
+func shouldIgnoreInterface(iface string) bool {
+	if iface == "lo" {
+		return true
+	}
+	prefixes := []string{"docker", "br-", "veth", "tun", "tap", "wg", "virbr", "zt", "tailscale"}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(iface, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseProcesses(text string) []types.ProcessInfo {

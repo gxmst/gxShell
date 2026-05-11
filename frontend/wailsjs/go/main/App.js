@@ -90,6 +90,10 @@ export function Reconnect(arg1) {
   return window['go']['main']['App']['Reconnect'](arg1);
 }
 
+export function ReconnectWithSecrets(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ReconnectWithSecrets'](arg1, arg2, arg3);
+}
+
 export function RenameRemoteFile(arg1, arg2, arg3) {
   return window['go']['main']['App']['RenameRemoteFile'](arg1, arg2, arg3);
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	osruntime "runtime"
 	"strings"
 	"time"
 
@@ -184,16 +185,16 @@ func (a *App) ConnectWithSecrets(profileID string, password string, privateKeyPa
 	if err != nil {
 		return types.SessionInfo{}, err
 	}
+	if fullProfile.RememberPassword {
+		if err := a.loadProfileSecrets(&fullProfile); err != nil {
+			return types.SessionInfo{}, err
+		}
+	}
 	if password != "" {
 		fullProfile.Password = password
 	}
 	if privateKeyPassphrase != "" {
 		fullProfile.PrivateKeyPassphrase = privateKeyPassphrase
-	}
-	if fullProfile.RememberPassword {
-		if err := a.loadProfileSecrets(&fullProfile); err != nil {
-			return types.SessionInfo{}, err
-		}
 	}
 	settings, _ := a.store.GetSettings()
 	info, err := a.ssh.Connect(fullProfile, settings.ConnectionTimeout, cols, rows)
@@ -214,12 +215,16 @@ func (a *App) Disconnect(sessionID string) error {
 }
 
 func (a *App) Reconnect(sessionID string) (types.SessionInfo, error) {
+	return a.ReconnectWithSecrets(sessionID, "", "")
+}
+
+func (a *App) ReconnectWithSecrets(sessionID string, password string, privateKeyPassphrase string) (types.SessionInfo, error) {
 	old, err := a.ssh.Get(sessionID)
 	if err != nil {
 		return types.SessionInfo{}, err
 	}
 	_ = a.Disconnect(sessionID)
-	return a.Connect(old.ProfileID, old.Cols, old.Rows)
+	return a.ConnectWithSecrets(old.ProfileID, password, privateKeyPassphrase, old.Cols, old.Rows)
 }
 
 func (a *App) WriteToTerminal(sessionID string, data string) error {
@@ -346,7 +351,15 @@ func (a *App) ReadLogs(limit int) []types.LogEntry {
 }
 
 func (a *App) OpenDataDir() error {
-	return exec.Command("explorer.exe", a.store.DataDir()).Start()
+	dir := a.store.DataDir()
+	switch osruntime.GOOS {
+	case "windows":
+		return exec.Command("explorer.exe", dir).Start()
+	case "darwin":
+		return exec.Command("open", dir).Start()
+	default:
+		return exec.Command("xdg-open", dir).Start()
+	}
 }
 
 func (a *App) SelectPrivateKey() (string, error) {

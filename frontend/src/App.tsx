@@ -51,6 +51,7 @@ import {
   ListRemoteDir,
   OpenDataDir,
   Reconnect,
+  ReconnectWithSecrets,
   RenameRemoteFile,
   ResizeTerminal,
   SelectDownloadPath,
@@ -82,6 +83,12 @@ type Toast = {
 };
 
 type Drawer = "monitor" | "sftp" | "commands" | "settings";
+
+type SecretRequest = {
+  profile: types.Profile;
+  mode: "connect" | "reconnect";
+  sessionId?: string;
+};
 
 const appThemes = ["Dark", "Deep Blue", "Light"];
 
@@ -168,6 +175,7 @@ function App() {
   const [terminalSearchOpen, setTerminalSearchOpen] = useState(false);
   const [terminalSearch, setTerminalSearch] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [secretRequest, setSecretRequest] = useState<SecretRequest | null>(null);
 
   const terminals = useRef<Record<string, Terminal>>({});
   const fits = useRef<Record<string, FitAddon>>({});
@@ -339,18 +347,15 @@ function App() {
   }, [drawer, activeTab]);
 
   const connectProfile = async (profile: types.Profile) => {
+    if (needsSecret(profile)) {
+      setSecretRequest({ profile, mode: "connect" });
+      return;
+    }
+    await openSession(profile, "", "");
+  };
+
+  const openSession = async (profile: types.Profile, password: string, passphrase: string) => {
     try {
-      let password = "";
-      let passphrase = "";
-      if (!profile.rememberPassword) {
-        if (profile.authType === "password") {
-          password = window.prompt(`Password for ${profile.username}@${profile.host}`) || "";
-          if (!password) return;
-        }
-        if (profile.authType === "privateKey") {
-          passphrase = window.prompt(`Private key passphrase for ${profile.name || profile.host} (leave blank if none)`) || "";
-        }
-      }
       const info = profile.rememberPassword
         ? await Connect(profile.id, 120, 36)
         : await ConnectWithSecrets(profile.id, password, passphrase, 120, 36);
@@ -361,6 +366,39 @@ function App() {
     } catch (err) {
       notify(String(err), "error");
     }
+  };
+
+  const reconnectTab = async (tab: Tab) => {
+    const profile = profiles.find((item) => item.id === tab.profileId);
+    if (profile && needsSecret(profile)) {
+      setSecretRequest({ profile, mode: "reconnect", sessionId: tab.id });
+      return;
+    }
+    try {
+      const info = await Reconnect(tab.id);
+      replaceReconnectedTab(tab.id, info);
+    } catch (err) {
+      notify(String(err), "error");
+    }
+  };
+
+  const reconnectWithSecret = async (request: SecretRequest, password: string, passphrase: string) => {
+    if (!request.sessionId) return;
+    try {
+      const info = await ReconnectWithSecrets(request.sessionId, password, passphrase);
+      replaceReconnectedTab(request.sessionId, info);
+    } catch (err) {
+      notify(String(err), "error");
+    }
+  };
+
+  const replaceReconnectedTab = (oldID: string, info: types.SessionInfo) => {
+    terminals.current[oldID]?.dispose();
+    delete terminals.current[oldID];
+    delete fits.current[oldID];
+    delete searches.current[oldID];
+    setTabs((items) => items.map((tab) => tab.id === oldID ? { ...tab, id: info.id, state: info.state } : tab));
+    setActiveTab(info.id);
   };
 
   const closeTab = async (id: string) => {
@@ -505,10 +543,7 @@ function App() {
                 </button>
               ))}
             </div>
-            <button className="tab-action" disabled={!active} onClick={() => active && Reconnect(active.id).then((info) => {
-              setTabs((items) => items.map((tab) => tab.id === active.id ? { ...tab, id: info.id, state: info.state } : tab));
-              setActiveTab(info.id);
-            })}><RefreshCw size={14} /></button>
+            <button className="tab-action" disabled={!active} onClick={() => active && reconnectTab(active)}><RefreshCw size={14} /></button>
           </div>
           <div className="terminal-stage">
             {tabs.map((tab) => (
@@ -527,7 +562,13 @@ function App() {
 
       {globalSearchOpen && <GlobalSearchModal query={globalQuery} onQuery={setGlobalQuery} results={globalResults} onClose={() => setGlobalSearchOpen(false)} />}
       {terminalSearchOpen && <TerminalSearchModal query={terminalSearch} onQuery={setTerminalSearch} onNext={runTerminalSearch} onClose={() => setTerminalSearchOpen(false)} />}
-      {profileModal && <ProfileModal profile={profileModal} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={async (id) => { await DeleteProfile(id); setProfileModal(null); await reload(); }} onDuplicate={async (id) => { await DuplicateProfile(id); await reload(); }} />}
+      {secretRequest && <SecretModal request={secretRequest} onClose={() => setSecretRequest(null)} onSubmit={async (password, passphrase) => {
+        const request = secretRequest;
+        setSecretRequest(null);
+        if (request.mode === "connect") await openSession(request.profile, password, passphrase);
+        else await reconnectWithSecret(request, password, passphrase);
+      }} />}
+      {profileModal && <ProfileModal profile={profileModal} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={async (id) => { await DeleteProfile(id); setProfileModal(null); await reload(); }} onDuplicate={async (id) => { await DuplicateProfile(id); await reload(); notify("Profile copied. Saved credentials are not copied.", "info"); }} />}
       {commandModal && <CommandModal command={commandModal} onClose={() => setCommandModal(null)} onSave={saveCommand} />}
       <div className="toast-stack">{toasts.map((toast) => <div key={toast.id} className={clsx("toast", `toast-${toast.tone}`)}>{toast.text}</div>)}</div>
     </div>
@@ -546,6 +587,10 @@ function navLabel(item: Drawer) {
   if (item === "sftp") return "Files";
   if (item === "commands") return "Cmd";
   return item[0].toUpperCase() + item.slice(1);
+}
+
+function needsSecret(profile: types.Profile) {
+  return !profile.rememberPassword && (profile.authType === "password" || profile.authType === "privateKey");
 }
 
 function stateClass(state: string) {
@@ -743,6 +788,35 @@ function TerminalSearchModal({ query, onQuery, onNext, onClose }: { query: strin
         <kbd>Ctrl F</kbd>
       </div>
       <button className="btn-primary mt-3 w-full" onClick={onNext}>Find next</button>
+    </ModalShell>
+  );
+}
+
+function SecretModal({ request, onSubmit, onClose }: { request: SecretRequest; onSubmit: (password: string, passphrase: string) => void; onClose: () => void }) {
+  const [password, setPassword] = useState("");
+  const [passphrase, setPassphrase] = useState("");
+  const [show, setShow] = useState(false);
+  const isPassword = request.profile.authType === "password";
+  return (
+    <ModalShell onClose={onClose} compact>
+      <div className="mb-3">
+        <div className="text-sm font-semibold">{isPassword ? "Enter SSH password" : "Enter key passphrase"}</div>
+        <div className="mt-1 truncate text-xs text-muted">{request.profile.username}@{request.profile.host}</div>
+      </div>
+      {isPassword ? (
+        <Label text="Password">
+          <input autoFocus className="input" type={show ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && password && onSubmit(password, "")} />
+        </Label>
+      ) : (
+        <Label text="Private key passphrase">
+          <input autoFocus className="input" type={show ? "text" : "password"} value={passphrase} onChange={(e) => setPassphrase(e.target.value)} onKeyDown={(e) => e.key === "Enter" && onSubmit("", passphrase)} />
+        </Label>
+      )}
+      <label className="check mt-3"><input type="checkbox" checked={show} onChange={(e) => setShow(e.target.checked)} /> Show secret</label>
+      <div className="mt-4 flex justify-end gap-2">
+        <button className="btn-secondary" onClick={onClose}>Cancel</button>
+        <button className="btn-primary" onClick={() => onSubmit(password, passphrase)}>Connect</button>
+      </div>
     </ModalShell>
   );
 }

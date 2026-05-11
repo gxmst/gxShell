@@ -71,28 +71,26 @@ func (m *Manager) Connect(profile types.Profile, timeoutSec int, cols int, rows 
 
 	config, err := clientConfig(profile, timeoutSec, m.knownHostsPath, m.emit)
 	if err != nil {
-		m.setError(id, err)
+		m.failConnect(id, err, nil, nil)
 		return info, err
 	}
 
 	addr := fmt.Sprintf("%s:%d", profile.Host, profile.Port)
 	conn, err := net.DialTimeout("tcp", addr, time.Duration(timeoutSec)*time.Second)
 	if err != nil {
-		m.setError(id, err)
+		m.failConnect(id, err, nil, nil)
 		return info, err
 	}
 
 	clientConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
 	if err != nil {
-		_ = conn.Close()
-		m.setError(id, err)
+		m.failConnect(id, err, nil, conn)
 		return info, err
 	}
 	client := ssh.NewClient(clientConn, chans, reqs)
 	shell, err := client.NewSession()
 	if err != nil {
-		_ = client.Close()
-		m.setError(id, err)
+		m.failConnect(id, err, client, nil)
 		return info, err
 	}
 
@@ -103,36 +101,31 @@ func (m *Manager) Connect(profile types.Profile, timeoutSec int, cols int, rows 
 	}
 	if err := shell.RequestPty("xterm-256color", rows, cols, modes); err != nil {
 		_ = shell.Close()
-		_ = client.Close()
-		m.setError(id, err)
+		m.failConnect(id, err, client, nil)
 		return info, err
 	}
 
 	stdin, err := shell.StdinPipe()
 	if err != nil {
 		_ = shell.Close()
-		_ = client.Close()
-		m.setError(id, err)
+		m.failConnect(id, err, client, nil)
 		return info, err
 	}
 	stdout, err := shell.StdoutPipe()
 	if err != nil {
 		_ = shell.Close()
-		_ = client.Close()
-		m.setError(id, err)
+		m.failConnect(id, err, client, nil)
 		return info, err
 	}
 	stderr, err := shell.StderrPipe()
 	if err != nil {
 		_ = shell.Close()
-		_ = client.Close()
-		m.setError(id, err)
+		m.failConnect(id, err, client, nil)
 		return info, err
 	}
 	if err := shell.Shell(); err != nil {
 		_ = shell.Close()
-		_ = client.Close()
-		m.setError(id, err)
+		m.failConnect(id, err, client, nil)
 		return info, err
 	}
 
@@ -227,6 +220,7 @@ func (m *Manager) Disconnect(id string) error {
 		session.mu.Unlock()
 	})
 	m.markDisconnected(id)
+	m.remove(id)
 	return nil
 }
 
@@ -307,6 +301,23 @@ func (m *Manager) get(id string) (*Session, error) {
 		return nil, errors.New("session not found")
 	}
 	return session, nil
+}
+
+func (m *Manager) remove(id string) {
+	m.mu.Lock()
+	delete(m.sessions, id)
+	m.mu.Unlock()
+}
+
+func (m *Manager) failConnect(id string, err error, client *ssh.Client, conn net.Conn) {
+	if client != nil {
+		_ = client.Close()
+	}
+	if conn != nil {
+		_ = conn.Close()
+	}
+	m.setError(id, err)
+	m.remove(id)
 }
 
 func (m *Manager) setError(id string, err error) {
