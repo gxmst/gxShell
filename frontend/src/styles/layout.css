@@ -1,0 +1,53 @@
+.workspace {
+  display: grid;
+  grid-template-columns: 292px minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  transition: grid-template-columns 180ms ease;
+}
+
+.app-shell[data-collapsed="true"] .workspace {
+  grid-template-columns: 58px minmax(0, 1fr);
+}
+
+.panel,
+.current-card,
+.metric-row,
+.mini-metric,
+.command-row,
+.file-table {
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel-raised) 72%, transparent);
+}
+
+.panel {
+  border-radius: var(--radius);
+  padding: 9px;
+}
+
+.panel.dense {
+  padding: 7px;
+}
+
+.current-card {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+  padding: 8px 9px;
+}
+
+.command-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  border-radius: 10px;
+  padding: 7px;
+}
+
+.command-row:hover {
+  background: color-mix(in srgb, var(--panel-raised) 82%, transparent);
+}

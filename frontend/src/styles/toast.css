@@ -1,0 +1,27 @@
+.toast-stack {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 60;
+  display: grid;
+  gap: 8px;
+}
+
+.toast {
+  max-width: 360px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-raised) 92%, black);
+  padding: 9px 11px;
+  color: var(--text);
+  font-size: 12px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, .24);
+}
+
+.toast-success {
+  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
+}
+
+.toast-error {
+  border-color: color-mix(in srgb, var(--bad) 38%, transparent);
+}

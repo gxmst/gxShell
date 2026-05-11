@@ -1,0 +1,39 @@
+.file-table {
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+.file-row {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) 48px 52px 58px;
+  gap: 6px;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.file-row + .file-row {
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.file-row:hover {
+  background: color-mix(in srgb, var(--panel-raised) 62%, transparent);
+  color: var(--text);
+}
+
+.file-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.file-size,
+.file-date {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: right;
+}

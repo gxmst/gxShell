@@ -1,0 +1,136 @@
+.terminal-pane {
+  display: grid;
+  grid-template-rows: 42px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--terminal);
+}
+
+.tabbar {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--terminal-top), var(--terminal));
+  padding: 5px 7px 0;
+}
+
+.tabs-scroll {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+}
+
+.tab {
+  position: relative;
+  display: flex;
+  height: 36px;
+  max-width: 220px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  transition: 140ms ease;
+}
+
+.tab:hover {
+  background: color-mix(in srgb, var(--panel-raised) 52%, transparent);
+  color: var(--text);
+}
+
+.tab-active {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--terminal) 76%, var(--panel-raised));
+  color: var(--text);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 32%, transparent);
+}
+
+.tab svg:last-child {
+  opacity: .32;
+  transition: 120ms ease;
+}
+
+.tab:hover svg:last-child {
+  opacity: 1;
+}
+
+.tab-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 6px 6px;
+}
+
+.tab-action {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  color: var(--muted);
+  transition: 140ms ease;
+}
+
+.tab-action:hover {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--panel-raised) 60%, transparent);
+  color: var(--text);
+}
+
+.terminal-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 72% 4%, color-mix(in srgb, var(--accent) 8%, transparent), transparent 34%),
+    linear-gradient(180deg, var(--terminal-top), var(--terminal) 36%);
+}
+
+.terminal-host {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+  padding: 12px 14px;
+}
+
+.terminal-empty {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  text-align: center;
+}
+
+.terminal-empty-card {
+  display: flex;
+  max-width: 420px;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px;
+}
+
+.xterm {
+  height: 100%;
+  max-width: 100%;
+  padding: 1px;
+  font-weight: 400;
+}
+
+.xterm .xterm-viewport {
+  scrollbar-width: thin;
+  background: transparent !important;
+}

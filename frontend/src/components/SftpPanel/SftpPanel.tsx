@@ -1,0 +1,70 @@
+import { useEffect, useState } from "react";
+import { Copy, Download, Edit3, File, Folder, FolderPlus, RefreshCw, Trash2, Upload } from "lucide-react";
+import { types } from "../../../wailsjs/go/models";
+import { CreateRemoteDir, DeleteRemoteFile, DownloadFile, RenameRemoteFile, SelectDownloadPath, SelectUploadFile, UploadFile } from "../../../wailsjs/go/main/App";
+import type { Tab, Toast } from "../../types";
+import { formatFileSize } from "../../utils/format";
+import { ConfirmDialog } from "../modals/ConfirmDialog";
+import { TextInputDialog } from "../modals/TextInputDialog";
+
+type DialogState =
+  | { type: "mkdir" }
+  | { type: "rename"; file: types.RemoteFile }
+  | { type: "delete"; file: types.RemoteFile }
+  | null;
+
+export function SftpPanel(props: { active?: Tab; path: string; files: types.RemoteFile[]; busy: boolean; onRefresh: (path?: string) => void; onNotify: (text: string, tone?: Toast["tone"]) => void }) {
+  const { active, path, files, busy, onRefresh, onNotify } = props;
+  const [draftPath, setDraftPath] = useState(path);
+  const [dialog, setDialog] = useState<DialogState>(null);
+  useEffect(() => setDraftPath(path), [path]);
+  if (!active) return <div className="empty compact">Connect first to browse SFTP.</div>;
+
+  const upload = async () => {
+    const local = await SelectUploadFile();
+    if (!local) return;
+    const name = local.split(/[\\/]/).pop() || "upload.bin";
+    await UploadFile(active.id, local, `${path.replace(/\/$/, "")}/${name}`);
+    onRefresh(path);
+  };
+
+  const download = async (file: types.RemoteFile) => {
+    const target = await SelectDownloadPath(file.name);
+    if (!target) return;
+    await DownloadFile(active.id, file.path, target);
+    onNotify("Download finished", "success");
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-1">
+        <input className="input compact-input" value={draftPath} onChange={(e) => setDraftPath(e.target.value)} onKeyDown={(e) => e.key === "Enter" && onRefresh(draftPath)} />
+        <button className="icon-btn compact-icon" onClick={() => onRefresh(draftPath)}><RefreshCw size={13} /></button>
+        <button className="icon-btn compact-icon" onClick={upload}><Upload size={13} /></button>
+        <button className="icon-btn compact-icon" onClick={() => setDialog({ type: "mkdir" })}><FolderPlus size={13} /></button>
+      </div>
+      <div className="file-table">
+        {busy && <div className="empty compact">Loading...</div>}
+        {!busy && files.map((file) => (
+          <div key={file.path} className="file-row" onDoubleClick={() => file.isDir ? onRefresh(file.path) : download(file)}>
+            {file.isDir ? <Folder size={14} className="text-accent" /> : <File size={14} className="text-muted" />}
+            <span className="min-w-0 flex-1 truncate">{file.name}</span>
+            <span className="w-14 text-right text-muted">{file.isDir ? "dir" : formatFileSize(file.size)}</span>
+            <span className="hidden w-16 text-muted xl:inline">{file.permissions || file.mode}</span>
+            <div className="file-actions">
+              <button className="mini-btn" onClick={() => navigator.clipboard?.writeText(file.path)}><Copy size={11} /></button>
+              {!file.isDir && <button className="mini-btn" onClick={() => download(file)}><Download size={11} /></button>}
+              <button className="mini-btn" onClick={() => setDialog({ type: "rename", file })}><Edit3 size={11} /></button>
+              <button className="mini-btn danger" onClick={() => setDialog({ type: "delete", file })}><Trash2 size={11} /></button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {dialog?.type === "mkdir" && <TextInputDialog title="New folder" label="Folder name" onClose={() => setDialog(null)} onSubmit={async (name) => { await CreateRemoteDir(active.id, `${path}/${name}`); setDialog(null); onRefresh(path); }} />}
+      {dialog?.type === "rename" && <TextInputDialog title="Rename file" label="New name" initialValue={dialog.file.name} onClose={() => setDialog(null)} onSubmit={async (name) => { await RenameRemoteFile(active.id, dialog.file.path, `${path}/${name}`); setDialog(null); onRefresh(path); }} />}
+      {dialog?.type === "delete" && <ConfirmDialog title="Delete remote file" body={`Delete ${dialog.file.name}? This cannot be undone.`} confirmText="Delete" onClose={() => setDialog(null)} onConfirm={async () => { await DeleteRemoteFile(active.id, dialog.file.path); setDialog(null); onRefresh(path); }} />}
+    </div>
+  );
+}
+
