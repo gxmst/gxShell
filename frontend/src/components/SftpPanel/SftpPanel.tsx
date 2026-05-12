@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { Copy, Download, Edit3, File, Folder, FolderPlus, RefreshCw, Trash2, Upload } from "lucide-react";
+import { Copy, Download, Edit3, File, Folder, FolderDown, FolderPlus, RefreshCw, Trash2, Upload } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
-import { CreateRemoteDir, DeleteRemoteFile, DownloadFile, RenameRemoteFile, SelectDownloadPath, SelectUploadFile, UploadFile } from "../../../wailsjs/go/main/App";
+import { CreateRemoteDir, DeleteRemoteFile, DownloadFile, DownloadFolder, RenameRemoteFile, SelectDownloadPath, SelectUploadFile, UploadFile } from "../../../wailsjs/go/main/App";
 import type { Tab, Toast } from "../../types";
 import { formatFileSize } from "../../utils/format";
 import { ConfirmDialog } from "../modals/ConfirmDialog";
@@ -13,8 +13,8 @@ type DialogState =
   | { type: "delete"; file: types.RemoteFile }
   | null;
 
-export function SftpPanel(props: { active?: Tab; path: string; files: types.RemoteFile[]; busy: boolean; onRefresh: (path?: string) => void; onNotify: (text: string, tone?: Toast["tone"]) => void }) {
-  const { active, path, files, busy, onRefresh, onNotify } = props;
+export function SftpPanel(props: { active?: Tab; path: string; files: types.RemoteFile[]; busy: boolean; onRefresh: (path?: string) => void; onNotify: (text: string, tone?: Toast["tone"]) => void; setCtxMenu: any }) {
+  const { active, path, files, busy, onRefresh, onNotify, setCtxMenu } = props;
   const [draftPath, setDraftPath] = useState(path);
   const [dialog, setDialog] = useState<DialogState>(null);
   useEffect(() => setDraftPath(path), [path]);
@@ -35,6 +35,13 @@ export function SftpPanel(props: { active?: Tab; path: string; files: types.Remo
     onNotify("Download finished", "success");
   };
 
+  const downloadFolder = async (file: types.RemoteFile) => {
+    const target = await SelectDownloadPath(file.name + ".d");
+    if (!target) return;
+    await DownloadFolder(active.id, file.path, target);
+    onNotify("Folder download finished", "success");
+  };
+
   return (
     <div className="space-y-2">
       <div className="flex gap-1">
@@ -47,15 +54,18 @@ export function SftpPanel(props: { active?: Tab; path: string; files: types.Remo
         {busy && <div className="empty compact">Loading...</div>}
         {!busy && files.map((file) => (
           <div key={file.path} className="file-row" onDoubleClick={() => file.isDir ? onRefresh(file.path) : download(file)}>
-            {file.isDir ? <Folder size={14} className="text-accent" /> : <File size={14} className="text-muted" />}
+            <span>{file.isDir ? <Folder size={14} className="text-accent" /> : <File size={14} className="text-muted" />}</span>
             <span className="min-w-0 flex-1 truncate">{file.name}</span>
             <span className="w-14 text-right text-muted">{file.isDir ? "dir" : formatFileSize(file.size)}</span>
-            <span className="hidden w-16 text-muted xl:inline">{file.permissions || file.mode}</span>
             <div className="file-actions">
-              <button className="mini-btn" onClick={() => navigator.clipboard?.writeText(file.path)}><Copy size={11} /></button>
-              {!file.isDir && <button className="mini-btn" onClick={() => download(file)}><Download size={11} /></button>}
-              <button className="mini-btn" onClick={() => setDialog({ type: "rename", file })}><Edit3 size={11} /></button>
-              <button className="mini-btn danger" onClick={() => setDialog({ type: "delete", file })}><Trash2 size={11} /></button>
+              {file.isDir ? (
+                <button className="mini-btn bg-accent/10 border border-accent/30 hover:border-accent/50" onClick={() => downloadFolder(file)} title="Download folder"><FolderDown size={12} /></button>
+              ) : (
+                <button className="mini-btn bg-accent/10 border border-accent/30 hover:border-accent/50" onClick={() => download(file)} title="Download"><Download size={12} /></button>
+              )}
+              <button className="mini-btn" onClick={() => navigator.clipboard?.writeText(file.path)} title="Copy path"><Copy size={11} /></button>
+              <button className="mini-btn" onClick={() => setDialog({ type: "rename", file })} title="Rename"><Edit3 size={11} /></button>
+              <button className="mini-btn danger" onClick={() => setDialog({ type: "delete", file })} title="Delete"><Trash2 size={11} /></button>
             </div>
           </div>
         ))}
@@ -67,4 +77,3 @@ export function SftpPanel(props: { active?: Tab; path: string; files: types.Remo
     </div>
   );
 }
-

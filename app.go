@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -39,17 +41,31 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	store, err := config.NewStore()
 	if err != nil {
-		panic(err)
+		runtime.LogError(ctx, "failed to create config store: "+err.Error())
+		runtime.Quit(ctx)
+		return
 	}
 	a.store = store
 	a.log = logger.New(store.DataDir())
-	a.secrets = secrets.NewStore()
+	a.secrets = secrets.NewStore(a.store.DataDir())
 	emit := func(event string, data any) {
 		if a.ctx != nil {
 			runtime.EventsEmit(a.ctx, event, data)
 		}
 	}
-	a.ssh = sshmanager.NewManager(filepath.Join(store.DataDir(), "known_hosts"), emit)
+	confirm := func(host string, fingerprint string) bool {
+	        if a.ctx == nil {
+	                return false
+	        }
+	        res, _ := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+	                Type:          runtime.QuestionDialog,
+	                Title:         "Unknown Host Key",
+	                Message:       fmt.Sprintf("The host key for %s is unknown.\nFingerprint: %s\n\nDo you want to trust this host and continue connecting?", host, fingerprint),
+	                DefaultButton: "No",
+	        })
+	        return res == "Yes"
+	}
+	a.ssh = sshmanager.NewManager(filepath.Join(store.DataDir(), "known_hosts"), emit, confirm)       
 	a.sftp = sftpmanager.NewManager(a.ssh, emit)
 	a.monitor = monitor.NewManager(a.ssh, emit)
 	a.migrateSecrets()
@@ -62,16 +78,14 @@ func (a *App) domReady(ctx context.Context) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
-	for _, session := range a.ssh.List() {
-		_ = a.ssh.Disconnect(session.ID)
-	}
+	a.ssh.Shutdown()
 	a.log.Info("gxShell stopped")
 }
 
 func (a *App) GetAppInfo() map[string]string {
 	return map[string]string{
 		"name":    "gxShell",
-		"version": "1.0.0",
+		"version": "1.0",
 		"dataDir": a.store.DataDir(),
 	}
 }
@@ -196,7 +210,11 @@ func (a *App) ConnectWithSecrets(profileID string, password string, privateKeyPa
 	if privateKeyPassphrase != "" {
 		fullProfile.PrivateKeyPassphrase = privateKeyPassphrase
 	}
-	settings, _ := a.store.GetSettings()
+	settings, settingsErr := a.store.GetSettings()
+	if settingsErr != nil {
+		a.log.Error("failed to read settings: " + settingsErr.Error())
+		settings = config.DefaultSettings()
+	}
 	info, err := a.ssh.Connect(fullProfile, settings.ConnectionTimeout, cols, rows)
 	if err != nil {
 		a.log.Error("connect failed: " + err.Error())
@@ -258,6 +276,10 @@ func (a *App) DownloadFile(sessionID, remotePath, localPath string) error {
 	return a.sftp.DownloadFile(sessionID, remotePath, localPath)
 }
 
+func (a *App) DownloadFolder(sessionID, remotePath, localDir string) error {
+	return a.sftp.DownloadFolder(sessionID, remotePath, localDir)
+}
+
 func (a *App) DeleteRemoteFile(sessionID, remotePath string) error {
 	return a.sftp.DeleteRemoteFile(sessionID, remotePath)
 }
@@ -271,7 +293,11 @@ func (a *App) CreateRemoteDir(sessionID, remotePath string) error {
 }
 
 func (a *App) StartMonitor(sessionID string) error {
-	settings, _ := a.store.GetSettings()
+	settings, err := a.store.GetSettings()
+	if err != nil {
+		a.log.Error("failed to read settings: " + err.Error())
+		settings = config.DefaultSettings()
+	}
 	a.monitor.Start(sessionID, settings.MonitorIntervalSec)
 	return nil
 }
@@ -362,6 +388,18 @@ func (a *App) OpenDataDir() error {
 	}
 }
 
+func (a *App) LogCommand(sessionID string, line string) {
+	host := ""
+	if session, err := a.ssh.Get(sessionID); err == nil {
+		host = session.Name
+	}
+	a.log.LogCommand(sessionID, host, line)
+}
+
+func (a *App) ExportHistory() error {
+	return a.log.OpenHistory()
+}
+
 func (a *App) SelectPrivateKey() (string, error) {
 	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "Select private key",
@@ -448,6 +486,7 @@ func (a *App) migrateSecrets() {
 	if changed {
 		_ = a.store.SaveProfiles(profiles)
 	}
+	a.store.CleanupBackups()
 }
 
 func (a *App) touchProfile(id string) {
@@ -495,5 +534,7 @@ func sanitizeProfile(profile types.Profile) types.Profile {
 }
 
 func newID(prefix string) string {
-	return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return fmt.Sprintf("%s-%d-%s", prefix, time.Now().UnixNano(), hex.EncodeToString(b))
 }

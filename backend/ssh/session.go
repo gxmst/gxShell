@@ -22,6 +22,7 @@ type Manager struct {
 	sessions       map[string]*Session
 	emit           func(event string, data any)
 	knownHostsPath string
+	confirm        func(host, fingerprint string) bool
 }
 
 type Session struct {
@@ -34,14 +35,14 @@ type Session struct {
 	mu        sync.RWMutex
 }
 
-func NewManager(knownHostsPath string, emit func(event string, data any)) *Manager {
-	return &Manager{
-		sessions:       map[string]*Session{},
-		emit:           emit,
-		knownHostsPath: knownHostsPath,
-	}
+func NewManager(knownHostsPath string, emit func(event string, data any), confirm func(host, fingerprint string) bool) *Manager {
+        return &Manager{
+                sessions:       map[string]*Session{},
+                emit:           emit,
+                knownHostsPath: knownHostsPath,
+                confirm:        confirm,
+        }
 }
-
 func (m *Manager) Connect(profile types.Profile, timeoutSec int, cols int, rows int) (types.SessionInfo, error) {
 	if cols <= 0 {
 		cols = 120
@@ -69,7 +70,7 @@ func (m *Manager) Connect(profile types.Profile, timeoutSec int, cols int, rows 
 	m.mu.Unlock()
 	m.emit("terminal:connecting", info)
 
-	config, err := clientConfig(profile, timeoutSec, m.knownHostsPath, m.emit)
+	config, err := clientConfig(profile, timeoutSec, m.knownHostsPath, m.emit, m.confirm)
 	if err != nil {
 		m.failConnect(id, err, nil, nil)
 		return info, err
@@ -141,17 +142,19 @@ func (m *Manager) Connect(profile types.Profile, timeoutSec int, cols int, rows 
 	go m.forwardOutput(id, stdout)
 	go m.forwardOutput(id, stderr)
 	go func() {
+		panicHandler(id, m)
 		err := shell.Wait()
 		if err != nil && !errors.Is(err, io.EOF) {
 			m.emit("terminal:error", map[string]any{"sessionId": id, "error": err.Error()})
 		}
-		m.markDisconnected(id)
+		m.Disconnect(id)
 	}()
 
 	return info, nil
 }
 
 func (m *Manager) forwardOutput(id string, reader io.Reader) {
+	defer panicHandler(id, m)
 	buf := make([]byte, 4096)
 	for {
 		n, err := reader.Read(buf)
@@ -162,6 +165,12 @@ func (m *Manager) forwardOutput(id string, reader io.Reader) {
 			})
 		}
 		if err != nil {
+			return
+		}
+		m.mu.RLock()
+		session := m.sessions[id]
+		m.mu.RUnlock()
+		if session == nil {
 			return
 		}
 	}
@@ -246,6 +255,18 @@ func (m *Manager) List() []types.SessionInfo {
 	return items
 }
 
+func (m *Manager) Shutdown() {
+	m.mu.Lock()
+	ids := make([]string, 0, len(m.sessions))
+	for id := range m.sessions {
+		ids = append(ids, id)
+	}
+	m.mu.Unlock()
+	for _, id := range ids {
+		_ = m.Disconnect(id)
+	}
+}
+
 func (m *Manager) Client(id string) (*ssh.Client, error) {
 	session, err := m.get(id)
 	if err != nil {
@@ -289,6 +310,12 @@ func (m *Manager) Exec(id string, command string, timeout time.Duration) (string
 		return out.String(), nil
 	case <-time.After(timeout):
 		_ = s.Close()
+		go func() {
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+			}
+		}()
 		return out.String(), errors.New("remote command timeout")
 	}
 }
@@ -351,7 +378,7 @@ func (m *Manager) markDisconnected(id string) {
 	m.emit("terminal:disconnected", info)
 }
 
-func clientConfig(profile types.Profile, timeoutSec int, knownHostsPath string, emit func(event string, data any)) (*ssh.ClientConfig, error) {
+func clientConfig(profile types.Profile, timeoutSec int, knownHostsPath string, emit func(event string, data any), confirm func(host, fingerprint string) bool) (*ssh.ClientConfig, error) {
 	var auth []ssh.AuthMethod
 	switch profile.AuthType {
 	case types.AuthPrivateKey:
@@ -375,15 +402,23 @@ func clientConfig(profile types.Profile, timeoutSec int, knownHostsPath string, 
 	return &ssh.ClientConfig{
 		User:            profile.Username,
 		Auth:            auth,
-		HostKeyCallback: hostKeyCallback(profile, knownHostsPath, emit),
+		HostKeyCallback: hostKeyCallback(profile, knownHostsPath, emit, confirm),
 		Timeout:         time.Duration(timeoutSec) * time.Second,
 		ClientVersion:   "SSH-2.0-gxShell",
 	}, nil
 }
 
-func hostKeyCallback(profile types.Profile, knownHostsPath string, emit func(event string, data any)) ssh.HostKeyCallback {
-	_ = os.MkdirAll(filepath.Dir(knownHostsPath), 0700)
-	_ = ensureFile(knownHostsPath, 0600)
+func hostKeyCallback(profile types.Profile, knownHostsPath string, emit func(event string, data any), confirm func(host, fingerprint string) bool) ssh.HostKeyCallback {
+	if err := os.MkdirAll(filepath.Dir(knownHostsPath), 0700); err != nil {
+		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			return fmt.Errorf("cannot create known_hosts dir: %w", err)
+		}
+	}
+	if err := ensureFile(knownHostsPath, 0600); err != nil {
+		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			return fmt.Errorf("cannot create known_hosts file: %w", err)
+		}
+	}
 	callback, err := knownhosts.New(knownHostsPath)
 	if err != nil {
 		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
@@ -397,6 +432,10 @@ func hostKeyCallback(profile types.Profile, knownHostsPath string, emit func(eve
 		}
 		var keyErr *knownhosts.KeyError
 		if errors.As(err, &keyErr) && len(keyErr.Want) == 0 {
+			fingerprint := ssh.FingerprintSHA256(key)
+			if confirm != nil && !confirm(hostname, fingerprint) {
+				return errors.New("host key rejected by user")
+			}
 			hostPort := knownhosts.Normalize(fmt.Sprintf("%s:%d", profile.Host, profile.Port))
 			line := knownhosts.Line([]string{hostPort}, key)
 			if writeErr := appendKnownHost(knownHostsPath, line); writeErr != nil {
@@ -431,4 +470,13 @@ func appendKnownHost(path string, line string) error {
 	defer f.Close()
 	_, err = f.WriteString(line + "\n")
 	return err
+}
+
+func panicHandler(sessionID string, m *Manager) {
+	if r := recover(); r != nil {
+		m.emit("terminal:error", map[string]any{
+			"sessionId": sessionID,
+			"error":     fmt.Sprintf("internal panic: %v", r),
+		})
+	}
 }

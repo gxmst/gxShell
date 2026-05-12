@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 type HotkeyOptions = {
   activeTab: string;
@@ -8,23 +8,26 @@ type HotkeyOptions = {
 };
 
 export function useHotkeys(options: HotkeyOptions) {
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      const opts = optionsRef.current;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        options.onGlobalSearch();
+        opts.onGlobalSearch();
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
         event.preventDefault();
-        options.onTerminalSearch();
+        opts.onTerminalSearch();
       }
-      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "w" && options.activeTab) {
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "w" && opts.activeTab) {
         event.preventDefault();
-        options.onCloseTab(options.activeTab);
+        opts.onCloseTab(opts.activeTab);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [options]);
+  }, []);
 }
-

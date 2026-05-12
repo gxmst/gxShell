@@ -38,19 +38,19 @@
 }
 
 .app-shell[data-theme="Light"] {
-  --bg: #eef3f8;
-  --panel: #f8fbff;
-  --panel-soft: #eef4fb;
-  --panel-raised: #ffffff;
-  --terminal: #fbfcff;
-  --terminal-top: #f2f6fb;
-  --border: rgba(76, 94, 118, .22);
-  --border-strong: rgba(76, 94, 118, .34);
-  --text: #172033;
-  --muted: #64748b;
-  --muted-2: #8290a3;
+  --bg: #e8edf4;
+  --panel: #f0f3f8;
+  --panel-soft: #e9eef5;
+  --panel-raised: #f8fafd;
+  --terminal: #f4f7fb;
+  --terminal-top: #eef1f7;
+  --border: rgba(76, 94, 118, .18);
+  --border-strong: rgba(76, 94, 118, .28);
+  --text: #192038;
+  --muted: #5a6b82;
+  --muted-2: #7d8ea3;
   --accent: #2563eb;
-  --accent-soft: rgba(37, 99, 235, .10);
+  --accent-soft: rgba(37, 99, 235, .08);
   --ok: #15803d;
   --warn: #b45309;
   --bad: #dc2626;

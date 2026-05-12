@@ -5,11 +5,11 @@
 
 .file-row {
   display: grid;
-  grid-template-columns: 14px minmax(0, 1fr) 48px 52px 58px;
-  gap: 6px;
+  grid-template-columns: 16px minmax(0, 1fr) 52px 72px;
+  gap: 5px;
   align-items: center;
   min-height: 28px;
-  padding: 4px 7px;
+  padding: 3px 7px;
   color: var(--muted);
   font-size: 11px;
 }
@@ -36,4 +36,9 @@
   white-space: nowrap;
   text-overflow: ellipsis;
   text-align: right;
+}
+
+.file-actions {
+  display: flex;
+  gap: 2px;
 }

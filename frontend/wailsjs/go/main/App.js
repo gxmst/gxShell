@@ -42,8 +42,16 @@ export function DownloadFile(arg1, arg2, arg3) {
   return window['go']['main']['App']['DownloadFile'](arg1, arg2, arg3);
 }
 
+export function DownloadFolder(arg1, arg2, arg3) {
+  return window['go']['main']['App']['DownloadFolder'](arg1, arg2, arg3);
+}
+
 export function DuplicateProfile(arg1) {
   return window['go']['main']['App']['DuplicateProfile'](arg1);
+}
+
+export function ExportHistory() {
+  return window['go']['main']['App']['ExportHistory']();
 }
 
 export function GetAppInfo() {
@@ -76,6 +84,10 @@ export function ListRemoteDir(arg1, arg2) {
 
 export function ListSessions() {
   return window['go']['main']['App']['ListSessions']();
+}
+
+export function LogCommand(arg1, arg2) {
+  return window['go']['main']['App']['LogCommand'](arg1, arg2);
 }
 
 export function OpenDataDir() {

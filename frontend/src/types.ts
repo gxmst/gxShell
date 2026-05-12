@@ -1,6 +1,6 @@
 import { types } from "../wailsjs/go/models";
 
-export type Drawer = "monitor" | "sftp" | "commands" | "settings";
+export type Drawer = "monitor" | "sftp" | "commands" | "downloads" | "settings";
 
 export type Tab = {
   id: string;

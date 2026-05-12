@@ -22,7 +22,11 @@ export function Disconnect(arg1:string):Promise<void>;
 
 export function DownloadFile(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function DownloadFolder(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function DuplicateProfile(arg1:string):Promise<types.Profile>;
+
+export function ExportHistory():Promise<void>;
 
 export function GetAppInfo():Promise<Record<string, string>>;
 
@@ -39,6 +43,8 @@ export function ListProfiles():Promise<Array<types.Profile>>;
 export function ListRemoteDir(arg1:string,arg2:string):Promise<Array<types.RemoteFile>>;
 
 export function ListSessions():Promise<Array<types.SessionInfo>>;
+
+export function LogCommand(arg1:string,arg2:string):Promise<void>;
 
 export function OpenDataDir():Promise<void>;
 

@@ -49,7 +49,7 @@ export const terminalThemes: Record<string, any> = {
     cyan: "#6ce5e8"
   },
   Light: {
-    background: "#fbfcff",
+    background: "#f4f7fb",
     foreground: "#1e293b",
     cursor: "#2563eb",
     selectionBackground: "#bfdbfe",

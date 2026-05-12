@@ -3,8 +3,10 @@ package logger
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -13,12 +15,16 @@ import (
 )
 
 type Logger struct {
-	path string
-	mu   sync.Mutex
+	path        string
+	historyPath string
+	mu          sync.Mutex
 }
 
 func New(dir string) *Logger {
-	return &Logger{path: filepath.Join(dir, "logs", "app.log")}
+	return &Logger{
+		path:        filepath.Join(dir, "logs", "app.log"),
+		historyPath: filepath.Join(dir, "logs", "history.log"),
+	}
 }
 
 func (l *Logger) Info(message string) {
@@ -43,10 +49,35 @@ func (l *Logger) Write(level, message string) {
 	_, _ = f.WriteString(line)
 }
 
-func (l *Logger) ReadLatest(limit int) []types.LogEntry {
+func (l *Logger) LogCommand(sessionID, host string, line string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	ts := time.Now().Format("2006-01-02 15:04:05")
+	entry := fmt.Sprintf("[%s] [%s@%s] %s\n", ts, sessionID, host, strings.TrimSpace(line))
+	_ = os.MkdirAll(filepath.Dir(l.historyPath), 0755)
+	f, err := os.OpenFile(l.historyPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.WriteString(entry)
+}
+
+func (l *Logger) OpenHistory() error {
+	switch runtime.GOOS {
+	case "windows":
+		return exec.Command("explorer.exe", "/select,", l.historyPath).Start()
+	case "darwin":
+		return exec.Command("open", "-R", l.historyPath).Start()
+	default:
+		return exec.Command("xdg-open", filepath.Dir(l.historyPath)).Start()
+	}
+}
+
+func (l *Logger) ReadLatest(limit int) []types.LogEntry {
+	l.mu.Lock()
 	data, err := os.ReadFile(l.path)
+	l.mu.Unlock()
 	if err != nil {
 		return []types.LogEntry{}
 	}
@@ -56,12 +87,21 @@ func (l *Logger) ReadLatest(limit int) []types.LogEntry {
 	}
 	start := len(lines) - limit
 	entries := make([]types.LogEntry, 0, limit)
+	lineRe := regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^ ]*)\s+\[(\w+)\]\s+(.*)`)
 	for _, line := range lines[start:] {
-		entries = append(entries, types.LogEntry{
+		entry := types.LogEntry{
 			Time:    time.Now(),
 			Level:   "info",
 			Message: line,
-		})
+		}
+		if matches := lineRe.FindStringSubmatch(line); len(matches) == 4 {
+			if t, err := time.Parse(time.RFC3339, matches[1]); err == nil {
+				entry.Time = t
+			}
+			entry.Level = strings.ToLower(matches[2])
+			entry.Message = matches[3]
+		}
+		entries = append(entries, entry)
 	}
 	return entries
 }

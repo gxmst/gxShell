@@ -28,13 +28,16 @@ export namespace types {
 	}
 	export class AppSettings {
 	    themeName: string;
+	    language: string;
 	    terminal: TerminalSettings;
 	    monitorEnabled: boolean;
 	    monitorIntervalSec: number;
 	    connectionTimeout: number;
+	    highlightLevel: string;
 	    sidebarWidth: number;
 	    savePasswords: boolean;
 	    smartHighlight: boolean;
+	    confirmOnDisconnect: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppSettings(source);
@@ -43,13 +46,16 @@ export namespace types {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.themeName = source["themeName"];
+	        this.language = source["language"];
 	        this.terminal = this.convertValues(source["terminal"], TerminalSettings);
 	        this.monitorEnabled = source["monitorEnabled"];
 	        this.monitorIntervalSec = source["monitorIntervalSec"];
 	        this.connectionTimeout = source["connectionTimeout"];
+	        this.highlightLevel = source["highlightLevel"];
 	        this.sidebarWidth = source["sidebarWidth"];
 	        this.savePasswords = source["savePasswords"];
 	        this.smartHighlight = source["smartHighlight"];
+	        this.confirmOnDisconnect = source["confirmOnDisconnect"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

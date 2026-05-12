@@ -9,16 +9,16 @@ export function stateClass(state: string) {
 }
 
 export function normalizeAppTheme(theme?: string): string {
-  return appThemes.includes(theme || "") ? theme || "Dark" : "Dark";
+  return appThemes.includes(theme || "") ? theme || "Light" : "Light";
 }
 
 export function getTerminalTheme(settings: types.AppSettings) {
-  const requested = settings.terminal.themeName || settings.themeName || "Dark";
-  return terminalThemes[requested] || terminalThemes[normalizeAppTheme(settings.themeName)] || terminalThemes["gx Dark"];
+  const requested = settings.terminal.themeName || settings.themeName || "Light";
+  return terminalThemes[requested] || terminalThemes[normalizeAppTheme(settings.themeName)] || terminalThemes["Light"];
 }
 
 export function needsSecret(profile: types.Profile) {
-  return !profile.rememberPassword && (profile.authType === "password" || profile.authType === "privateKey");
+  return !profile.rememberPassword && (profile.authType === "password" || profile.authType === "privateKey");   
 }
 
 export function tabTitle(profile?: types.Profile, fallback?: string) {
@@ -48,4 +48,3 @@ export function formatFileSize(value: number) {
   if (value > 1024) return `${(value / 1024).toFixed(1)}K`;
   return `${value}B`;
 }
-

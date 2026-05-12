@@ -5,3 +5,8 @@ release/
 *.zip
 *.log
 *.tmp
+gxShell.exe
+*.bak
+*.dat
+.secretkey
+todo.md

@@ -30,14 +30,17 @@ type Profile struct {
 }
 
 type AppSettings struct {
-	ThemeName          string           `json:"themeName"`
-	Terminal           TerminalSettings `json:"terminal"`
-	MonitorEnabled     bool             `json:"monitorEnabled"`
-	MonitorIntervalSec int              `json:"monitorIntervalSec"`
-	ConnectionTimeout  int              `json:"connectionTimeout"`
-	SidebarWidth       int              `json:"sidebarWidth"`
-	SavePasswords      bool             `json:"savePasswords"`
-	SmartHighlight     bool             `json:"smartHighlight"`
+	ThemeName           string           `json:"themeName"`
+	Language            string           `json:"language"`
+	Terminal            TerminalSettings `json:"terminal"`
+	MonitorEnabled      bool             `json:"monitorEnabled"`
+	MonitorIntervalSec  int              `json:"monitorIntervalSec"`
+	ConnectionTimeout   int              `json:"connectionTimeout"`
+	HighlightLevel      string           `json:"highlightLevel"`
+	SidebarWidth        int              `json:"sidebarWidth"`
+	SavePasswords       bool             `json:"savePasswords"`
+	SmartHighlight      bool             `json:"smartHighlight"`
+	ConfirmOnDisconnect bool             `json:"confirmOnDisconnect"`
 }
 
 type TerminalSettings struct {

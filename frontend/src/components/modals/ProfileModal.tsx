@@ -13,7 +13,7 @@ export function ProfileModal(props: { profile: types.Profile; onClose: () => voi
         <Label text="Name"><input className="input" value={draft.name} onChange={(e) => update({ name: e.target.value })} /></Label>
         <Label text="Group"><input className="input" value={draft.group} onChange={(e) => update({ group: e.target.value })} /></Label>
         <Label text="Host"><input className="input" value={draft.host} onChange={(e) => update({ host: e.target.value })} /></Label>
-        <Label text="Port"><input className="input" type="number" value={draft.port} onChange={(e) => update({ port: Number(e.target.value) })} /></Label>
+        <Label text="Port"><input className="input" type="number" value={draft.port} onChange={(e) => { const v = Number(e.target.value); update({ port: Number.isNaN(v) ? 22 : v }); }} /></Label>
         <Label text="Username"><input className="input" value={draft.username} onChange={(e) => update({ username: e.target.value })} /></Label>
         <Label text="Auth"><select className="input" value={draft.authType} onChange={(e) => update({ authType: e.target.value })}><option value="password">Password</option><option value="privateKey">Private key</option></select></Label>
         {draft.authType === "password" ? <Label text="Password"><input className="input" type="password" value={draft.password || ""} onChange={(e) => update({ password: e.target.value })} /></Label> : <>

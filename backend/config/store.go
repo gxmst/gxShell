@@ -3,8 +3,10 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -43,7 +45,7 @@ func (s *Store) ensureDefaults() error {
 	if err := s.ensureJSON("commands.json", defaultCommands()); err != nil {
 		return err
 	}
-	return s.ensureJSON("settings.json", defaultSettings())
+	return s.ensureJSON("settings.json", DefaultSettings())
 }
 
 func (s *Store) ensureJSON(name string, value any) error {
@@ -67,10 +69,10 @@ func (s *Store) readJSON(name string, value any) error {
 	if err := json.Unmarshal(data, value); err != nil {
 		bakData, bakErr := os.ReadFile(filepath.Join(s.dir, name+".bak"))
 		if bakErr != nil {
-			return err
+			return fmt.Errorf("failed to parse %s (backup also unavailable): %w", name, err)
 		}
 		if bakErr := json.Unmarshal(bakData, value); bakErr != nil {
-			return err
+			return fmt.Errorf("failed to parse %s and its backup: %w", name, err)
 		}
 		_ = os.WriteFile(filepath.Join(s.dir, name), bakData, 0600)
 	}
@@ -92,7 +94,27 @@ func (s *Store) writeJSON(name string, value any) error {
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		dataCopy, readErr := os.ReadFile(tmp)
+		if readErr != nil {
+			return err
+		}
+		_ = os.Remove(tmp)
+		return os.WriteFile(path, dataCopy, 0600)
+	}
+	return nil
+}
+
+func (s *Store) CleanupBackups() {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".bak") {
+			_ = os.Remove(filepath.Join(s.dir, entry.Name()))
+		}
+	}
 }
 
 func (s *Store) ListProfiles() ([]types.Profile, error) {
@@ -110,7 +132,11 @@ func (s *Store) SaveProfiles(profiles []types.Profile) error {
 
 func (s *Store) GetSettings() (types.AppSettings, error) {
 	var settings types.AppSettings
-	return settings, s.readJSON("settings.json", &settings)
+	err := s.readJSON("settings.json", &settings)
+	if err != nil {
+		return DefaultSettings(), err
+	}
+	return settings, nil
 }
 
 func (s *Store) SaveSettings(settings types.AppSettings) error {
@@ -126,9 +152,9 @@ func (s *Store) SaveCommands(commands []types.CommandTemplate) error {
 	return s.writeJSON("commands.json", commands)
 }
 
-func defaultSettings() types.AppSettings {
+func DefaultSettings() types.AppSettings {
 	return types.AppSettings{
-		ThemeName:          "gx-dark",
+		ThemeName:          "Light",
 		MonitorEnabled:     true,
 		MonitorIntervalSec: 5,
 		ConnectionTimeout:  15,
@@ -141,7 +167,7 @@ func defaultSettings() types.AppSettings {
 			LineHeight:        1.25,
 			CursorStyle:       "block",
 			CursorBlink:       true,
-			ThemeName:         "gx Dark",
+			ThemeName:         "Light",
 			BackgroundOpacity: 1,
 			ScrollbackLines:   5000,
 		},

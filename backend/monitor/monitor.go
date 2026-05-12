@@ -92,14 +92,14 @@ func (m *Manager) Latest(sessionID string) types.Metrics {
 func (m *Manager) collectAndEmit(sessionID string) {
 	start := time.Now()
 	script := `gx_section() { printf 'GX_BEGIN_%s_9b7c2d\n' "$1"; sh -c "$2"; printf 'GX_END_%s_9b7c2d\n' "$1"; }
-gx_section UPTIME 'uptime -p 2>/dev/null || uptime 2>/dev/null'
-gx_section LOAD 'cat /proc/loadavg 2>/dev/null'
-gx_section MEM 'cat /proc/meminfo 2>/dev/null'
-gx_section DISK 'df -kP / 2>/dev/null | tail -n 1'
-gx_section CPU 'head -n 1 /proc/stat 2>/dev/null'
-gx_section DEFAULT_IFACE "ip route get 1.1.1.1 2>/dev/null | awk '\''{for(i=1;i<=NF;i++) if(\$i==\"dev\") {print \$(i+1); exit}}'\''"
-gx_section NET 'cat /proc/net/dev 2>/dev/null'
-gx_section PROC 'ps aux --sort=-%mem 2>/dev/null | head -n 6'`
+	gx_section UPTIME 'LC_ALL=C uptime -p 2>/dev/null || LC_ALL=C uptime 2>/dev/null'
+	gx_section LOAD 'LC_ALL=C cat /proc/loadavg 2>/dev/null'
+	gx_section MEM 'LC_ALL=C cat /proc/meminfo 2>/dev/null'
+	gx_section DISK 'LC_ALL=C df -kP / 2>/dev/null | tail -n 1'
+	gx_section CPU 'LC_ALL=C head -n 1 /proc/stat 2>/dev/null'
+	gx_section DEFAULT_IFACE "LC_ALL=C ip route get 1.1.1.1 2>/dev/null | awk '\''{for(i=1;i<=NF;i++) if(\$i==\"dev\") {print \$(i+1); exit}}'\''"
+	gx_section NET 'LC_ALL=C cat /proc/net/dev 2>/dev/null'
+	gx_section PROC 'LC_ALL=C ps aux --sort=-%mem 2>/dev/null | head -n 6 || LC_ALL=C ps -eo user,pid,%cpu,%mem,vsz,rss,tty,stat,start,time,args --sort=-%mem 2>/dev/null | head -n 6'`
 	out, err := m.exec.Exec(sessionID, script, 5*time.Second)
 	metrics := parseMetrics(sessionID, out)
 	metrics.Online = err == nil

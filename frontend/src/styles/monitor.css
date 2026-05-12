@@ -1,20 +1,19 @@
 .metric-row {
-  display: grid;
-  grid-template-columns: 22px 52px minmax(0, 1fr) 64px;
+  display: flex;
   gap: 8px;
   align-items: center;
-  min-height: 48px;
-  border-radius: 10px;
-  padding: 7px 8px;
+  min-height: 34px;
+  border-radius: 8px;
+  padding: 4px 8px;
 }
 
 .metric-icon {
   display: inline-flex;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   align-items: center;
   justify-content: center;
-  border-radius: 7px;
+  border-radius: 6px;
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 
@@ -23,7 +22,7 @@
 .metric-icon.metric-bad { color: var(--bad); }
 
 .meter {
-  height: 5px;
+  height: 4px;
   overflow: hidden;
   border-radius: 999px;
   background: color-mix(in srgb, var(--muted-2) 24%, transparent);
@@ -43,17 +42,17 @@
 .compact-chip-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: 4px;
 }
 
 .compact-chip-grid {
-  gap: 5px;
+  gap: 3px;
 }
 
 .mini-metric {
   min-width: 0;
-  border-radius: 9px;
-  padding: 6px 7px;
+  border-radius: 7px;
+  padding: 4px 6px;
 }
 
 .process-toggle {
@@ -61,10 +60,10 @@
   width: 100%;
   align-items: center;
   justify-content: space-between;
-  border-radius: 8px;
-  padding: 6px 7px;
+  border-radius: 7px;
+  padding: 4px 6px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   transition: 140ms ease;
 }
 
@@ -76,11 +75,11 @@
 .process-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
-  border-radius: 8px;
-  padding: 5px 7px;
+  gap: 6px;
+  border-radius: 7px;
+  padding: 3px 6px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .process-row:hover {

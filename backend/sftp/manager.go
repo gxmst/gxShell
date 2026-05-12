@@ -1,9 +1,11 @@
 package sftpmanager
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 
 	"gxShell/backend/types"
@@ -37,6 +39,7 @@ func (m *Manager) ListRemoteDir(sessionID string, remotePath string) ([]types.Re
 	if remotePath == "" {
 		remotePath = "."
 	}
+	remotePath = cleanRemotePath(remotePath)
 	client, err := m.withClient(sessionID)
 	if err != nil {
 		return nil, err
@@ -68,6 +71,7 @@ func (m *Manager) ListRemoteDir(sessionID string, remotePath string) ([]types.Re
 }
 
 func (m *Manager) UploadFile(sessionID, localPath, remotePath string) error {
+	remotePath = cleanRemotePath(remotePath)
 	client, err := m.withClient(sessionID)
 	if err != nil {
 		return err
@@ -79,7 +83,11 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) error {
 		return err
 	}
 	defer src.Close()
-	stat, _ := src.Stat()
+	stat, statErr := src.Stat()
+	var totalSize int64
+	if statErr == nil {
+		totalSize = stat.Size()
+	}
 
 	dst, err := client.Create(remotePath)
 	if err != nil {
@@ -88,15 +96,16 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) error {
 	defer dst.Close()
 
 	written, err := copyWithProgress(dst, src, func(n int64) {
-		m.emit("sftp:progress", map[string]any{"sessionId": sessionID, "path": remotePath, "done": n, "total": stat.Size(), "direction": "upload"})
+		m.emit("sftp:progress", map[string]any{"sessionId": sessionID, "path": remotePath, "done": n, "total": totalSize, "direction": "upload"})
 	})
 	if err == nil {
-		m.emit("sftp:progress", map[string]any{"sessionId": sessionID, "path": remotePath, "done": written, "total": stat.Size(), "direction": "upload", "finished": true})
+		m.emit("sftp:progress", map[string]any{"sessionId": sessionID, "path": remotePath, "done": written, "total": totalSize, "direction": "upload", "finished": true})
 	}
 	return err
 }
 
 func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) error {
+	remotePath = cleanRemotePath(remotePath)
 	client, err := m.withClient(sessionID)
 	if err != nil {
 		return err
@@ -108,7 +117,7 @@ func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) error {
 		return err
 	}
 	defer src.Close()
-	stat, _ := src.Stat()
+	stat, statErr := src.Stat()
 
 	dst, err := os.Create(localPath)
 	if err != nil {
@@ -118,14 +127,14 @@ func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) error {
 
 	written, err := copyWithProgress(dst, src, func(n int64) {
 		total := int64(0)
-		if stat != nil {
+		if statErr == nil {
 			total = stat.Size()
 		}
 		m.emit("sftp:progress", map[string]any{"sessionId": sessionID, "path": remotePath, "done": n, "total": total, "direction": "download"})
 	})
 	if err == nil {
 		total := written
-		if stat != nil {
+		if statErr == nil {
 			total = stat.Size()
 		}
 		m.emit("sftp:progress", map[string]any{"sessionId": sessionID, "path": remotePath, "done": written, "total": total, "direction": "download", "finished": true})
@@ -134,6 +143,7 @@ func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) error {
 }
 
 func (m *Manager) DeleteRemoteFile(sessionID, remotePath string) error {
+	remotePath = cleanRemotePath(remotePath)
 	client, err := m.withClient(sessionID)
 	if err != nil {
 		return err
@@ -143,6 +153,8 @@ func (m *Manager) DeleteRemoteFile(sessionID, remotePath string) error {
 }
 
 func (m *Manager) RenameRemoteFile(sessionID, oldPath, newPath string) error {
+	oldPath = cleanRemotePath(oldPath)
+	newPath = cleanRemotePath(newPath)
 	client, err := m.withClient(sessionID)
 	if err != nil {
 		return err
@@ -152,12 +164,102 @@ func (m *Manager) RenameRemoteFile(sessionID, oldPath, newPath string) error {
 }
 
 func (m *Manager) CreateRemoteDir(sessionID, remotePath string) error {
+	remotePath = cleanRemotePath(remotePath)
 	client, err := m.withClient(sessionID)
 	if err != nil {
 		return err
 	}
 	defer client.Close()
 	return client.MkdirAll(remotePath)
+}
+
+func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) error {
+	remotePath = cleanRemotePath(remotePath)
+	client, err := m.withClient(sessionID)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	cleanRemote := path.Clean(remotePath)
+	if err := os.MkdirAll(localDir, 0755); err != nil {
+		return err
+	}
+
+	var files []struct {
+		remotePath string
+		localRel   string
+		isDir      bool
+		size       int64
+	}
+	walker := client.Walk(remotePath)
+	for walker.Step() {
+		if err := walker.Err(); err != nil {
+			return err
+		}
+		rp := walker.Path()
+		rel, relErr := filepath.Rel(cleanRemote, rp)
+		if relErr != nil {
+			return fmt.Errorf("invalid path: %w", relErr)
+		}
+		isDir := walker.Stat().IsDir()
+		files = append(files, struct {
+			remotePath string
+			localRel   string
+			isDir      bool
+			size       int64
+		}{remotePath: rp, localRel: rel, isDir: isDir})
+		if isDir {
+			localSub := filepath.Join(localDir, rel)
+			if err := os.MkdirAll(localSub, 0755); err != nil {
+				return err
+			}
+		}
+	}
+
+	for i, f := range files {
+		if f.isDir {
+			continue
+		}
+		localPath := filepath.Join(localDir, f.localRel)
+		m.emit("sftp:progress", map[string]any{
+			"sessionId": sessionID,
+			"path":      f.remotePath,
+			"done":      int64(i + 1),
+			"total":     int64(len(files)),
+			"direction": "download",
+		})
+		if err := m.downloadFileOnly(client, f.remotePath, localPath); err != nil {
+			return err
+		}
+	}
+
+	m.emit("sftp:progress", map[string]any{
+		"sessionId": sessionID,
+		"path":      remotePath,
+		"done":      int64(len(files)),
+		"total":     int64(len(files)),
+		"direction": "download",
+		"finished":  true,
+	})
+	return nil
+}
+
+func (m *Manager) downloadFileOnly(client *sftp.Client, remotePath, localPath string) error {
+	src, err := client.Open(remotePath)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	dst, err := os.Create(localPath)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	_, err = io.Copy(dst, src)
+	return err
 }
 
 func copyWithProgress(dst io.Writer, src io.Reader, progress func(int64)) (int64, error) {
@@ -183,4 +285,12 @@ func copyWithProgress(dst io.Writer, src io.Reader, progress func(int64)) (int64
 			return total, readErr
 		}
 	}
+}
+
+func cleanRemotePath(p string) string {
+	cleaned := path.Clean(p)
+	if cleaned == ".." || path.IsAbs(cleaned) {
+		return "."
+	}
+	return cleaned
 }

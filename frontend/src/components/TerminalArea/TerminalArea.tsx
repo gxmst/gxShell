@@ -3,6 +3,7 @@ import { Plus, Search, TerminalSquare } from "lucide-react";
 import type { Tab } from "../../types";
 import { TabBar } from "../TabBar/TabBar";
 import { types } from "../../../wailsjs/go/models";
+import { t } from "../../i18n";
 
 export function TerminalArea(props: {
   tabs: Tab[];
@@ -14,7 +15,9 @@ export function TerminalArea(props: {
   onReconnect: (tab: Tab) => void;
   onNewConnection: () => void;
   onCommandPalette: () => void;
+  language: string;
 }) {
+  const lang = props.language;
   return (
     <section className="terminal-pane">
       <TabBar tabs={props.tabs} activeTab={props.activeTab} profiles={props.profiles} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} />
@@ -26,11 +29,11 @@ export function TerminalArea(props: {
           <div className="terminal-empty">
             <div className="terminal-empty-card">
               <TerminalSquare className="mx-auto mb-3 h-11 w-11 text-muted" />
-              <div className="text-lg font-semibold">No active terminal</div>
-              <div className="mt-1 text-sm text-muted">Double click a server, or press Ctrl+K to search.</div>
+              <div className="text-lg font-semibold">{t(lang, "noActiveTerminal")}</div>
+              <div className="mt-1 text-sm text-muted">{t(lang, "noActiveTerminalHint")}</div>
               <div className="mt-4 flex justify-center gap-2">
-                <button className="btn-primary" onClick={props.onNewConnection}><Plus size={15} /> New connection</button>
-                <button className="btn-secondary" onClick={props.onCommandPalette}><Search size={15} /> Open command palette</button>
+                <button className="btn-primary" onClick={props.onNewConnection}><Plus size={15} /> {t(lang, "newConnection")}</button>
+                <button className="btn-secondary" onClick={props.onCommandPalette}><Search size={15} /> {t(lang, "openCmdPalette")}</button>
               </div>
             </div>
           </div>
