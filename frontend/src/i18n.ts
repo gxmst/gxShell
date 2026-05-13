@@ -13,7 +13,14 @@ export type LangKey =
   | "progressDownload" | "progressUpload"
   | "hostKeyTitle" | "hostKeyMessage"
   | "copyToClipboard" | "all" | "none"
-  | "confirmDisconnectBody";
+  | "confirmDisconnectBody" | "connecting"
+  | "highlighting" | "highlightOff" | "highlightBasic" | "highlightFull"
+  | "exportHistory" | "savePassword"
+  | "editServer" | "newServer" | "name" | "group" | "host" | "port"
+  | "username" | "auth" | "password" | "privateKey" | "passphrase"
+  | "favorite" | "description" | "delete" | "duplicate"
+  | "hostRequired" | "usernameRequired" | "portRange"
+  | "category" | "command" | "saveCommand" | "editCommand" | "newCommandModal";
 
 const en: Record<LangKey, string> = {
   monitor: "Monitor",
@@ -71,6 +78,36 @@ const en: Record<LangKey, string> = {
   all: "All",
   none: "None",
   confirmDisconnectBody: "Disconnect {name}? The terminal session will be closed.",
+  connecting: "Connecting...",
+  highlighting: "Highlighting",
+  highlightOff: "Off",
+  highlightBasic: "Basic (errors, warnings)",
+  highlightFull: "Full (IP, paths, services)",
+  exportHistory: "Export history",
+  savePassword: "Save password or passphrase in system credential store",
+  editServer: "Edit server",
+  newServer: "New server",
+  name: "Name",
+  group: "Group",
+  host: "Host",
+  port: "Port",
+  username: "Username",
+  auth: "Auth",
+  password: "Password",
+  privateKey: "Private key",
+  passphrase: "Passphrase",
+  favorite: "Favorite",
+  description: "Description",
+  delete: "Delete",
+  duplicate: "Duplicate",
+  hostRequired: "Host is required",
+  usernameRequired: "Username is required",
+  portRange: "Port must be 1-65535",
+  category: "Category",
+  command: "Command",
+  saveCommand: "Save command",
+  editCommand: "Edit command",
+  newCommandModal: "New command",
 };
 
 const zhCN: Record<LangKey, string> = {
@@ -129,6 +166,36 @@ const zhCN: Record<LangKey, string> = {
   all: "全部",
   none: "无",
   confirmDisconnectBody: "断开 {name}？终端会话将被关闭。",
+  connecting: "正在连接...",
+  highlighting: "高亮",
+  highlightOff: "关闭",
+  highlightBasic: "基础（错误、警告）",
+  highlightFull: "完整（IP、路径、服务）",
+  exportHistory: "导出历史",
+  savePassword: "在系统凭据管理器中保存密码",
+  editServer: "编辑服务器",
+  newServer: "新建服务器",
+  name: "名称",
+  group: "分组",
+  host: "主机",
+  port: "端口",
+  username: "用户名",
+  auth: "认证方式",
+  password: "密码",
+  privateKey: "私钥",
+  passphrase: "密钥密码",
+  favorite: "收藏",
+  description: "描述",
+  delete: "删除",
+  duplicate: "复制",
+  hostRequired: "主机地址不能为空",
+  usernameRequired: "用户名不能为空",
+  portRange: "端口范围 1-65535",
+  category: "分类",
+  command: "命令",
+  saveCommand: "保存命令",
+  editCommand: "编辑命令",
+  newCommandModal: "新建命令",
 };
 
 const locales: Record<string, Record<LangKey, string>> = { en, "zh-CN": zhCN };

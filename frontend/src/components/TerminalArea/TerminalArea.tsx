@@ -1,15 +1,18 @@
 import clsx from "clsx";
+import { memo } from "react";
 import { Plus, Search, TerminalSquare } from "lucide-react";
 import type { Tab } from "../../types";
 import { TabBar } from "../TabBar/TabBar";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
 
-export function TerminalArea(props: {
+export const TerminalArea = memo(function TerminalArea(props: {
   tabs: Tab[];
   activeTab: string;
   profiles: types.Profile[];
   terminalHosts: React.MutableRefObject<Record<string, HTMLDivElement | null>>;
+  sidebarCollapsed: boolean;
+  onToggleSidebar: () => void;
   onActive: (id: string) => void;
   onClose: (id: string) => void;
   onReconnect: (tab: Tab) => void;
@@ -20,10 +23,10 @@ export function TerminalArea(props: {
   const lang = props.language;
   return (
     <section className="terminal-pane">
-      <TabBar tabs={props.tabs} activeTab={props.activeTab} profiles={props.profiles} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} />
+      <TabBar tabs={props.tabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} />
       <div className="terminal-stage">
         {props.tabs.map((tab) => (
-          <div key={tab.id} className={clsx("terminal-host", props.activeTab === tab.id ? "block" : "hidden")} ref={(el) => { props.terminalHosts.current[tab.id] = el; }} />
+          <div key={tab.id} className={clsx("terminal-host", props.activeTab !== tab.id && "terminal-hidden")} ref={(el) => { props.terminalHosts.current[tab.id] = el; }} />
         ))}
         {!props.tabs.length && (
           <div className="terminal-empty">
@@ -41,4 +44,4 @@ export function TerminalArea(props: {
       </div>
     </section>
   );
-}
+});

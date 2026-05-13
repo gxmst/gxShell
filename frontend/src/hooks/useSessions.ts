@@ -57,6 +57,7 @@ export function useSessions(options: UseSessionsOptions) {
   }, []);
 
   const openSession = useCallback(async (profile: types.Profile, password: string, passphrase: string) => {
+    notifyRef.current(`Connecting to ${profile.name || profile.host}...`, "info");
     const info = profile.rememberPassword
       ? await Connect(profile.id, 120, 36)
       : await ConnectWithSecrets(profile.id, password, passphrase, 120, 36);
@@ -84,6 +85,7 @@ export function useSessions(options: UseSessionsOptions) {
       setSecretRequest({ profile, mode: "reconnect", sessionId: tab.id });
       return;
     }
+    notifyRef.current(`Reconnecting to ${tab.title}...`, "info");
     const info = await Reconnect(tab.id);
     replaceReconnectedTab(tab.id, info);
   }, [replaceReconnectedTab]);

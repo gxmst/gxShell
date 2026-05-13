@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"github.com/zalando/go-keyring"
 )
@@ -17,6 +18,7 @@ const service = "gxShell"
 
 type Store struct {
 	dataDir string
+	mu      sync.Mutex
 }
 
 func NewStore(dataDir string) *Store {
@@ -147,6 +149,8 @@ func (s *Store) writeFallback(data map[string]map[string]string) error {
 }
 
 func (s *Store) saveFallback(profileID, kind, value string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data := s.readFallback()
 	if data[profileID] == nil {
 		data[profileID] = map[string]string{}
@@ -156,6 +160,8 @@ func (s *Store) saveFallback(profileID, kind, value string) error {
 }
 
 func (s *Store) loadFallback(profileID, kind string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data := s.readFallback()
 	if entry, ok := data[profileID]; ok {
 		return entry[kind]
@@ -164,6 +170,8 @@ func (s *Store) loadFallback(profileID, kind string) string {
 }
 
 func (s *Store) deleteFallback(profileID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data := s.readFallback()
 	delete(data, profileID)
 	_ = s.writeFallback(data)

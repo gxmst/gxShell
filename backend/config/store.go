@@ -94,15 +94,20 @@ func (s *Store) writeJSON(name string, value any) error {
 	if err := os.WriteFile(tmp, data, 0600); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		dataCopy, readErr := os.ReadFile(tmp)
-		if readErr != nil {
-			return err
+	var renameErr error
+	for i := 0; i < 3; i++ {
+		renameErr = os.Rename(tmp, path)
+		if renameErr == nil {
+			return nil
 		}
-		_ = os.Remove(tmp)
-		return os.WriteFile(path, dataCopy, 0600)
+		time.Sleep(10 * time.Millisecond)
 	}
-	return nil
+	dataCopy, readErr := os.ReadFile(tmp)
+	if readErr != nil {
+		return renameErr
+	}
+	_ = os.Remove(tmp)
+	return os.WriteFile(path, dataCopy, 0600)
 }
 
 func (s *Store) CleanupBackups() {

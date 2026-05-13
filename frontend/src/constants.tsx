@@ -22,6 +22,20 @@ export const emptyProfile = (): types.Profile =>
   });
 
 export const terminalThemes: Record<string, any> = {
+  Dark: {
+    background: "#030b16",
+    foreground: "#cbd5e1",
+    cursor: "#66d9ef",
+    selectionBackground: "#284766",
+    black: "#0b0f14",
+    red: "#ff6b6b",
+    green: "#51d88a",
+    yellow: "#f6c760",
+    blue: "#64d2ff",
+    magenta: "#c792ea",
+    cyan: "#5de4c7",
+    white: "#d7e3f4"
+  },
   "gx Dark": {
     background: "#030b16",
     foreground: "#cbd5e1",

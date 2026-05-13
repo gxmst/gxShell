@@ -3,7 +3,6 @@
   grid-template-rows: 42px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
   background: var(--terminal);
 }
 
@@ -91,7 +90,7 @@
   position: relative;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: clip;
   background: var(--terminal);
 }
 
@@ -102,7 +101,15 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  padding: 8px 18px;
+  padding: 0 0 0 6px;
+  contain: layout style;
+}
+
+.terminal-hidden {
+  visibility: hidden;
+  position: absolute;
+  pointer-events: none;
+  inset: 0;
 }
 
 .terminal-empty {
@@ -130,6 +137,7 @@
 }
 
 .xterm .xterm-viewport {
+  overflow-y: auto !important;
   scrollbar-width: thin;
   background: var(--terminal);
 }

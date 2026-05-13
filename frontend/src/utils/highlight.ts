@@ -1,17 +1,9 @@
 type HighlightRule = { pattern: RegExp; color: number; bold?: boolean };
 
 const ansi = {
-  reset: "\x1b[0m",
   bold: "\x1b[1m",
-  red: "\x1b[31m",
-  green: "\x1b[32m",
-  yellow: "\x1b[33m",
-  blue: "\x1b[34m",
-  magenta: "\x1b[35m",
-  cyan: "\x1b[36m",
-  gray: "\x1b[90m",
-  redBg: "\x1b[41m",
-  greenBg: "\x1b[42m",
+  defaultForeground: "\x1b[39m",
+  normalIntensity: "\x1b[22m",
 };
 
 export type HighlightLevel = "off" | "basic" | "full";
@@ -44,14 +36,23 @@ const fullRules: HighlightRule[] = [
   { pattern: /\[([^\]]+)\]/g, color: 90 },
 ];
 
+const basicQuickCheck = /\b(error|fail|fatal|panic|warn|success|ok|done|ready|running|debug|info)\b/i;
+const fullQuickCheck = /\b(error|fail|fatal|panic|warn|success|ok|done|ready|running|debug|info|root|admin|sudo|nginx|docker|ssh|http)\b|(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/i;
+
 function colorCode(color: number, bold?: boolean) {
   const b = bold ? "\x1b[1m" : "";
   return `${b}\x1b[${color}m`;
 }
 
+function restoreCode(bold?: boolean) {
+  return bold ? `${ansi.defaultForeground}${ansi.normalIntensity}` : ansi.defaultForeground;
+}
+
 function highlightLine(line: string, level: HighlightLevel): string {
-  if (level === "off" || line.includes("\x1b")) return line;
+  if (level === "off" || line.includes("\x1b") || line.includes("\r") || line.includes("\b")) return line;
   const rules = level === "full" ? fullRules : basicRules;
+  const quickCheck = level === "full" ? fullQuickCheck : basicQuickCheck;
+  if (!quickCheck.test(line)) return line;
   let result = line;
   const applied = new Set<string>();
   for (const rule of rules) {
@@ -59,7 +60,7 @@ function highlightLine(line: string, level: HighlightLevel): string {
       const key = `${match}|${rule.pattern.source}`;
       if (applied.has(key)) return match;
       applied.add(key);
-      return `${colorCode(rule.color, rule.bold)}${match}${ansi.reset}`;
+      return `${colorCode(rule.color, rule.bold)}${match}${restoreCode(rule.bold)}`;
     });
   }
   return result;
@@ -67,20 +68,10 @@ function highlightLine(line: string, level: HighlightLevel): string {
 
 export function highlight(data: string, level: HighlightLevel): string {
   if (level === "off") return data;
+  if (data.length > 2048) return data;
   const lines = data.split("\n");
   for (let i = 0; i < lines.length; i++) {
     lines[i] = highlightLine(lines[i], level);
   }
   return lines.join("\n");
-}
-
-export function highlightStream(data: string, level: HighlightLevel, buffer: { current: string }): string {     
-  if (level === "off") return data;
-  buffer.current += data;
-  if (!buffer.current.includes("\n") && buffer.current.length < 2048) {
-    return data;
-  }
-  const result = highlight(buffer.current, level);
-  buffer.current = "";
-  return result;
 }

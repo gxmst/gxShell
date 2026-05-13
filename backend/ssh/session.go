@@ -2,6 +2,8 @@ package sshmanager
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -43,7 +45,15 @@ func NewManager(knownHostsPath string, emit func(event string, data any), confir
                 confirm:        confirm,
         }
 }
+const maxSessions = 20
+
 func (m *Manager) Connect(profile types.Profile, timeoutSec int, cols int, rows int) (types.SessionInfo, error) {
+	m.mu.RLock()
+	count := len(m.sessions)
+	m.mu.RUnlock()
+	if count >= maxSessions {
+		return types.SessionInfo{}, fmt.Errorf("connection limit reached (%d sessions max)", maxSessions)
+	}
 	if cols <= 0 {
 		cols = 120
 	}
@@ -54,7 +64,7 @@ func (m *Manager) Connect(profile types.Profile, timeoutSec int, cols int, rows 
 		timeoutSec = 15
 	}
 
-	id := fmt.Sprintf("sess-%d", time.Now().UnixNano())
+	id := newSessionID()
 	info := types.SessionInfo{
 		ID:        id,
 		ProfileID: profile.ID,
@@ -172,6 +182,11 @@ func (m *Manager) forwardOutput(id string, reader io.Reader) {
 		m.mu.RUnlock()
 		if session == nil {
 			return
+		}
+		select {
+		case <-session.done:
+			return
+		default:
 		}
 	}
 }
@@ -462,7 +477,11 @@ func ensureFile(path string, mode os.FileMode) error {
 	return f.Close()
 }
 
+var knownHostsWriteMu sync.Mutex
+
 func appendKnownHost(path string, line string) error {
+	knownHostsWriteMu.Lock()
+	defer knownHostsWriteMu.Unlock()
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return err
@@ -479,4 +498,10 @@ func panicHandler(sessionID string, m *Manager) {
 			"error":     fmt.Sprintf("internal panic: %v", r),
 		})
 	}
+}
+
+func newSessionID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return "sess-" + hex.EncodeToString(b)
 }

@@ -21,25 +21,31 @@ export function SftpPanel(props: { active?: Tab; path: string; files: types.Remo
   if (!active) return <div className="empty compact">Connect first to browse SFTP.</div>;
 
   const upload = async () => {
-    const local = await SelectUploadFile();
-    if (!local) return;
-    const name = local.split(/[\\/]/).pop() || "upload.bin";
-    await UploadFile(active.id, local, `${path.replace(/\/$/, "")}/${name}`);
-    onRefresh(path);
+    try {
+      const local = await SelectUploadFile();
+      if (!local) return;
+      const name = local.split(/[\\/]/).pop() || "upload.bin";
+      await UploadFile(active.id, local, `${path.replace(/\/$/, "")}/${name}`);
+      onRefresh(path);
+    } catch (err) { onNotify(String(err), "error"); }
   };
 
   const download = async (file: types.RemoteFile) => {
-    const target = await SelectDownloadPath(file.name);
-    if (!target) return;
-    await DownloadFile(active.id, file.path, target);
-    onNotify("Download finished", "success");
+    try {
+      const target = await SelectDownloadPath(file.name);
+      if (!target) return;
+      await DownloadFile(active.id, file.path, target);
+      onNotify("Download finished", "success");
+    } catch (err) { onNotify(String(err), "error"); }
   };
 
   const downloadFolder = async (file: types.RemoteFile) => {
-    const target = await SelectDownloadPath(file.name + ".d");
-    if (!target) return;
-    await DownloadFolder(active.id, file.path, target);
-    onNotify("Folder download finished", "success");
+    try {
+      const target = await SelectDownloadPath(file.name + ".d");
+      if (!target) return;
+      await DownloadFolder(active.id, file.path, target);
+      onNotify("Folder download finished", "success");
+    } catch (err) { onNotify(String(err), "error"); }
   };
 
   return (
@@ -71,9 +77,9 @@ export function SftpPanel(props: { active?: Tab; path: string; files: types.Remo
         ))}
       </div>
 
-      {dialog?.type === "mkdir" && <TextInputDialog title="New folder" label="Folder name" onClose={() => setDialog(null)} onSubmit={async (name) => { await CreateRemoteDir(active.id, `${path}/${name}`); setDialog(null); onRefresh(path); }} />}
-      {dialog?.type === "rename" && <TextInputDialog title="Rename file" label="New name" initialValue={dialog.file.name} onClose={() => setDialog(null)} onSubmit={async (name) => { await RenameRemoteFile(active.id, dialog.file.path, `${path}/${name}`); setDialog(null); onRefresh(path); }} />}
-      {dialog?.type === "delete" && <ConfirmDialog title="Delete remote file" body={`Delete ${dialog.file.name}? This cannot be undone.`} confirmText="Delete" onClose={() => setDialog(null)} onConfirm={async () => { await DeleteRemoteFile(active.id, dialog.file.path); setDialog(null); onRefresh(path); }} />}
+      {dialog?.type === "mkdir" && <TextInputDialog title="New folder" label="Folder name" onClose={() => setDialog(null)} onSubmit={async (name) => { try { await CreateRemoteDir(active.id, `${path}/${name}`); setDialog(null); onRefresh(path); } catch (err) { onNotify(String(err), "error"); } }} />}
+      {dialog?.type === "rename" && <TextInputDialog title="Rename file" label="New name" initialValue={dialog.file.name} onClose={() => setDialog(null)} onSubmit={async (name) => { try { await RenameRemoteFile(active.id, dialog.file.path, `${path}/${name}`); setDialog(null); onRefresh(path); } catch (err) { onNotify(String(err), "error"); } }} />}
+      {dialog?.type === "delete" && <ConfirmDialog title="Delete remote file" body={`Delete ${dialog.file.name}? This cannot be undone.`} confirmText="Delete" onClose={() => setDialog(null)} onConfirm={async () => { try { await DeleteRemoteFile(active.id, dialog.file.path); setDialog(null); onRefresh(path); } catch (err) { onNotify(String(err), "error"); } }} />}
     </div>
   );
 }

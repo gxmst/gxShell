@@ -1,18 +1,21 @@
-﻿import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { types } from "../../wailsjs/go/models";
 import { ResizeTerminal, WriteToTerminal, LogCommand } from "../../wailsjs/go/main/App";
 import { getTerminalTheme } from "../utils/format";
 import { highlight, type HighlightLevel } from "../utils/highlight";
 
-const MAX_BUFFERED_CHUNKS = 500;
+const MAX_BUFFERED_CHUNKS = 100;
+const RESIZE_SETTLE_MS = 80;
 
 export function useTerminal(activeTab: string, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean) {
   const terminals = useRef<Record<string, Terminal>>({});
   const fits = useRef<Record<string, FitAddon>>({});
   const searches = useRef<Record<string, SearchAddon>>({});
+  const webgl = useRef<Record<string, WebglAddon>>({});
   const terminalHosts = useRef<Record<string, HTMLDivElement | null>>({});
   const bufferedOutput = useRef<Record<string, string[]>>({});
   const observers = useRef<Record<string, ResizeObserver>>({});
@@ -20,6 +23,11 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
   const cleanupFns = useRef<Record<string, () => void>>({});
   const cmdBuffer = useRef<Record<string, string>>({});
   const lastDimensions = useRef<Record<string, { cols: number; rows: number }>>({});
+  const pendingFitFrames = useRef<Record<string, number>>({});
+  const pendingResizeTimers = useRef<Record<string, number>>({});
+  const pendingOutput = useRef<Record<string, string[]>>({});
+  const pendingWriteFrames = useRef<Record<string, number>>({});
+  const lastHostSize = useRef<Record<string, string>>({});
 
   const addTimer = useCallback((ms: number, fn: () => void) => {
     const id = window.setTimeout(() => {
@@ -33,12 +41,14 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
 
+  const highlightLevelRef = useRef<HighlightLevel>("off");
+  highlightLevelRef.current = (settings?.highlightLevel as HighlightLevel) || "off";
+
   const applyHighlight = useCallback((sessionId: string, data: string) => {
-    const level: HighlightLevel = (settings?.highlightLevel as HighlightLevel) || "off";
+    const level = highlightLevelRef.current;
     if (level === "off") return data;
-    // Direct highlight without line buffering to ensure zero latency for prompts
     return highlight(data, level);
-  }, [settings]);
+  }, []);
 
   useEffect(() => {
     if (!activeTab || !settings) return;
@@ -46,7 +56,9 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
     if (!host) return;
 
     const fitAndResize = () => {
-      window.requestAnimationFrame(() => {
+      if (pendingFitFrames.current[activeTab]) return;
+      pendingFitFrames.current[activeTab] = window.requestAnimationFrame(() => {
+        delete pendingFitFrames.current[activeTab];
         try {
           if (!host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
           const fit = fits.current[activeTab];
@@ -59,20 +71,14 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
           const prev = lastDimensions.current[activeTab];
           if (prev && prev.cols === cols && prev.rows === rows) return;
 
-          const timerKey = `resize-${activeTab}`;
-          if (timers.current.has(timerKey)) return;
-
-          // Sync lock immediately to prevent redundant calls
           lastDimensions.current[activeTab] = { cols, rows };
-          ResizeTerminal(activeTab, cols, rows).catch(() => {
-            // Revert on error to allow retry
-            delete lastDimensions.current[activeTab];
-          });
-
-          const tid = window.setTimeout(() => {
-            timers.current.delete(timerKey);
-          }, 300);
-          timers.current.add(timerKey);
+          window.clearTimeout(pendingResizeTimers.current[activeTab]);
+          pendingResizeTimers.current[activeTab] = window.setTimeout(() => {
+            delete pendingResizeTimers.current[activeTab];
+            ResizeTerminal(activeTab, cols, rows).catch(() => {
+              delete lastDimensions.current[activeTab];
+            });
+          }, RESIZE_SETTLE_MS);
         } catch {
         }
       });
@@ -90,7 +96,10 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
         fontSize: settings.terminal.fontSize || 13.5,
         fontWeight: 400,
         lineHeight: settings.terminal.lineHeight || 1.35,
+        minimumContrastRatio: 1,
+        drawBoldTextInBrightColors: false,
         scrollback: settings.terminal.scrollbackLines || 5000,
+        smoothScrollDuration: 0,
         theme: getTerminalTheme(settings)
       });
       const fit = new FitAddon();
@@ -99,18 +108,32 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
       term.loadAddon(searchAddon);
       term.open(host);
 
+      try {
+        const gl = new WebglAddon();
+        term.loadAddon(gl);
+        webgl.current[activeTab] = gl;
+      } catch (err) {
+        notifyRef.current("WebGL unavailable, using canvas renderer", "info");
+      }
+
       host.addEventListener("contextmenu", async (e) => {
         e.preventDefault();
         const selection = term.getSelection();
         if (selection) {
-          await navigator.clipboard.writeText(selection);
-          notifyRef.current("Copied to clipboard", "success");
+          try {
+            await navigator.clipboard.writeText(selection);
+            notifyRef.current("Copied to clipboard", "success");
+          } catch {
+            notifyRef.current("Copy failed, use Ctrl+C instead", "error");
+          }
           term.clearSelection();
         } else {
           try {
             const text = await navigator.clipboard.readText();
             WriteToTerminal(activeTab, text).catch(() => {});
-          } catch {}
+          } catch {
+            notifyRef.current("Paste failed, use Ctrl+V instead", "error");
+          }
         }
       });
 
@@ -142,7 +165,14 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
       addTimer(100, fitAndResize);
     }
 
-    const resize = () => fitAndResize();
+    const resize = () => {
+      const h = terminalHosts.current[activeTab];
+      if (!h || h.clientWidth <= 0 || h.clientHeight <= 0) return;
+      const key = `${h.clientWidth}x${h.clientHeight}`;
+      if (lastHostSize.current[activeTab] === key) return;
+      lastHostSize.current[activeTab] = key;
+      fitAndResize();
+    };
     const observer = new ResizeObserver(resize);
     observer.observe(host);
     observers.current[activeTab] = observer;
@@ -188,7 +218,17 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
   const writeOutput = useCallback((sessionId: string, data: string) => {
     const term = terminals.current[sessionId];
     if (term) {
-      term.write(applyHighlight(sessionId, data));
+      const queue = pendingOutput.current[sessionId] || [];
+      queue.push(data);
+      pendingOutput.current[sessionId] = queue;
+      if (pendingWriteFrames.current[sessionId]) return;
+      pendingWriteFrames.current[sessionId] = window.requestAnimationFrame(() => {
+        delete pendingWriteFrames.current[sessionId];
+        const chunks = pendingOutput.current[sessionId];
+        delete pendingOutput.current[sessionId];
+        if (!chunks?.length) return;
+        terminals.current[sessionId]?.write(applyHighlight(sessionId, chunks.join("")));
+      });
     } else {
       const buffer = bufferedOutput.current[sessionId] || [];
       if (buffer.length < MAX_BUFFERED_CHUNKS) {
@@ -200,13 +240,23 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
   const disposeTerminal = useCallback((id: string) => {
     cleanupFns.current[id]?.();
     delete cleanupFns.current[id];
+    webgl.current[id]?.dispose();
     terminals.current[id]?.dispose();
+    if (pendingFitFrames.current[id]) window.cancelAnimationFrame(pendingFitFrames.current[id]);
+    if (pendingWriteFrames.current[id]) window.cancelAnimationFrame(pendingWriteFrames.current[id]);
+    window.clearTimeout(pendingResizeTimers.current[id]);
+    delete webgl.current[id];
     delete terminals.current[id];
     delete fits.current[id];
     delete searches.current[id];
     delete bufferedOutput.current[id];
+    delete pendingOutput.current[id];
+    delete pendingFitFrames.current[id];
+    delete pendingWriteFrames.current[id];
+    delete pendingResizeTimers.current[id];
     delete cmdBuffer.current[id];
     delete lastDimensions.current[id];
+    delete lastHostSize.current[id];
   }, []);
 
   const findNext = useCallback((id: string, query: string) => {

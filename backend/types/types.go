@@ -38,6 +38,7 @@ type AppSettings struct {
 	ConnectionTimeout   int              `json:"connectionTimeout"`
 	HighlightLevel      string           `json:"highlightLevel"`
 	SidebarWidth        int              `json:"sidebarWidth"`
+	SidebarSplitPct     int              `json:"sidebarSplitPct"`
 	SavePasswords       bool             `json:"savePasswords"`
 	SmartHighlight      bool             `json:"smartHighlight"`
 	ConfirmOnDisconnect bool             `json:"confirmOnDisconnect"`

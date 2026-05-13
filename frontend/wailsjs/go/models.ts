@@ -35,6 +35,7 @@ export namespace types {
 	    connectionTimeout: number;
 	    highlightLevel: string;
 	    sidebarWidth: number;
+	    sidebarSplitPct: number;
 	    savePasswords: boolean;
 	    smartHighlight: boolean;
 	    confirmOnDisconnect: boolean;
@@ -53,6 +54,7 @@ export namespace types {
 	        this.connectionTimeout = source["connectionTimeout"];
 	        this.highlightLevel = source["highlightLevel"];
 	        this.sidebarWidth = source["sidebarWidth"];
+	        this.sidebarSplitPct = source["sidebarSplitPct"];
 	        this.savePasswords = source["savePasswords"];
 	        this.smartHighlight = source["smartHighlight"];
 	        this.confirmOnDisconnect = source["confirmOnDisconnect"];

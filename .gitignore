@@ -10,3 +10,4 @@ gxShell.exe
 *.dat
 .secretkey
 todo.md
+frontend/package.json.md5

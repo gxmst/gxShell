@@ -124,6 +124,10 @@ function App() {
 
   const themeName = normalizeAppTheme(profileState.settings?.themeName);
 
+  const handleNewConnection = useCallback(() => setProfileModal(emptyProfile()), []);
+  const handleCommandPalette = useCallback(() => { setGlobalQuery(""); setGlobalSearchOpen(true); }, []);
+  const handleToggleSidebar = useCallback(() => setSidebarCollapsed(v => !v), []);
+
   return (
     <ErrorBoundary>
     <div className="app-shell" onContextMenu={() => setCtxMenu(null)} data-theme={themeName} data-collapsed={sidebarCollapsed ? "true" : "false"} >
@@ -166,19 +170,21 @@ function App() {
           activeTab={sessions.activeTab}
           profiles={profileState.profiles}
           terminalHosts={activeTerminal.terminalHosts}
+          sidebarCollapsed={sidebarCollapsed}
+          onToggleSidebar={handleToggleSidebar}
           onActive={sessions.setActiveTab}
           onClose={sessions.closeTab}
           onReconnect={sessions.reconnectTab}
-          onNewConnection={() => setProfileModal(emptyProfile())}
-          onCommandPalette={() => { setGlobalQuery(""); setGlobalSearchOpen(true); }}
+          onNewConnection={handleNewConnection}
+          onCommandPalette={handleCommandPalette}
           language={profileState.settings?.language || "en"}
         />
       </main>
 
       {globalSearchOpen && <GlobalSearchModal query={globalQuery} onQuery={setGlobalQuery} results={globalResults} onClose={() => setGlobalSearchOpen(false)} />}
       {terminalSearchOpen && <TerminalSearchModal query={terminalSearch} onQuery={setTerminalSearch} onNext={() => activeTerminal.findNext(sessions.activeTab, terminalSearch)} onClose={() => setTerminalSearchOpen(false)} />}
-      {profileModal && <ProfileModal profile={profileModal} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={async (id) => { await profileState.deleteProfile(id); setProfileModal(null); }} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify("Profile copied. Saved credentials are not copied.", "info"); }} />}
-      {commandModal && <CommandModal command={commandModal} onClose={() => setCommandModal(null)} onSave={saveCommand} />}
+      {profileModal && <ProfileModal profile={profileModal} language={profileState.settings?.language || "en"} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={async (id) => { await profileState.deleteProfile(id); setProfileModal(null); }} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify("Profile copied. Saved credentials are not copied.", "info"); }} />}
+      {commandModal && <CommandModal command={commandModal} language={profileState.settings?.language || "en"} onClose={() => setCommandModal(null)} onSave={saveCommand} />}
       {sessions.secretRequest && <SecretModal request={sessions.secretRequest} language={profileState.settings?.language || "en"} onClose={() => sessions.setSecretRequest(null)} onSubmit={async (password, passphrase) => { const request = sessions.secretRequest; sessions.setSecretRequest(null); if (request) await sessions.submitSecret(request, password, passphrase); }} />}
       <ProgressBar />
       <ToastStack toasts={toasts} />

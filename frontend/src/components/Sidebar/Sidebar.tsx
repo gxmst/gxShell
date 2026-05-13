@@ -3,6 +3,7 @@ import clsx from "clsx";
 import { Download as DownloadIcon, Edit3, MoreHorizontal, Play, Plus, Search } from "lucide-react";
 import { useTransfers } from "../../hooks/useTransfers";
 import { types } from "../../../wailsjs/go/models";
+import { UpdateSettings } from "../../../wailsjs/go/main/App";
 import type { Drawer, Tab, Toast } from "../../types";
 import { AppIcon, drawerIcon } from "../../constants";
 import { stateClass } from "../../utils/format";
@@ -48,6 +49,14 @@ export function Sidebar(props: {
     : ["monitor", "sftp", "commands", "settings"];
   const [splitPct, setSplitPct] = useState(45);
   const dragRef = useRef({ active: false, startY: 0, startPct: 0 });
+  const splitRef = useRef(splitPct);
+  splitRef.current = splitPct;
+
+  useEffect(() => {
+    if (props.settings?.sidebarSplitPct) {
+      setSplitPct(props.settings.sidebarSplitPct);
+    }
+  }, [props.settings?.sidebarSplitPct]);
 
   const onDragStart = useCallback((e: React.MouseEvent) => {
     dragRef.current = { active: true, startY: e.clientY, startPct: splitPct };
@@ -65,7 +74,11 @@ export function Sidebar(props: {
 
   const onDragEnd = useCallback(() => {
     dragRef.current.active = false;
-  }, []);
+    if (props.settings) {
+      const next = new types.AppSettings({ ...props.settings, sidebarSplitPct: Math.round(splitRef.current) });
+      UpdateSettings(next).catch(() => {});
+    }
+  }, [props.settings]);
 
   useEffect(() => {
     const move = (e: MouseEvent) => onDragMove(e);
@@ -134,7 +147,7 @@ export function Sidebar(props: {
             {props.drawer === "monitor" && <MonitorPanel metrics={props.activeMetrics} active={props.active} onStart={props.onStartMonitor} />}
             {props.drawer === "sftp" && <SftpPanel active={props.active} path={props.remotePath} files={props.remoteFiles} busy={props.sftpBusy} onRefresh={props.onRefreshSftp} onNotify={props.onNotify} setCtxMenu={props.setCtxMenu} />}
             {props.drawer === "commands" && <CommandPanel commands={props.commands} active={props.active} onRun={props.onRunCommand} onEdit={props.onEditCommand} onDelete={props.onDeleteCommand} onNew={props.onNewCommand} />}
-            {props.drawer === "settings" && props.settings && <SettingsPanel settings={props.settings} onSave={props.onSaveSettings} onOpenData={props.onOpenData} dataDir={props.appInfo.dataDir || ""} />}
+            {props.drawer === "settings" && props.settings && <SettingsPanel settings={props.settings} language={lang} onSave={props.onSaveSettings} onOpenData={props.onOpenData} dataDir={props.appInfo.dataDir || ""} />}
             {props.drawer === "downloads" && <DownloadList />}
           </div>
         </div>

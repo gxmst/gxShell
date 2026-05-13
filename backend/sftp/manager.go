@@ -93,11 +93,14 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) error {
 	if err != nil {
 		return err
 	}
-	defer dst.Close()
 
 	written, err := copyWithProgress(dst, src, func(n int64) {
 		m.emit("sftp:progress", map[string]any{"sessionId": sessionID, "path": remotePath, "done": n, "total": totalSize, "direction": "upload"})
 	})
+	closeErr := dst.Close()
+	if err == nil && closeErr != nil {
+		err = closeErr
+	}
 	if err == nil {
 		m.emit("sftp:progress", map[string]any{"sessionId": sessionID, "path": remotePath, "done": written, "total": totalSize, "direction": "upload", "finished": true})
 	}
@@ -256,10 +259,13 @@ func (m *Manager) downloadFileOnly(client *sftp.Client, remotePath, localPath st
 	if err != nil {
 		return err
 	}
-	defer dst.Close()
 
-	_, err = io.Copy(dst, src)
-	return err
+	_, copyErr := io.Copy(dst, src)
+	closeErr := dst.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
 }
 
 func copyWithProgress(dst io.Writer, src io.Reader, progress func(int64)) (int64, error) {
