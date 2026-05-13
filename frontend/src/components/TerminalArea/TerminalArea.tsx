@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { memo } from "react";
-import { Plus, Search, TerminalSquare } from "lucide-react";
+import { Plus, TerminalSquare } from "lucide-react";
 import type { Tab } from "../../types";
 import { TabBar } from "../TabBar/TabBar";
 import { types } from "../../../wailsjs/go/models";
@@ -17,7 +17,6 @@ export const TerminalArea = memo(function TerminalArea(props: {
   onClose: (id: string) => void;
   onReconnect: (tab: Tab) => void;
   onNewConnection: () => void;
-  onCommandPalette: () => void;
   language: string;
 }) {
   const lang = props.language;
@@ -34,9 +33,8 @@ export const TerminalArea = memo(function TerminalArea(props: {
               <TerminalSquare className="mx-auto mb-3 h-11 w-11 text-muted" />
               <div className="text-lg font-semibold">{t(lang, "noActiveTerminal")}</div>
               <div className="mt-1 text-sm text-muted">{t(lang, "noActiveTerminalHint")}</div>
-              <div className="mt-4 flex justify-center gap-2">
+              <div className="mt-4 flex justify-center">
                 <button className="btn-primary" onClick={props.onNewConnection}><Plus size={15} /> {t(lang, "newConnection")}</button>
-                <button className="btn-secondary" onClick={props.onCommandPalette}><Search size={15} /> {t(lang, "openCmdPalette")}</button>
               </div>
             </div>
           </div>

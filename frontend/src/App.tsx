@@ -125,7 +125,6 @@ function App() {
   const themeName = normalizeAppTheme(profileState.settings?.themeName);
 
   const handleNewConnection = useCallback(() => setProfileModal(emptyProfile()), []);
-  const handleCommandPalette = useCallback(() => { setGlobalQuery(""); setGlobalSearchOpen(true); }, []);
   const handleToggleSidebar = useCallback(() => setSidebarCollapsed(v => !v), []);
 
   return (
@@ -176,7 +175,6 @@ function App() {
           onClose={sessions.closeTab}
           onReconnect={sessions.reconnectTab}
           onNewConnection={handleNewConnection}
-          onCommandPalette={handleCommandPalette}
           language={profileState.settings?.language || "en"}
         />
       </main>
