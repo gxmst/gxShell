@@ -2,7 +2,7 @@ import { useState } from "react";
 import { FileText, HardDrive, Save } from "lucide-react";
 import { ExportHistory } from "../../../wailsjs/go/main/App";
 import { types } from "../../../wailsjs/go/models";
-import { appThemes, terminalThemes } from "../../constants";
+import { appThemes, fontPresets, terminalThemes } from "../../constants";
 import { normalizeAppTheme } from "../../utils/format";
 import { t } from "../../i18n";
 import { Label } from "../modals/ModalShell";
@@ -27,7 +27,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir 
         <Label text={t(lang, "lang")}><select className="input compact-input" value={draft.language || "en"} onChange={(e) => update({ language: e.target.value })}><option value="en">English</option><option value="zh-CN">简体中文</option></select></Label>
         <Label text={t(lang, "theme")}><select className="input compact-input" value={normalizeAppTheme(draft.themeName)} onChange={(e) => setAppTheme(e.target.value)}>{appThemes.map((theme) => <option key={theme}>{theme}</option>)}</select></Label>
         <Label text={t(lang, "termTheme")}><select className="input compact-input" value={draft.terminal.themeName} onChange={(e) => updateTerm({ themeName: e.target.value })}>{Object.keys(terminalThemes).map((theme) => <option key={theme}>{theme}</option>)}</select></Label>
-        <Label text={t(lang, "font")}><input className="input compact-input" value={draft.terminal.fontFamily} onChange={(e) => updateTerm({ fontFamily: e.target.value })} /></Label>
+        <Label text={t(lang, "font")}><select className="input compact-input" value={draft.terminal.fontFamily} onChange={(e) => updateTerm({ fontFamily: e.target.value })}>{fontPresets.map((f) => <option key={f} value={f}>{f.split(",")[0].trim()}</option>)}</select></Label>
         <div className="grid grid-cols-3 gap-1.5">
           <Label text={t(lang, "size")}><input className="input compact-input" type="number" value={draft.terminal.fontSize} onChange={(e) => updateTerm({ fontSize: Number(e.target.value) })} /></Label>
           <Label text={t(lang, "monitorInterval")}><input className="input compact-input" type="number" value={draft.monitorIntervalSec} onChange={(e) => update({ monitorIntervalSec: Number(e.target.value) })} /></Label>

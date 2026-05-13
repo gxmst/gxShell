@@ -4,6 +4,23 @@ import type { Drawer } from "./types";
 
 export const appThemes = ["Dark", "Deep Blue", "Light"];
 
+export const fontPresets = [
+  "JetBrains Mono, Cascadia Code, Consolas, monospace",
+  "Cascadia Code, Consolas, monospace",
+  "Fira Code, Consolas, monospace",
+  "Maple Mono, Consolas, monospace",
+  "Iosevka, Consolas, monospace",
+  "Source Code Pro, Consolas, monospace",
+  "Hack, Consolas, monospace",
+  "Inconsolata, Consolas, monospace",
+  "Victor Mono, Consolas, monospace",
+  "IBM Plex Mono, Consolas, monospace",
+  "Ubuntu Mono, Consolas, monospace",
+  "Menlo, Monaco, Consolas, monospace",
+  "Consolas, monospace",
+  "Courier New, monospace",
+];
+
 export const emptyProfile = (): types.Profile =>
   new types.Profile({
     id: "",

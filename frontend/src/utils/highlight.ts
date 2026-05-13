@@ -38,6 +38,7 @@ const fullRules: HighlightRule[] = [
 
 const basicQuickCheck = /\b(error|fail|fatal|panic|warn|success|ok|done|ready|running|debug|info)\b/i;
 const fullQuickCheck = /\b(error|fail|fatal|panic|warn|success|ok|done|ready|running|debug|info|root|admin|sudo|nginx|docker|ssh|http)\b|(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/i;
+const ansiStrip = /\x1b\[[0-9;]*[a-zA-Z]/g;
 
 function colorCode(color: number, bold?: boolean) {
   const b = bold ? "\x1b[1m" : "";
@@ -49,10 +50,11 @@ function restoreCode(bold?: boolean) {
 }
 
 function highlightLine(line: string, level: HighlightLevel): string {
-  if (level === "off" || line.includes("\x1b") || line.includes("\r") || line.includes("\b")) return line;
+  if (level === "off" || line.includes("\r") || line.includes("\b")) return line;
   const rules = level === "full" ? fullRules : basicRules;
   const quickCheck = level === "full" ? fullQuickCheck : basicQuickCheck;
-  if (!quickCheck.test(line)) return line;
+  const stripped = line.replace(ansiStrip, "");
+  if (!quickCheck.test(stripped)) return line;
   let result = line;
   const applied = new Set<string>();
   for (const rule of rules) {
@@ -68,7 +70,6 @@ function highlightLine(line: string, level: HighlightLevel): string {
 
 export function highlight(data: string, level: HighlightLevel): string {
   if (level === "off") return data;
-  if (data.length > 2048) return data;
   const lines = data.split("\n");
   for (let i = 0; i < lines.length; i++) {
     lines[i] = highlightLine(lines[i], level);
