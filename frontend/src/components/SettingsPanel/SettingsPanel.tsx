@@ -35,10 +35,10 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir 
         </div>
         <label className="check"><input type="checkbox" checked={draft.monitorEnabled} onChange={(e) => update({ monitorEnabled: e.target.checked })} /> {t(lang, "enableMonitor")}</label>
         <Label text={t(lang, "highlighting")}><select className="input compact-input" value={draft.highlightLevel || "off"} onChange={(e) => update({ highlightLevel: e.target.value })}><option value="off">{t(lang, "highlightOff")}</option><option value="basic">{t(lang, "highlightBasic")}</option><option value="full">{t(lang, "highlightFull")}</option></select></Label>
-        <label className="check"><input type="checkbox" checked={draft.smartHighlight} onChange={(e) => update({ smartHighlight: e.target.checked })} /> {t(lang, "highlightOutput")}</label>
         <label className="check"><input type="checkbox" checked={draft.confirmOnDisconnect || false} onChange={(e) => update({ confirmOnDisconnect: e.target.checked })} /> {t(lang, "confirmClose")}</label>
       </div>
       <button className="btn-primary w-full text-[11px]" onClick={() => onSave(draft)}><Save size={13} /> {t(lang, "save")}</button>
+
       <button className="btn-secondary w-full text-[11px]" onClick={onOpenData}><HardDrive size={13} /> {t(lang, "openData")}</button>
       <button className="btn-secondary w-full text-[11px]" onClick={() => ExportHistory().catch(() => {})}><FileText size={13} /> {t(lang, "exportHistory")}</button>
       <div className="truncate text-[10px] text-muted">{dataDir}</div>

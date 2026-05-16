@@ -11,3 +11,8 @@ gxShell.exe
 .secretkey
 todo.md
 frontend/package.json.md5
+.gxshell_key
+*.pem
+*.key
+.env
+.env.*

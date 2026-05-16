@@ -7,6 +7,23 @@
   padding: 4px 8px;
 }
 
+.metric-row-clickable {
+  cursor: pointer;
+  transition: 120ms ease;
+}
+
+.metric-row-clickable:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.metric-row-content {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
 .metric-icon {
   display: inline-flex;
   width: 20px;
@@ -22,7 +39,7 @@
 .metric-icon.metric-bad { color: var(--bad); }
 
 .meter {
-  height: 4px;
+  height: 5px;
   overflow: hidden;
   border-radius: 999px;
   background: color-mix(in srgb, var(--muted-2) 24%, transparent);
@@ -53,6 +70,33 @@
   min-width: 0;
   border-radius: 7px;
   padding: 4px 6px;
+}
+
+.mini-metric-clickable {
+  cursor: pointer;
+  position: relative;
+  transition: 120ms ease;
+}
+
+.mini-metric-clickable:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.mini-metric-hint {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  opacity: 0;
+  transition: 120ms ease;
+}
+
+.mini-metric-clickable:hover .mini-metric-hint {
+  opacity: 0.6;
 }
 
 .process-toggle {

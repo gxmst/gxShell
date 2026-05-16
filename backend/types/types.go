@@ -23,8 +23,10 @@ type Profile struct {
 	RememberPassword     bool      `json:"rememberPassword"`
 	Description          string    `json:"description"`
 	Tags                 []string  `json:"tags"`
-	Favorite             bool      `json:"favorite"`
-	LastConnectedAt      time.Time `json:"lastConnectedAt,omitempty"`
+	Favorite             bool          `json:"favorite"`
+	Tunnels              []TunnelRule  `json:"tunnels"`
+	AutoReconnect        bool          `json:"autoReconnect"`
+	LastConnectedAt      time.Time     `json:"lastConnectedAt,omitempty"`
 	CreatedAt            time.Time `json:"createdAt"`
 	UpdatedAt            time.Time `json:"updatedAt"`
 }
@@ -42,6 +44,7 @@ type AppSettings struct {
 	SavePasswords       bool             `json:"savePasswords"`
 	SmartHighlight      bool             `json:"smartHighlight"`
 	ConfirmOnDisconnect bool             `json:"confirmOnDisconnect"`
+	Ai                  AiConfig         `json:"ai"`
 }
 
 type TerminalSettings struct {
@@ -131,4 +134,117 @@ type LogEntry struct {
 	Time    time.Time `json:"time"`
 	Level   string    `json:"level"`
 	Message string    `json:"message"`
+}
+
+type TunnelType string
+
+const (
+	TunnelLocal   TunnelType = "local"
+	TunnelRemote  TunnelType = "remote"
+	TunnelDynamic TunnelType = "dynamic"
+)
+
+type TunnelRule struct {
+	ID       string     `json:"id"`
+	Type     TunnelType `json:"type"`
+	Local    string     `json:"local"`
+	Remote   string     `json:"remote"`
+	BindHost string     `json:"bindHost,omitempty"`
+}
+
+type TunnelStatus struct {
+	Rule  TunnelRule `json:"rule"`
+	Active bool      `json:"active"`
+	Error  string    `json:"error,omitempty"`
+}
+
+type NetworkHop struct {
+	Index   int     `json:"index"`
+	Host    string  `json:"host"`
+	IP      string  `json:"ip"`
+	RTT1    float64 `json:"rtt1"`
+	RTT2    float64 `json:"rtt2"`
+	RTT3    float64 `json:"rtt3"`
+	Timeout bool    `json:"timeout"`
+	Loss    float64 `json:"loss"`
+	Jitter  float64 `json:"jitter"`
+}
+
+type NetworkPath struct {
+	Target    string       `json:"target"`
+	Hops      []NetworkHop `json:"hops"`
+	TotalRTT  float64      `json:"totalRtt"`
+	PingAvg   float64      `json:"pingAvg"`
+	PingMin   float64      `json:"pingMin"`
+	PingMax   float64      `json:"pingMax"`
+	PingLoss  float64      `json:"pingLoss"`
+	Jitter    float64      `json:"jitter"`
+	TracedAt  time.Time    `json:"tracedAt"`
+}
+
+type LocalFile struct {
+	Name    string    `json:"name"`
+	Path    string    `json:"path"`
+	Size    int64     `json:"size"`
+	IsDir   bool      `json:"isDir"`
+	ModTime time.Time `json:"modTime"`
+}
+
+type LogFile struct {
+	Name    string    `json:"name"`
+	Path    string    `json:"path"`
+	Size    int64     `json:"size"`
+	ModTime time.Time `json:"modTime"`
+}
+
+type AiConfig struct {
+	Provider string `json:"provider"`
+	APIKey   string `json:"apiKey"`
+	Endpoint string `json:"endpoint"`
+	Model    string `json:"model"`
+}
+
+type AiFunctionCall struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type AiToolCall struct {
+	ID       string          `json:"id"`
+	Type     string          `json:"type"`
+	Function AiFunctionCall  `json:"function"`
+}
+
+type AiMessage struct {
+	Role             string       `json:"role"`
+	Content          string       `json:"content"`
+	ReasoningContent string       `json:"reasoningContent,omitempty"`
+	ToolCalls        []AiToolCall `json:"toolCalls,omitempty"`
+	ToolCallID       string       `json:"toolCallId,omitempty"`
+}
+
+type AiToolResult struct {
+	ToolCallID string `json:"toolCallId"`
+	Content    string `json:"content"`
+}
+
+type AiChatRequest struct {
+	Messages []AiMessage `json:"messages"`
+	Context  string      `json:"context"`
+}
+
+type AiTokenUsage struct {
+	PromptTokens     int64 `json:"promptTokens"`
+	CompletionTokens int64 `json:"completionTokens"`
+	TotalTokens      int64 `json:"totalTokens"`
+}
+
+type ContainerInfo struct {
+	ID      string   `json:"id"`
+	Names   []string `json:"names"`
+	Image   string   `json:"image"`
+	State   string   `json:"state"`
+	Status  string   `json:"status"`
+	Ports   string   `json:"ports"`
+	Created int64    `json:"created"`
 }

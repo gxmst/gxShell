@@ -2,22 +2,29 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	osruntime "runtime"
 	"strings"
+	"sync"
 	"time"
 
+	"gxShell/backend/ai"
 	"gxShell/backend/config"
+	"gxShell/backend/docker"
+	"gxShell/backend/localfs"
 	"gxShell/backend/logger"
 	"gxShell/backend/monitor"
+	"gxShell/backend/network"
 	"gxShell/backend/secrets"
 	sftpmanager "gxShell/backend/sftp"
 	sshmanager "gxShell/backend/ssh"
+	"gxShell/backend/tunnel"
 	"gxShell/backend/types"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -31,6 +38,10 @@ type App struct {
 	sftp    *sftpmanager.Manager
 	monitor *monitor.Manager
 	secrets *secrets.Store
+	net     *network.Manager
+	tunnels *tunnel.Manager
+	ai      *ai.Manager
+	docker  *docker.Manager
 }
 
 func NewApp() *App {
@@ -68,6 +79,22 @@ func (a *App) startup(ctx context.Context) {
 	a.ssh = sshmanager.NewManager(filepath.Join(store.DataDir(), "known_hosts"), emit, confirm)       
 	a.sftp = sftpmanager.NewManager(a.ssh, emit)
 	a.monitor = monitor.NewManager(a.ssh, emit)
+	a.net = network.NewManager(emit)
+	a.net.SetLogDebug(func(format string, args ...any) {
+		a.log.Info(fmt.Sprintf(format, args...))
+	})
+	a.tunnels = tunnel.NewManager(emit)
+	a.ai = ai.NewManager()
+	a.docker = docker.NewManager(a.ssh)
+	a.docker.SetEmit(emit)
+	if settings, err := a.store.GetSettings(); err == nil {
+		a.ai.UpdateConfig(ai.Config{
+			Provider: ai.Provider(settings.Ai.Provider),
+			APIKey:   settings.Ai.APIKey,
+			Endpoint: settings.Ai.Endpoint,
+			Model:    settings.Ai.Model,
+		})
+	}
 	a.migrateSecrets()
 	a.log.Info("gxShell started")
 }
@@ -79,6 +106,7 @@ func (a *App) domReady(ctx context.Context) {
 
 func (a *App) shutdown(ctx context.Context) {
 	a.ssh.Shutdown()
+	a.net.StopAll()
 	a.log.Info("gxShell stopped")
 }
 
@@ -117,7 +145,7 @@ func (a *App) CreateProfile(profile types.Profile) (types.Profile, error) {
 		return types.Profile{}, err
 	}
 	now := time.Now()
-	profile.ID = newID("profile")
+	profile.ID = types.NewID("profile")
 	profile.CreatedAt = now
 	profile.UpdatedAt = now
 	normalizeProfile(&profile)
@@ -224,11 +252,21 @@ func (a *App) ConnectWithSecrets(profileID string, password string, privateKeyPa
 	if settings.MonitorEnabled {
 		a.monitor.Start(info.ID, settings.MonitorIntervalSec)
 	}
+	if len(fullProfile.Tunnels) > 0 {
+		client, clientErr := a.ssh.Client(info.ID)
+		if clientErr == nil {
+			statuses := a.tunnels.StartTunnels(info.ID, client, fullProfile.Tunnels)
+			_ = statuses
+		}
+	}
 	return info, nil
 }
 
 func (a *App) Disconnect(sessionID string) error {
 	a.monitor.Stop(sessionID)
+	a.sftp.InvalidateClient(sessionID)
+	a.tunnels.StopTunnels(sessionID)
+	a.net.StopPing(sessionID)
 	return a.ssh.Disconnect(sessionID)
 }
 
@@ -321,7 +359,7 @@ func (a *App) CreateCommand(command types.CommandTemplate) (types.CommandTemplat
 		return types.CommandTemplate{}, err
 	}
 	now := time.Now()
-	command.ID = newID("cmd")
+	command.ID = types.NewID("cmd")
 	command.CreatedAt = now
 	command.UpdatedAt = now
 	commands = append(commands, command)
@@ -369,11 +407,80 @@ func (a *App) UpdateSettings(settings types.AppSettings) (types.AppSettings, err
 	if settings.MonitorIntervalSec <= 0 {
 		settings.MonitorIntervalSec = 5
 	}
+	if settings.Ai.Provider == "" && settings.Ai.APIKey == "" && settings.Ai.Endpoint == "" && settings.Ai.Model == "" {
+		aiCfg := a.ai.GetConfig()
+		settings.Ai = types.AiConfig{
+			Provider: string(aiCfg.Provider),
+			APIKey:   aiCfg.APIKey,
+			Endpoint: aiCfg.Endpoint,
+			Model:    aiCfg.Model,
+		}
+	}
 	return settings, a.store.SaveSettings(settings)
 }
 
 func (a *App) ReadLogs(limit int) []types.LogEntry {
 	return a.log.ReadLatest(limit)
+}
+
+func (a *App) ListLogFiles() []types.LogFile {
+	logDir := filepath.Join(a.store.DataDir(), "logs")
+	entries, err := os.ReadDir(logDir)
+	if err != nil {
+		return []types.LogFile{}
+	}
+	var files []types.LogFile
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		files = append(files, types.LogFile{
+			Name:    entry.Name(),
+			Path:    filepath.Join(logDir, entry.Name()),
+			Size:    info.Size(),
+			ModTime: info.ModTime(),
+		})
+	}
+	return files
+}
+
+func (a *App) ReadLogFile(name string) (string, error) {
+	logDir := filepath.Join(a.store.DataDir(), "logs")
+	cleanName := filepath.Base(name)
+	path := filepath.Join(logDir, cleanName)
+	absPath, err := filepath.Abs(path)
+	if err != nil || !strings.HasPrefix(absPath, filepath.Clean(logDir)+string(os.PathSeparator)) {
+		return "", fmt.Errorf("invalid log file path")
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+func (a *App) SendCommandToAll(command string) error {
+	sessions := a.ssh.List()
+	if len(sessions) == 0 {
+		return fmt.Errorf("no active sessions")
+	}
+	if !strings.HasSuffix(command, "\n") {
+		command += "\n"
+	}
+	var errs []string
+	for _, s := range sessions {
+		if err := a.ssh.Write(s.ID, command); err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %s", s.Name, err.Error()))
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("partial failure: %s", strings.Join(errs, "; "))
+	}
+	return nil
 }
 
 func (a *App) OpenDataDir() error {
@@ -533,8 +640,545 @@ func sanitizeProfile(profile types.Profile) types.Profile {
 	return profile
 }
 
-func newID(prefix string) string {
-	b := make([]byte, 4)
-	_, _ = rand.Read(b)
-	return fmt.Sprintf("%s-%d-%s", prefix, time.Now().UnixNano(), hex.EncodeToString(b))
+func (a *App) TraceRoute(sessionID string) (*types.NetworkPath, error) {
+	info, err := a.ssh.Get(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	profile, err := a.getProfileForConnect(info.ProfileID)
+	if err != nil {
+		return nil, err
+	}
+	return a.net.TraceRoute(profile.Host)
 }
+
+func (a *App) PingHost(sessionID string, count int) (*types.NetworkPath, error) {
+	client, err := a.ssh.Client(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	info, err := a.ssh.Get(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	profile, err := a.getProfileForConnect(info.ProfileID)
+	if err != nil {
+		return nil, err
+	}
+	return a.net.Ping(client, profile.Host, count)
+}
+
+func (a *App) StartNetworkPing(sessionID string, intervalSec int) error {
+	client, err := a.ssh.Client(sessionID)
+	if err != nil {
+		return err
+	}
+	info, err := a.ssh.Get(sessionID)
+	if err != nil {
+		return err
+	}
+	profile, err := a.getProfileForConnect(info.ProfileID)
+	if err != nil {
+		return err
+	}
+	a.net.StartPing(client, profile.Host, intervalSec)
+	return nil
+}
+
+func (a *App) StopNetworkPing(sessionID string) {
+	info, err := a.ssh.Get(sessionID)
+	if err != nil {
+		return
+	}
+	profile, err := a.getProfileForConnect(info.ProfileID)
+	if err != nil {
+		return
+	}
+	a.net.StopPing(profile.Host)
+}
+
+func (a *App) GetNetworkPath(sessionID string) (*types.NetworkPath, error) {
+	client, err := a.ssh.Client(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	info, err := a.ssh.Get(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	profile, err := a.getProfileForConnect(info.ProfileID)
+	if err != nil {
+		return nil, err
+	}
+	path := a.net.GetPath(profile.Host)
+	if path == nil {
+		return a.net.Ping(client, profile.Host, 4)
+	}
+	return path, nil
+}
+
+func (a *App) ListTunnelStatus(sessionID string) []types.TunnelStatus {
+	return a.tunnels.ListStatus(sessionID)
+}
+
+func (a *App) RestartTunnels(sessionID string) ([]types.TunnelStatus, error) {
+	info, err := a.ssh.Get(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	profile, err := a.getProfileForConnect(info.ProfileID)
+	if err != nil {
+		return nil, err
+	}
+	client, err := a.ssh.Client(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	a.tunnels.StopTunnels(sessionID)
+	return a.tunnels.StartTunnels(sessionID, client, profile.Tunnels), nil
+}
+
+func (a *App) AddTunnelRule(sessionID string, rule types.TunnelRule) (types.TunnelStatus, error) {
+	info, err := a.ssh.Get(sessionID)
+	if err != nil {
+		return types.TunnelStatus{}, err
+	}
+	client, err := a.ssh.Client(sessionID)
+	if err != nil {
+		return types.TunnelStatus{}, err
+	}
+	if rule.ID == "" {
+		rule.ID = types.NewID("tunnel")
+	}
+	status := a.tunnels.AddTunnel(sessionID, client, rule)
+	if status.Active {
+		profile, perr := a.getProfileForConnect(info.ProfileID)
+		if perr == nil {
+			profile.Tunnels = append(profile.Tunnels, rule)
+			_, _ = a.UpdateProfile(profile)
+		}
+	}
+	return status, nil
+}
+
+func (a *App) RemoveTunnelRule(sessionID string, ruleID string) error {
+	info, err := a.ssh.Get(sessionID)
+	if err != nil {
+		return err
+	}
+	a.tunnels.RemoveTunnel(sessionID, ruleID)
+	profile, perr := a.getProfileForConnect(info.ProfileID)
+	if perr == nil {
+		for i, r := range profile.Tunnels {
+			if r.ID == ruleID {
+				profile.Tunnels = append(profile.Tunnels[:i], profile.Tunnels[i+1:]...)
+				_, _ = a.UpdateProfile(profile)
+				break
+			}
+		}
+	}
+	return nil
+}
+
+func (a *App) ListLocalDir(dir string) ([]types.LocalFile, error) {
+	return localfs.ListDir(dir)
+}
+
+func (a *App) LocalHomeDir() string {
+	return localfs.HomeDir()
+}
+
+func (a *App) SaveAiConfig(provider, apiKey, endpoint, model string) error {
+	if strings.Contains(apiKey, "****") {
+		existing := a.ai.GetConfig()
+		apiKey = existing.APIKey
+	}
+	a.log.Info(fmt.Sprintf("SaveAiConfig: provider=%q model=%q endpoint=%q apiKeyLen=%d", provider, model, endpoint, len(apiKey)))
+	a.ai.UpdateConfig(ai.Config{
+		Provider: ai.Provider(provider),
+		APIKey:   apiKey,
+		Endpoint: endpoint,
+		Model:    model,
+	})
+	verifyCfg := a.ai.GetConfig()
+	a.log.Info(fmt.Sprintf("SaveAiConfig memory verify: provider=%q model=%q endpoint=%q", verifyCfg.Provider, verifyCfg.Model, verifyCfg.Endpoint))
+	settings, err := a.store.GetSettings()
+	if err != nil {
+		a.log.Error("SaveAiConfig: failed to read settings: " + err.Error())
+		return err
+	}
+	settings.Ai = types.AiConfig{
+		Provider: provider,
+		APIKey:   apiKey,
+		Endpoint: endpoint,
+		Model:    model,
+	}
+	if err := a.store.SaveSettings(settings); err != nil {
+		a.log.Error("SaveAiConfig: failed to save settings: " + err.Error())
+		return err
+	}
+	a.log.Info("SaveAiConfig: saved to file successfully")
+	return nil
+}
+
+func (a *App) GetAiConfig() types.AiConfig {
+	cfg := a.ai.GetConfig()
+	maskedKey := ""
+	if cfg.APIKey != "" {
+		if len(cfg.APIKey) > 8 {
+			maskedKey = cfg.APIKey[:4] + "****" + cfg.APIKey[len(cfg.APIKey)-4:]
+		} else {
+			maskedKey = "****"
+		}
+	}
+	return types.AiConfig{
+		Provider: string(cfg.Provider),
+		APIKey:   maskedKey,
+		Endpoint: cfg.Endpoint,
+		Model:    cfg.Model,
+	}
+}
+
+func (a *App) AiChat(req types.AiChatRequest) error {
+	cfg := a.ai.GetConfig()
+	a.log.Info(fmt.Sprintf("AI chat request: provider=%s model=%s endpoint=%s msgs=%d contextLen=%d", cfg.Provider, cfg.Model, cfg.Endpoint, len(req.Messages), len(req.Context)))
+
+	go func() {
+		aiReq := ai.ChatRequest{
+			Messages: make([]ai.Message, len(req.Messages)),
+			Context:  req.Context,
+		}
+		for i, m := range req.Messages {
+			aiReq.Messages[i] = ai.Message{Role: m.Role, Content: m.Content}
+		}
+		if len(aiReq.Messages) > 0 {
+			lastMsg := aiReq.Messages[len(aiReq.Messages)-1]
+			a.log.Info(fmt.Sprintf("AI chat last msg: role=%s contentLen=%d contentPreview=%q", lastMsg.Role, len(lastMsg.Content), truncate(lastMsg.Content, 200)))
+		}
+		err := a.ai.Chat(aiReq, func(resp ai.ChatResponse) {
+			if a.ctx != nil {
+				event := map[string]any{
+					"content":          resp.Content,
+					"finish":           resp.Finish,
+					"promptTokens":     resp.PromptTk,
+					"completionTokens": resp.CompleteTk,
+				}
+				if resp.ReasoningContent != "" {
+					event["reasoningContent"] = resp.ReasoningContent
+				}
+				if len(resp.ToolCalls) > 0 {
+					tcData := make([]map[string]any, len(resp.ToolCalls))
+					for i, tc := range resp.ToolCalls {
+						tcData[i] = map[string]any{
+							"id":   tc.ID,
+							"type": tc.Type,
+							"function": map[string]any{
+								"name":      tc.Function.Name,
+								"arguments": tc.Function.Arguments,
+							},
+						}
+					}
+					event["toolCalls"] = tcData
+				}
+				runtime.EventsEmit(a.ctx, "ai:chunk", event)
+			}
+		})
+		if err != nil && a.ctx != nil {
+			a.log.Error("AI chat error: " + err.Error())
+			runtime.EventsEmit(a.ctx, "ai:error", map[string]any{"error": err.Error()})
+		}
+	}()
+	return nil
+}
+
+func (a *App) AiExecuteTool(sessionID string, toolCallID string, toolName string, arguments string) string {
+	a.log.Info(fmt.Sprintf("AI execute tool: session=%s tool=%s args=%s", sessionID, toolName, truncate(arguments, 200)))
+
+	var output string
+	switch toolName {
+	case "execute_command":
+		var args struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+			output = "Error parsing command arguments: " + err.Error()
+			break
+		}
+		if warn, blocked := checkDangerousCommand(args.Command); blocked {
+			output = "BLOCKED: " + warn
+			a.log.Error("AI tool blocked dangerous command: " + args.Command)
+			break
+		}
+		result, err := a.ssh.ExecuteCommand(sessionID, args.Command)
+		if err != nil {
+			output = "Error executing command: " + err.Error()
+		} else {
+			if result == "" {
+				output = "(command produced no output)"
+			} else {
+				output = result
+			}
+		}
+		a.log.Info(fmt.Sprintf("AI tool result: tool=%s outputLen=%d", toolName, len(output)))
+
+	case "read_file":
+		var args struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+			output = "Error parsing file path arguments: " + err.Error()
+			break
+		}
+		if warn, blocked := checkSensitivePath(args.Path); blocked {
+			output = "BLOCKED: " + warn
+			a.log.Error("AI tool blocked sensitive file read: " + args.Path)
+			break
+		}
+		cmd := "cat " + shellescape(args.Path)
+		result, err := a.ssh.ExecuteCommand(sessionID, cmd)
+		if err != nil {
+			output = "Error reading file: " + err.Error()
+		} else {
+			if result == "" {
+				output = "(file is empty)"
+			} else {
+				output = result
+			}
+		}
+		a.log.Info(fmt.Sprintf("AI tool result: tool=%s path=%s outputLen=%d", toolName, args.Path, len(output)))
+
+	default:
+		output = "Unknown tool: " + toolName
+	}
+
+	return output
+}
+
+func (a *App) AiContinueChat(req types.AiChatRequest) error {
+	a.log.Info(fmt.Sprintf("AI continue chat: msgs=%d", len(req.Messages)))
+
+	go func() {
+		aiReq := ai.ChatRequest{
+			Messages: make([]ai.Message, len(req.Messages)),
+			Context:  req.Context,
+		}
+		for i, m := range req.Messages {
+			aiReq.Messages[i] = ai.Message{
+				Role:             m.Role,
+				Content:          m.Content,
+				ReasoningContent: m.ReasoningContent,
+				ToolCallID:       m.ToolCallID,
+			}
+			for _, tc := range m.ToolCalls {
+				aiReq.Messages[i].ToolCalls = append(aiReq.Messages[i].ToolCalls, ai.ToolCall{
+					ID:   tc.ID,
+					Type: tc.Type,
+					Function: ai.FunctionCall{
+						Name:      tc.Function.Name,
+						Arguments: tc.Function.Arguments,
+					},
+				})
+			}
+		}
+
+		err := a.ai.Chat(aiReq, func(resp ai.ChatResponse) {
+			if a.ctx != nil {
+				event := map[string]any{
+					"content":          resp.Content,
+					"finish":           resp.Finish,
+					"promptTokens":     resp.PromptTk,
+					"completionTokens": resp.CompleteTk,
+				}
+				if resp.ReasoningContent != "" {
+					event["reasoningContent"] = resp.ReasoningContent
+				}
+				if len(resp.ToolCalls) > 0 {
+					tcData := make([]map[string]any, len(resp.ToolCalls))
+					for i, tc := range resp.ToolCalls {
+						tcData[i] = map[string]any{
+							"id":   tc.ID,
+							"type": tc.Type,
+							"function": map[string]any{
+								"name":      tc.Function.Name,
+								"arguments": tc.Function.Arguments,
+							},
+						}
+					}
+					event["toolCalls"] = tcData
+				}
+				runtime.EventsEmit(a.ctx, "ai:chunk", event)
+			}
+		})
+		if err != nil && a.ctx != nil {
+			a.log.Error("AI continue chat error: " + err.Error())
+			runtime.EventsEmit(a.ctx, "ai:error", map[string]any{"error": err.Error()})
+		}
+	}()
+	return nil
+}
+
+func (a *App) GetAiUsage() types.AiTokenUsage {
+	u := a.ai.GetUsage()
+	return types.AiTokenUsage{
+		PromptTokens:     u.PromptTokens,
+		CompletionTokens: u.CompletionTokens,
+		TotalTokens:      u.TotalTokens,
+	}
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
+func shellescape(s string) string {
+	if s == "" {
+		return "''"
+	}
+	safe := true
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '/') {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+func (a *App) ResetAiUsage() {
+	a.ai.ResetUsage()
+}
+
+func (a *App) ListAiModels(provider, apiKey, endpoint string) ([]string, error) {
+	if strings.Contains(apiKey, "****") {
+		apiKey = a.ai.GetConfig().APIKey
+	}
+	return a.ai.ListModels(ai.Config{
+		Provider: ai.Provider(provider),
+		APIKey:   apiKey,
+		Endpoint: endpoint,
+	})
+}
+
+func (a *App) ListContainers(sessionID string, all bool) ([]types.ContainerInfo, error) {
+	return a.docker.ListContainers(sessionID, all)
+}
+
+func (a *App) ContainerLogs(sessionID, containerID string, tail int) (string, error) {
+	return a.docker.ContainerLogs(sessionID, containerID, tail)
+}
+
+func (a *App) StreamContainerLogs(sessionID, containerID string, tail int) error {
+	return a.docker.StreamContainerLogs(sessionID, containerID, tail)
+}
+
+func (a *App) StopContainerLogs(sessionID, containerID string) {
+	a.docker.StopContainerLogs(sessionID, containerID)
+}
+
+func (a *App) RestartContainer(sessionID, containerID string) error {
+	return a.docker.RestartContainer(sessionID, containerID)
+}
+
+func (a *App) StopContainer(sessionID, containerID string) error {
+	return a.docker.StopContainer(sessionID, containerID)
+}
+
+func (a *App) StartContainer(sessionID, containerID string) error {
+	return a.docker.StartContainer(sessionID, containerID)
+}
+
+func (a *App) RemoveContainer(sessionID, containerID string, force bool) error {
+	return a.docker.RemoveContainer(sessionID, containerID, force)
+}
+
+var dangerousCmdPatterns = []struct {
+	pattern string
+	reason  string
+}{
+	{`rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|/)`, "destructive rm command"},
+	{`mkfs`, "filesystem format"},
+	{`dd\s+`, "raw disk write"},
+	{`:\(\)\{\s*:\|:\&\s*\}\s*;`, "fork bomb"},
+	{`>\s*/dev/sd`, "direct disk write"},
+	{`chmod\s+(-R\s+)?0?777\s+/`, "overly permissive chmod on root"},
+	{`shutdown`, "system shutdown"},
+	{`reboot`, "system reboot"},
+	{`init\s+[06]`, "init to runlevel 0/6"},
+	{`systemctl\s+(stop|disable)\s+(ssh|sshd|network|systemd)`, "stopping critical services"},
+	{`iptables\s+-F`, "flushing firewall rules"},
+	{`crontab\s+-r`, "removing crontab"},
+	{`userdel`, "deleting user"},
+	{`passwd\s+root`, "changing root password"},
+	{`mv\s+.*\s*/dev/null`, "moving files to /dev/null"},
+}
+
+var dangerousCmdRegexps = sync.OnceValue(func() []struct {
+	*regexp.Regexp
+	reason string
+} {
+	result := make([]struct {
+		*regexp.Regexp
+		reason string
+	}, len(dangerousCmdPatterns))
+	for i, p := range dangerousCmdPatterns {
+		result[i].Regexp = regexp.MustCompile(p.pattern)
+		result[i].reason = p.reason
+	}
+	return result
+})
+
+func checkDangerousCommand(cmd string) (string, bool) {
+	trimmed := strings.TrimSpace(cmd)
+	base := trimmed
+	if idx := strings.Index(trimmed, " "); idx > 0 {
+		base = trimmed[:idx]
+	}
+	directDangerous := map[string]string{
+		"mkfs": "filesystem format", "shutdown": "system shutdown", "reboot": "system reboot",
+		"userdel": "deleting user", "fdisk": "disk partitioning",
+	}
+	if reason, ok := directDangerous[base]; ok {
+		return reason, true
+	}
+	for _, dr := range dangerousCmdRegexps() {
+		if dr.MatchString(cmd) {
+			return dr.reason, true
+		}
+	}
+	return "", false
+}
+
+var sensitivePaths = []struct {
+	pattern string
+	reason  string
+}{
+	{"/etc/shadow", "password hashes"},
+	{"/etc/gshadow", "group password hashes"},
+	{"/etc/ssh/ssh_host_", "SSH private host keys"},
+	{"/root/.ssh/id_", "SSH private keys"},
+	{"/home/", "user home SSH private keys"},
+}
+
+func checkSensitivePath(p string) (string, bool) {
+	lower := strings.ToLower(p)
+	for _, sp := range sensitivePaths {
+		if strings.Contains(lower, strings.ToLower(sp.pattern)) {
+			if sp.pattern == "/home/" {
+				if strings.Contains(lower, "/.ssh/id_") && !strings.Contains(lower, ".pub") {
+					return sp.reason, true
+				}
+				continue
+			}
+			return sp.reason, true
+		}
+	}
+	return "", false
+}
+
+

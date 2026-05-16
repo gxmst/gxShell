@@ -9,7 +9,7 @@ const ansi = {
 export type HighlightLevel = "off" | "basic" | "full";
 
 const basicRules: HighlightRule[] = [
-  { pattern: /\b(error|fail(ed|ure)?|fatal|panic|refused|denied|invalid|cannot|timed?\s*out)\b/gi, color: 31 }, 
+  { pattern: /\b(error|fail(ed|ure)?|fatal|panic|refused|denied|invalid|cannot|timed?\s*out)\b/gi, color: 31 },
   { pattern: /\b(warn(ing)?|deprecated|caution)\b/gi, color: 33 },
   { pattern: /\b(success(fully)?|ok|done|complete(d)?|finished|ready|running|online|healthy|active)\b/gi, color: 32 },
   { pattern: /\b(debug|trace|verbose|info|notice)\b/gi, color: 90 },
@@ -38,7 +38,27 @@ const fullRules: HighlightRule[] = [
 
 const basicQuickCheck = /\b(error|fail|fatal|panic|warn|success|ok|done|ready|running|debug|info)\b/i;
 const fullQuickCheck = /\b(error|fail|fatal|panic|warn|success|ok|done|ready|running|debug|info|root|admin|sudo|nginx|docker|ssh|http)\b|(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/i;
-const ansiStrip = /\x1b\[[0-9;]*[a-zA-Z]/g;
+const ansiRe = /\x1b\[[0-9;]*[a-zA-Z]/g;
+
+type Segment = { text: string; isAnsi: boolean };
+
+function splitAnsiSegments(line: string): Segment[] {
+  const segments: Segment[] = [];
+  let last = 0;
+  ansiRe.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = ansiRe.exec(line)) !== null) {
+    if (match.index > last) {
+      segments.push({ text: line.slice(last, match.index), isAnsi: false });
+    }
+    segments.push({ text: match[0], isAnsi: true });
+    last = match.index + match[0].length;
+  }
+  if (last < line.length) {
+    segments.push({ text: line.slice(last), isAnsi: false });
+  }
+  return segments;
+}
 
 function colorCode(color: number, bold?: boolean) {
   const b = bold ? "\x1b[1m" : "";
@@ -50,22 +70,36 @@ function restoreCode(bold?: boolean) {
 }
 
 function highlightLine(line: string, level: HighlightLevel): string {
-  if (level === "off" || line.includes("\r") || line.includes("\b")) return line;
+  if (level === "off") return line;
+  let trailingCr = false;
+  if (line.endsWith("\r")) {
+    trailingCr = true;
+    line = line.slice(0, -1);
+  }
+  if (line.includes("\r") || line.includes("\b")) return trailingCr ? line + "\r" : line;
   const rules = level === "full" ? fullRules : basicRules;
   const quickCheck = level === "full" ? fullQuickCheck : basicQuickCheck;
-  const stripped = line.replace(ansiStrip, "");
-  if (!quickCheck.test(stripped)) return line;
-  let result = line;
+  const stripped = line.replace(ansiRe, "");
+  if (!quickCheck.test(stripped)) return trailingCr ? line + "\r" : line;
+
+  const segments = splitAnsiSegments(line);
   const applied = new Set<string>();
+
   for (const rule of rules) {
-    result = result.replace(rule.pattern, (match, ..._args) => {
-      const key = `${match}|${rule.pattern.source}`;
-      if (applied.has(key)) return match;
-      applied.add(key);
-      return `${colorCode(rule.color, rule.bold)}${match}${restoreCode(rule.bold)}`;
-    });
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      if (seg.isAnsi) continue;
+      seg.text = seg.text.replace(rule.pattern, (match, ..._args) => {
+        const key = `${match}|${rule.pattern.source}`;
+        if (applied.has(key)) return match;
+        applied.add(key);
+        return `${colorCode(rule.color, rule.bold)}${match}${restoreCode(rule.bold)}`;
+      });
+    }
   }
-  return result;
+
+  const result = segments.map((s) => s.text).join("");
+  return trailingCr ? result + "\r" : result;
 }
 
 export function highlight(data: string, level: HighlightLevel): string {

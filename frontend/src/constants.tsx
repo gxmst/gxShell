@@ -1,4 +1,4 @@
-import { Activity, Command, Folder, Settings, TerminalSquare } from "lucide-react";
+import { Activity, ArrowRightLeft, Bot, Box, Command, FileText, Folder, Settings, TerminalSquare } from "lucide-react";
 import { types } from "../wailsjs/go/models";
 import type { Drawer } from "./types";
 
@@ -102,13 +102,11 @@ export function drawerIcon(item: Drawer, size = 15) {
   if (item === "monitor") return <Activity size={size} />;
   if (item === "sftp") return <Folder size={size} />;
   if (item === "commands") return <Command size={size} />;
+  if (item === "tunnels") return <ArrowRightLeft size={size} />;
+  if (item === "logs") return <FileText size={size} />;
+  if (item === "containers") return <Box size={size} />;
+  if (item === "ai") return <Bot size={size} />;
   return <Settings size={size} />;
-}
-
-export function navLabel(item: Drawer) {
-  if (item === "sftp") return "Files";
-  if (item === "commands") return "Cmd";
-  return item[0].toUpperCase() + item.slice(1);
 }
 
 export function AppIcon() {

@@ -7,10 +7,14 @@
 
 .side-content {
   display: grid;
-  grid-template-rows: auto auto auto 1fr 1fr;
+  grid-template-rows: auto auto auto auto 1fr 6px 1fr;
   height: 100%;
   min-height: 0;
   padding: 9px;
+}
+
+.side-content-tool {
+  grid-template-rows: auto auto 1fr;
 }
 
 .split-handle {
@@ -139,11 +143,53 @@
   padding-top: 6px;
 }
 
+.group-tabs {
+  display: flex;
+  gap: 3px;
+  padding: 0 2px 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.group-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.group-tab {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  border-radius: 6px;
+  padding: 0 8px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: 120ms ease;
+}
+
+.group-tab:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel-raised) 60%, transparent);
+}
+
+.group-tab-active {
+  color: var(--text);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
 .server-list,
 .tool-body {
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+
+.tool-body-full {
+  min-height: 0;
+  overflow: auto;
+  margin-top: 6px;
 }
 
 .server-list {
@@ -206,5 +252,72 @@
   height: 7px;
   flex-shrink: 0;
   border-radius: 999px;
+}
+
+.logs-file-only {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.logs-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 6px;
+}
+
+.logs-toolbar-title {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex: 1;
+}
+
+.logs-file-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.logs-file-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: 100ms ease;
+}
+
+.logs-file-item:hover {
+  background: color-mix(in srgb, var(--panel-raised) 60%, transparent);
+}
+
+.logs-viewer {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.logs-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 6px;
+  font-family: var(--font-mono, "JetBrains Mono", "Cascadia Code", Consolas, monospace);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text);
+  background: color-mix(in srgb, var(--terminal-top) 30%, transparent);
+  border-radius: 6px;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 

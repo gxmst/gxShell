@@ -14,6 +14,8 @@ import (
 	"gxShell/backend/types"
 )
 
+const maxLogSize = 10 * 1024 * 1024
+
 type Logger struct {
 	path        string
 	historyPath string
@@ -41,6 +43,9 @@ func (l *Logger) Write(level, message string) {
 	message = redact(message)
 	line := fmt.Sprintf("%s [%s] %s\n", time.Now().Format(time.RFC3339), strings.ToUpper(level), message)
 	_ = os.MkdirAll(filepath.Dir(l.path), 0755)
+	if info, err := os.Stat(l.path); err == nil && info.Size() >= int64(maxLogSize) {
+		_ = os.Rename(l.path, l.path+".1")
+	}
 	f, err := os.OpenFile(l.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return
@@ -106,13 +111,13 @@ func (l *Logger) ReadLatest(limit int) []types.LogEntry {
 	return entries
 }
 
+var redactPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(password|passphrase|privateKey|private_key|secret|token)\s*[:=]\s*[^,\s}]+`),
+	regexp.MustCompile(`(?i)("?(password|passphrase|privateKey|private_key|secret|token)"?\s*:\s*)"[^"]*"`),
+}
+
 func redact(s string) string {
-	patterns := []string{
-		`(?i)(password|passphrase|privateKey|private_key|secret|token)\s*[:=]\s*[^,\s}]+`,
-		`(?i)("?(password|passphrase|privateKey|private_key|secret|token)"?\s*:\s*)"[^"]*"`,
-	}
-	for _, pattern := range patterns {
-		re := regexp.MustCompile(pattern)
+	for _, re := range redactPatterns {
 		s = re.ReplaceAllStringFunc(s, func(match string) string {
 			if strings.Contains(match, ":") {
 				parts := strings.SplitN(match, ":", 2)

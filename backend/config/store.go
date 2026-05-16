@@ -166,6 +166,7 @@ func DefaultSettings() types.AppSettings {
 		SidebarWidth:       300,
 		SavePasswords:      false,
 		SmartHighlight:     false,
+		HighlightLevel:     "off",
 		Terminal: types.TerminalSettings{
 			FontFamily:        "JetBrains Mono, Cascadia Code, Consolas, monospace",
 			FontSize:          14,
@@ -212,5 +213,5 @@ func defaultCommands() []types.CommandTemplate {
 }
 
 func makeID(prefix string, index int) string {
-	return prefix + "-" + time.Now().Format("20060102150405") + "-" + string(rune('a'+index))
+	return types.NewID(prefix)
 }

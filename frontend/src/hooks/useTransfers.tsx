@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 
 export type Transfer = {
@@ -10,7 +10,19 @@ export type Transfer = {
   finished?: boolean;
 };
 
-export function useTransfers() {
+type TransfersState = {
+  transfers: Record<string, Transfer>;
+  activeCount: number;
+  removeTransfer: (key: string) => void;
+};
+
+const TransfersContext = createContext<TransfersState>({
+  transfers: {},
+  activeCount: 0,
+  removeTransfer: () => {},
+});
+
+export function TransfersProvider({ children }: { children: ReactNode }) {
   const [transfers, setTransfers] = useState<Record<string, Transfer>>({});
 
   useEffect(() => {
@@ -39,5 +51,13 @@ export function useTransfers() {
     });
   };
 
-  return { transfers, activeCount, removeTransfer };
+  return (
+    <TransfersContext.Provider value={{ transfers, activeCount, removeTransfer }}>
+      {children}
+    </TransfersContext.Provider>
+  );
+}
+
+export function useTransfers() {
+  return useContext(TransfersContext);
 }

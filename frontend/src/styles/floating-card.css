@@ -1,0 +1,60 @@
+.floating-card {
+  position: fixed;
+  z-index: 9999;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  animation: fc-fade-in 150ms ease;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 40px);
+}
+
+@keyframes fc-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.floating-card-drag-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 30px;
+  height: 30px;
+  cursor: grab;
+  border-radius: var(--radius) var(--radius) 0 0;
+  z-index: 1;
+}
+
+.floating-card-drag-bar:active {
+  cursor: grabbing;
+}
+
+.floating-card-close {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--muted);
+  z-index: 2;
+  transition: 120ms ease;
+}
+
+.floating-card-close:hover {
+  background: color-mix(in srgb, var(--bad) 20%, transparent);
+  color: var(--bad);
+}
+
+.floating-card-body {
+  padding: 12px;
+  padding-top: 32px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}

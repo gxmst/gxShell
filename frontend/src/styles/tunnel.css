@@ -1,0 +1,91 @@
+.tunnel-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tunnel-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  color: var(--muted);
+  transition: 120ms ease;
+}
+
+.tunnel-icon-btn:hover {
+  background: color-mix(in srgb, var(--panel-raised) 80%, transparent);
+  color: var(--text);
+}
+
+.tunnel-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 0;
+}
+
+.tunnel-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel-raised) 40%, transparent);
+  border: 1px solid var(--border);
+}
+
+.tunnel-row-inactive {
+  opacity: 0.55;
+}
+
+.tunnel-type-badge {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  flex-shrink: 0;
+}
+
+.tunnel-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tunnel-addr {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.tunnel-add-form {
+  padding: 6px 8px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel-raised) 40%, transparent);
+  border: 1px solid var(--border);
+}
+
+.tunnel-preset-btn {
+  font-size: 9px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  transition: 120ms ease;
+}
+
+.tunnel-preset-btn:hover {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+}

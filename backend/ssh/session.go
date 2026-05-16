@@ -224,10 +224,15 @@ func (m *Manager) Resize(id string, cols int, rows int) error {
 }
 
 func (m *Manager) Disconnect(id string) error {
-	session, err := m.get(id)
-	if err != nil {
-		return err
+	m.mu.Lock()
+	session := m.sessions[id]
+	if session == nil {
+		m.mu.Unlock()
+		return errors.New("session not found")
 	}
+	delete(m.sessions, id)
+	m.mu.Unlock()
+
 	session.closeOnce.Do(func() {
 		session.mu.Lock()
 		if session.stdin != nil {
@@ -240,11 +245,13 @@ func (m *Manager) Disconnect(id string) error {
 			_ = session.client.Close()
 		}
 		close(session.done)
-		session.info.State = types.SessionDisconnected
+		if session.info.State != types.SessionError {
+			session.info.State = types.SessionDisconnected
+		}
+		info := session.info
 		session.mu.Unlock()
+		m.emit("terminal:disconnected", info)
 	})
-	m.markDisconnected(id)
-	m.remove(id)
 	return nil
 }
 
@@ -345,6 +352,50 @@ func (m *Manager) get(id string) (*Session, error) {
 	return session, nil
 }
 
+func (m *Manager) ExecuteCommand(sessionID string, command string) (string, error) {
+	session, err := m.get(sessionID)
+	if err != nil {
+		return "", err
+	}
+	session.mu.RLock()
+	client := session.client
+	session.mu.RUnlock()
+	if client == nil {
+		return "", errors.New("SSH client not available")
+	}
+	sshSession, err := client.NewSession()
+	if err != nil {
+		return "", fmt.Errorf("failed to create SSH session: %w", err)
+	}
+	defer sshSession.Close()
+	var stdout, stderr bytes.Buffer
+	sshSession.Stdout = &stdout
+	sshSession.Stderr = &stderr
+	err = sshSession.Run(command)
+	output := stdout.String()
+	if stderrStr := stderr.String(); stderrStr != "" {
+		if output != "" {
+			output += "\n"
+		}
+		output += stderrStr
+	}
+	if err != nil {
+		var exitErr *ssh.ExitError
+		if errors.As(err, &exitErr) {
+			if output != "" {
+				output += "\n"
+			}
+			output += fmt.Sprintf("(exit code: %d)", exitErr.ExitStatus())
+		} else {
+			if output != "" {
+				output += "\n"
+			}
+			output += "error: " + err.Error()
+		}
+	}
+	return output, nil
+}
+
 func (m *Manager) remove(id string) {
 	m.mu.Lock()
 	delete(m.sessions, id)
@@ -375,22 +426,6 @@ func (m *Manager) setError(id string, err error) {
 		m.emit("terminal:error", map[string]any{"sessionId": id, "error": err.Error()})
 		m.emit("terminal:state", info)
 	}
-}
-
-func (m *Manager) markDisconnected(id string) {
-	m.mu.RLock()
-	session := m.sessions[id]
-	m.mu.RUnlock()
-	if session == nil {
-		return
-	}
-	session.mu.Lock()
-	if session.info.State != types.SessionError {
-		session.info.State = types.SessionDisconnected
-	}
-	info := session.info
-	session.mu.Unlock()
-	m.emit("terminal:disconnected", info)
 }
 
 func clientConfig(profile types.Profile, timeoutSec int, knownHostsPath string, emit func(event string, data any), confirm func(host, fingerprint string) bool) (*ssh.ClientConfig, error) {

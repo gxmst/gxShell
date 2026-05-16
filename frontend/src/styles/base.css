@@ -155,6 +155,8 @@ button, input, textarea, select {
 .text-muted { color: var(--muted); }
 .text-accent { color: var(--accent); }
 .text-ok { color: var(--ok); }
+.text-warn { color: var(--warn); }
+.text-bad { color: var(--bad); }
 .bg-ok { background: var(--ok); }
 .bg-warn { background: var(--warn); }
 .bg-bad { background: var(--bad); }

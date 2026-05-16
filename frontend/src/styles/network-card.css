@@ -1,0 +1,166 @@
+.npc-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.npc-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  color: var(--muted);
+  transition: 120ms ease;
+}
+
+.npc-icon-btn:hover {
+  background: color-mix(in srgb, var(--panel-raised) 80%, transparent);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.npc-icon-btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.npc-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.npc-stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 7px;
+  padding: 5px 8px;
+  background: color-mix(in srgb, var(--panel-raised) 50%, transparent);
+  font-size: 10px;
+}
+
+.npc-stat-label {
+  color: var(--muted);
+  min-width: 0;
+}
+
+.npc-stat-value {
+  margin-left: auto;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.npc-hops-section {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+
+.npc-trace-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 10px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  transition: 120ms ease;
+}
+
+.npc-trace-btn:hover {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.npc-trace-btn:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.npc-hops-list {
+  margin-top: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.npc-hop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  position: relative;
+}
+
+.npc-hop-timeout {
+  opacity: 0.5;
+}
+
+.npc-hop-index {
+  width: 18px;
+  text-align: right;
+  font-size: 9px;
+  color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.npc-hop-line {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+  position: relative;
+}
+
+.npc-hop-timeout .npc-hop-line {
+  background: var(--muted-2);
+}
+
+.npc-hop-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.npc-hop-addr {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-size: 10px;
+  font-family: var(--font-mono, monospace);
+}
+
+.npc-hop-rtt {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+.npc-no-hops {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 20px 0;
+}
+
+.npc-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 24px 0;
+}

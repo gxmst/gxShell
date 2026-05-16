@@ -1,10 +1,11 @@
-﻿import clsx from "clsx";
+import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { types } from "../wailsjs/go/models";
-import { CreateCommand, DeleteCommand, ListCommands, OpenDataDir, SelectPrivateKey, SendCommandToTerminal, StartMonitor, UpdateCommand } from "../wailsjs/go/main/App";
+import { CreateCommand, DeleteCommand, ListCommands, OpenDataDir, ReadLogFile, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, UpdateCommand } from "../wailsjs/go/main/App";
 import { emptyProfile } from "./constants";
 import type { Drawer } from "./types";
+import type { Tab } from "./types";
 import { normalizeAppTheme } from "./utils/format";
 import { useToasts } from "./hooks/useToasts";
 import { useProfiles } from "./hooks/useProfiles";
@@ -13,8 +14,10 @@ import { useTerminal } from "./hooks/useTerminal";
 import { useSessions } from "./hooks/useSessions";
 import { useSftp } from "./hooks/useSftp";
 import { useHotkeys } from "./hooks/useHotkeys";
+import { usePersistedState } from "./hooks/usePersistedState";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { TerminalArea } from "./components/TerminalArea/TerminalArea";
+import { FloatingTerminal } from "./components/FloatingTerminal/FloatingTerminal";
 import { ProfileModal } from "./components/modals/ProfileModal";
 import { CommandModal } from "./components/modals/CommandModal";
 import { SecretModal } from "./components/modals/SecretModal";
@@ -22,20 +25,23 @@ import { GlobalSearchModal, TerminalSearchModal } from "./components/modals/Sear
 import { ProgressBar } from "./components/ProgressBar/ProgressBar";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastStack } from "./components/ToastStack";
+import { TransfersProvider } from "./hooks/useTransfers";
 import { EventsOn } from "../wailsjs/runtime/runtime";
 
 function App() {
   const { toasts, notify } = useToasts();
   const profileState = useProfiles(notify);
   const { metrics } = useMonitor();
-  const [drawer, setDrawer] = useState<Drawer>("monitor");
+  const [drawer, setDrawer] = usePersistedState<Drawer>("gx:drawer", "monitor");
   const [profileModal, setProfileModal] = useState<types.Profile | null>(null);
   const [commandModal, setCommandModal] = useState<types.CommandTemplate | null>(null);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [globalQuery, setGlobalQuery] = useState("");
   const [terminalSearchOpen, setTerminalSearchOpen] = useState(false);
   const [terminalSearch, setTerminalSearch] = useState("");
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("gx:sidebarCollapsed", false);
+  const [logViewer, setLogViewer] = useState<{ name: string; content: string } | null>(null);
+  const [floatingTabIds, setFloatingTabIds] = usePersistedState<string[]>("gx:floatingTabIds", []);
   const [ctxMenu, setCtxMenu] = useState<{x:number, y:number, items:{label:string, action:()=>void, danger?:boolean}[]} | null>(null);
 
   useEffect(() => {
@@ -57,8 +63,35 @@ function App() {
   const sftp = useSftp(sessions.active, drawer, notify);
 
   const activeTerminal = useTerminal(sessions.activeTab, profileState.settings, notify, sidebarCollapsed);      
-  const { writeOutput, disposeTerminal, findNext, focusTerminal } = activeTerminal;
+  const { writeOutput, disposeTerminal, findNext, focusTerminal, refitTerminal } = activeTerminal;      
   terminalBridge.current.disposeTerminal = disposeTerminal;
+
+  const handleTearOff = useCallback((tab: Tab) => {
+    setFloatingTabIds((prev) => prev.includes(tab.id) ? prev : [...prev, tab.id]);
+    if (sessions.activeTab === tab.id) {
+      const remaining = sessions.tabs.filter((t) => t.id !== tab.id);
+      if (remaining.length > 0) {
+        sessions.setActiveTab(remaining[0].id);
+      }
+    }
+    setTimeout(() => refitTerminal(tab.id), 50);
+  }, [refitTerminal, sessions.activeTab, sessions.tabs, sessions.setActiveTab]);
+
+  const handleDockFloating = useCallback((id: string) => {
+    setFloatingTabIds((prev) => prev.filter((fid) => fid !== id));
+    sessions.setActiveTab(id);
+    setTimeout(() => refitTerminal(id), 50);
+  }, [refitTerminal, sessions.setActiveTab]);
+
+  const handleCloseFloating = useCallback(async (id: string) => {
+    await sessions.closeTab(id);
+    setFloatingTabIds((prev) => prev.filter((fid) => fid !== id));
+  }, [sessions.closeTab]);
+
+  useEffect(() => {
+    const tabIds = new Set(sessions.tabs.map((t) => t.id));
+    setFloatingTabIds((prev) => prev.filter((id) => tabIds.has(id)));
+  }, [sessions.tabs]);
 
   useEffect(() => {
     const offData = EventsOn("terminal:data", (payload: { sessionId: string; data: string }) => {
@@ -129,6 +162,7 @@ function App() {
 
   return (
     <ErrorBoundary>
+    <TransfersProvider>
     <div className="app-shell" onContextMenu={() => setCtxMenu(null)} data-theme={themeName} data-collapsed={sidebarCollapsed ? "true" : "false"} >
       <main className="workspace">
         <Sidebar
@@ -148,6 +182,7 @@ function App() {
           onNewProfile={() => setProfileModal(emptyProfile())}
           onEditProfile={(profile) => setProfileModal(new types.Profile(profile))}
           onConnectProfile={sessions.connectProfile}
+          onDeleteProfile={async (id) => { await profileState.deleteProfile(id); }}
           onOpenSearch={() => setGlobalSearchOpen(true)}
           onStartMonitor={() => sessions.active && StartMonitor(sessions.active.id)}
           onRefreshSftp={sftp.refreshSftp}
@@ -158,11 +193,22 @@ function App() {
                 setTimeout(() => focusTerminal(sessions.activeTab), 10);
             }
           }}     
+          onRunCommandAll={(cmd) => {
+            SendCommandToAll(cmd.command).catch(() => {});
+          }}
           onEditCommand={(cmd) => setCommandModal(cmd)}
           onDeleteCommand={async (id) => { await DeleteCommand(id); profileState.setCommands(await ListCommands()); }}
           onNewCommand={() => setCommandModal(new types.CommandTemplate({ id: "", name: "", command: "", category: "Custom", description: "", tags: [] }))}
           onSaveSettings={async (next) => { await profileState.saveSettings(next); notify("Settings saved", "success"); }}
           onOpenData={OpenDataDir}
+          onOpenLog={async (name) => {
+            try {
+              const content = await ReadLogFile(name);
+              setLogViewer({ name, content });
+            } catch { notify("Failed to read log file", "error"); }
+          }}
+          getTerminalLines={activeTerminal.getTerminalLines}
+          activeTabId={sessions.activeTab}
         />
         <TerminalArea
           tabs={sessions.tabs}
@@ -175,9 +221,19 @@ function App() {
           onClose={sessions.closeTab}
           onReconnect={sessions.reconnectTab}
           onNewConnection={handleNewConnection}
+          onTearOff={handleTearOff}
           language={profileState.settings?.language || "en"}
+          logViewer={logViewer}
+          onCloseLogViewer={() => setLogViewer(null)}
+          floatingTabIds={floatingTabIds}
         />
       </main>
+
+      {floatingTabIds.map((id) => {
+        const tab = sessions.tabs.find((t) => t.id === id);
+        if (!tab) return null;
+        return <FloatingTerminal key={id} tab={tab} terminalHosts={activeTerminal.terminalHosts} onDock={handleDockFloating} onClose={handleCloseFloating} refitTerminal={refitTerminal} />;
+      })}
 
       {globalSearchOpen && <GlobalSearchModal query={globalQuery} onQuery={setGlobalQuery} results={globalResults} onClose={() => setGlobalSearchOpen(false)} />}
       {terminalSearchOpen && <TerminalSearchModal query={terminalSearch} onQuery={setTerminalSearch} onNext={() => activeTerminal.findNext(sessions.activeTab, terminalSearch)} onClose={() => setTerminalSearchOpen(false)} />}
@@ -196,6 +252,7 @@ function App() {
         </div>
       )}
     </div>
+    </TransfersProvider>
     </ErrorBoundary>
   );
 }

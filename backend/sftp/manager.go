@@ -7,6 +7,9 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strings"
+	"sync"
+	"time"
 
 	"gxShell/backend/types"
 
@@ -18,21 +21,99 @@ type SSHClientProvider interface {
 	Client(sessionID string) (*ssh.Client, error)
 }
 
+type cachedClient struct {
+	client  *sftp.Client
+	lastUsed time.Time
+}
+
 type Manager struct {
 	sessions SSHClientProvider
 	emit     func(event string, data any)
+	mu       sync.Mutex
+	cache    map[string]*cachedClient
 }
 
+const maxSFTPCache = 10
+
 func NewManager(sessions SSHClientProvider, emit func(event string, data any)) *Manager {
-	return &Manager{sessions: sessions, emit: emit}
+	m := &Manager{
+		sessions: sessions,
+		emit:     emit,
+		cache:    map[string]*cachedClient{},
+	}
+	go m.evictLoop()
+	return m
 }
 
 func (m *Manager) withClient(sessionID string) (*sftp.Client, error) {
-	client, err := m.sessions.Client(sessionID)
+	m.mu.Lock()
+	if cc, ok := m.cache[sessionID]; ok {
+		client := cc.client
+		cc.lastUsed = time.Now()
+		m.mu.Unlock()
+		if _, err := client.Getwd(); err != nil {
+			m.InvalidateClient(sessionID)
+		} else {
+			return client, nil
+		}
+	}
+	if len(m.cache) >= maxSFTPCache {
+		var oldestID string
+		var oldestTime time.Time
+		for id, cc := range m.cache {
+			if oldestID == "" || cc.lastUsed.Before(oldestTime) {
+				oldestID = id
+				oldestTime = cc.lastUsed
+			}
+		}
+		if oldestID != "" {
+			_ = m.cache[oldestID].client.Close()
+			delete(m.cache, oldestID)
+		}
+	}
+	m.mu.Unlock()
+
+	sshClient, err := m.sessions.Client(sessionID)
 	if err != nil {
 		return nil, err
 	}
-	return sftp.NewClient(client)
+	client, err := sftp.NewClient(sshClient)
+	if err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	if old, ok := m.cache[sessionID]; ok {
+		_ = old.client.Close()
+	}
+	m.cache[sessionID] = &cachedClient{client: client, lastUsed: time.Now()}
+	m.mu.Unlock()
+	return client, nil
+}
+
+func (m *Manager) InvalidateClient(sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if cc, ok := m.cache[sessionID]; ok {
+		_ = cc.client.Close()
+		delete(m.cache, sessionID)
+	}
+}
+
+func (m *Manager) evictLoop() {
+	ticker := time.NewTicker(2 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		m.mu.Lock()
+		now := time.Now()
+		for id, cc := range m.cache {
+			if now.Sub(cc.lastUsed) > 5*time.Minute {
+				_ = cc.client.Close()
+				delete(m.cache, id)
+			}
+		}
+		m.mu.Unlock()
+	}
 }
 
 func (m *Manager) ListRemoteDir(sessionID string, remotePath string) ([]types.RemoteFile, error) {
@@ -44,9 +125,9 @@ func (m *Manager) ListRemoteDir(sessionID string, remotePath string) ([]types.Re
 	if err != nil {
 		return nil, err
 	}
-	defer client.Close()
 	entries, err := client.ReadDir(remotePath)
 	if err != nil {
+		m.InvalidateClient(sessionID)
 		return nil, err
 	}
 	files := make([]types.RemoteFile, 0, len(entries))
@@ -76,7 +157,6 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) error {
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	src, err := os.Open(localPath)
 	if err != nil {
@@ -91,6 +171,7 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) error {
 
 	dst, err := client.Create(remotePath)
 	if err != nil {
+		m.InvalidateClient(sessionID)
 		return err
 	}
 
@@ -113,10 +194,10 @@ func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) error {
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	src, err := client.Open(remotePath)
 	if err != nil {
+		m.InvalidateClient(sessionID)
 		return err
 	}
 	defer src.Close()
@@ -151,8 +232,11 @@ func (m *Manager) DeleteRemoteFile(sessionID, remotePath string) error {
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-	return client.Remove(remotePath)
+	err = client.Remove(remotePath)
+	if err != nil {
+		m.InvalidateClient(sessionID)
+	}
+	return err
 }
 
 func (m *Manager) RenameRemoteFile(sessionID, oldPath, newPath string) error {
@@ -162,8 +246,11 @@ func (m *Manager) RenameRemoteFile(sessionID, oldPath, newPath string) error {
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-	return client.Rename(oldPath, newPath)
+	err = client.Rename(oldPath, newPath)
+	if err != nil {
+		m.InvalidateClient(sessionID)
+	}
+	return err
 }
 
 func (m *Manager) CreateRemoteDir(sessionID, remotePath string) error {
@@ -172,8 +259,11 @@ func (m *Manager) CreateRemoteDir(sessionID, remotePath string) error {
 	if err != nil {
 		return err
 	}
-	defer client.Close()
-	return client.MkdirAll(remotePath)
+	err = client.MkdirAll(remotePath)
+	if err != nil {
+		m.InvalidateClient(sessionID)
+	}
+	return err
 }
 
 func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) error {
@@ -182,7 +272,6 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) error {
 	if err != nil {
 		return err
 	}
-	defer client.Close()
 
 	cleanRemote := path.Clean(remotePath)
 	if err := os.MkdirAll(localDir, 0755); err != nil {
@@ -198,6 +287,7 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) error {
 	walker := client.Walk(remotePath)
 	for walker.Step() {
 		if err := walker.Err(); err != nil {
+			m.InvalidateClient(sessionID)
 			return err
 		}
 		rp := walker.Path()
@@ -233,6 +323,7 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) error {
 			"direction": "download",
 		})
 		if err := m.downloadFileOnly(client, f.remotePath, localPath); err != nil {
+			m.InvalidateClient(sessionID)
 			return err
 		}
 	}
@@ -295,8 +386,26 @@ func copyWithProgress(dst io.Writer, src io.Reader, progress func(int64)) (int64
 
 func cleanRemotePath(p string) string {
 	cleaned := path.Clean(p)
-	if cleaned == ".." || path.IsAbs(cleaned) {
+	parts := strings.Split(cleaned, "/")
+	var safe []string
+	for _, part := range parts {
+		if part == ".." {
+			if len(safe) > 0 {
+				safe = safe[:len(safe)-1]
+			}
+			continue
+		}
+		if part == "" || part == "." {
+			continue
+		}
+		safe = append(safe, part)
+	}
+	result := strings.Join(safe, "/")
+	if strings.HasPrefix(cleaned, "/") {
+		return "/" + result
+	}
+	if result == "" {
 		return "."
 	}
-	return cleaned
+	return result
 }

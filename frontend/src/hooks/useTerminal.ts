@@ -42,7 +42,13 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
   notifyRef.current = notify;
 
   const highlightLevelRef = useRef<HighlightLevel>("off");
-  highlightLevelRef.current = (settings?.highlightLevel as HighlightLevel) || "off";
+  {
+    const raw = settings?.highlightLevel;
+    highlightLevelRef.current = (raw === "basic" || raw === "full") ? raw : "off";
+  }
+
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
   const applyHighlight = useCallback((sessionId: string, data: string) => {
     const level = highlightLevelRef.current;
@@ -51,7 +57,7 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
   }, []);
 
   useEffect(() => {
-    if (!activeTab || !settings) return;
+    if (!activeTab || !settingsRef.current) return;
     const host = terminalHosts.current[activeTab];
     if (!host) return;
 
@@ -87,20 +93,21 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
     if (terminals.current[activeTab]) {
       fitAndResize();
     } else {
+      const s = settingsRef.current;
       const term = new Terminal({
-        allowProposedApi: false,
+        allowProposedApi: true,
         convertEol: true,
-        cursorBlink: settings.terminal.cursorBlink,
-        cursorStyle: settings.terminal.cursorStyle as any,
-        fontFamily: settings.terminal.fontFamily || "JetBrains Mono, Cascadia Code, Fira Code, Maple Mono, Consolas, monospace",
-        fontSize: settings.terminal.fontSize || 13.5,
+        cursorBlink: s.terminal.cursorBlink,
+        cursorStyle: s.terminal.cursorStyle as any,
+        fontFamily: s.terminal.fontFamily || "JetBrains Mono, Cascadia Code, Fira Code, Maple Mono, Consolas, monospace",
+        fontSize: s.terminal.fontSize || 13.5,
         fontWeight: 400,
-        lineHeight: settings.terminal.lineHeight || 1.35,
+        lineHeight: s.terminal.lineHeight || 1.35,
         minimumContrastRatio: 1,
         drawBoldTextInBrightColors: false,
-        scrollback: settings.terminal.scrollbackLines || 5000,
+        scrollback: s.terminal.scrollbackLines || 5000,
         smoothScrollDuration: 0,
-        theme: getTerminalTheme(settings)
+        theme: getTerminalTheme(s)
       });
       const fit = new FitAddon();
       const searchAddon = new SearchAddon();
@@ -190,7 +197,7 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
       delete cleanupFns.current[activeTab];
       delete cmdBuffer.current[activeTab];
     };
-  }, [activeTab, settings, addTimer]);
+  }, [activeTab, addTimer]);
 
   useEffect(() => {
     if (!settings) return;
@@ -264,8 +271,60 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
     searches.current[id]?.findNext(query);
   }, []);
 
+  const refitTerminal = useCallback((id: string) => {
+    const fit = fits.current[id];
+    const term = terminals.current[id];
+    const host = terminalHosts.current[id];
+    if (!fit || !term || !host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
+    try {
+      fit.fit();
+      const { cols, rows } = term;
+      const prev = lastDimensions.current[id];
+      if (!prev || prev.cols !== cols || prev.rows !== rows) {
+        lastDimensions.current[id] = { cols, rows };
+        ResizeTerminal(id, cols, rows).catch(() => {
+          delete lastDimensions.current[id];
+        });
+      }
+    } catch {}
+  }, []);
+
   const focusTerminal = useCallback((id: string) => {
     terminals.current[id]?.focus();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      timers.current.forEach((id) => window.clearTimeout(id));
+      timers.current.clear();
+    };
+  }, []);
+
+  const getTerminalLines = useCallback((id: string, lineCount: number): string => {
+    const term = terminals.current[id];
+    if (!term) {
+      console.log("[getTerminalLines] no terminal for id:", id, "available ids:", Object.keys(terminals.current));
+      return "";
+    }
+    try {
+      const buffer = term.buffer.active;
+      const lines: string[] = [];
+      const totalLines = buffer.length;
+      const start = Math.max(0, totalLines - lineCount * 3);
+      for (let i = start; i < totalLines; i++) {
+        const line = buffer.getLine(i);
+        if (line) {
+          const text = line.translateToString(true);
+          if (text.trim()) lines.push(text);
+        }
+      }
+      const result = lines.slice(-lineCount).join("\n");
+      console.log("[getTerminalLines] id:", id, "totalLines:", totalLines, "nonEmptyLines:", lines.length, "resultLen:", result.length, "preview:", result.slice(0, 100));
+      return result;
+    } catch (err) {
+      console.error("[getTerminalLines] error:", err);
+      return "";
+    }
   }, []);
 
   const stable = useMemo(() => ({
@@ -274,7 +333,9 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
     disposeTerminal,
     findNext,
     focusTerminal,
-  }), [writeOutput, disposeTerminal, findNext, focusTerminal]);
+    refitTerminal,
+    getTerminalLines,
+  }), [writeOutput, disposeTerminal, findNext, focusTerminal, refitTerminal, getTerminalLines]);
 
   return stable;
 }

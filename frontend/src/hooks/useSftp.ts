@@ -14,12 +14,11 @@ export function useSftp(active?: Tab, drawer?: string, notify?: (text: string, t
   remotePathRef.current = remotePath;
 
   const refreshSftp = useCallback(async (path = remotePathRef.current) => {
-    const currentActive = active;
-    if (!currentActive) return;
+    if (!active?.id) return;
     setSftpBusy(true);
     try {
-      const files = await ListRemoteDir(currentActive.id, path);
-      const cacheKey = `${currentActive.id}:${path}`;
+      const files = await ListRemoteDir(active.id, path);
+      const cacheKey = `${active.id}:${path}`;
       fileCache.current[cacheKey] = files;
       setRemoteFiles(files);
       setRemotePath(path);
@@ -28,7 +27,7 @@ export function useSftp(active?: Tab, drawer?: string, notify?: (text: string, t
     } finally {
       setSftpBusy(false);
     }
-  }, [active]);
+  }, [active?.id]);
 
   useEffect(() => {
     if (drawer === "sftp" && active) {

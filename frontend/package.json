@@ -14,12 +14,14 @@
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
     "clsx": "^2.1.1",
+    "dompurify": "^3.4.3",
     "lucide-react": "^1.14.0",
+    "marked": "^18.0.3",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "zustand": "^5.0.13"
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@types/dompurify": "^3.0.5",
     "@types/react": "^18.0.17",
     "@types/react-dom": "^18.0.6",
     "@vitejs/plugin-react": "^2.0.1",
