@@ -14,11 +14,14 @@ A cross-platform desktop SSH workbench built with Wails v2 + Go + React, integra
 - xterm.js v6 + WebGL GPU 加速渲染
 - 多标签会话，最多 20 个并发连接
 - 浮动终端窗口，标签可拖出为独立面板
+- 终端分屏：水平/垂直分屏，可拖拽调整比例，同时查看两个终端
 - 终端自适应尺寸，防抖调整 PTY 大小
 - 右键复制/粘贴，搜索插件
 - 输出高亮：三级模式（关闭 / 基础 / 完整），自动着色错误、警告、IP、路径等
 - 密码和私钥认证，支持 passphrase
 - Host Key TOFU（首次信任）策略，密钥变更自动拒绝
+- SSH ProxyJump 跳板机：通过跳板机间接连接目标服务器，侧边栏跳板机标识
+- 连接状态心跳：30 秒 SSH keepalive 探测，断线自动检测
 
 ### 系统监控 / System Monitor
 
@@ -75,6 +78,7 @@ A cross-platform desktop SSH workbench built with Wails v2 + Go + React, integra
 - AI Markdown 输出 DOMPurify 消毒，防止 XSS
 - 日志自动脱敏：password、token 等字段 redact
 - API Key 前端脱敏展示，保存时识别 masked key 不覆盖
+- SSH ProxyJump 禁止嵌套跳板，防止循环引用；删除跳板机时级联清理引用
 
 ### 其他 / Others
 
@@ -176,6 +180,8 @@ build/bin/gxShell.exe
 4. Docker 管理依赖 SSH，不支持本地 Docker socket
 5. 系统监控仅支持 Linux（通过 /proc 文件系统采集）
 6. 当前仅构建 Windows 版本
+7. 终端分屏仅支持两个终端同时显示，不支持三栏或更多分屏
+8. SSH ProxyJump 仅支持一级跳板，不支持嵌套跳板
 
 ---
 

@@ -2,6 +2,15 @@ import { types } from "../wailsjs/go/models";
 
 export type Drawer = "monitor" | "sftp" | "commands" | "tunnels" | "logs" | "containers" | "ai" | "settings";
 
+export type SplitDirection = "horizontal" | "vertical";
+
+export type SplitPane = {
+  left: string;
+  right: string;
+  direction: SplitDirection;
+  ratio: number;
+};
+
 export type Tab = {
   id: string;
   profileId: string;

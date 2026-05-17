@@ -28,6 +28,7 @@ export type LangKey =
   | "sshTunnels" | "restartTunnels" | "noTunnels" | "tunnelsRestarted"
   | "reconnecting" | "reconnectFailed" | "autoReconnect"
   | "tunnelRules" | "addTunnel" | "tunnelType" | "tunnelLocal" | "tunnelRemote" | "tunnelDynamic" | "tunnelBindHost" | "removeTunnel" | "tunnelAdded"
+  | "proxyJump"
   | "presetWeb" | "presetMySQL" | "presetRedis" | "presetSOCKS"
   | "transfer" | "transferTitle" | "noActiveTransfer" | "transferProgress" | "transferComplete"
   | "memoryDetail" | "topMemProcesses" | "close"
@@ -153,6 +154,7 @@ const en: Record<LangKey, string> = {
   tunnelBindHost: "Bind Host",
   removeTunnel: "Remove",
   tunnelAdded: "Tunnel added",
+  proxyJump: "Proxy Jump",
   presetWeb: "Web",
   presetMySQL: "MySQL",
   presetRedis: "Redis",
@@ -323,6 +325,7 @@ const zhCN: Record<LangKey, string> = {
   tunnelBindHost: "绑定地址",
   removeTunnel: "移除",
   tunnelAdded: "隧道已添加",
+  proxyJump: "跳板机",
   presetWeb: "Web",
   presetMySQL: "MySQL",
   presetRedis: "Redis",

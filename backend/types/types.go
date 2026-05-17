@@ -21,6 +21,7 @@ type Profile struct {
 	PrivateKeyPath       string    `json:"privateKeyPath,omitempty"`
 	PrivateKeyPassphrase string    `json:"privateKeyPassphrase,omitempty"`
 	RememberPassword     bool      `json:"rememberPassword"`
+	ProxyJumpID          string    `json:"proxyJumpId,omitempty"`
 	Description          string    `json:"description"`
 	Tags                 []string  `json:"tags"`
 	Favorite             bool          `json:"favorite"`

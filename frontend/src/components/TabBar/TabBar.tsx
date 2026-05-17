@@ -1,11 +1,11 @@
 import clsx from "clsx";
 import { useCallback, useEffect, useRef } from "react";
-import { PanelLeft, RefreshCw, X } from "lucide-react";
-import type { Tab } from "../../types";
+import { Columns2, PanelLeft, RefreshCw, Rows2, X } from "lucide-react";
+import type { SplitDirection, Tab } from "../../types";
 import { stateClass } from "../../utils/format";
 import { types } from "../../../wailsjs/go/models";
 
-export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSidebar, onActive, onClose, onReconnect, onTearOff }: { tabs: Tab[]; activeTab: string; profiles: types.Profile[]; sidebarCollapsed: boolean; onToggleSidebar: () => void; onActive: (id: string) => void; onClose: (id: string) => void; onReconnect: (tab: Tab) => void; onTearOff?: (tab: Tab) => void }) {
+export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSidebar, onActive, onClose, onReconnect, onTearOff, onSplitToggle }: { tabs: Tab[]; activeTab: string; profiles: types.Profile[]; sidebarCollapsed: boolean; onToggleSidebar: () => void; onActive: (id: string) => void; onClose: (id: string) => void; onReconnect: (tab: Tab) => void; onTearOff?: (tab: Tab) => void; onSplitToggle?: (tabId: string, direction: SplitDirection) => void }) {
   const active = tabs.find((tab) => tab.id === activeTab);
   const dragRef = useRef<{ tabId: string; startX: number; startY: number; active: boolean } | null>(null);
   const tabsRef = useRef(tabs);
@@ -74,6 +74,8 @@ export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSi
         })}
       </div>
       <div className="tab-actions">
+        <button className="tab-action" disabled={!active || tabs.length < 2} onClick={() => active && onSplitToggle?.(active.id, "horizontal")} title="Split Horizontal"><Columns2 size={14} /></button>
+        <button className="tab-action" disabled={!active || tabs.length < 2} onClick={() => active && onSplitToggle?.(active.id, "vertical")} title="Split Vertical"><Rows2 size={14} /></button>
         <button className="tab-action" disabled={!active} onClick={() => active && onReconnect(active)}><RefreshCw size={14} /></button>
       </div>
     </div>

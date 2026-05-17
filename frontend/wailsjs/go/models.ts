@@ -613,6 +613,7 @@ export namespace types {
 	    privateKeyPath?: string;
 	    privateKeyPassphrase?: string;
 	    rememberPassword: boolean;
+	    proxyJumpId?: string;
 	    description: string;
 	    tags: string[];
 	    favorite: boolean;
@@ -642,6 +643,7 @@ export namespace types {
 	        this.privateKeyPath = source["privateKeyPath"];
 	        this.privateKeyPassphrase = source["privateKeyPassphrase"];
 	        this.rememberPassword = source["rememberPassword"];
+	        this.proxyJumpId = source["proxyJumpId"];
 	        this.description = source["description"];
 	        this.tags = source["tags"];
 	        this.favorite = source["favorite"];

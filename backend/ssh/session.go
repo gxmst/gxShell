@@ -2,6 +2,7 @@ package sshmanager
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -28,13 +29,14 @@ type Manager struct {
 }
 
 type Session struct {
-	info      types.SessionInfo
-	client    *ssh.Client
-	shell     *ssh.Session
-	stdin     io.WriteCloser
-	done      chan struct{}
-	closeOnce sync.Once
-	mu        sync.RWMutex
+	info       types.SessionInfo
+	client     *ssh.Client
+	jumpClient *ssh.Client
+	shell      *ssh.Session
+	stdin      io.WriteCloser
+	done       chan struct{}
+	closeOnce  sync.Once
+	mu         sync.RWMutex
 }
 
 func NewManager(knownHostsPath string, emit func(event string, data any), confirm func(host, fingerprint string) bool) *Manager {
@@ -48,6 +50,10 @@ func NewManager(knownHostsPath string, emit func(event string, data any), confir
 const maxSessions = 20
 
 func (m *Manager) Connect(profile types.Profile, timeoutSec int, cols int, rows int) (types.SessionInfo, error) {
+	return m.ConnectViaJump(profile, types.Profile{}, timeoutSec, cols, rows)
+}
+
+func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profile, timeoutSec int, cols int, rows int) (types.SessionInfo, error) {
 	m.mu.RLock()
 	count := len(m.sessions)
 	m.mu.RUnlock()
@@ -82,26 +88,65 @@ func (m *Manager) Connect(profile types.Profile, timeoutSec int, cols int, rows 
 
 	config, err := clientConfig(profile, timeoutSec, m.knownHostsPath, m.emit, m.confirm)
 	if err != nil {
-		m.failConnect(id, err, nil, nil)
+		m.failConnect(id, err, nil, nil, nil)
 		return info, err
 	}
 
-	addr := fmt.Sprintf("%s:%d", profile.Host, profile.Port)
-	conn, err := net.DialTimeout("tcp", addr, time.Duration(timeoutSec)*time.Second)
-	if err != nil {
-		m.failConnect(id, err, nil, nil)
-		return info, err
-	}
+	var client *ssh.Client
+	var jumpClient *ssh.Client
 
-	clientConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
-	if err != nil {
-		m.failConnect(id, err, nil, conn)
-		return info, err
+	if jumpProfile.ID != "" {
+		jumpConfig, err := clientConfig(jumpProfile, timeoutSec, m.knownHostsPath, m.emit, m.confirm)
+		if err != nil {
+			m.failConnect(id, fmt.Errorf("jump host config error: %w", err), nil, nil, nil)
+			return info, err
+		}
+		jumpAddr := fmt.Sprintf("%s:%d", jumpProfile.Host, jumpProfile.Port)
+		jumpConn, err := net.DialTimeout("tcp", jumpAddr, time.Duration(timeoutSec)*time.Second)
+		if err != nil {
+			m.failConnect(id, fmt.Errorf("jump host connection failed: %w", err), nil, nil, nil)
+			return info, err
+		}
+		jumpClientConn, chans, reqs, err := ssh.NewClientConn(jumpConn, jumpAddr, jumpConfig)
+		if err != nil {
+			_ = jumpConn.Close()
+			m.failConnect(id, fmt.Errorf("jump host SSH handshake failed: %w", err), nil, nil, nil)
+			return info, err
+		}
+		jumpClient = ssh.NewClient(jumpClientConn, chans, reqs)
+
+		targetAddr := fmt.Sprintf("%s:%d", profile.Host, profile.Port)
+		dialCtx, dialCancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+		targetConn, err := jumpClient.DialContext(dialCtx, "tcp", targetAddr)
+		dialCancel()
+		if err != nil {
+			m.failConnect(id, fmt.Errorf("jump host cannot reach target %s: %w", targetAddr, err), nil, jumpClient, nil)
+			return info, err
+		}
+		targetClientConn, chans, reqs, err := ssh.NewClientConn(targetConn, targetAddr, config)
+		if err != nil {
+			_ = targetConn.Close()
+			m.failConnect(id, fmt.Errorf("target SSH handshake via jump failed: %w", err), nil, jumpClient, nil)
+			return info, err
+		}
+		client = ssh.NewClient(targetClientConn, chans, reqs)
+	} else {
+		addr := fmt.Sprintf("%s:%d", profile.Host, profile.Port)
+		conn, err := net.DialTimeout("tcp", addr, time.Duration(timeoutSec)*time.Second)
+		if err != nil {
+			m.failConnect(id, err, nil, nil, nil)
+			return info, err
+		}
+		clientConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
+		if err != nil {
+			m.failConnect(id, err, nil, nil, conn)
+			return info, err
+		}
+		client = ssh.NewClient(clientConn, chans, reqs)
 	}
-	client := ssh.NewClient(clientConn, chans, reqs)
 	shell, err := client.NewSession()
 	if err != nil {
-		m.failConnect(id, err, client, nil)
+		m.failConnect(id, err, client, jumpClient, nil)
 		return info, err
 	}
 
@@ -112,36 +157,37 @@ func (m *Manager) Connect(profile types.Profile, timeoutSec int, cols int, rows 
 	}
 	if err := shell.RequestPty("xterm-256color", rows, cols, modes); err != nil {
 		_ = shell.Close()
-		m.failConnect(id, err, client, nil)
+		m.failConnect(id, err, client, jumpClient, nil)
 		return info, err
 	}
 
 	stdin, err := shell.StdinPipe()
 	if err != nil {
 		_ = shell.Close()
-		m.failConnect(id, err, client, nil)
+		m.failConnect(id, err, client, jumpClient, nil)
 		return info, err
 	}
 	stdout, err := shell.StdoutPipe()
 	if err != nil {
 		_ = shell.Close()
-		m.failConnect(id, err, client, nil)
+		m.failConnect(id, err, client, jumpClient, nil)
 		return info, err
 	}
 	stderr, err := shell.StderrPipe()
 	if err != nil {
 		_ = shell.Close()
-		m.failConnect(id, err, client, nil)
+		m.failConnect(id, err, client, jumpClient, nil)
 		return info, err
 	}
 	if err := shell.Shell(); err != nil {
 		_ = shell.Close()
-		m.failConnect(id, err, client, nil)
+		m.failConnect(id, err, client, jumpClient, nil)
 		return info, err
 	}
 
 	session.mu.Lock()
 	session.client = client
+	session.jumpClient = jumpClient
 	session.shell = shell
 	session.stdin = stdin
 	session.info.State = types.SessionConnected
@@ -151,6 +197,7 @@ func (m *Manager) Connect(profile types.Profile, timeoutSec int, cols int, rows 
 
 	go m.forwardOutput(id, stdout)
 	go m.forwardOutput(id, stderr)
+	go m.keepalive(id)
 	go func() {
 		panicHandler(id, m)
 		err := shell.Wait()
@@ -176,6 +223,46 @@ func (m *Manager) forwardOutput(id string, reader io.Reader) {
 		}
 		if err != nil {
 			return
+		}
+		m.mu.RLock()
+		session := m.sessions[id]
+		m.mu.RUnlock()
+		if session == nil {
+			return
+		}
+		select {
+		case <-session.done:
+			return
+		default:
+		}
+	}
+}
+
+func (m *Manager) keepalive(id string) {
+	defer panicHandler(id, m)
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			m.mu.RLock()
+			session := m.sessions[id]
+			m.mu.RUnlock()
+			if session == nil {
+				return
+			}
+			session.mu.RLock()
+			client := session.client
+			session.mu.RUnlock()
+			if client == nil {
+				return
+			}
+			_, _, err := client.SendRequest("keepalive@gxshell", false, nil)
+			if err != nil {
+				m.emit("terminal:error", map[string]any{"sessionId": id, "error": "connection keepalive failed"})
+				go m.Disconnect(id)
+				return
+			}
 		}
 		m.mu.RLock()
 		session := m.sessions[id]
@@ -243,6 +330,9 @@ func (m *Manager) Disconnect(id string) error {
 		}
 		if session.client != nil {
 			_ = session.client.Close()
+		}
+		if session.jumpClient != nil {
+			_ = session.jumpClient.Close()
 		}
 		close(session.done)
 		if session.info.State != types.SessionError {
@@ -402,9 +492,12 @@ func (m *Manager) remove(id string) {
 	m.mu.Unlock()
 }
 
-func (m *Manager) failConnect(id string, err error, client *ssh.Client, conn net.Conn) {
+func (m *Manager) failConnect(id string, err error, client *ssh.Client, jumpClient *ssh.Client, conn net.Conn) {
 	if client != nil {
 		_ = client.Close()
+	}
+	if jumpClient != nil {
+		_ = jumpClient.Close()
 	}
 	if conn != nil {
 		_ = conn.Close()

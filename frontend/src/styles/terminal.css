@@ -94,6 +94,30 @@
   background: var(--terminal);
 }
 
+.terminal-split-pane {
+  visibility: visible !important;
+  position: relative !important;
+  pointer-events: auto !important;
+}
+
+.split-divider {
+  background: var(--border);
+  cursor: col-resize;
+  transition: background 120ms ease;
+}
+
+.split-divider:hover {
+  background: var(--accent);
+}
+
+.split-divider-vertical {
+  cursor: row-resize;
+}
+
+.split-divider-hidden {
+  display: none;
+}
+
 .terminal-host {
   box-sizing: border-box;
   width: 100%;
@@ -119,6 +143,8 @@
   justify-content: center;
   color: var(--muted);
   text-align: center;
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
 }
 
 .terminal-empty-card {
@@ -158,6 +184,8 @@
   display: flex;
   flex-direction: column;
   background: var(--terminal);
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
 }
 
 .log-viewer-header {

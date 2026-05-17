@@ -5,7 +5,7 @@ import { types } from "../wailsjs/go/models";
 import { CreateCommand, DeleteCommand, ListCommands, OpenDataDir, ReadLogFile, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, UpdateCommand } from "../wailsjs/go/main/App";
 import { emptyProfile } from "./constants";
 import type { Drawer } from "./types";
-import type { Tab } from "./types";
+import type { SplitPane, Tab } from "./types";
 import { normalizeAppTheme } from "./utils/format";
 import { useToasts } from "./hooks/useToasts";
 import { useProfiles } from "./hooks/useProfiles";
@@ -42,6 +42,7 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("gx:sidebarCollapsed", false);
   const [logViewer, setLogViewer] = useState<{ name: string; content: string } | null>(null);
   const [floatingTabIds, setFloatingTabIds] = usePersistedState<string[]>("gx:floatingTabIds", []);
+  const [splitPane, setSplitPane] = useState<SplitPane | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{x:number, y:number, items:{label:string, action:()=>void, danger?:boolean}[]} | null>(null);
 
   useEffect(() => {
@@ -62,7 +63,7 @@ function App() {
   const activeMetrics = sessions.active ? metrics[sessions.active.id] : undefined;
   const sftp = useSftp(sessions.active, drawer, notify);
 
-  const activeTerminal = useTerminal(sessions.activeTab, profileState.settings, notify, sidebarCollapsed);      
+  const activeTerminal = useTerminal(sessions.activeTab, profileState.settings, notify, sidebarCollapsed, splitPane);
   const { writeOutput, disposeTerminal, findNext, focusTerminal, refitTerminal } = activeTerminal;      
   terminalBridge.current.disposeTerminal = disposeTerminal;
 
@@ -91,6 +92,9 @@ function App() {
   useEffect(() => {
     const tabIds = new Set(sessions.tabs.map((t) => t.id));
     setFloatingTabIds((prev) => prev.filter((id) => tabIds.has(id)));
+    if (splitPane && (!tabIds.has(splitPane.left) || !tabIds.has(splitPane.right))) {
+      setSplitPane(null);
+    }
   }, [sessions.tabs]);
 
   useEffect(() => {
@@ -226,6 +230,9 @@ function App() {
           logViewer={logViewer}
           onCloseLogViewer={() => setLogViewer(null)}
           floatingTabIds={floatingTabIds}
+          splitPane={splitPane}
+          onSplitChange={setSplitPane}
+          refitTerminal={refitTerminal}
         />
       </main>
 
@@ -237,7 +244,7 @@ function App() {
 
       {globalSearchOpen && <GlobalSearchModal query={globalQuery} onQuery={setGlobalQuery} results={globalResults} onClose={() => setGlobalSearchOpen(false)} />}
       {terminalSearchOpen && <TerminalSearchModal query={terminalSearch} onQuery={setTerminalSearch} onNext={() => activeTerminal.findNext(sessions.activeTab, terminalSearch)} onClose={() => setTerminalSearchOpen(false)} />}
-      {profileModal && <ProfileModal profile={profileModal} language={profileState.settings?.language || "en"} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={async (id) => { await profileState.deleteProfile(id); setProfileModal(null); }} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify("Profile copied. Saved credentials are not copied.", "info"); }} />}
+      {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={async (id) => { await profileState.deleteProfile(id); setProfileModal(null); }} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify("Profile copied. Saved credentials are not copied.", "info"); }} />}
       {commandModal && <CommandModal command={commandModal} language={profileState.settings?.language || "en"} onClose={() => setCommandModal(null)} onSave={saveCommand} />}
       {sessions.secretRequest && <SecretModal request={sessions.secretRequest} language={profileState.settings?.language || "en"} onClose={() => sessions.setSecretRequest(null)} onSubmit={async (password, passphrase) => { const request = sessions.secretRequest; sessions.setSecretRequest(null); if (request) await sessions.submitSecret(request, password, passphrase); }} />}
       <ProgressBar />

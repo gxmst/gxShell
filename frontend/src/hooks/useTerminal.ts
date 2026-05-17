@@ -7,11 +7,12 @@ import { types } from "../../wailsjs/go/models";
 import { ResizeTerminal, WriteToTerminal, LogCommand } from "../../wailsjs/go/main/App";
 import { getTerminalTheme } from "../utils/format";
 import { highlight, type HighlightLevel } from "../utils/highlight";
+import type { SplitPane } from "../types";
 
 const MAX_BUFFERED_CHUNKS = 100;
 const RESIZE_SETTLE_MS = 80;
 
-export function useTerminal(activeTab: string, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean) {
+export function useTerminal(activeTab: string, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null) {
   const terminals = useRef<Record<string, Terminal>>({});
   const fits = useRef<Record<string, FitAddon>>({});
   const searches = useRef<Record<string, SearchAddon>>({});
@@ -200,6 +201,44 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
   }, [activeTab, addTimer]);
 
   useEffect(() => {
+    if (!splitPane) return;
+    const ids = [splitPane.left, splitPane.right].filter((id) => id && id !== activeTab && terminals.current[id]);
+    if (!ids.length) return;
+    const cleanups: (() => void)[] = [];
+    ids.forEach((id) => {
+      const host = terminalHosts.current[id];
+      if (!host) return;
+      const fit = fits.current[id];
+      const term = terminals.current[id];
+      if (!fit || !term) return;
+      const resize = () => {
+        if (!host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
+        const key = `${host.clientWidth}x${host.clientHeight}`;
+        if (lastHostSize.current[id] === key) return;
+        lastHostSize.current[id] = key;
+        try {
+          fit.fit();
+          const { cols, rows } = term;
+          const prev = lastDimensions.current[id];
+          if (!prev || prev.cols !== cols || prev.rows !== rows) {
+            lastDimensions.current[id] = { cols, rows };
+            window.clearTimeout(pendingResizeTimers.current[id]);
+            pendingResizeTimers.current[id] = window.setTimeout(() => {
+              delete pendingResizeTimers.current[id];
+              ResizeTerminal(id, cols, rows).catch(() => { delete lastDimensions.current[id]; });
+            }, RESIZE_SETTLE_MS);
+          }
+        } catch {}
+      };
+      const observer = new ResizeObserver(resize);
+      observer.observe(host);
+      cleanups.push(() => observer.disconnect());
+      resize();
+    });
+    return () => cleanups.forEach((fn) => fn());
+  }, [splitPane, activeTab]);
+
+  useEffect(() => {
     if (!settings) return;
     Object.values(terminals.current).forEach((term) => {
       term.options.theme = getTerminalTheme(settings);
@@ -271,11 +310,17 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
     searches.current[id]?.findNext(query);
   }, []);
 
-  const refitTerminal = useCallback((id: string) => {
+  const refitTerminal = useCallback((id: string, _depth = 0) => {
     const fit = fits.current[id];
     const term = terminals.current[id];
     const host = terminalHosts.current[id];
-    if (!fit || !term || !host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
+    if (!fit || !term || !host) return;
+    if (host.clientWidth <= 0 || host.clientHeight <= 0) {
+      if (_depth < 5) {
+        setTimeout(() => refitTerminal(id, _depth + 1), 80);
+      }
+      return;
+    }
     try {
       fit.fit();
       const { cols, rows } = term;
@@ -286,6 +331,7 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
           delete lastDimensions.current[id];
         });
       }
+      term.refresh(0, term.buffer.active.length - 1);
     } catch {}
   }, []);
 

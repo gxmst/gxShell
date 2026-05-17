@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { Edit3, MoreHorizontal, Play, Plus, Search, Trash2 } from "lucide-react";
+import { Edit3, MoreHorizontal, Play, Plus, Search, Trash2, ArrowUpRight } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { TraceRoute, PingHost, UpdateSettings } from "../../../wailsjs/go/main/App";
 import type { Drawer, Tab, Toast } from "../../types";
@@ -173,7 +173,7 @@ export function Sidebar(props: {
                   <span className={clsx("status-dot", props.active?.profileId === profile.id ? stateClass(props.active.state) : "bg-muted")} />
                   <div className="min-w-0">
                     <div className="truncate text-sm font-medium">{profile.name || profile.host}</div>
-                    <div className="truncate text-xs text-muted">{profile.username}@{profile.host}:{profile.port}</div>
+                    <div className="truncate text-xs text-muted">{profile.username}@{profile.host}:{profile.port}{profile.proxyJumpId && <ArrowUpRight size={10} className="inline ml-1 opacity-50" />}</div>
                   </div>
                 </div>
                 <div className="row-actions">

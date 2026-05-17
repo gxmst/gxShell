@@ -197,6 +197,9 @@ func (a *App) DeleteProfile(id string) error {
 	found := false
 	for _, profile := range profiles {
 		if profile.ID != id {
+			if profile.ProxyJumpID == id {
+				profile.ProxyJumpID = ""
+			}
 			next = append(next, profile)
 		} else {
 			found = true
@@ -238,12 +241,29 @@ func (a *App) ConnectWithSecrets(profileID string, password string, privateKeyPa
 	if privateKeyPassphrase != "" {
 		fullProfile.PrivateKeyPassphrase = privateKeyPassphrase
 	}
+
+	var jumpProfile types.Profile
+	if fullProfile.ProxyJumpID != "" {
+		jumpProfile, err = a.getProfileForConnect(fullProfile.ProxyJumpID)
+		if err != nil {
+			return types.SessionInfo{}, fmt.Errorf("jump host profile not found: %w", err)
+		}
+		if jumpProfile.RememberPassword {
+			if err := a.loadProfileSecrets(&jumpProfile); err != nil {
+				return types.SessionInfo{}, fmt.Errorf("jump host secrets load failed: %w", err)
+			}
+		}
+		if jumpProfile.ProxyJumpID != "" {
+			return types.SessionInfo{}, errors.New("nested proxy jump is not supported")
+		}
+	}
+
 	settings, settingsErr := a.store.GetSettings()
 	if settingsErr != nil {
 		a.log.Error("failed to read settings: " + settingsErr.Error())
 		settings = config.DefaultSettings()
 	}
-	info, err := a.ssh.Connect(fullProfile, settings.ConnectionTimeout, cols, rows)
+	info, err := a.ssh.ConnectViaJump(fullProfile, jumpProfile, settings.ConnectionTimeout, cols, rows)
 	if err != nil {
 		a.log.Error("connect failed: " + err.Error())
 		return info, err
