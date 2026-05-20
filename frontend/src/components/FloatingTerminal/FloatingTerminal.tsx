@@ -9,9 +9,10 @@ interface FloatingTerminalProps {
   onDock: (id: string) => void;
   onClose: (id: string) => void;
   refitTerminal?: (id: string) => void;
+  reattachTerminal?: (id: string, newHost: HTMLDivElement) => void;
 }
 
-export function FloatingTerminal({ tab, terminalHosts, onDock, onClose, refitTerminal }: FloatingTerminalProps) {
+export function FloatingTerminal({ tab, terminalHosts, onDock, onClose, refitTerminal, reattachTerminal }: FloatingTerminalProps) {
   const [pos, setPos] = useState({ left: 120, top: 80 });
   const [size, setSize] = useState({ width: 720, height: 480 });
   const dragRef = useRef({ active: false, startX: 0, startY: 0, startLeft: 0, startTop: 0 });
@@ -22,33 +23,36 @@ export function FloatingTerminal({ tab, terminalHosts, onDock, onClose, refitTer
   useEffect(() => {
     const host = hostRef.current;
     if (!host || movedRef.current) return;
-    const oldHost = terminalHosts.current[tab.id];
-    if (oldHost && oldHost !== host) {
-      const xtermEl = oldHost.querySelector(".xterm");
-      if (xtermEl) {
-        host.appendChild(xtermEl);
+
+    if (reattachTerminal) {
+      reattachTerminal(tab.id, host);
+    } else {
+      const oldHost = terminalHosts.current[tab.id];
+      if (oldHost && oldHost !== host) {
+        const xtermEl = oldHost.querySelector(".xterm");
+        if (xtermEl) {
+          host.appendChild(xtermEl);
+        }
       }
+      terminalHosts.current[tab.id] = host;
+      setTimeout(() => refitTerminal?.(tab.id), 50);
     }
-    terminalHosts.current[tab.id] = host;
+    
     movedRef.current = true;
-    const timer = setTimeout(() => refitTerminal?.(tab.id), 50);
-    return () => clearTimeout(timer);
-  }, [tab.id, terminalHosts, refitTerminal]);
+  }, [tab.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     return () => {
-      const host = hostRef.current;
-      if (!host) return;
-      const xtermEl = host.querySelector(".xterm");
-      const mainHost = document.querySelector(`.terminal-stage [data-tab-id="${tab.id}"]`);
-      if (xtermEl && mainHost) {
-        mainHost.appendChild(xtermEl);
-        terminalHosts.current[tab.id] = mainHost as HTMLDivElement;
+      // When unmounting (dock or close), move the terminal DOM back to the main window.
+      // reattachTerminal uses term.element directly, so it doesn't depend on
+      // terminalHosts.current (which may have been overwritten by TerminalArea's ref).
+      const mainHost = document.querySelector(`.terminal-stage [data-tab-id="${tab.id}"]`) as HTMLDivElement;
+      if (mainHost && reattachTerminal) {
+        reattachTerminal(tab.id, mainHost);
       }
       movedRef.current = false;
-      setTimeout(() => refitTerminal?.(tab.id), 50);
     };
-  }, [tab.id, terminalHosts, refitTerminal]);
+  }, [tab.id, reattachTerminal]);
 
   const onHeaderMouseDown = useCallback((e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest("button")) return;

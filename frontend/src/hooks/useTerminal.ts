@@ -62,6 +62,10 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
     const host = terminalHosts.current[activeTab];
     if (!host) return;
 
+    // Disconnect any observer left by reattachTerminal before setting up our own
+    observers.current[activeTab]?.disconnect();
+    delete observers.current[activeTab];
+
     const fitAndResize = () => {
       if (pendingFitFrames.current[activeTab]) return;
       pendingFitFrames.current[activeTab] = window.requestAnimationFrame(() => {
@@ -335,6 +339,61 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
     } catch {}
   }, []);
 
+  const reattachTerminal = useCallback((id: string, newHost: HTMLDivElement) => {
+    const term = terminals.current[id];
+    if (!term || !term.element) return;
+
+    // 1. Dispose WebGL renderer before moving DOM to prevent stale WebGL context
+    if (webgl.current[id]) {
+      try {
+        webgl.current[id].dispose();
+      } catch {}
+      delete webgl.current[id];
+    }
+
+    // 2. Move the terminal's root element (.xterm) to the new host
+    // Use term.element directly — it always references the correct DOM node
+    // regardless of what terminalHosts.current points to (which may have been
+    // overwritten by TerminalArea's ref callback during React re-render)
+    if (term.element.parentElement !== newHost) {
+      newHost.appendChild(term.element);
+    }
+    terminalHosts.current[id] = newHost;
+
+    // 3. Reload WebGL addon — this creates a fresh canvas and WebGL context
+    // in the new DOM location, then force a full repaint from the in-memory buffer
+    try {
+      const gl = new WebglAddon();
+      term.loadAddon(gl);
+      webgl.current[id] = gl;
+    } catch {}
+    term.refresh(0, term.buffer.active.length - 1);
+
+    // 4. Setup ResizeObserver for the new host
+    if (observers.current[id]) {
+      observers.current[id].disconnect();
+    }
+    const resize = () => {
+      if (!newHost || newHost.clientWidth <= 0 || newHost.clientHeight <= 0) return;
+      refitTerminal(id);
+    };
+    const observer = new ResizeObserver(resize);
+    observer.observe(newHost);
+    observers.current[id] = observer;
+
+    const oldCleanup = cleanupFns.current[id];
+    cleanupFns.current[id] = () => {
+      oldCleanup?.();
+      observer.disconnect();
+      delete observers.current[id];
+    };
+
+    // 5. Delayed refit — wait for the container to get real dimensions after React layout
+    requestAnimationFrame(() => {
+      setTimeout(() => refitTerminal(id), 80);
+    });
+  }, [refitTerminal]);
+
   const focusTerminal = useCallback((id: string) => {
     terminals.current[id]?.focus();
   }, []);
@@ -380,8 +439,9 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
     findNext,
     focusTerminal,
     refitTerminal,
+    reattachTerminal,
     getTerminalLines,
-  }), [writeOutput, disposeTerminal, findNext, focusTerminal, refitTerminal, getTerminalLines]);
+  }), [writeOutput, disposeTerminal, findNext, focusTerminal, refitTerminal, reattachTerminal, getTerminalLines]);
 
   return stable;
 }

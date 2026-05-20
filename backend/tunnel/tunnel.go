@@ -218,12 +218,20 @@ func relay(a, b net.Conn) {
 				}
 			}
 			if err != nil {
+				// Half-close: signal the other side we're done writing
+				if tc, ok := dst.(*net.TCPConn); ok {
+					_ = tc.CloseWrite()
+				} else {
+					return
+				}
 				return
 			}
 		}
 	}
 	go copy(a, b)
 	go copy(b, a)
+	// Wait for BOTH directions to finish before closing
+	<-done
 	<-done
 }
 

@@ -200,8 +200,8 @@ func (s *Store) writeFallback(data map[string]map[string]string) error {
 		return err
 	}
 	if err := os.Rename(tmp, s.fallbackPath()); err != nil {
-		_ = os.Remove(tmp)
 		dataCopy, readErr := os.ReadFile(tmp)
+		_ = os.Remove(tmp)
 		if readErr != nil {
 			return err
 		}

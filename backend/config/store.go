@@ -74,7 +74,9 @@ func (s *Store) readJSON(name string, value any) error {
 		if bakErr := json.Unmarshal(bakData, value); bakErr != nil {
 			return fmt.Errorf("failed to parse %s and its backup: %w", name, err)
 		}
+		s.mu.Lock()
 		_ = os.WriteFile(filepath.Join(s.dir, name), bakData, 0600)
+		s.mu.Unlock()
 	}
 	return nil
 }

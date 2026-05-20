@@ -442,6 +442,7 @@ func (m *Manager) parseSSE(body io.Reader, onChunk func(ChatResponse)) error {
 	var promptTk, completeTk int
 	var toolCalls []ToolCall
 	var hasToolCalls bool
+	var finishSent bool
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -526,6 +527,7 @@ func (m *Manager) parseSSE(body io.Reader, onChunk func(ChatResponse)) error {
 
 		if finishReason == "tool_calls" {
 			if hasToolCalls && len(toolCalls) > 0 {
+				finishSent = true
 				onChunk(ChatResponse{
 					Finish:     true,
 					PromptTk:   promptTk,
@@ -536,13 +538,22 @@ func (m *Manager) parseSSE(body io.Reader, onChunk func(ChatResponse)) error {
 		}
 	}
 
-	if !hasToolCalls {
-		onChunk(ChatResponse{
-			Content:    "",
-			Finish:     true,
-			PromptTk:   promptTk,
-			CompleteTk: completeTk,
-		})
+	if !finishSent {
+		if hasToolCalls && len(toolCalls) > 0 {
+			onChunk(ChatResponse{
+				Finish:     true,
+				PromptTk:   promptTk,
+				CompleteTk: completeTk,
+				ToolCalls:  toolCalls,
+			})
+		} else {
+			onChunk(ChatResponse{
+				Content:    "",
+				Finish:     true,
+				PromptTk:   promptTk,
+				CompleteTk: completeTk,
+			})
+		}
 	}
 
 	m.mu.Lock()

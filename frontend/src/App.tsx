@@ -64,7 +64,7 @@ function App() {
   const sftp = useSftp(sessions.active, drawer, notify);
 
   const activeTerminal = useTerminal(sessions.activeTab, profileState.settings, notify, sidebarCollapsed, splitPane);
-  const { writeOutput, disposeTerminal, findNext, focusTerminal, refitTerminal } = activeTerminal;      
+  const { writeOutput, disposeTerminal, findNext, focusTerminal, refitTerminal, reattachTerminal } = activeTerminal;      
   terminalBridge.current.disposeTerminal = disposeTerminal;
 
   const handleTearOff = useCallback((tab: Tab) => {
@@ -81,8 +81,9 @@ function App() {
   const handleDockFloating = useCallback((id: string) => {
     setFloatingTabIds((prev) => prev.filter((fid) => fid !== id));
     sessions.setActiveTab(id);
-    setTimeout(() => refitTerminal(id), 50);
-  }, [refitTerminal, sessions.setActiveTab]);
+    // reattachTerminal is called from FloatingTerminal's cleanup effect,
+    // which includes a delayed refitTerminal — no need to call it here.
+  }, [sessions.setActiveTab]);
 
   const handleCloseFloating = useCallback(async (id: string) => {
     await sessions.closeTab(id);
@@ -235,13 +236,11 @@ function App() {
           refitTerminal={refitTerminal}
         />
       </main>
-
       {floatingTabIds.map((id) => {
         const tab = sessions.tabs.find((t) => t.id === id);
         if (!tab) return null;
-        return <FloatingTerminal key={id} tab={tab} terminalHosts={activeTerminal.terminalHosts} onDock={handleDockFloating} onClose={handleCloseFloating} refitTerminal={refitTerminal} />;
+        return <FloatingTerminal key={id} tab={tab} terminalHosts={activeTerminal.terminalHosts} onDock={handleDockFloating} onClose={handleCloseFloating} refitTerminal={refitTerminal} reattachTerminal={reattachTerminal} />;
       })}
-
       {globalSearchOpen && <GlobalSearchModal query={globalQuery} onQuery={setGlobalQuery} results={globalResults} onClose={() => setGlobalSearchOpen(false)} />}
       {terminalSearchOpen && <TerminalSearchModal query={terminalSearch} onQuery={setTerminalSearch} onNext={() => activeTerminal.findNext(sessions.activeTab, terminalSearch)} onClose={() => setTerminalSearchOpen(false)} />}
       {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={async (id) => { await profileState.deleteProfile(id); setProfileModal(null); }} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify("Profile copied. Saved credentials are not copied.", "info"); }} />}

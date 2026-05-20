@@ -199,7 +199,15 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 	go m.forwardOutput(id, stderr)
 	go m.keepalive(id)
 	go func() {
-		panicHandler(id, m)
+		defer func() {
+			if r := recover(); r != nil {
+				m.emit("terminal:error", map[string]any{
+					"sessionId": id,
+					"error":     fmt.Sprintf("internal panic: %v", r),
+				})
+				m.Disconnect(id)
+			}
+		}()
 		err := shell.Wait()
 		if err != nil && !errors.Is(err, io.EOF) {
 			m.emit("terminal:error", map[string]any{"sessionId": id, "error": err.Error()})
@@ -625,6 +633,7 @@ func panicHandler(sessionID string, m *Manager) {
 			"sessionId": sessionID,
 			"error":     fmt.Sprintf("internal panic: %v", r),
 		})
+		m.Disconnect(sessionID)
 	}
 }
 
