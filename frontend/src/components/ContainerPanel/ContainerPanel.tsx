@@ -51,8 +51,11 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   const activeIdRef = useRef(props.active?.id);
   activeIdRef.current = props.active?.id;
 
+  const logContainerIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     const off = EventsOn("docker:log", (data: any) => {
+      if (data.containerID && data.containerID !== logContainerIdRef.current) return;
       if (data.done === "true") {
         setLogStreaming(false);
         return;
@@ -67,6 +70,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   const viewLogs = useCallback(async (c: types.ContainerInfo) => {
     if (!props.active?.id) return;
     setLogContainer(c);
+    logContainerIdRef.current = c.id;
     setLogs("");
     setLogStreaming(true);
     try {
@@ -82,6 +86,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
       StopContainerLogs(activeIdRef.current, logContainer.id).catch(() => {});
     }
     setLogContainer(null);
+    logContainerIdRef.current = null;
     setLogs("");
     setLogStreaming(false);
   }, [logContainer]);

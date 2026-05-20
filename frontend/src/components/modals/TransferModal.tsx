@@ -102,11 +102,11 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
     const files = localFiles.filter((f) => selectedLocal.has(f.path) && !f.isDir);
     for (const file of files) {
       const remoteTarget = remotePath.replace(/\/$/, "") + "/" + file.name;
-      setHistory((prev) => [{ name: file.name, direction: "upload" as const, time: new Date() }, ...prev].slice(0, 50));
       try {
         await UploadFile(active.id, file.path, remoteTarget);
+        setHistory((prev) => [{ name: file.name, direction: "upload" as const, time: new Date() }, ...prev].slice(0, 50));
       } catch (err) {
-        console.error("Upload failed:", err);
+        setHistory((prev) => [{ name: file.name, direction: "upload" as const, time: new Date(), failed: true }, ...prev].slice(0, 50));
       }
     }
     loadRemoteDir(remotePath);
@@ -117,11 +117,11 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
     const files = remoteFiles.filter((f) => selectedRemote.has(f.path) && !f.isDir);
     for (const file of files) {
       const localTarget = localPath.replace(/\/$/, "") + "/" + file.name;
-      setHistory((prev) => [{ name: file.name, direction: "download" as const, time: new Date() }, ...prev].slice(0, 50));
       try {
         await DownloadFile(active.id, file.path, localTarget);
+        setHistory((prev) => [{ name: file.name, direction: "download" as const, time: new Date() }, ...prev].slice(0, 50));
       } catch (err) {
-        console.error("Download failed:", err);
+        setHistory((prev) => [{ name: file.name, direction: "download" as const, time: new Date(), failed: true }, ...prev].slice(0, 50));
       }
     }
     loadLocalDir(localPath);
@@ -218,9 +218,9 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
           })}
           {history.map((h, i) => (
             <div key={i} className="transfer-progress-item" style={{ opacity: 0.5 }}>
-              {h.direction === "upload" ? <ArrowUp size={11} className="text-ok shrink-0" /> : <ArrowDown size={11} className="text-ok shrink-0" />}
+              {h.direction === "upload" ? <ArrowUp size={11} className={h.failed ? "text-bad shrink-0" : "text-ok shrink-0"} /> : <ArrowDown size={11} className={h.failed ? "text-bad shrink-0" : "text-ok shrink-0"} />}
               <span className="min-w-0 flex-1 truncate text-[10px]">{h.name}</span>
-              <span className="text-[9px] text-ok shrink-0">{t(lang, "transferComplete")}</span>
+              <span className={h.failed ? "text-[9px] text-bad shrink-0" : "text-[9px] text-ok shrink-0"}>{h.failed ? t(lang, "transferFailed") : t(lang, "transferComplete")}</span>
             </div>
           ))}
         </div>
@@ -233,4 +233,5 @@ type TransferRecord = {
   name: string;
   direction: "upload" | "download";
   time: Date;
+  failed?: boolean;
 };

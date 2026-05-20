@@ -30,7 +30,7 @@ export type LangKey =
   | "tunnelRules" | "addTunnel" | "tunnelType" | "tunnelLocal" | "tunnelRemote" | "tunnelDynamic" | "tunnelBindHost" | "removeTunnel" | "tunnelAdded"
   | "proxyJump"
   | "presetWeb" | "presetMySQL" | "presetRedis" | "presetSOCKS"
-  | "transfer" | "transferTitle" | "noActiveTransfer" | "transferProgress" | "transferComplete"
+  | "transfer" | "transferTitle" | "noActiveTransfer" | "transferProgress" | "transferComplete" | "transferFailed"
   | "memoryDetail" | "topMemProcesses" | "close"
   | "defaultGroup" | "allGroups"
   | "logs" | "logFiles" | "noLogFiles" | "selectLogFile" | "runAll"
@@ -164,6 +164,7 @@ const en: Record<LangKey, string> = {
   noActiveTransfer: "No active transfers",
   transferProgress: "Transferring",
   transferComplete: "Transfer complete",
+  transferFailed: "Transfer failed",
   memoryDetail: "Memory Detail",
   topMemProcesses: "Top Memory Processes",
   close: "Close",
@@ -335,6 +336,7 @@ const zhCN: Record<LangKey, string> = {
   noActiveTransfer: "暂无传输任务",
   transferProgress: "传输中",
   transferComplete: "传输完成",
+  transferFailed: "传输失败",
   memoryDetail: "内存详情",
   topMemProcesses: "内存占用排行",
   close: "关闭",

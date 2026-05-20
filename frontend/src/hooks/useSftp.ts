@@ -12,20 +12,24 @@ export function useSftp(active?: Tab, drawer?: string, notify?: (text: string, t
   notifyRef.current = notify;
   const remotePathRef = useRef(remotePath);
   remotePathRef.current = remotePath;
+  const fetchSeq = useRef(0);
 
   const refreshSftp = useCallback(async (path = remotePathRef.current) => {
     if (!active?.id) return;
+    const seq = ++fetchSeq.current;
     setSftpBusy(true);
     try {
       const files = await ListRemoteDir(active.id, path);
+      if (seq !== fetchSeq.current) return;
       const cacheKey = `${active.id}:${path}`;
       fileCache.current[cacheKey] = files;
       setRemoteFiles(files);
       setRemotePath(path);
     } catch (err) {
+      if (seq !== fetchSeq.current) return;
       notifyRef.current?.(String(err), "error");
     } finally {
-      setSftpBusy(false);
+      if (seq === fetchSeq.current) setSftpBusy(false);
     }
   }, [active?.id]);
 

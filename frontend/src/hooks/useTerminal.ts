@@ -407,10 +407,7 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
 
   const getTerminalLines = useCallback((id: string, lineCount: number): string => {
     const term = terminals.current[id];
-    if (!term) {
-      console.log("[getTerminalLines] no terminal for id:", id, "available ids:", Object.keys(terminals.current));
-      return "";
-    }
+    if (!term) return "";
     try {
       const buffer = term.buffer.active;
       const lines: string[] = [];
@@ -423,11 +420,8 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
           if (text.trim()) lines.push(text);
         }
       }
-      const result = lines.slice(-lineCount).join("\n");
-      console.log("[getTerminalLines] id:", id, "totalLines:", totalLines, "nonEmptyLines:", lines.length, "resultLen:", result.length, "preview:", result.slice(0, 100));
-      return result;
-    } catch (err) {
-      console.error("[getTerminalLines] error:", err);
+      return lines.slice(-lineCount).join("\n");
+    } catch {
       return "";
     }
   }, []);
