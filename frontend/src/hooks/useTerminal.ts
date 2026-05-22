@@ -174,7 +174,6 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
       delete bufferedOutput.current[activeTab];
 
       fitAndResize();
-      addTimer(100, fitAndResize);
     }
 
     const resize = () => {
@@ -202,7 +201,8 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
       delete cleanupFns.current[activeTab];
       delete cmdBuffer.current[activeTab];
     };
-  }, [activeTab, addTimer]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   useEffect(() => {
     if (!splitPane) return;
@@ -250,20 +250,33 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
       term.options.fontSize = settings.terminal.fontSize;
       term.options.lineHeight = settings.terminal.lineHeight;
     });
-    addTimer(50, () => {
-      Object.values(fits.current).forEach((fit) => {
-        try { fit.fit(); } catch {}
-      });
-    });
-  }, [settings, addTimer]);
+  }, [settings]);
 
   useEffect(() => {
-    addTimer(220, () => {
-      Object.values(fits.current).forEach((fit) => {
-        try { fit.fit(); } catch {}
+    const ids = Object.keys(terminals.current);
+    if (!ids.length) return;
+    const timer = window.setTimeout(() => {
+      ids.forEach((id) => {
+        const fit = fits.current[id];
+        const term = terminals.current[id];
+        const host = terminalHosts.current[id];
+        if (!fit || !term || !host) return;
+        if (host.clientWidth <= 0 || host.clientHeight <= 0) return;
+        try {
+          fit.fit();
+          const { cols, rows } = term;
+          const prev = lastDimensions.current[id];
+          if (!prev || prev.cols !== cols || prev.rows !== rows) {
+            lastDimensions.current[id] = { cols, rows };
+            ResizeTerminal(id, cols, rows).catch(() => {
+              delete lastDimensions.current[id];
+            });
+          }
+        } catch {}
       });
-    });
-  }, [sidebarCollapsed, addTimer]);
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [sidebarCollapsed]);
 
   const writeOutput = useCallback((sessionId: string, data: string) => {
     const term = terminals.current[sessionId];
@@ -288,6 +301,8 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
   }, [applyHighlight]);
 
   const disposeTerminal = useCallback((id: string) => {
+    observers.current[id]?.disconnect();
+    delete observers.current[id];
     cleanupFns.current[id]?.();
     delete cleanupFns.current[id];
     webgl.current[id]?.dispose();
@@ -301,12 +316,14 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
     delete searches.current[id];
     delete bufferedOutput.current[id];
     delete pendingOutput.current[id];
+    delete pendingResizeTimers.current[id];
+    delete refitTimers.current[id];
     delete pendingFitFrames.current[id];
     delete pendingWriteFrames.current[id];
-    delete pendingResizeTimers.current[id];
     delete cmdBuffer.current[id];
     delete lastDimensions.current[id];
     delete lastHostSize.current[id];
+    delete terminalHosts.current[id];
   }, []);
 
   const findNext = useCallback((id: string, query: string) => {
@@ -314,6 +331,7 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
     searches.current[id]?.findNext(query);
   }, []);
 
+  const refitTimers = useRef<Record<string, number>>({});
   const refitTerminal = useCallback((id: string, _depth = 0) => {
     const fit = fits.current[id];
     const term = terminals.current[id];
@@ -325,51 +343,36 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
       }
       return;
     }
-    try {
-      fit.fit();
-      const { cols, rows } = term;
-      const prev = lastDimensions.current[id];
-      if (!prev || prev.cols !== cols || prev.rows !== rows) {
-        lastDimensions.current[id] = { cols, rows };
-        ResizeTerminal(id, cols, rows).catch(() => {
-          delete lastDimensions.current[id];
-        });
-      }
-      term.refresh(0, term.buffer.active.length - 1);
-    } catch {}
+    window.clearTimeout(refitTimers.current[id]);
+    refitTimers.current[id] = window.setTimeout(() => {
+      delete refitTimers.current[id];
+      try {
+        fit.fit();
+        const { cols, rows } = term;
+        const prev = lastDimensions.current[id];
+        if (!prev || prev.cols !== cols || prev.rows !== rows) {
+          lastDimensions.current[id] = { cols, rows };
+          ResizeTerminal(id, cols, rows).catch(() => {
+            delete lastDimensions.current[id];
+          });
+        }
+      } catch {}
+    }, 80);
   }, []);
 
   const reattachTerminal = useCallback((id: string, newHost: HTMLDivElement) => {
     const term = terminals.current[id];
     if (!term || !term.element) return;
 
-    // 1. Dispose WebGL renderer before moving DOM to prevent stale WebGL context
-    if (webgl.current[id]) {
-      try {
-        webgl.current[id].dispose();
-      } catch {}
-      delete webgl.current[id];
-    }
-
-    // 2. Move the terminal's root element (.xterm) to the new host
-    // Use term.element directly — it always references the correct DOM node
-    // regardless of what terminalHosts.current points to (which may have been
-    // overwritten by TerminalArea's ref callback during React re-render)
+    // Move the terminal's root element (.xterm) to the new host
+    // without disposing WebGL — xterm.js WebGL renderer handles
+    // canvas resize automatically when the container changes.
     if (term.element.parentElement !== newHost) {
       newHost.appendChild(term.element);
     }
     terminalHosts.current[id] = newHost;
 
-    // 3. Reload WebGL addon — this creates a fresh canvas and WebGL context
-    // in the new DOM location, then force a full repaint from the in-memory buffer
-    try {
-      const gl = new WebglAddon();
-      term.loadAddon(gl);
-      webgl.current[id] = gl;
-    } catch {}
-    term.refresh(0, term.buffer.active.length - 1);
-
-    // 4. Setup ResizeObserver for the new host
+    // Setup ResizeObserver for the new host
     if (observers.current[id]) {
       observers.current[id].disconnect();
     }
@@ -388,7 +391,7 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
       delete observers.current[id];
     };
 
-    // 5. Delayed refit — wait for the container to get real dimensions after React layout
+    // Delayed refit — wait for the container to get real dimensions after React layout
     requestAnimationFrame(() => {
       setTimeout(() => refitTerminal(id), 80);
     });
