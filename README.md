@@ -194,3 +194,11 @@ build/bin/gxShell.exe
 - SSH Host Key 存储在 `known_hosts` 文件，首次信任，变更拒绝
 - AI 工具执行受危险命令黑名单和敏感路径检查保护
 - API Key 在前端脱敏展示，保存时识别 masked key 不覆盖真实密钥
+
+---
+
+## 许可证 / License
+
+本项目采用 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) 许可证。
+
+This project is licensed under the [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International](https://creativecommons.org/licenses/by-nc-sa/4.0/) license.
