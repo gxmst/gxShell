@@ -1,18 +1,22 @@
+/* ── Terminal Pane ────────────────────────────────────── */
+
 .terminal-pane {
   display: grid;
-  grid-template-rows: 42px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   background: var(--terminal);
 }
 
+/* ── Tab Bar ─────────────────────────────────────────── */
+
 .tabbar {
   display: flex;
   min-width: 0;
   align-items: flex-end;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   background: linear-gradient(180deg, var(--terminal-top), var(--terminal));
-  padding: 5px 7px 0;
+  padding: 6px 8px 0;
 }
 
 .tabs-scroll {
@@ -20,71 +24,146 @@
   min-width: 0;
   flex: 1;
   overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabs-scroll::-webkit-scrollbar {
+  display: none;
 }
 
 .tab {
   position: relative;
   display: flex;
-  height: 36px;
-  max-width: 220px;
+  height: 34px;
+  max-width: 200px;
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
   border: 1px solid transparent;
   border-bottom: 0;
-  border-radius: 10px 10px 0 0;
+  border-radius: 9px 9px 0 0;
   padding: 0 10px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1;
-  transition: 140ms ease;
+  transition: all 200ms var(--ease);
 }
 
 .tab:hover {
-  background: color-mix(in srgb, var(--panel-raised) 52%, transparent);
+  background: color-mix(in srgb, var(--panel-raised) 55%, transparent);
   color: var(--text);
 }
 
 .tab-active {
   border-color: var(--border);
-  background: color-mix(in srgb, var(--terminal) 76%, var(--panel-raised));
+  background: var(--terminal);
   color: var(--text);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
-.tab svg:last-child {
-  opacity: .32;
-  transition: 120ms ease;
+.tab-active::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: color-mix(in srgb, var(--accent) 75%, transparent);
 }
 
-.tab:hover svg:last-child {
+.tab svg[data-lucide="x"] {
+  opacity: 0;
+  color: var(--muted);
+  transition: opacity 200ms var(--ease), color 150ms var(--ease);
+  flex-shrink: 0;
+}
+
+.tab:hover svg[data-lucide="x"] {
   opacity: 1;
 }
 
+.tab svg[data-lucide="x"]:hover {
+  color: var(--text);
+}
+
+/* ── Tab Actions ─────────────────────────────────────── */
+
 .tab-actions {
   display: flex;
+  gap: 2px;
   align-items: center;
-  gap: 4px;
-  margin: 0 0 6px 6px;
+  padding: 0 2px 4px;
+  flex-shrink: 0;
 }
 
 .tab-action {
   display: inline-flex;
-  width: 26px;
-  height: 26px;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
-  border: 1px solid transparent;
+  border-radius: 7px;
   color: var(--muted);
-  transition: 140ms ease;
+  gap: 2px;
+  transition: all 200ms var(--ease);
 }
 
-.tab-action:hover {
-  border-color: var(--border);
-  background: color-mix(in srgb, var(--panel-raised) 60%, transparent);
+.tab-action:hover:not(:disabled) {
   color: var(--text);
+  background: color-mix(in srgb, var(--panel-raised) 65%, transparent);
 }
+
+.tab-action:disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+/* Dropdown menu */
+.tab-action-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 160px;
+  border-radius: 10px;
+  background: var(--panel-raised);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-lg);
+  z-index: 50;
+  overflow: hidden;
+  animation: dropdown-in 150ms var(--ease);
+}
+
+@keyframes dropdown-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.tab-action-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 14px;
+  color: var(--text);
+  font-size: 12px;
+  transition: background 150ms var(--ease);
+  white-space: nowrap;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+
+.tab-action-item:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.tab-action-item svg {
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+/* ── Terminal Stage ─────────────────────────────────── */
 
 .terminal-stage {
   position: relative;
@@ -94,16 +173,44 @@
   background: var(--terminal);
 }
 
+/* ── Terminal Host ───────────────────────────────────── */
+
+.terminal-host {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 0 0 0 6px;
+  contain: layout style paint;
+}
+
+.terminal-host > div {
+  width: 100%;
+  height: 100%;
+  padding: 6px 8px;
+}
+
+.terminal-hidden {
+  visibility: hidden;
+  position: absolute;
+  pointer-events: none;
+  inset: 0;
+}
+
 .terminal-split-pane {
   visibility: visible !important;
   position: relative !important;
   pointer-events: auto !important;
 }
 
+/* ── Split Divider ───────────────────────────────────── */
+
 .split-divider {
   background: var(--border);
   cursor: col-resize;
-  transition: background 120ms ease;
+  transition: background 200ms var(--ease);
 }
 
 .split-divider:hover {
@@ -118,23 +225,7 @@
   display: none;
 }
 
-.terminal-host {
-  box-sizing: border-box;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-  overflow: hidden;
-  padding: 0 0 0 6px;
-  contain: layout style;
-}
-
-.terminal-hidden {
-  visibility: hidden;
-  position: absolute;
-  pointer-events: none;
-  inset: 0;
-}
+/* ── Empty State ─────────────────────────────────────── */
 
 .terminal-empty {
   display: flex;
@@ -152,14 +243,20 @@
   max-width: 420px;
   flex-direction: column;
   align-items: center;
-  padding: 24px;
+  padding: 32px;
+  border-radius: 14px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
 }
 
-.xterm {
-  /* height: 100%; removed to fix fit logic */
-  max-width: 100%;
-  padding: 0;
-  font-weight: 400;
+/* GPU compositing hints for xterm.js */
+.xterm-viewport {
+  will-change: transform;
+}
+
+.xterm-screen {
+  isolation: isolate;
 }
 
 .xterm .xterm-viewport {
@@ -177,6 +274,8 @@
   display: none;
 }
 
+/* ── Log Viewer Overlay ──────────────────────────────── */
+
 .log-viewer-overlay {
   position: absolute;
   inset: 0;
@@ -192,7 +291,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--terminal-top);
 }
@@ -209,7 +308,7 @@
   min-height: 0;
   overflow: auto;
   margin: 0;
-  padding: 10px;
+  padding: 12px;
   font-family: var(--font-mono, "JetBrains Mono", "Cascadia Code", Consolas, monospace);
   font-size: 12px;
   line-height: 1.6;
@@ -218,16 +317,18 @@
   word-break: break-all;
 }
 
+/* ── Floating Terminal ───────────────────────────────── */
+
 .floating-terminal {
   position: fixed;
   z-index: 8000;
   display: flex;
   flex-direction: column;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1px solid var(--border-strong);
   background: var(--terminal);
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.55), 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
-  animation: ft-fade-in 180ms ease;
+  box-shadow: var(--shadow-lg), 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
+  animation: ft-fade-in 200ms var(--ease);
   overflow: hidden;
 }
 
@@ -240,8 +341,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 36px;
-  padding: 0 10px;
+  height: 38px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--border);
   background: linear-gradient(180deg, var(--terminal-top), var(--terminal));
   cursor: grab;
@@ -304,10 +405,10 @@
   height: 8px;
   border-right: 2px solid var(--muted);
   border-bottom: 2px solid var(--muted);
-  opacity: 0.4;
-  transition: opacity 120ms ease;
+  opacity: 0.3;
+  transition: opacity 200ms var(--ease);
 }
 
 .floating-terminal-resize:hover::before {
-  opacity: 0.8;
+  opacity: 0.7;
 }

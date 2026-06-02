@@ -17,6 +17,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
   onClose: (id: string) => void;
   onReconnect: (tab: Tab) => void;
   onNewConnection: () => void;
+  onNewLocal?: () => void;
   onTearOff?: (tab: Tab) => void;
   language: string;
   logViewer?: { name: string; content: string } | null;
@@ -64,7 +65,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
 
   return (
     <section className="terminal-pane">
-      <TabBar tabs={visibleTabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} onTearOff={props.onTearOff} onSplitToggle={(tabId, direction) => {
+      <TabBar tabs={visibleTabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} onTearOff={props.onTearOff} onNewConnection={props.onNewConnection} onNewLocal={props.onNewLocal} language={lang} onSplitToggle={(tabId, direction) => {
         if (!props.onSplitChange) return;
         if (isSplitVisible) {
           const leftId = split!.left;

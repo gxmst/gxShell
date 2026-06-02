@@ -35,7 +35,7 @@ export type LangKey =
   | "defaultGroup" | "allGroups"
   | "logs" | "logFiles" | "noLogFiles" | "selectLogFile" | "runAll"
   | "ai" | "aiAssistant" | "aiSettings" | "aiProvider" | "aiModel" | "aiApiKey" | "aiEndpoint" | "aiCustom" | "aiSend" | "aiThinking" | "aiNoConfig" | "aiNoConfigHint" | "aiContext" | "aiTokenUsage" | "aiClear" | "aiDiagnose" | "aiInputPlaceholder" | "aiFetchModels" | "aiSelectModel" | "aiNewChat" | "aiChatHistory" | "aiNoChats"
-  | "containers" | "noContainers" | "showAll" | "viewLogs" | "restart" | "stop" | "start" | "remove" | "noLogs" | "noActiveSession";
+  | "containers" | "noContainers" | "showAll" | "viewLogs" | "restart" | "stop" | "start" | "remove" | "noLogs" | "noActiveSession" | "localTerminal";
 
 const en: Record<LangKey, string> = {
   monitor: "Monitor",
@@ -207,6 +207,7 @@ const en: Record<LangKey, string> = {
   remove: "Remove",
   noLogs: "No logs available",
   noActiveSession: "No active session",
+  localTerminal: "Local Terminal",
 };
 
 const zhCN: Record<LangKey, string> = {
@@ -379,6 +380,7 @@ const zhCN: Record<LangKey, string> = {
   remove: "删除",
   noLogs: "暂无日志",
   noActiveSession: "无活动会话",
+  localTerminal: "本地终端",
 };
 
 const locales: Record<string, Record<LangKey, string>> = { en, "zh-CN": zhCN };

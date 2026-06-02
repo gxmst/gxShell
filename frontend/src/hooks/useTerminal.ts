@@ -29,6 +29,7 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
   const pendingOutput = useRef<Record<string, string[]>>({});
   const pendingWriteFrames = useRef<Record<string, number>>({});
   const lastHostSize = useRef<Record<string, string>>({});
+  const throughputRef = useRef<Record<string, number>>({});
 
   const addTimer = useCallback((ms: number, fn: () => void) => {
     const id = window.setTimeout(() => {
@@ -55,6 +56,16 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
     const level = highlightLevelRef.current;
     if (level === "off") return data;
     return highlight(data, level);
+  }, []);
+
+  // Reset throughput counters every second; auto-disable highlight under sustained load
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      for (const key of Object.keys(throughputRef.current)) {
+        throughputRef.current[key] = 0;
+      }
+    }, 1000);
+    return () => window.clearInterval(id);
   }, []);
 
   useEffect(() => {
@@ -122,6 +133,13 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
 
       try {
         const gl = new WebglAddon();
+        gl.onContextLoss(() => {
+          // Dispose the WebGL addon; xterm.js automatically falls back
+          // to the canvas renderer, avoiding flickering / white screens.
+          gl.dispose();
+          delete webgl.current[activeTab];
+          notifyRef.current("WebGL context lost, using canvas renderer", "info");
+        });
         term.loadAddon(gl);
         webgl.current[activeTab] = gl;
       } catch (err) {
@@ -281,6 +299,8 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
   const writeOutput = useCallback((sessionId: string, data: string) => {
     const term = terminals.current[sessionId];
     if (term) {
+      // Track bytes/sec per session for adaptive highlight
+      throughputRef.current[sessionId] = (throughputRef.current[sessionId] || 0) + data.length;
       const queue = pendingOutput.current[sessionId] || [];
       queue.push(data);
       pendingOutput.current[sessionId] = queue;
@@ -290,7 +310,13 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
         const chunks = pendingOutput.current[sessionId];
         delete pendingOutput.current[sessionId];
         if (!chunks?.length) return;
-        terminals.current[sessionId]?.write(applyHighlight(sessionId, chunks.join("")));
+        // Skip highlight under high throughput (>32 KB/s) to keep rendering smooth
+        const rate = throughputRef.current[sessionId] || 0;
+        const shouldHighlight = rate < 32768;
+        const combined = chunks.join("");
+        terminals.current[sessionId]?.write(
+          shouldHighlight ? applyHighlight(sessionId, combined) : combined
+        );
       });
     } else {
       const buffer = bufferedOutput.current[sessionId] || [];
@@ -324,6 +350,7 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
     delete lastDimensions.current[id];
     delete lastHostSize.current[id];
     delete terminalHosts.current[id];
+    delete throughputRef.current[id];
   }, []);
 
   const findNext = useCallback((id: string, query: string) => {
