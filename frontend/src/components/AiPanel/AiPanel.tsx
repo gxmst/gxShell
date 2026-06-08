@@ -37,6 +37,7 @@ type ChatSession = {
   title: string;
   messages: ChatMsg[];
   createdAt: number;
+  terminalSessionId?: string;
 };
 
 let sessionCounter = 0;
@@ -49,7 +50,7 @@ function MarkdownContent({ content }: { content: string }) {
   return <div className="ai-markdown" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-function ToolCallBlock({ tc, result, onApprove, sessionId }: { tc: ToolCallData; result?: ToolResultData; onApprove: () => void; sessionId: string }) {
+function ToolCallBlock({ tc, result, onApprove, lang }: { tc: ToolCallData; result?: ToolResultData; onApprove: () => void; lang: string }) {
   let args: any = {};
   try { args = JSON.parse(tc.function.arguments); } catch {}
 
@@ -61,16 +62,16 @@ function ToolCallBlock({ tc, result, onApprove, sessionId }: { tc: ToolCallData;
     <div className="ai-tool-call">
       <div className="ai-tool-call-header">
         <Play size={10} className="text-accent" />
-        <span className="text-[10px] font-semibold">{isCommand ? "🔧 Execute" : isReadFile ? "📄 Read File" : tc.function.name}</span>
+        <span className="text-[10px] font-semibold">{isCommand ? t(lang, "aiToolExecute") : isReadFile ? t(lang, "aiToolReadFile") : tc.function.name}</span>
       </div>
       <code className="ai-tool-call-cmd">{cmdText}</code>
       {result?.executed && (
         <pre className="ai-tool-call-result">{result.content.length > 2000 ? result.content.slice(0, 2000) + "\n... (truncated)" : result.content}</pre>
       )}
-      {result?.executing && <div className="ai-tool-call-status">⏳ Executing...</div>}
+      {result?.executing && <div className="ai-tool-call-status">{t(lang, "aiToolRunning")}</div>}
       {!result?.executed && !result?.executing && (
         <div className="ai-tool-call-actions">
-          <button className="ai-tool-approve-btn" onClick={onApprove}><Check size={10} /> Run</button>
+          <button className="ai-tool-approve-btn" onClick={onApprove}><Check size={10} /> {t(lang, "aiRunTool")}</button>
         </div>
       )}
     </div>
@@ -103,11 +104,10 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const activeSessionIdRef = useRef(activeSessionId);
   activeSessionIdRef.current = activeSessionId;
-  const pendingToolCallsRef = useRef<ToolCallData[]>([]);
-  const pendingAssistantMsgRef = useRef<ChatMsg | null>(null);
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const messages = activeSession?.messages || [];
+  const boundTerminalSessionId = activeSession?.terminalSessionId || props.activeTabId;
 
   const MAX_STORED_SESSIONS = 20;
   const MAX_MSG_LENGTH = 8000;
@@ -167,7 +167,7 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
     }));
 
     try {
-      const output = await AiExecuteTool(sessionId, tc.id, tc.function.name, tc.function.arguments);
+      const output = await AiExecuteTool(sessionId, tc.id);
       setSessions((prev) => prev.map((s) => {
         if (s.id !== sid) return s;
         const msgs = [...s.messages];
@@ -242,10 +242,12 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
     }
 
     setStreaming(true);
-    const terminalCtx = props.getTerminalLines(props.activeTabId, 10);
+    const terminalSessionId = session.terminalSessionId || props.activeTabId;
+    const terminalCtx = props.getTerminalLines(terminalSessionId, 10);
     const req = new types.AiChatRequest({
       messages: apiMessages,
       context: terminalCtx,
+      sessionId: terminalSessionId,
     });
     AiContinueChat(req).catch((err) => {
       setStreaming(false);
@@ -354,27 +356,28 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
     try {
       await SaveAiConfig("openai", apiKey, endpoint, model);
       setShowSettings(false);
-      onNotifyRef.current("AI settings saved", "success");
+      onNotifyRef.current(t(lang, "aiSettingsSaved"), "success");
     } catch (err) {
       onNotifyRef.current("Save failed: " + String(err), "error");
     }
-  }, [apiKey, endpoint, model]);
+  }, [apiKey, endpoint, model, lang]);
 
   const fetchModels = useCallback(async () => {
     setFetchingModels(true);
     try {
       const models = await ListAiModels("openai", apiKey, endpoint);
       setModelList(models || []);
-      if (!models || models.length === 0) onNotifyRef.current("No models found", "info");
+      if (!models || models.length === 0) onNotifyRef.current(t(lang, "aiNoModels"), "info");
     } catch (err) { onNotifyRef.current(String(err), "error"); }
     finally { setFetchingModels(false); }
-  }, [apiKey, endpoint]);
+  }, [apiKey, endpoint, lang]);
 
   const sendChat = useCallback((userText: string, extraContext?: string) => {
     if (!userText.trim() || streaming) return;
-    if (!model) { onNotifyRef.current("AI model not configured — click ⚙ to set up", "error"); return; }
+    if (!model) { onNotifyRef.current(t(lang, "aiNotConfigured"), "error"); return; }
 
-    const terminalCtx = extraContext || props.getTerminalLines(props.activeTabId, 10);
+    const terminalSessionId = activeSession?.terminalSessionId || props.activeTabId;
+    const terminalCtx = extraContext || props.getTerminalLines(terminalSessionId, 10);
     let displayContent = userText.trim();
     let apiContent = userText.trim();
     if (terminalCtx) apiContent += "\n\n[Terminal Output]\n```\n" + terminalCtx + "\n```";
@@ -386,7 +389,7 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
       if (s.id !== activeSessionId) return s;
       const newMsgs = [...s.messages, userMsg, assistantMsg];
       const title = s.messages.length === 0 ? displayContent.slice(0, 30) + (displayContent.length > 30 ? "..." : "") : s.title;
-      return { ...s, messages: newMsgs, title };
+      return { ...s, messages: newMsgs, title, terminalSessionId: s.terminalSessionId || terminalSessionId };
     }));
 
     setInput("");
@@ -397,18 +400,19 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
     const req = new types.AiChatRequest({
       messages: currentMsgs.filter((m) => m.content).map((m) => new types.AiMessage({ role: m.role, content: m.content })),
       context: terminalCtx,
+      sessionId: terminalSessionId,
     });
     AiChat(req).catch((err) => { setStreaming(false); onNotifyRef.current("Chat failed: " + String(err), "error"); });
-  }, [messages, streaming, activeSessionId, model, props.getTerminalLines, props.activeTabId]);
+  }, [activeSession?.terminalSessionId, messages, streaming, activeSessionId, model, lang, props.getTerminalLines, props.activeTabId]);
 
   const send = useCallback(() => { sendChat(input); }, [input, sendChat]);
 
   const diagnose = useCallback(() => {
     if (streaming) return;
-    const ctx = props.getTerminalLines(props.activeTabId, 30);
-    const prompt = ctx ? t(lang, "aiDiagnose") + "\n\n--- Terminal Output ---\n" + ctx : t(lang, "aiDiagnose") + " (no terminal output available)";
+    const ctx = props.getTerminalLines(boundTerminalSessionId, 30);
+    const prompt = ctx ? t(lang, "aiDiagnose") + "\n\n--- Terminal Output ---\n" + ctx : t(lang, "aiDiagnose") + " (" + t(lang, "aiNoTerminalOutput") + ")";
     sendChat(prompt, ctx);
-  }, [streaming, lang, sendChat, props.getTerminalLines, props.activeTabId]);
+  }, [streaming, lang, sendChat, props.getTerminalLines, boundTerminalSessionId]);
 
   const onKeyDown = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
 
@@ -452,13 +456,13 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
             <button className="mini-btn" onClick={() => setShowSettings(false)}><X size={10} /></button>
           </div>
           <div className="ai-settings-popup-body">
-            <Label text="Preset">
+            <Label text={t(lang, "aiPreset")}>
               <select className="input compact-input" value={endpoint === "https://api.deepseek.com/v1" ? "deepseek" : "custom"} onChange={(e) => {
                 if (e.target.value === "deepseek") { setEndpoint("https://api.deepseek.com/v1"); setModel("deepseek-chat"); }
                 else { setEndpoint(""); setModel(""); }
                 setModelList([]);
               }}>
-                <option value="custom">OpenAI Compatible</option>
+                <option value="custom">{t(lang, "aiOpenAICompatible")}</option>
                 <option value="deepseek">DeepSeek</option>
               </select>
             </Label>
@@ -504,8 +508,8 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
                   key={tc.id || j}
                   tc={tc}
                   result={msg.toolResults?.find((tr) => tr.toolCallId === tc.id)}
-                  onApprove={() => executeToolAndContinue(props.activeTabId, tc)}
-                  sessionId={props.activeTabId}
+                  onApprove={() => executeToolAndContinue(boundTerminalSessionId, tc)}
+                  lang={lang}
                 />
               ))}
             </div>
@@ -516,7 +520,7 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
       {usage && usage.totalTokens > 0 && (
         <div className="ai-usage">
           <span>{t(lang, "aiTokenUsage")}: {usage.totalTokens.toLocaleString()}</span>
-          <button className="text-[9px] opacity-60 hover:opacity-100" onClick={() => { ResetAiUsage(); setUsage(new types.AiTokenUsage()); }}>Reset</button>
+          <button className="text-[9px] opacity-60 hover:opacity-100" onClick={() => { ResetAiUsage(); setUsage(new types.AiTokenUsage()); }}>{t(lang, "aiResetUsage")}</button>
         </div>
       )}
 
@@ -524,11 +528,11 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
         {model ? (
           <span className="text-[9px] text-muted truncate">
             {model} {endpoint ? `@ ${endpoint.replace(/^https?:\/\//, "").split("/")[0]}` : ""}
-            {apiKey ? " 🔑" : " ⚠️ No API Key"}
-            {(() => { const tc = props.getTerminalLines(props.activeTabId, 1); return tc ? " 📺" : " 📺✗"; })()}
+            {apiKey ? ` / ${t(lang, "aiApiKeySaved")}` : ` / ${t(lang, "aiNoApiKey")}`}
+            {(() => { const tc = props.getTerminalLines(boundTerminalSessionId, 1); return tc ? ` / ${t(lang, "aiContextReady")}` : ` / ${t(lang, "aiNoContext")}`; })()}
           </span>
         ) : (
-          <span className="text-[9px] text-muted">⚠️ Not configured — click ⚙ to set up</span>
+          <span className="text-[9px] text-muted">{t(lang, "aiNotConfigured")}</span>
         )}
       </div>
 

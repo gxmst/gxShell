@@ -35,6 +35,7 @@ export type LangKey =
   | "defaultGroup" | "allGroups"
   | "logs" | "logFiles" | "noLogFiles" | "selectLogFile" | "runAll"
   | "ai" | "aiAssistant" | "aiSettings" | "aiProvider" | "aiModel" | "aiApiKey" | "aiEndpoint" | "aiCustom" | "aiSend" | "aiThinking" | "aiNoConfig" | "aiNoConfigHint" | "aiContext" | "aiTokenUsage" | "aiClear" | "aiDiagnose" | "aiInputPlaceholder" | "aiFetchModels" | "aiSelectModel" | "aiNewChat" | "aiChatHistory" | "aiNoChats"
+  | "aiToolExecute" | "aiToolReadFile" | "aiToolRunning" | "aiRunTool" | "aiPreset" | "aiOpenAICompatible" | "aiResetUsage" | "aiApiKeySaved" | "aiNoApiKey" | "aiContextReady" | "aiNoContext" | "aiNotConfigured" | "aiSettingsSaved" | "aiNoModels" | "aiNoTerminalOutput"
   | "containers" | "noContainers" | "showAll" | "viewLogs" | "restart" | "stop" | "start" | "remove" | "noLogs" | "noActiveSession" | "localTerminal";
 
 const en: Record<LangKey, string> = {
@@ -197,6 +198,21 @@ const en: Record<LangKey, string> = {
   aiNewChat: "New Chat",
   aiChatHistory: "Chat History",
   aiNoChats: "No chat history",
+  aiToolExecute: "Execute command",
+  aiToolReadFile: "Read file",
+  aiToolRunning: "Executing...",
+  aiRunTool: "Run",
+  aiPreset: "Preset",
+  aiOpenAICompatible: "OpenAI Compatible",
+  aiResetUsage: "Reset",
+  aiApiKeySaved: "API key saved",
+  aiNoApiKey: "No API key",
+  aiContextReady: "Context ready",
+  aiNoContext: "No context",
+  aiNotConfigured: "Not configured",
+  aiSettingsSaved: "AI settings saved",
+  aiNoModels: "No models found",
+  aiNoTerminalOutput: "No terminal output available",
   containers: "Containers",
   noContainers: "No containers found",
   showAll: "All",
@@ -370,6 +386,21 @@ const zhCN: Record<LangKey, string> = {
   aiNewChat: "新对话",
   aiChatHistory: "对话历史",
   aiNoChats: "暂无对话记录",
+  aiToolExecute: "执行命令",
+  aiToolReadFile: "读取文件",
+  aiToolRunning: "正在执行...",
+  aiRunTool: "运行",
+  aiPreset: "预设",
+  aiOpenAICompatible: "OpenAI 兼容",
+  aiResetUsage: "重置",
+  aiApiKeySaved: "API 密钥已保存",
+  aiNoApiKey: "无 API 密钥",
+  aiContextReady: "上下文已就绪",
+  aiNoContext: "无上下文",
+  aiNotConfigured: "未配置",
+  aiSettingsSaved: "AI 设置已保存",
+  aiNoModels: "未找到模型",
+  aiNoTerminalOutput: "无可用终端输出",
   containers: "容器",
   noContainers: "未找到容器",
   showAll: "全部",

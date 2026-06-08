@@ -2,7 +2,7 @@ import { Activity, ArrowRightLeft, Bot, Box, Command, FileText, Folder, Settings
 import { types } from "../wailsjs/go/models";
 import type { Drawer } from "./types";
 
-export const appThemes = ["Dark", "Deep Blue", "Light"];
+export const appThemes = ["Light", "Dark", "Deep Blue"];
 
 export const fontPresets = [
   "JetBrains Mono, Cascadia Code, Consolas, monospace",

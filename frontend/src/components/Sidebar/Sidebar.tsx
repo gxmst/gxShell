@@ -55,6 +55,7 @@ export function Sidebar(props: {
   activeTabId: string;
 }) {
   const lang = props.settings?.language || "en";
+  const appVersion = props.appInfo.version || "1.1";
   const navItems: Drawer[] = ["monitor", "sftp", "commands", "tunnels", "logs", "containers", "ai", "settings"];
   const [splitPct, setSplitPct] = useState(45);
   const dragRef = useRef({ active: false, startY: 0, startPct: 0 });
@@ -139,7 +140,7 @@ export function Sidebar(props: {
             <div className="brand-mark"><AppIcon /></div>
             <div className="min-w-0">
               <div className="brand-name">gxShell</div>
-              <div className="brand-meta">v1.0 · Ctrl+K</div>
+              <div className="brand-meta">v{appVersion} / Ctrl+K</div>
             </div>
             <button className="icon-btn ml-auto" onClick={() => props.setCollapsed((value) => !value)} title={t(lang, "collapse")}><MoreHorizontal size={15} /></button>
           </div>
@@ -203,7 +204,7 @@ export function Sidebar(props: {
             <div className="brand-mark"><AppIcon /></div>
             <div className="min-w-0">
               <div className="brand-name">gxShell</div>
-              <div className="brand-meta">v1.0 · Ctrl+K</div>
+              <div className="brand-meta">v{appVersion} / Ctrl+K</div>
             </div>
             <button className="icon-btn ml-auto" onClick={() => props.setCollapsed((value) => !value)} title={t(lang, "collapse")}><MoreHorizontal size={15} /></button>
           </div>

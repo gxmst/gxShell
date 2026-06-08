@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -40,13 +41,14 @@ type Session struct {
 }
 
 func NewManager(knownHostsPath string, emit func(event string, data any), confirm func(host, fingerprint string) bool) *Manager {
-        return &Manager{
-                sessions:       map[string]*Session{},
-                emit:           emit,
-                knownHostsPath: knownHostsPath,
-                confirm:        confirm,
-        }
+	return &Manager{
+		sessions:       map[string]*Session{},
+		emit:           emit,
+		knownHostsPath: knownHostsPath,
+		confirm:        confirm,
+	}
 }
+
 const maxSessions = 20
 
 func (m *Manager) Connect(profile types.Profile, timeoutSec int, cols int, rows int) (types.SessionInfo, error) {
@@ -101,7 +103,7 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 			m.failConnect(id, fmt.Errorf("jump host config error: %w", err), nil, nil, nil)
 			return info, err
 		}
-		jumpAddr := fmt.Sprintf("%s:%d", jumpProfile.Host, jumpProfile.Port)
+		jumpAddr := sshAddress(jumpProfile.Host, jumpProfile.Port)
 		jumpConn, err := net.DialTimeout("tcp", jumpAddr, time.Duration(timeoutSec)*time.Second)
 		if err != nil {
 			m.failConnect(id, fmt.Errorf("jump host connection failed: %w", err), nil, nil, nil)
@@ -115,7 +117,7 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 		}
 		jumpClient = ssh.NewClient(jumpClientConn, chans, reqs)
 
-		targetAddr := fmt.Sprintf("%s:%d", profile.Host, profile.Port)
+		targetAddr := sshAddress(profile.Host, profile.Port)
 		dialCtx, dialCancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 		targetConn, err := jumpClient.DialContext(dialCtx, "tcp", targetAddr)
 		dialCancel()
@@ -131,7 +133,7 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 		}
 		client = ssh.NewClient(targetClientConn, chans, reqs)
 	} else {
-		addr := fmt.Sprintf("%s:%d", profile.Host, profile.Port)
+		addr := sshAddress(profile.Host, profile.Port)
 		conn, err := net.DialTimeout("tcp", addr, time.Duration(timeoutSec)*time.Second)
 		if err != nil {
 			m.failConnect(id, err, nil, nil, nil)
@@ -450,7 +452,10 @@ func (m *Manager) get(id string) (*Session, error) {
 	return session, nil
 }
 
-func (m *Manager) ExecuteCommand(sessionID string, command string) (string, error) {
+func (m *Manager) ExecuteCommand(sessionID string, command string, timeout time.Duration, maxOutput int64) (string, error) {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
 	session, err := m.get(sessionID)
 	if err != nil {
 		return "", err
@@ -466,30 +471,41 @@ func (m *Manager) ExecuteCommand(sessionID string, command string) (string, erro
 		return "", fmt.Errorf("failed to create SSH session: %w", err)
 	}
 	defer sshSession.Close()
-	var stdout, stderr bytes.Buffer
-	sshSession.Stdout = &stdout
-	sshSession.Stderr = &stderr
-	err = sshSession.Run(command)
+	stdout := newLimitedBuffer(maxOutput)
+	stderr := newLimitedBuffer(maxOutput)
+	sshSession.Stdout = stdout
+	sshSession.Stderr = stderr
+
+	done := make(chan error, 1)
+	go func() {
+		done <- sshSession.Run(command)
+	}()
+
+	select {
+	case err = <-done:
+	case <-time.After(timeout):
+		_ = sshSession.Close()
+		err = errors.New("remote command timeout")
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+	}
+
 	output := stdout.String()
 	if stderrStr := stderr.String(); stderrStr != "" {
-		if output != "" {
-			output += "\n"
-		}
-		output += stderrStr
+		output = appendLine(output, stderrStr)
 	}
 	if err != nil {
 		var exitErr *ssh.ExitError
 		if errors.As(err, &exitErr) {
-			if output != "" {
-				output += "\n"
-			}
-			output += fmt.Sprintf("(exit code: %d)", exitErr.ExitStatus())
+			output = appendLine(output, fmt.Sprintf("(exit code: %d)", exitErr.ExitStatus()))
 		} else {
-			if output != "" {
-				output += "\n"
-			}
-			output += "error: " + err.Error()
+			output = appendLine(output, "error: "+err.Error())
 		}
+	}
+	if stdout.Truncated() || stderr.Truncated() {
+		output = appendLine(output, fmt.Sprintf("(output truncated after %d bytes)", maxOutput))
 	}
 	return output, nil
 }
@@ -587,7 +603,7 @@ func hostKeyCallback(profile types.Profile, knownHostsPath string, emit func(eve
 			if confirm != nil && !confirm(hostname, fingerprint) {
 				return errors.New("host key rejected by user")
 			}
-			hostPort := knownhosts.Normalize(fmt.Sprintf("%s:%d", profile.Host, profile.Port))
+			hostPort := knownhosts.Normalize(sshAddress(profile.Host, profile.Port))
 			line := knownhosts.Line([]string{hostPort}, key)
 			if writeErr := appendKnownHost(knownHostsPath, line); writeErr != nil {
 				return writeErr
@@ -625,6 +641,52 @@ func appendKnownHost(path string, line string) error {
 	defer f.Close()
 	_, err = f.WriteString(line + "\n")
 	return err
+}
+
+func sshAddress(host string, port int) string {
+	return net.JoinHostPort(host, strconv.Itoa(port))
+}
+
+func appendLine(base string, line string) string {
+	if line == "" {
+		return base
+	}
+	if base == "" {
+		return line
+	}
+	return base + "\n" + line
+}
+
+type limitedBuffer struct {
+	bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func newLimitedBuffer(limit int64) *limitedBuffer {
+	if limit <= 0 || limit > int64(int(^uint(0)>>1)) {
+		limit = int64(int(^uint(0) >> 1))
+	}
+	return &limitedBuffer{limit: int(limit)}
+}
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	remaining := b.limit - b.Len()
+	if remaining <= 0 {
+		b.truncated = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		_, _ = b.Buffer.Write(p[:remaining])
+		b.truncated = true
+		return len(p), nil
+	}
+	_, err := b.Buffer.Write(p)
+	return len(p), err
+}
+
+func (b *limitedBuffer) Truncated() bool {
+	return b.truncated
 }
 
 func panicHandler(sessionID string, m *Manager) {

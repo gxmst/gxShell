@@ -15,9 +15,9 @@ import (
 )
 
 type Manager struct {
-	ssh       *sshmanager.Manager
-	emit      func(event string, data any)
-	mu        sync.Mutex
+	ssh        *sshmanager.Manager
+	emit       func(event string, data any)
+	mu         sync.Mutex
 	logCancels map[string]func()
 }
 
@@ -40,6 +40,13 @@ var safeIDRe = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 func sanitizeDockerArg(arg string) error {
 	if !safeIDRe.MatchString(arg) {
 		return fmt.Errorf("invalid docker argument: %s", arg)
+	}
+	return nil
+}
+
+func sanitizeTailArg(tail int) error {
+	if tail < 0 || tail > 100000 {
+		return fmt.Errorf("invalid tail value: %d", tail)
 	}
 	return nil
 }
@@ -93,6 +100,9 @@ func (m *Manager) ContainerLogs(sessionID, containerID string, tail int) (string
 	if err := sanitizeDockerArg(containerID); err != nil {
 		return "", err
 	}
+	if err := sanitizeTailArg(tail); err != nil {
+		return "", err
+	}
 	cmd := fmt.Sprintf("docker logs --tail %d %s 2>&1", tail, containerID)
 	out, err := m.ssh.Exec(sessionID, cmd, 30*time.Second)
 	if err != nil {
@@ -103,6 +113,9 @@ func (m *Manager) ContainerLogs(sessionID, containerID string, tail int) (string
 
 func (m *Manager) StreamContainerLogs(sessionID, containerID string, tail int) error {
 	if err := sanitizeDockerArg(containerID); err != nil {
+		return err
+	}
+	if err := sanitizeTailArg(tail); err != nil {
 		return err
 	}
 	key := sessionID + ":" + containerID
@@ -274,12 +287,12 @@ func parseDockerTime(s string) int64 {
 
 func ParseContainerJSON(raw string) ([]types.ContainerInfo, error) {
 	var dockerContainers []struct {
-		ID      string   `json:"Id"`
-		Names   []string `json:"Names"`
-		Image   string   `json:"Image"`
-		State   string   `json:"State"`
-		Status  string   `json:"Status"`
-		Ports   []struct {
+		ID     string   `json:"Id"`
+		Names  []string `json:"Names"`
+		Image  string   `json:"Image"`
+		State  string   `json:"State"`
+		Status string   `json:"Status"`
+		Ports  []struct {
 			IP          string `json:"IP"`
 			PrivatePort int    `json:"PrivatePort"`
 			PublicPort  int    `json:"PublicPort"`

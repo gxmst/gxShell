@@ -33,6 +33,29 @@ func TestSanitizeDockerArg(t *testing.T) {
 	}
 }
 
+func TestSanitizeTailArg(t *testing.T) {
+	tests := []struct {
+		name    string
+		tail    int
+		wantErr bool
+	}{
+		{"zero", 0, false},
+		{"typical", 200, false},
+		{"upper bound", 100000, false},
+		{"negative", -1, true},
+		{"too large", 100001, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := sanitizeTailArg(tt.tail)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("sanitizeTailArg(%d) error = %v, wantErr %v", tt.tail, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestParseDockerTime(t *testing.T) {
 	tests := []struct {
 		name  string

@@ -16,6 +16,7 @@ export type Tab = {
   profileId: string;
   title: string;
   state: string;
+  local?: boolean;
   error?: string;
 };
 
