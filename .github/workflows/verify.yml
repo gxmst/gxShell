@@ -25,12 +25,6 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Go test
-        run: go test ./...
-
-      - name: Go vet
-        run: go vet ./...
-
       - name: Install frontend dependencies
         working-directory: frontend
         run: npm ci
@@ -38,3 +32,9 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         run: npm run build
+
+      - name: Go test
+        run: go test ./...
+
+      - name: Go vet
+        run: go vet ./...
