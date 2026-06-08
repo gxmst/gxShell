@@ -23,7 +23,7 @@ export function useProfiles(notify: (text: string, tone?: "info" | "error" | "su
       GetAppInfo()
     ]);
     if (!mounted.current) return;
-    if (!appThemes.includes(currentSettings.themeName)) currentSettings.themeName = "Dark";
+    if (!appThemes.includes(currentSettings.themeName)) currentSettings.themeName = "Light";
     if (!currentSettings.terminal.themeName || currentSettings.terminal.themeName === "gx Dark") {
       currentSettings.terminal.themeName = currentSettings.themeName === "Light" ? "Light" : currentSettings.themeName;
     }

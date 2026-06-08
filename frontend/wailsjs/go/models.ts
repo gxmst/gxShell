@@ -89,6 +89,7 @@ export namespace types {
 	export class AiChatRequest {
 	    messages: AiMessage[];
 	    context: string;
+	    sessionId: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AiChatRequest(source);
@@ -98,6 +99,7 @@ export namespace types {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.messages = this.convertValues(source["messages"], AiMessage);
 	        this.context = source["context"];
+	        this.sessionId = source["sessionId"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

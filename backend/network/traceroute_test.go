@@ -1,6 +1,7 @@
 package network
 
 import (
+	"strings"
 	"testing"
 
 	"gxShell/backend/types"
@@ -23,6 +24,33 @@ func TestParseRTTs(t *testing.T) {
 			got := parseRTTs(tt.input)
 			if len(got) != tt.want {
 				t.Errorf("parseRTTs(%q) returned %d values, want %d", tt.input, len(got), tt.want)
+			}
+		})
+	}
+}
+
+func TestSanitizeTarget(t *testing.T) {
+	tests := []struct {
+		name    string
+		target  string
+		wantErr bool
+	}{
+		{"hostname", "example.com", false},
+		{"ipv4", "8.8.8.8", false},
+		{"ipv6", "2001:4860:4860::8888", false},
+		{"empty", "", true},
+		{"flag injection", "-h", true},
+		{"semicolon", "example.com;whoami", true},
+		{"space", "example.com whoami", true},
+		{"newline", "example.com\nwhoami", true},
+		{"too long", strings.Repeat("a", 254), true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := sanitizeTarget(tt.target)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("sanitizeTarget(%q) error = %v, wantErr %v", tt.target, err, tt.wantErr)
 			}
 		})
 	}

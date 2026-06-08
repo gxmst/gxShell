@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
-import { Connect, ConnectWithSecrets, Disconnect, Reconnect, ReconnectWithSecrets, StartMonitor, StopMonitor } from "../../wailsjs/go/main/App";
+import { Connect, ConnectWithSecrets, ConnectLocal, Disconnect, Reconnect, ReconnectWithSecrets, StartMonitor, StopMonitor } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 import type { SecretRequest, Tab } from "../types";
 import { needsSecret, tabTitle } from "../utils/format";
@@ -79,7 +79,18 @@ export function useSessions(options: UseSessionsOptions) {
     setActiveTab(info.id);
   }, []);
 
+  const connectLocal = useCallback(async () => {
+    notifyRef.current("Opening local terminal...", "info");
+    const info = await ConnectLocal(120, 36);
+    setTabs((items) => [...items, { id: info.id, profileId: "", title: info.name || "Local Terminal", state: info.state, local: true }]);
+    setActiveTab(info.id);
+  }, []);
+
   const reconnectTab = useCallback(async (tab: Tab) => {
+    if (tab.local) {
+      await connectLocal();
+      return;
+    }
     const profile = profilesRef.current.find((item) => item.id === tab.profileId);
     if (profile && needsSecret(profile)) {
       setSecretRequest({ profile, mode: "reconnect", sessionId: tab.id });
@@ -88,7 +99,7 @@ export function useSessions(options: UseSessionsOptions) {
     notifyRef.current(`Reconnecting to ${tab.title}...`, "info");
     const info = await Reconnect(tab.id);
     replaceReconnectedTab(tab.id, info);
-  }, [replaceReconnectedTab]);
+  }, [connectLocal, replaceReconnectedTab]);
 
   const submitSecret = useCallback(async (request: SecretRequest, password: string, passphrase: string) => {
     if (request.mode === "connect") {
@@ -101,7 +112,8 @@ export function useSessions(options: UseSessionsOptions) {
   }, [openSession, replaceReconnectedTab]);
 
   const closeTab = useCallback(async (id: string, skipConfirm = false) => {
-    if (!skipConfirm && options.confirmOnDisconnect) {
+    const tab = tabs.find((item) => item.id === id);
+    if (!skipConfirm && options.confirmOnDisconnect && !tab?.local) {
       const shouldClose = window.confirm("Are you sure you want to disconnect?");
       if (!shouldClose) return;
     }
@@ -113,7 +125,7 @@ export function useSessions(options: UseSessionsOptions) {
       if (activeTabRef.current === id) setActiveTab(next[0]?.id || "");
       return next;
     });
-  }, [options.confirmOnDisconnect]);
+  }, [options.confirmOnDisconnect, tabs]);
 
   return {
     tabs,
@@ -123,6 +135,7 @@ export function useSessions(options: UseSessionsOptions) {
     secretRequest,
     setSecretRequest,
     connectProfile,
+    connectLocal,
     reconnectTab,
     submitSecret,
     closeTab

@@ -8,9 +8,11 @@ export function AiChat(arg1:types.AiChatRequest):Promise<void>;
 
 export function AiContinueChat(arg1:types.AiChatRequest):Promise<void>;
 
-export function AiExecuteTool(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
+export function AiExecuteTool(arg1:string,arg2:string):Promise<string>;
 
 export function Connect(arg1:string,arg2:number,arg3:number):Promise<types.SessionInfo>;
+
+export function ConnectLocal(arg1:number,arg2:number):Promise<types.SessionInfo>;
 
 export function ConnectWithSecrets(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number):Promise<types.SessionInfo>;
 

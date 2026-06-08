@@ -226,6 +226,7 @@ function App() {
           onClose={sessions.closeTab}
           onReconnect={sessions.reconnectTab}
           onNewConnection={handleNewConnection}
+          onNewLocal={sessions.connectLocal}
           onTearOff={handleTearOff}
           language={profileState.settings?.language || "en"}
           logViewer={logViewer}

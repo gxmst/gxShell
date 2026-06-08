@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"gxShell/backend/types"
 	"golang.org/x/crypto/ssh"
+	"gxShell/backend/types"
 )
 
 type Manager struct {
@@ -51,9 +51,11 @@ func (m *Manager) TraceRoute(target string) (*types.NetworkPath, error) {
 	}
 
 	m.logDebug("[TraceRoute] local trace to %s output (%d bytes): %q", target, len(out), truncate(out, 800))
-	_ = err
 
 	hops := parseTraceroute(out)
+	if err != nil && len(hops) == 0 {
+		return nil, fmt.Errorf("traceroute failed: %w: %s", err, truncate(strings.TrimSpace(out), 240))
+	}
 
 	path := &types.NetworkPath{
 		Target:   target,
@@ -82,6 +84,9 @@ func (m *Manager) TraceRoute(target string) (*types.NetworkPath, error) {
 }
 
 func (m *Manager) localTracert(target string) (string, error) {
+	if err := sanitizeTarget(target); err != nil {
+		return "", err
+	}
 	cmd := exec.Command("tracert", "-d", "-w", "2000", "-h", "30", target)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		HideWindow:    true,
@@ -92,6 +97,9 @@ func (m *Manager) localTracert(target string) (string, error) {
 }
 
 func (m *Manager) localTraceroute(target string) (string, error) {
+	if err := sanitizeTarget(target); err != nil {
+		return "", err
+	}
 	cmd := exec.Command("traceroute", "-n", "-w", "2", "-m", "30", target)
 	out, err := cmd.CombinedOutput()
 	if strings.TrimSpace(string(out)) == "" || strings.Contains(string(out), "command not found") {
@@ -101,6 +109,22 @@ func (m *Manager) localTraceroute(target string) (string, error) {
 		}
 	}
 	return string(out), err
+}
+
+func sanitizeTarget(target string) error {
+	if target == "" {
+		return fmt.Errorf("target cannot be empty")
+	}
+	if strings.HasPrefix(target, "-") {
+		return fmt.Errorf("invalid target: cannot start with '-'")
+	}
+	if strings.ContainsAny(target, ";|&`$(){}<>\\\"'\n\r\t ") {
+		return fmt.Errorf("invalid target: contains forbidden characters")
+	}
+	if len(target) > 253 {
+		return fmt.Errorf("target too long")
+	}
+	return nil
 }
 
 func (m *Manager) Ping(client *ssh.Client, target string, count int) (*types.NetworkPath, error) {
@@ -196,17 +220,17 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
-func (m *Manager) StartPing(client *ssh.Client, target string, intervalSec int) {
+func (m *Manager) StartPing(key string, client *ssh.Client, target string, intervalSec int) {
 	if intervalSec <= 0 {
 		intervalSec = 5
 	}
 	m.mu.Lock()
-	if _, ok := m.pinging[target]; ok {
+	if _, ok := m.pinging[key]; ok {
 		m.mu.Unlock()
 		return
 	}
 	stop := make(chan struct{})
-	m.pinging[target] = stop
+	m.pinging[key] = stop
 	m.mu.Unlock()
 
 	go func() {

@@ -18,6 +18,7 @@ import (
 	"gxShell/backend/config"
 	"gxShell/backend/docker"
 	"gxShell/backend/localfs"
+	"gxShell/backend/localterm"
 	"gxShell/backend/logger"
 	"gxShell/backend/monitor"
 	"gxShell/backend/network"
@@ -31,21 +32,48 @@ import (
 )
 
 type App struct {
-	ctx     context.Context
-	store   *config.Store
-	log     *logger.Logger
-	ssh     *sshmanager.Manager
-	sftp    *sftpmanager.Manager
-	monitor *monitor.Manager
-	secrets *secrets.Store
-	net     *network.Manager
-	tunnels *tunnel.Manager
-	ai      *ai.Manager
-	docker  *docker.Manager
+	ctx      context.Context
+	store    *config.Store
+	log      *logger.Logger
+	ssh      *sshmanager.Manager
+	sftp     *sftpmanager.Manager
+	monitor  *monitor.Manager
+	secrets  *secrets.Store
+	net      *network.Manager
+	tunnels  *tunnel.Manager
+	ai       *ai.Manager
+	docker   *docker.Manager
+	local    *localterm.Manager
+	aiToolMu sync.Mutex
+	aiTools  map[string]authorizedAIToolCall
 }
 
+const aiConfigSecretID = "ai-config"
+
+const (
+	aiToolTimeout          = 20 * time.Second
+	aiToolOutputLimit      = 128 * 1024
+	aiToolAuthorizationTTL = 15 * time.Minute
+)
+
 func NewApp() *App {
-	return &App{}
+	return &App{aiTools: map[string]authorizedAIToolCall{}}
+}
+
+type terminalSessionBackend interface {
+	Disconnect(id string) error
+	Write(id string, data string) error
+	Resize(id string, cols int, rows int) error
+	Get(id string) (types.SessionInfo, error)
+	List() []types.SessionInfo
+}
+
+type authorizedAIToolCall struct {
+	SessionID  string
+	ToolCallID string
+	ToolName   string
+	Arguments  string
+	ExpiresAt  time.Time
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -65,18 +93,18 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}
 	confirm := func(host string, fingerprint string) bool {
-	        if a.ctx == nil {
-	                return false
-	        }
-	        res, _ := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
-	                Type:          runtime.QuestionDialog,
-	                Title:         "Unknown Host Key",
-	                Message:       fmt.Sprintf("The host key for %s is unknown.\nFingerprint: %s\n\nDo you want to trust this host and continue connecting?", host, fingerprint),
-	                DefaultButton: "No",
-	        })
-	        return res == "Yes"
+		if a.ctx == nil {
+			return false
+		}
+		res, _ := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+			Type:          runtime.QuestionDialog,
+			Title:         "Unknown Host Key",
+			Message:       fmt.Sprintf("The host key for %s is unknown.\nFingerprint: %s\n\nDo you want to trust this host and continue connecting?", host, fingerprint),
+			DefaultButton: "No",
+		})
+		return res == "Yes"
 	}
-	a.ssh = sshmanager.NewManager(filepath.Join(store.DataDir(), "known_hosts"), emit, confirm)       
+	a.ssh = sshmanager.NewManager(filepath.Join(store.DataDir(), "known_hosts"), emit, confirm)
 	a.sftp = sftpmanager.NewManager(a.ssh, emit)
 	a.monitor = monitor.NewManager(a.ssh, emit)
 	a.net = network.NewManager(emit)
@@ -87,10 +115,21 @@ func (a *App) startup(ctx context.Context) {
 	a.ai = ai.NewManager()
 	a.docker = docker.NewManager(a.ssh)
 	a.docker.SetEmit(emit)
+	a.local = localterm.NewManager(emit)
 	if settings, err := a.store.GetSettings(); err == nil {
+		apiKey := settings.Ai.APIKey
+		if settings.Ai.APIKey != "" {
+			if err := a.secrets.SavePassword(aiConfigSecretID, settings.Ai.APIKey); err == nil {
+				settings.Ai.APIKey = ""
+				_ = a.store.SaveSettings(settings)
+			}
+		}
+		if stored, err := a.secrets.GetPassword(aiConfigSecretID); err == nil && stored != "" {
+			apiKey = stored
+		}
 		a.ai.UpdateConfig(ai.Config{
 			Provider: ai.Provider(settings.Ai.Provider),
-			APIKey:   settings.Ai.APIKey,
+			APIKey:   apiKey,
 			Endpoint: settings.Ai.Endpoint,
 			Model:    settings.Ai.Model,
 		})
@@ -106,6 +145,7 @@ func (a *App) domReady(ctx context.Context) {
 
 func (a *App) shutdown(ctx context.Context) {
 	a.ssh.Shutdown()
+	a.local.Shutdown()
 	a.net.StopAll()
 	a.log.Info("gxShell stopped")
 }
@@ -113,7 +153,7 @@ func (a *App) shutdown(ctx context.Context) {
 func (a *App) GetAppInfo() map[string]string {
 	return map[string]string{
 		"name":    "gxShell",
-		"version": "1.0",
+		"version": "1.1",
 		"dataDir": a.store.DataDir(),
 	}
 }
@@ -287,7 +327,16 @@ func (a *App) Disconnect(sessionID string) error {
 	a.sftp.InvalidateClient(sessionID)
 	a.tunnels.StopTunnels(sessionID)
 	a.net.StopPing(sessionID)
-	return a.ssh.Disconnect(sessionID)
+	a.discardAuthorizedAiToolCalls(sessionID)
+	backend, err := a.terminalBackend(sessionID)
+	if err != nil {
+		return err
+	}
+	return backend.Disconnect(sessionID)
+}
+
+func (a *App) ConnectLocal(cols int, rows int) (types.SessionInfo, error) {
+	return a.local.Connect(cols, rows)
 }
 
 func (a *App) Reconnect(sessionID string) (types.SessionInfo, error) {
@@ -304,22 +353,69 @@ func (a *App) ReconnectWithSecrets(sessionID string, password string, privateKey
 }
 
 func (a *App) WriteToTerminal(sessionID string, data string) error {
-	return a.ssh.Write(sessionID, data)
+	backend, err := a.terminalBackend(sessionID)
+	if err != nil {
+		return err
+	}
+	return backend.Write(sessionID, data)
 }
 
 func (a *App) ResizeTerminal(sessionID string, cols int, rows int) error {
-	return a.ssh.Resize(sessionID, cols, rows)
+	backend, err := a.terminalBackend(sessionID)
+	if err != nil {
+		return err
+	}
+	return backend.Resize(sessionID, cols, rows)
 }
 
 func (a *App) ListSessions() []types.SessionInfo {
-	return a.ssh.List()
+	sessions := []types.SessionInfo{}
+	for _, backend := range a.terminalBackends() {
+		sessions = append(sessions, backend.List()...)
+	}
+	return sessions
 }
 
 func (a *App) SendCommandToTerminal(sessionID string, command string) error {
 	if !strings.HasSuffix(command, "\n") {
 		command += "\n"
 	}
-	return a.ssh.Write(sessionID, command)
+	backend, err := a.terminalBackend(sessionID)
+	if err != nil {
+		return err
+	}
+	return backend.Write(sessionID, command)
+}
+
+func (a *App) terminalBackends() []terminalSessionBackend {
+	backends := make([]terminalSessionBackend, 0, 2)
+	if a.ssh != nil {
+		backends = append(backends, a.ssh)
+	}
+	if a.local != nil {
+		backends = append(backends, a.local)
+	}
+	return backends
+}
+
+func (a *App) terminalBackend(sessionID string) (terminalSessionBackend, error) {
+	if sessionID == "" {
+		return nil, errors.New("session not found")
+	}
+	for _, backend := range a.terminalBackends() {
+		if _, err := backend.Get(sessionID); err == nil {
+			return backend, nil
+		}
+	}
+	return nil, errors.New("session not found")
+}
+
+func (a *App) terminalInfo(sessionID string) (types.SessionInfo, error) {
+	backend, err := a.terminalBackend(sessionID)
+	if err != nil {
+		return types.SessionInfo{}, err
+	}
+	return backend.Get(sessionID)
 }
 
 func (a *App) ListRemoteDir(sessionID string, remotePath string) ([]types.RemoteFile, error) {
@@ -431,11 +527,11 @@ func (a *App) UpdateSettings(settings types.AppSettings) (types.AppSettings, err
 		aiCfg := a.ai.GetConfig()
 		settings.Ai = types.AiConfig{
 			Provider: string(aiCfg.Provider),
-			APIKey:   aiCfg.APIKey,
 			Endpoint: aiCfg.Endpoint,
 			Model:    aiCfg.Model,
 		}
 	}
+	settings.Ai.APIKey = ""
 	return settings, a.store.SaveSettings(settings)
 }
 
@@ -517,7 +613,7 @@ func (a *App) OpenDataDir() error {
 
 func (a *App) LogCommand(sessionID string, line string) {
 	host := ""
-	if session, err := a.ssh.Get(sessionID); err == nil {
+	if session, err := a.terminalInfo(sessionID); err == nil {
 		host = session.Name
 	}
 	a.log.LogCommand(sessionID, host, line)
@@ -701,20 +797,12 @@ func (a *App) StartNetworkPing(sessionID string, intervalSec int) error {
 	if err != nil {
 		return err
 	}
-	a.net.StartPing(client, profile.Host, intervalSec)
+	a.net.StartPing(sessionID, client, profile.Host, intervalSec)
 	return nil
 }
 
 func (a *App) StopNetworkPing(sessionID string) {
-	info, err := a.ssh.Get(sessionID)
-	if err != nil {
-		return
-	}
-	profile, err := a.getProfileForConnect(info.ProfileID)
-	if err != nil {
-		return
-	}
-	a.net.StopPing(profile.Host)
+	a.net.StopPing(sessionID)
 }
 
 func (a *App) GetNetworkPath(sessionID string) (*types.NetworkPath, error) {
@@ -827,9 +915,14 @@ func (a *App) SaveAiConfig(provider, apiKey, endpoint, model string) error {
 		a.log.Error("SaveAiConfig: failed to read settings: " + err.Error())
 		return err
 	}
+	if apiKey == "" {
+		a.secrets.Delete(aiConfigSecretID)
+	} else if err := a.secrets.SavePassword(aiConfigSecretID, apiKey); err != nil {
+		a.log.Error("SaveAiConfig: failed to save API key: " + err.Error())
+		return err
+	}
 	settings.Ai = types.AiConfig{
 		Provider: provider,
-		APIKey:   apiKey,
 		Endpoint: endpoint,
 		Model:    model,
 	}
@@ -861,7 +954,7 @@ func (a *App) GetAiConfig() types.AiConfig {
 
 func (a *App) AiChat(req types.AiChatRequest) error {
 	cfg := a.ai.GetConfig()
-	a.log.Info(fmt.Sprintf("AI chat request: provider=%s model=%s endpoint=%s msgs=%d contextLen=%d", cfg.Provider, cfg.Model, cfg.Endpoint, len(req.Messages), len(req.Context)))
+	a.log.Info(fmt.Sprintf("AI chat request: provider=%s model=%s endpoint=%s session=%s msgs=%d contextLen=%d", cfg.Provider, cfg.Model, cfg.Endpoint, req.SessionID, len(req.Messages), len(req.Context)))
 
 	go func() {
 		aiReq := ai.ChatRequest{
@@ -887,6 +980,7 @@ func (a *App) AiChat(req types.AiChatRequest) error {
 					event["reasoningContent"] = resp.ReasoningContent
 				}
 				if len(resp.ToolCalls) > 0 {
+					a.registerAuthorizedAiToolCalls(req.SessionID, resp.ToolCalls)
 					tcData := make([]map[string]any, len(resp.ToolCalls))
 					for i, tc := range resp.ToolCalls {
 						tcData[i] = map[string]any{
@@ -911,8 +1005,15 @@ func (a *App) AiChat(req types.AiChatRequest) error {
 	return nil
 }
 
-func (a *App) AiExecuteTool(sessionID string, toolCallID string, toolName string, arguments string) string {
-	a.log.Info(fmt.Sprintf("AI execute tool: session=%s tool=%s args=%s", sessionID, toolName, truncate(arguments, 200)))
+func (a *App) AiExecuteTool(sessionID string, toolCallID string) string {
+	toolCall, err := a.claimAuthorizedAiToolCall(sessionID, toolCallID)
+	if err != nil {
+		a.log.Error(fmt.Sprintf("AI tool authorization failed: session=%s toolCallID=%s error=%s", sessionID, toolCallID, err.Error()))
+		return "BLOCKED: " + err.Error()
+	}
+	toolName := toolCall.ToolName
+	arguments := toolCall.Arguments
+	a.log.Info(fmt.Sprintf("AI execute authorized tool: session=%s toolCallID=%s tool=%s args=%s", sessionID, toolCallID, toolName, truncate(arguments, 200)))
 
 	var output string
 	switch toolName {
@@ -929,7 +1030,7 @@ func (a *App) AiExecuteTool(sessionID string, toolCallID string, toolName string
 			a.log.Error("AI tool blocked dangerous command: " + args.Command)
 			break
 		}
-		result, err := a.ssh.ExecuteCommand(sessionID, args.Command)
+		result, err := a.ssh.ExecuteCommand(sessionID, args.Command, aiToolTimeout, aiToolOutputLimit)
 		if err != nil {
 			output = "Error executing command: " + err.Error()
 		} else {
@@ -955,7 +1056,7 @@ func (a *App) AiExecuteTool(sessionID string, toolCallID string, toolName string
 			break
 		}
 		cmd := "cat " + shellescape(args.Path)
-		result, err := a.ssh.ExecuteCommand(sessionID, cmd)
+		result, err := a.ssh.ExecuteCommand(sessionID, cmd, aiToolTimeout, aiToolOutputLimit)
 		if err != nil {
 			output = "Error reading file: " + err.Error()
 		} else {
@@ -974,8 +1075,85 @@ func (a *App) AiExecuteTool(sessionID string, toolCallID string, toolName string
 	return output
 }
 
+func (a *App) registerAuthorizedAiToolCalls(sessionID string, toolCalls []ai.ToolCall) {
+	if sessionID == "" || len(toolCalls) == 0 {
+		return
+	}
+	now := time.Now()
+	a.aiToolMu.Lock()
+	defer a.aiToolMu.Unlock()
+	if a.aiTools == nil {
+		a.aiTools = map[string]authorizedAIToolCall{}
+	}
+	a.pruneExpiredAuthorizedAiToolCallsLocked(now)
+	for _, tc := range toolCalls {
+		if tc.ID == "" || !isAllowedAiTool(tc.Function.Name) {
+			continue
+		}
+		a.aiTools[aiToolAuthorizationKey(sessionID, tc.ID)] = authorizedAIToolCall{
+			SessionID:  sessionID,
+			ToolCallID: tc.ID,
+			ToolName:   tc.Function.Name,
+			Arguments:  tc.Function.Arguments,
+			ExpiresAt:  now.Add(aiToolAuthorizationTTL),
+		}
+	}
+}
+
+func (a *App) claimAuthorizedAiToolCall(sessionID string, toolCallID string) (authorizedAIToolCall, error) {
+	if sessionID == "" || toolCallID == "" {
+		return authorizedAIToolCall{}, errors.New("missing AI tool authorization")
+	}
+	now := time.Now()
+	a.aiToolMu.Lock()
+	defer a.aiToolMu.Unlock()
+	if a.aiTools == nil {
+		a.aiTools = map[string]authorizedAIToolCall{}
+	}
+	a.pruneExpiredAuthorizedAiToolCallsLocked(now)
+	key := aiToolAuthorizationKey(sessionID, toolCallID)
+	toolCall, ok := a.aiTools[key]
+	if !ok {
+		return authorizedAIToolCall{}, errors.New("AI tool call was not authorized by the backend")
+	}
+	delete(a.aiTools, key)
+	if now.After(toolCall.ExpiresAt) {
+		return authorizedAIToolCall{}, errors.New("AI tool authorization expired")
+	}
+	return toolCall, nil
+}
+
+func (a *App) discardAuthorizedAiToolCalls(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	a.aiToolMu.Lock()
+	defer a.aiToolMu.Unlock()
+	for key, toolCall := range a.aiTools {
+		if toolCall.SessionID == sessionID {
+			delete(a.aiTools, key)
+		}
+	}
+}
+
+func (a *App) pruneExpiredAuthorizedAiToolCallsLocked(now time.Time) {
+	for key, toolCall := range a.aiTools {
+		if now.After(toolCall.ExpiresAt) {
+			delete(a.aiTools, key)
+		}
+	}
+}
+
+func aiToolAuthorizationKey(sessionID string, toolCallID string) string {
+	return sessionID + "\x00" + toolCallID
+}
+
+func isAllowedAiTool(toolName string) bool {
+	return toolName == "execute_command" || toolName == "read_file"
+}
+
 func (a *App) AiContinueChat(req types.AiChatRequest) error {
-	a.log.Info(fmt.Sprintf("AI continue chat: msgs=%d", len(req.Messages)))
+	a.log.Info(fmt.Sprintf("AI continue chat: session=%s msgs=%d", req.SessionID, len(req.Messages)))
 
 	go func() {
 		aiReq := ai.ChatRequest{
@@ -1013,6 +1191,7 @@ func (a *App) AiContinueChat(req types.AiChatRequest) error {
 					event["reasoningContent"] = resp.ReasoningContent
 				}
 				if len(resp.ToolCalls) > 0 {
+					a.registerAuthorizedAiToolCalls(req.SessionID, resp.ToolCalls)
 					tcData := make([]map[string]any, len(resp.ToolCalls))
 					for i, tc := range resp.ToolCalls {
 						tcData[i] = map[string]any{
@@ -1200,5 +1379,3 @@ func checkSensitivePath(p string) (string, bool) {
 	}
 	return "", false
 }
-
-

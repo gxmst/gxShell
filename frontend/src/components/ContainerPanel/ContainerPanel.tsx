@@ -69,6 +69,10 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
 
   const viewLogs = useCallback(async (c: types.ContainerInfo) => {
     if (!props.active?.id) return;
+    const previous = logContainerIdRef.current;
+    if (previous && previous !== c.id) {
+      await StopContainerLogs(props.active.id, previous).catch(() => {});
+    }
     setLogContainer(c);
     logContainerIdRef.current = c.id;
     setLogs("");
@@ -93,8 +97,8 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
 
   useEffect(() => {
     return () => {
-      if (logContainer && activeIdRef.current) {
-        StopContainerLogs(activeIdRef.current, logContainer.id).catch(() => {});
+      if (logContainerIdRef.current && activeIdRef.current) {
+        StopContainerLogs(activeIdRef.current, logContainerIdRef.current).catch(() => {});
       }
     };
   }, []);

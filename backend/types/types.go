@@ -10,26 +10,26 @@ const (
 )
 
 type Profile struct {
-	ID                   string    `json:"id"`
-	Name                 string    `json:"name"`
-	Group                string    `json:"group"`
-	Host                 string    `json:"host"`
-	Port                 int       `json:"port"`
-	Username             string    `json:"username"`
-	AuthType             AuthType  `json:"authType"`
-	Password             string    `json:"password,omitempty"`
-	PrivateKeyPath       string    `json:"privateKeyPath,omitempty"`
-	PrivateKeyPassphrase string    `json:"privateKeyPassphrase,omitempty"`
-	RememberPassword     bool      `json:"rememberPassword"`
-	ProxyJumpID          string    `json:"proxyJumpId,omitempty"`
-	Description          string    `json:"description"`
-	Tags                 []string  `json:"tags"`
-	Favorite             bool          `json:"favorite"`
-	Tunnels              []TunnelRule  `json:"tunnels"`
-	AutoReconnect        bool          `json:"autoReconnect"`
-	LastConnectedAt      time.Time     `json:"lastConnectedAt,omitempty"`
-	CreatedAt            time.Time `json:"createdAt"`
-	UpdatedAt            time.Time `json:"updatedAt"`
+	ID                   string       `json:"id"`
+	Name                 string       `json:"name"`
+	Group                string       `json:"group"`
+	Host                 string       `json:"host"`
+	Port                 int          `json:"port"`
+	Username             string       `json:"username"`
+	AuthType             AuthType     `json:"authType"`
+	Password             string       `json:"password,omitempty"`
+	PrivateKeyPath       string       `json:"privateKeyPath,omitempty"`
+	PrivateKeyPassphrase string       `json:"privateKeyPassphrase,omitempty"`
+	RememberPassword     bool         `json:"rememberPassword"`
+	ProxyJumpID          string       `json:"proxyJumpId,omitempty"`
+	Description          string       `json:"description"`
+	Tags                 []string     `json:"tags"`
+	Favorite             bool         `json:"favorite"`
+	Tunnels              []TunnelRule `json:"tunnels"`
+	AutoReconnect        bool         `json:"autoReconnect"`
+	LastConnectedAt      time.Time    `json:"lastConnectedAt,omitempty"`
+	CreatedAt            time.Time    `json:"createdAt"`
+	UpdatedAt            time.Time    `json:"updatedAt"`
 }
 
 type AppSettings struct {
@@ -154,9 +154,9 @@ type TunnelRule struct {
 }
 
 type TunnelStatus struct {
-	Rule  TunnelRule `json:"rule"`
-	Active bool      `json:"active"`
-	Error  string    `json:"error,omitempty"`
+	Rule   TunnelRule `json:"rule"`
+	Active bool       `json:"active"`
+	Error  string     `json:"error,omitempty"`
 }
 
 type NetworkHop struct {
@@ -172,15 +172,15 @@ type NetworkHop struct {
 }
 
 type NetworkPath struct {
-	Target    string       `json:"target"`
-	Hops      []NetworkHop `json:"hops"`
-	TotalRTT  float64      `json:"totalRtt"`
-	PingAvg   float64      `json:"pingAvg"`
-	PingMin   float64      `json:"pingMin"`
-	PingMax   float64      `json:"pingMax"`
-	PingLoss  float64      `json:"pingLoss"`
-	Jitter    float64      `json:"jitter"`
-	TracedAt  time.Time    `json:"tracedAt"`
+	Target   string       `json:"target"`
+	Hops     []NetworkHop `json:"hops"`
+	TotalRTT float64      `json:"totalRtt"`
+	PingAvg  float64      `json:"pingAvg"`
+	PingMin  float64      `json:"pingMin"`
+	PingMax  float64      `json:"pingMax"`
+	PingLoss float64      `json:"pingLoss"`
+	Jitter   float64      `json:"jitter"`
+	TracedAt time.Time    `json:"tracedAt"`
 }
 
 type LocalFile struct {
@@ -211,9 +211,9 @@ type AiFunctionCall struct {
 }
 
 type AiToolCall struct {
-	ID       string          `json:"id"`
-	Type     string          `json:"type"`
-	Function AiFunctionCall  `json:"function"`
+	ID       string         `json:"id"`
+	Type     string         `json:"type"`
+	Function AiFunctionCall `json:"function"`
 }
 
 type AiMessage struct {
@@ -230,8 +230,9 @@ type AiToolResult struct {
 }
 
 type AiChatRequest struct {
-	Messages []AiMessage `json:"messages"`
-	Context  string      `json:"context"`
+	Messages  []AiMessage `json:"messages"`
+	Context   string      `json:"context"`
+	SessionID string      `json:"sessionId"`
 }
 
 type AiTokenUsage struct {

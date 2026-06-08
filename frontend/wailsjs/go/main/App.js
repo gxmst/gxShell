@@ -14,12 +14,16 @@ export function AiContinueChat(arg1) {
   return window['go']['main']['App']['AiContinueChat'](arg1);
 }
 
-export function AiExecuteTool(arg1, arg2, arg3, arg4) {
-  return window['go']['main']['App']['AiExecuteTool'](arg1, arg2, arg3, arg4);
+export function AiExecuteTool(arg1, arg2) {
+  return window['go']['main']['App']['AiExecuteTool'](arg1, arg2);
 }
 
 export function Connect(arg1, arg2, arg3) {
   return window['go']['main']['App']['Connect'](arg1, arg2, arg3);
+}
+
+export function ConnectLocal(arg1, arg2) {
+  return window['go']['main']['App']['ConnectLocal'](arg1, arg2);
 }
 
 export function ConnectWithSecrets(arg1, arg2, arg3, arg4, arg5) {
