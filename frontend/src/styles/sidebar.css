@@ -106,25 +106,34 @@
 }
 
 .nav-chip {
+  position: relative;
   display: inline-flex;
   height: 27px;
   align-items: center;
   justify-content: center;
   gap: 5px;
+  border: 1px solid transparent;
   border-radius: 8px;
   color: var(--muted);
   font-size: 11px;
   transition: 140ms ease;
 }
 
-.nav-chip:hover,
-.nav-chip-active {
+.nav-chip:hover {
   color: var(--text);
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--panel-raised) 74%, transparent);
 }
 
 .nav-chip-active {
-  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--accent) 70%, transparent);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--accent) 18%, var(--panel-raised)),
+      color-mix(in srgb, var(--accent) 10%, var(--panel)));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent),
+    0 5px 14px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
 .section-title {
