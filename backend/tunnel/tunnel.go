@@ -12,15 +12,15 @@ import (
 )
 
 type Manager struct {
-	mu      sync.Mutex
-	active  map[string][]*forward
-	emit    func(event string, data any)
+	mu     sync.Mutex
+	active map[string][]*forward
+	emit   func(event string, data any)
 }
 
 type forward struct {
-	rule    types.TunnelRule
+	rule     types.TunnelRule
 	listener net.Listener
-	done    chan struct{}
+	done     chan struct{}
 }
 
 func NewManager(emit func(event string, data any)) *Manager {
@@ -66,7 +66,10 @@ func (m *Manager) startOne(client *ssh.Client, rule types.TunnelRule) (*forward,
 		return &forward{rule: rule, listener: ln}, nil
 
 	case types.TunnelRemote:
-		addr := resolveAddr(rule.Remote, rule.BindHost, "0.0.0.0")
+		// Default to loopback on the remote host. Binding 0.0.0.0 would expose the
+		// forwarded port on every interface of the remote server; require the user
+		// to set BindHost explicitly to opt into a non-loopback bind.
+		addr := resolveAddr(rule.Remote, rule.BindHost, "127.0.0.1")
 		ln, err := client.Listen("tcp", addr)
 		if err != nil {
 			return nil, fmt.Errorf("remote listen failed: %w", err)
@@ -205,32 +208,38 @@ func (m *Manager) handleSOCKS(sessionID string, fwd *forward, client *ssh.Client
 }
 
 func relay(a, b net.Conn) {
+	// Either endpoint may be an SSH channel (not *net.TCPConn), so we cannot rely
+	// on CloseWrite for half-close signalling. Instead, when either copy direction
+	// finishes we force-close both connections exactly once. This unblocks the
+	// peer's Read so the other goroutine returns, preventing goroutine/socket
+	// leaks for connections closed from the SSH side first.
+	var once sync.Once
+	closeBoth := func() {
+		once.Do(func() {
+			_ = a.Close()
+			_ = b.Close()
+		})
+	}
 	done := make(chan struct{}, 2)
-	copy := func(dst, src net.Conn) {
+	cp := func(dst, src net.Conn) {
 		defer func() { done <- struct{}{} }()
 		buf := make([]byte, 32*1024)
 		for {
 			n, err := src.Read(buf)
 			if n > 0 {
-				_, werr := dst.Write(buf[:n])
-				if werr != nil {
+				if _, werr := dst.Write(buf[:n]); werr != nil {
+					closeBoth()
 					return
 				}
 			}
 			if err != nil {
-				// Half-close: signal the other side we're done writing
-				if tc, ok := dst.(*net.TCPConn); ok {
-					_ = tc.CloseWrite()
-				} else {
-					return
-				}
+				closeBoth()
 				return
 			}
 		}
 	}
-	go copy(a, b)
-	go copy(b, a)
-	// Wait for BOTH directions to finish before closing
+	go cp(a, b)
+	go cp(b, a)
 	<-done
 	<-done
 }

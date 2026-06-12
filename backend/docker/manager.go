@@ -18,14 +18,23 @@ type Manager struct {
 	ssh        *sshmanager.Manager
 	emit       func(event string, data any)
 	mu         sync.Mutex
-	logCancels map[string]func()
+	logCancels map[string]*logStream
+}
+
+// logStream identifies a single log-follow goroutine. The pointer doubles as the
+// identity token: a teardown only removes the map entry if it still points at
+// itself, so a superseded stream can't delete the entry of the one that replaced
+// it.
+type logStream struct {
+	cancel func()
+	once   sync.Once
 }
 
 func NewManager(sshMgr *sshmanager.Manager) *Manager {
 	return &Manager{
 		ssh:        sshMgr,
 		emit:       func(event string, data any) {},
-		logCancels: make(map[string]func()),
+		logCancels: make(map[string]*logStream),
 	}
 }
 
@@ -121,8 +130,8 @@ func (m *Manager) StreamContainerLogs(sessionID, containerID string, tail int) e
 	key := sessionID + ":" + containerID
 
 	m.mu.Lock()
-	if cancel, ok := m.logCancels[key]; ok {
-		cancel()
+	if existing, ok := m.logCancels[key]; ok {
+		existing.cancel()
 		delete(m.logCancels, key)
 	}
 	m.mu.Unlock()
@@ -150,15 +159,22 @@ func (m *Manager) StreamContainerLogs(sessionID, containerID string, tail int) e
 	}
 
 	ctx := make(chan struct{})
+	self := &logStream{}
+	self.cancel = func() { self.once.Do(func() { close(ctx); _ = session.Close() }) }
 	m.mu.Lock()
-	m.logCancels[key] = func() { close(ctx); _ = session.Close() }
+	m.logCancels[key] = self
 	m.mu.Unlock()
 
 	go func() {
 		defer func() {
 			_ = session.Close()
 			m.mu.Lock()
-			delete(m.logCancels, key)
+			// Only remove the map entry if it still points at this stream. A newer
+			// StreamContainerLogs for the same key may have replaced it; deleting
+			// blindly would orphan that newer stream (it could no longer be stopped).
+			if cur, ok := m.logCancels[key]; ok && cur == self {
+				delete(m.logCancels, key)
+			}
 			m.mu.Unlock()
 		}()
 
@@ -184,6 +200,13 @@ func (m *Manager) StreamContainerLogs(sessionID, containerID string, tail int) e
 					m.emit("docker:log", map[string]string{"containerID": containerID, "done": "true"})
 					return
 				}
+				// Non-EOF read error (e.g. session closed): still notify the
+				// frontend the stream ended so it doesn't wait forever.
+				select {
+				case <-ctx:
+				default:
+					m.emit("docker:log", map[string]string{"containerID": containerID, "done": "true"})
+				}
 				return
 			}
 			m.emit("docker:log", map[string]string{"containerID": containerID, "data": line})
@@ -197,8 +220,8 @@ func (m *Manager) StopContainerLogs(sessionID, containerID string) {
 	key := sessionID + ":" + containerID
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if cancel, ok := m.logCancels[key]; ok {
-		cancel()
+	if existing, ok := m.logCancels[key]; ok {
+		existing.cancel()
 		delete(m.logCancels, key)
 	}
 }
@@ -317,8 +340,12 @@ func ParseContainerJSON(raw string) ([]types.ContainerInfo, error) {
 				portStrs = append(portStrs, fmt.Sprintf("%d/%s", p.PrivatePort, p.Type))
 			}
 		}
+		shortID := dc.ID
+		if len(shortID) > 12 {
+			shortID = shortID[:12]
+		}
 		result = append(result, types.ContainerInfo{
-			ID:      dc.ID[:12],
+			ID:      shortID,
 			Names:   names,
 			Image:   dc.Image,
 			State:   dc.State,

@@ -78,8 +78,8 @@
   flex: 0 0 30px;
   border-radius: 9px;
   color: var(--accent);
-  background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+  background: transparent;
+  border: none;
 }
 
 .brand-name {

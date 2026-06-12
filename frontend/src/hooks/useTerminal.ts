@@ -12,7 +12,7 @@ import type { SplitPane } from "../types";
 const MAX_BUFFERED_CHUNKS = 100;
 const RESIZE_SETTLE_MS = 80;
 
-export function useTerminal(activeTab: string, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null) {
+export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null) {
   const terminals = useRef<Record<string, Terminal>>({});
   const fits = useRef<Record<string, FitAddon>>({});
   const searches = useRef<Record<string, SearchAddon>>({});
@@ -69,7 +69,7 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
   }, []);
 
   useEffect(() => {
-    if (!activeTab || !settingsRef.current) return;
+    if (!activeTab || !activeIsTerminal || !settingsRef.current) return;
     const host = terminalHosts.current[activeTab];
     if (!host) return;
 
@@ -220,7 +220,7 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
       delete cmdBuffer.current[activeTab];
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab]);
+  }, [activeTab, activeIsTerminal]);
 
   useEffect(() => {
     if (!splitPane) return;
@@ -392,7 +392,7 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
     if (!term || !term.element) return;
 
     // Move the terminal's root element (.xterm) to the new host
-    // without disposing WebGL — xterm.js WebGL renderer handles
+    // without disposing WebGL. xterm.js WebGL renderer handles
     // canvas resize automatically when the container changes.
     if (term.element.parentElement !== newHost) {
       newHost.appendChild(term.element);
@@ -418,7 +418,7 @@ export function useTerminal(activeTab: string, settings: types.AppSettings | nul
       delete observers.current[id];
     };
 
-    // Delayed refit — wait for the container to get real dimensions after React layout
+    // Delayed refit: wait for the container to get real dimensions after React layout.
     requestAnimationFrame(() => {
       setTimeout(() => refitTerminal(id), 80);
     });

@@ -7,8 +7,20 @@
   "frontend:dev:watcher": "npm run dev",
   "frontend:dev:serverUrl": "auto",
   "info": {
+    "companyName": "gxShell",
     "productName": "gxShell",
-    "productVersion": "1.1.0"
+    "productVersion": "1.1.0",
+    "copyright": "Copyright 2026",
+    "comments": "SSH Client with Markdown Viewer",
+    "fileAssociations": [
+      {
+        "ext": "md",
+        "name": "Markdown.Document",
+        "description": "Markdown Document",
+        "iconName": "AppIcon",
+        "role": "Viewer"
+      }
+    ]
   },
   "author": {
     "name": "",

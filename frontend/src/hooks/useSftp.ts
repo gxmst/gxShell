@@ -15,7 +15,7 @@ export function useSftp(active?: Tab, drawer?: string, notify?: (text: string, t
   const fetchSeq = useRef(0);
 
   const refreshSftp = useCallback(async (path = remotePathRef.current) => {
-    if (!active?.id) return;
+    if (!active?.id || active.type === "markdown") return;
     const seq = ++fetchSeq.current;
     setSftpBusy(true);
     try {
@@ -34,7 +34,7 @@ export function useSftp(active?: Tab, drawer?: string, notify?: (text: string, t
   }, [active?.id]);
 
   useEffect(() => {
-    if (drawer === "sftp" && active) {
+    if (drawer === "sftp" && active && active.type !== "markdown") {
       const cacheKey = `${active.id}:${remotePathRef.current}`;
       const cached = fileCache.current[cacheKey];
       if (cached) {

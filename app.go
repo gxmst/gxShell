@@ -2,14 +2,9 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
-	osruntime "runtime"
 	"strings"
 	"sync"
 	"time"
@@ -17,7 +12,6 @@ import (
 	"gxShell/backend/ai"
 	"gxShell/backend/config"
 	"gxShell/backend/docker"
-	"gxShell/backend/localfs"
 	"gxShell/backend/localterm"
 	"gxShell/backend/logger"
 	"gxShell/backend/monitor"
@@ -31,34 +25,35 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+// App is the main application struct that coordinates all managers.
 type App struct {
-	ctx      context.Context
-	store    *config.Store
-	log      *logger.Logger
-	ssh      *sshmanager.Manager
-	sftp     *sftpmanager.Manager
-	monitor  *monitor.Manager
-	secrets  *secrets.Store
-	net      *network.Manager
-	tunnels  *tunnel.Manager
-	ai       *ai.Manager
-	docker   *docker.Manager
-	local    *localterm.Manager
-	aiToolMu sync.Mutex
-	aiTools  map[string]authorizedAIToolCall
+	ctx             context.Context
+	store           *config.Store
+	log             *logger.Logger
+	ssh             *sshmanager.Manager
+	sftp            *sftpmanager.Manager
+	monitor         *monitor.Manager
+	secrets         *secrets.Store
+	net             *network.Manager
+	tunnels         *tunnel.Manager
+	ai              *ai.Manager
+	docker          *docker.Manager
+	local           *localterm.Manager
+	aiToolMu        sync.Mutex
+	aiTools         map[string]authorizedAIToolCall
+	rateLimiter     *connectionRateLimiter
+	startupFilePath string
+	startedAt       time.Time
+	// allowedFiles is the set of local file paths the user has genuinely chosen
+	// to open (via the native file dialog, the startup file-open, or as a
+	// markdown sibling of an already-allowed file). ReadLocalFile/WriteLocalFile
+	// only operate on paths in this set, so a compromised renderer cannot use
+	// them to read or overwrite arbitrary files on disk.
+	allowedFilesMu sync.Mutex
+	allowedFiles   map[string]bool
 }
 
 const aiConfigSecretID = "ai-config"
-
-const (
-	aiToolTimeout          = 20 * time.Second
-	aiToolOutputLimit      = 128 * 1024
-	aiToolAuthorizationTTL = 15 * time.Minute
-)
-
-func NewApp() *App {
-	return &App{aiTools: map[string]authorizedAIToolCall{}}
-}
 
 type terminalSessionBackend interface {
 	Disconnect(id string) error
@@ -76,8 +71,19 @@ type authorizedAIToolCall struct {
 	ExpiresAt  time.Time
 }
 
+// NewApp creates a new App instance.
+func NewApp() *App {
+	return &App{
+		aiTools:      map[string]authorizedAIToolCall{},
+		rateLimiter:  newConnectionRateLimiter(),
+		allowedFiles: map[string]bool{},
+	}
+}
+
+// startup initializes all managers and loads configuration.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.startedAt = time.Now()
 	store, err := config.NewStore()
 	if err != nil {
 		runtime.LogError(ctx, "failed to create config store: "+err.Error())
@@ -87,11 +93,13 @@ func (a *App) startup(ctx context.Context) {
 	a.store = store
 	a.log = logger.New(store.DataDir())
 	a.secrets = secrets.NewStore(a.store.DataDir())
+
 	emit := func(event string, data any) {
 		if a.ctx != nil {
 			runtime.EventsEmit(a.ctx, event, data)
 		}
 	}
+
 	confirm := func(host string, fingerprint string) bool {
 		if a.ctx == nil {
 			return false
@@ -104,7 +112,8 @@ func (a *App) startup(ctx context.Context) {
 		})
 		return res == "Yes"
 	}
-	a.ssh = sshmanager.NewManager(filepath.Join(store.DataDir(), "known_hosts"), emit, confirm)
+
+	a.ssh = sshmanager.NewManager(filepath.Join(a.store.DataDir(), "known_hosts"), emit, confirm)
 	a.sftp = sftpmanager.NewManager(a.ssh, emit)
 	a.monitor = monitor.NewManager(a.ssh, emit)
 	a.net = network.NewManager(emit)
@@ -116,6 +125,7 @@ func (a *App) startup(ctx context.Context) {
 	a.docker = docker.NewManager(a.ssh)
 	a.docker.SetEmit(emit)
 	a.local = localterm.NewManager(emit)
+
 	if settings, err := a.store.GetSettings(); err == nil {
 		apiKey := settings.Ai.APIKey
 		if settings.Ai.APIKey != "" {
@@ -134,560 +144,105 @@ func (a *App) startup(ctx context.Context) {
 			Model:    settings.Ai.Model,
 		})
 	}
+
 	a.migrateSecrets()
 	a.log.Info("gxShell started")
 }
 
+// domReady is called when the frontend is ready.
 func (a *App) domReady(ctx context.Context) {
 	a.ctx = ctx
 	runtime.WindowCenter(ctx)
+
+	runtime.OnFileDrop(ctx, func(_ int, _ int, paths []string) {
+		mdPaths := make([]string, 0, len(paths))
+		for _, path := range paths {
+			if strings.EqualFold(filepath.Ext(path), ".md") {
+				mdPaths = append(mdPaths, path)
+			}
+		}
+		if len(mdPaths) == 0 {
+			return
+		}
+		a.log.InfoFields("Files dropped, opening directly", logger.LogFields{"count": len(mdPaths)})
+		for _, path := range mdPaths {
+			if allowed := a.allowFile(path); allowed != "" {
+				a.log.InfoFields("Emitting file:open", logger.LogFields{"fileName": filepath.Base(allowed)})
+				runtime.EventsEmit(ctx, "file:open", allowed)
+			} else {
+				a.log.ErrorFields("Failed to allow file", logger.LogFields{"fileName": filepath.Base(path)})
+			}
+		}
+	})
+
+	if a.startupFilePath != "" {
+		if !isMarkdownPath(a.startupFilePath) {
+			a.log.ErrorFields("Ignoring unsupported startup file", logger.LogFields{
+				"fileName": filepath.Base(a.startupFilePath),
+			})
+			return
+		}
+		// The file was passed to us by the OS (e.g. "open with"), so it is a
+		// genuine user choice. Authorize it for ReadLocalFile/WriteLocalFile.
+		allowed := a.allowFile(a.startupFilePath)
+		if allowed == "" {
+			return
+		}
+		a.log.InfoFields("Emitting file:open event", logger.LogFields{
+			"fileName": filepath.Base(allowed),
+		})
+		runtime.EventsEmit(ctx, "file:open", allowed)
+	}
 }
 
+// shutdown cleans up resources before application exit.
 func (a *App) shutdown(ctx context.Context) {
 	a.ssh.Shutdown()
 	a.local.Shutdown()
 	a.net.StopAll()
-	a.log.Info("gxShell stopped")
-}
-
-func (a *App) GetAppInfo() map[string]string {
-	return map[string]string{
-		"name":    "gxShell",
-		"version": "1.1",
-		"dataDir": a.store.DataDir(),
+	uptime := time.Duration(0)
+	if !a.startedAt.IsZero() {
+		uptime = time.Since(a.startedAt)
 	}
-}
-
-func (a *App) ListProfiles() ([]types.Profile, error) {
-	profiles, err := a.store.ListProfiles()
-	if err != nil {
-		return nil, err
-	}
-	return sanitizeProfiles(profiles), nil
-}
-
-func (a *App) GetProfile(id string) (types.Profile, error) {
-	profiles, err := a.store.ListProfiles()
-	if err != nil {
-		return types.Profile{}, err
-	}
-	for _, profile := range profiles {
-		if profile.ID == id {
-			return sanitizeProfile(profile), nil
-		}
-	}
-	return types.Profile{}, errors.New("profile not found")
-}
-
-func (a *App) CreateProfile(profile types.Profile) (types.Profile, error) {
-	profiles, err := a.store.ListProfiles()
-	if err != nil {
-		return types.Profile{}, err
-	}
-	now := time.Now()
-	profile.ID = types.NewID("profile")
-	profile.CreatedAt = now
-	profile.UpdatedAt = now
-	normalizeProfile(&profile)
-	if err := a.saveProfileSecrets(&profile); err != nil {
-		return types.Profile{}, err
-	}
-	profiles = append(profiles, profile)
-	if err := a.store.SaveProfiles(profiles); err != nil {
-		return types.Profile{}, err
-	}
-	return sanitizeProfile(profile), nil
-}
-
-func (a *App) UpdateProfile(profile types.Profile) (types.Profile, error) {
-	profiles, err := a.store.ListProfiles()
-	if err != nil {
-		return types.Profile{}, err
-	}
-	for i := range profiles {
-		if profiles[i].ID == profile.ID {
-			if profile.RememberPassword && profile.Password == "" {
-				profile.Password = profiles[i].Password
-			}
-			if profile.RememberPassword && profile.PrivateKeyPassphrase == "" {
-				profile.PrivateKeyPassphrase = profiles[i].PrivateKeyPassphrase
-			}
-			profile.CreatedAt = profiles[i].CreatedAt
-			profile.UpdatedAt = time.Now()
-			normalizeProfile(&profile)
-			if err := a.saveProfileSecrets(&profile); err != nil {
-				return types.Profile{}, err
-			}
-			profiles[i] = profile
-			if err := a.store.SaveProfiles(profiles); err != nil {
-				return types.Profile{}, err
-			}
-			return sanitizeProfile(profile), nil
-		}
-	}
-	return types.Profile{}, errors.New("profile not found")
-}
-
-func (a *App) DeleteProfile(id string) error {
-	profiles, err := a.store.ListProfiles()
-	if err != nil {
-		return err
-	}
-	next := profiles[:0]
-	found := false
-	for _, profile := range profiles {
-		if profile.ID != id {
-			if profile.ProxyJumpID == id {
-				profile.ProxyJumpID = ""
-			}
-			next = append(next, profile)
-		} else {
-			found = true
-		}
-	}
-	if found {
-		a.secrets.Delete(id)
-	}
-	return a.store.SaveProfiles(next)
-}
-
-func (a *App) DuplicateProfile(id string) (types.Profile, error) {
-	profile, err := a.GetProfile(id)
-	if err != nil {
-		return types.Profile{}, err
-	}
-	profile.ID = ""
-	profile.Name = profile.Name + " Copy"
-	return a.CreateProfile(profile)
-}
-
-func (a *App) Connect(profileID string, cols int, rows int) (types.SessionInfo, error) {
-	return a.ConnectWithSecrets(profileID, "", "", cols, rows)
-}
-
-func (a *App) ConnectWithSecrets(profileID string, password string, privateKeyPassphrase string, cols int, rows int) (types.SessionInfo, error) {
-	fullProfile, err := a.getProfileForConnect(profileID)
-	if err != nil {
-		return types.SessionInfo{}, err
-	}
-	if fullProfile.RememberPassword {
-		if err := a.loadProfileSecrets(&fullProfile); err != nil {
-			return types.SessionInfo{}, err
-		}
-	}
-	if password != "" {
-		fullProfile.Password = password
-	}
-	if privateKeyPassphrase != "" {
-		fullProfile.PrivateKeyPassphrase = privateKeyPassphrase
-	}
-
-	var jumpProfile types.Profile
-	if fullProfile.ProxyJumpID != "" {
-		jumpProfile, err = a.getProfileForConnect(fullProfile.ProxyJumpID)
-		if err != nil {
-			return types.SessionInfo{}, fmt.Errorf("jump host profile not found: %w", err)
-		}
-		if jumpProfile.RememberPassword {
-			if err := a.loadProfileSecrets(&jumpProfile); err != nil {
-				return types.SessionInfo{}, fmt.Errorf("jump host secrets load failed: %w", err)
-			}
-		}
-		if jumpProfile.ProxyJumpID != "" {
-			return types.SessionInfo{}, errors.New("nested proxy jump is not supported")
-		}
-	}
-
-	settings, settingsErr := a.store.GetSettings()
-	if settingsErr != nil {
-		a.log.Error("failed to read settings: " + settingsErr.Error())
-		settings = config.DefaultSettings()
-	}
-	info, err := a.ssh.ConnectViaJump(fullProfile, jumpProfile, settings.ConnectionTimeout, cols, rows)
-	if err != nil {
-		a.log.Error("connect failed: " + err.Error())
-		return info, err
-	}
-	a.touchProfile(profileID)
-	if settings.MonitorEnabled {
-		a.monitor.Start(info.ID, settings.MonitorIntervalSec)
-	}
-	if len(fullProfile.Tunnels) > 0 {
-		client, clientErr := a.ssh.Client(info.ID)
-		if clientErr == nil {
-			statuses := a.tunnels.StartTunnels(info.ID, client, fullProfile.Tunnels)
-			_ = statuses
-		}
-	}
-	return info, nil
-}
-
-func (a *App) Disconnect(sessionID string) error {
-	a.monitor.Stop(sessionID)
-	a.sftp.InvalidateClient(sessionID)
-	a.tunnels.StopTunnels(sessionID)
-	a.net.StopPing(sessionID)
-	a.discardAuthorizedAiToolCalls(sessionID)
-	backend, err := a.terminalBackend(sessionID)
-	if err != nil {
-		return err
-	}
-	return backend.Disconnect(sessionID)
-}
-
-func (a *App) ConnectLocal(cols int, rows int) (types.SessionInfo, error) {
-	return a.local.Connect(cols, rows)
-}
-
-func (a *App) Reconnect(sessionID string) (types.SessionInfo, error) {
-	return a.ReconnectWithSecrets(sessionID, "", "")
-}
-
-func (a *App) ReconnectWithSecrets(sessionID string, password string, privateKeyPassphrase string) (types.SessionInfo, error) {
-	old, err := a.ssh.Get(sessionID)
-	if err != nil {
-		return types.SessionInfo{}, err
-	}
-	_ = a.Disconnect(sessionID)
-	return a.ConnectWithSecrets(old.ProfileID, password, privateKeyPassphrase, old.Cols, old.Rows)
-}
-
-func (a *App) WriteToTerminal(sessionID string, data string) error {
-	backend, err := a.terminalBackend(sessionID)
-	if err != nil {
-		return err
-	}
-	return backend.Write(sessionID, data)
-}
-
-func (a *App) ResizeTerminal(sessionID string, cols int, rows int) error {
-	backend, err := a.terminalBackend(sessionID)
-	if err != nil {
-		return err
-	}
-	return backend.Resize(sessionID, cols, rows)
-}
-
-func (a *App) ListSessions() []types.SessionInfo {
-	sessions := []types.SessionInfo{}
-	for _, backend := range a.terminalBackends() {
-		sessions = append(sessions, backend.List()...)
-	}
-	return sessions
-}
-
-func (a *App) SendCommandToTerminal(sessionID string, command string) error {
-	if !strings.HasSuffix(command, "\n") {
-		command += "\n"
-	}
-	backend, err := a.terminalBackend(sessionID)
-	if err != nil {
-		return err
-	}
-	return backend.Write(sessionID, command)
-}
-
-func (a *App) terminalBackends() []terminalSessionBackend {
-	backends := make([]terminalSessionBackend, 0, 2)
-	if a.ssh != nil {
-		backends = append(backends, a.ssh)
-	}
-	if a.local != nil {
-		backends = append(backends, a.local)
-	}
-	return backends
-}
-
-func (a *App) terminalBackend(sessionID string) (terminalSessionBackend, error) {
-	if sessionID == "" {
-		return nil, errors.New("session not found")
-	}
-	for _, backend := range a.terminalBackends() {
-		if _, err := backend.Get(sessionID); err == nil {
-			return backend, nil
-		}
-	}
-	return nil, errors.New("session not found")
-}
-
-func (a *App) terminalInfo(sessionID string) (types.SessionInfo, error) {
-	backend, err := a.terminalBackend(sessionID)
-	if err != nil {
-		return types.SessionInfo{}, err
-	}
-	return backend.Get(sessionID)
-}
-
-func (a *App) ListRemoteDir(sessionID string, remotePath string) ([]types.RemoteFile, error) {
-	return a.sftp.ListRemoteDir(sessionID, remotePath)
-}
-
-func (a *App) UploadFile(sessionID, localPath, remotePath string) error {
-	return a.sftp.UploadFile(sessionID, localPath, remotePath)
-}
-
-func (a *App) DownloadFile(sessionID, remotePath, localPath string) error {
-	return a.sftp.DownloadFile(sessionID, remotePath, localPath)
-}
-
-func (a *App) DownloadFolder(sessionID, remotePath, localDir string) error {
-	return a.sftp.DownloadFolder(sessionID, remotePath, localDir)
-}
-
-func (a *App) DeleteRemoteFile(sessionID, remotePath string) error {
-	return a.sftp.DeleteRemoteFile(sessionID, remotePath)
-}
-
-func (a *App) RenameRemoteFile(sessionID, oldPath, newPath string) error {
-	return a.sftp.RenameRemoteFile(sessionID, oldPath, newPath)
-}
-
-func (a *App) CreateRemoteDir(sessionID, remotePath string) error {
-	return a.sftp.CreateRemoteDir(sessionID, remotePath)
-}
-
-func (a *App) StartMonitor(sessionID string) error {
-	settings, err := a.store.GetSettings()
-	if err != nil {
-		a.log.Error("failed to read settings: " + err.Error())
-		settings = config.DefaultSettings()
-	}
-	a.monitor.Start(sessionID, settings.MonitorIntervalSec)
-	return nil
-}
-
-func (a *App) StopMonitor(sessionID string) error {
-	a.monitor.Stop(sessionID)
-	return nil
-}
-
-func (a *App) GetLatestMetrics(sessionID string) types.Metrics {
-	return a.monitor.Latest(sessionID)
-}
-
-func (a *App) ListCommands() ([]types.CommandTemplate, error) {
-	return a.store.ListCommands()
-}
-
-func (a *App) CreateCommand(command types.CommandTemplate) (types.CommandTemplate, error) {
-	commands, err := a.store.ListCommands()
-	if err != nil {
-		return types.CommandTemplate{}, err
-	}
-	now := time.Now()
-	command.ID = types.NewID("cmd")
-	command.CreatedAt = now
-	command.UpdatedAt = now
-	commands = append(commands, command)
-	return command, a.store.SaveCommands(commands)
-}
-
-func (a *App) UpdateCommand(command types.CommandTemplate) (types.CommandTemplate, error) {
-	commands, err := a.store.ListCommands()
-	if err != nil {
-		return types.CommandTemplate{}, err
-	}
-	for i := range commands {
-		if commands[i].ID == command.ID {
-			command.CreatedAt = commands[i].CreatedAt
-			command.UpdatedAt = time.Now()
-			commands[i] = command
-			return command, a.store.SaveCommands(commands)
-		}
-	}
-	return types.CommandTemplate{}, errors.New("command not found")
-}
-
-func (a *App) DeleteCommand(id string) error {
-	commands, err := a.store.ListCommands()
-	if err != nil {
-		return err
-	}
-	next := commands[:0]
-	for _, command := range commands {
-		if command.ID != id {
-			next = append(next, command)
-		}
-	}
-	return a.store.SaveCommands(next)
-}
-
-func (a *App) GetSettings() (types.AppSettings, error) {
-	return a.store.GetSettings()
-}
-
-func (a *App) UpdateSettings(settings types.AppSettings) (types.AppSettings, error) {
-	if settings.ConnectionTimeout <= 0 {
-		settings.ConnectionTimeout = 15
-	}
-	if settings.MonitorIntervalSec <= 0 {
-		settings.MonitorIntervalSec = 5
-	}
-	if settings.Ai.Provider == "" && settings.Ai.APIKey == "" && settings.Ai.Endpoint == "" && settings.Ai.Model == "" {
-		aiCfg := a.ai.GetConfig()
-		settings.Ai = types.AiConfig{
-			Provider: string(aiCfg.Provider),
-			Endpoint: aiCfg.Endpoint,
-			Model:    aiCfg.Model,
-		}
-	}
-	settings.Ai.APIKey = ""
-	return settings, a.store.SaveSettings(settings)
-}
-
-func (a *App) ReadLogs(limit int) []types.LogEntry {
-	return a.log.ReadLatest(limit)
-}
-
-func (a *App) ListLogFiles() []types.LogFile {
-	logDir := filepath.Join(a.store.DataDir(), "logs")
-	entries, err := os.ReadDir(logDir)
-	if err != nil {
-		return []types.LogFile{}
-	}
-	var files []types.LogFile
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		files = append(files, types.LogFile{
-			Name:    entry.Name(),
-			Path:    filepath.Join(logDir, entry.Name()),
-			Size:    info.Size(),
-			ModTime: info.ModTime(),
-		})
-	}
-	return files
-}
-
-func (a *App) ReadLogFile(name string) (string, error) {
-	logDir := filepath.Join(a.store.DataDir(), "logs")
-	cleanName := filepath.Base(name)
-	path := filepath.Join(logDir, cleanName)
-	absPath, err := filepath.Abs(path)
-	if err != nil || !strings.HasPrefix(absPath, filepath.Clean(logDir)+string(os.PathSeparator)) {
-		return "", fmt.Errorf("invalid log file path")
-	}
-	data, err := os.ReadFile(absPath)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
-
-func (a *App) SendCommandToAll(command string) error {
-	sessions := a.ssh.List()
-	if len(sessions) == 0 {
-		return fmt.Errorf("no active sessions")
-	}
-	if !strings.HasSuffix(command, "\n") {
-		command += "\n"
-	}
-	var errs []string
-	for _, s := range sessions {
-		if err := a.ssh.Write(s.ID, command); err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %s", s.Name, err.Error()))
-		}
-	}
-	if len(errs) > 0 {
-		return fmt.Errorf("partial failure: %s", strings.Join(errs, "; "))
-	}
-	return nil
-}
-
-func (a *App) OpenDataDir() error {
-	dir := a.store.DataDir()
-	switch osruntime.GOOS {
-	case "windows":
-		return exec.Command("explorer.exe", dir).Start()
-	case "darwin":
-		return exec.Command("open", dir).Start()
-	default:
-		return exec.Command("xdg-open", dir).Start()
-	}
-}
-
-func (a *App) LogCommand(sessionID string, line string) {
-	host := ""
-	if session, err := a.terminalInfo(sessionID); err == nil {
-		host = session.Name
-	}
-	a.log.LogCommand(sessionID, host, line)
-}
-
-func (a *App) ExportHistory() error {
-	return a.log.OpenHistory()
-}
-
-func (a *App) SelectPrivateKey() (string, error) {
-	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select private key",
+	a.log.InfoFields("gxShell stopped", logger.LogFields{
+		"uptime": uptime.String(),
 	})
 }
 
-func (a *App) SelectUploadFile() (string, error) {
-	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
-		Title: "Select file to upload",
-	})
-}
-
-func (a *App) SelectDownloadPath(defaultName string) (string, error) {
-	return runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
-		Title:           "Save downloaded file",
-		DefaultFilename: filepath.Base(defaultName),
-	})
-}
-
-func (a *App) getProfileForConnect(id string) (types.Profile, error) {
-	profiles, err := a.store.ListProfiles()
-	if err != nil {
-		return types.Profile{}, err
+func (a *App) confirmOpenDroppedMarkdown(paths []string) bool {
+	if a.ctx == nil {
+		return false
 	}
-	for _, profile := range profiles {
-		if profile.ID == id {
-			return profile, nil
+	message := ""
+	if len(paths) == 1 {
+		message = fmt.Sprintf("Open this dropped Markdown file?\n\n%s", paths[0])
+	} else {
+		shown := paths
+		suffix := ""
+		if len(paths) > 5 {
+			shown = paths[:5]
+			suffix = fmt.Sprintf("\n...and %d more", len(paths)-len(shown))
 		}
+		message = fmt.Sprintf("Open these %d dropped Markdown files?\n\n%s%s", len(paths), strings.Join(shown, "\n"), suffix)
 	}
-	return types.Profile{}, errors.New("profile not found")
-}
-
-func (a *App) saveProfileSecrets(profile *types.Profile) error {
-	password := profile.Password
-	passphrase := profile.PrivateKeyPassphrase
-	profile.Password = ""
-	profile.PrivateKeyPassphrase = ""
-	if !profile.RememberPassword {
-		a.secrets.Delete(profile.ID)
-		return nil
-	}
-	if err := a.secrets.SavePassword(profile.ID, password); err != nil {
-		return err
-	}
-	return a.secrets.SavePassphrase(profile.ID, passphrase)
-}
-
-func (a *App) loadProfileSecrets(profile *types.Profile) error {
-	password, err := a.secrets.GetPassword(profile.ID)
+	res, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+		Type:          runtime.QuestionDialog,
+		Title:         "Open Markdown file",
+		Message:       truncate(message, 1200),
+		Buttons:       []string{"Open", "Cancel"},
+		DefaultButton: "Cancel",
+		CancelButton:  "Cancel",
+	})
 	if err != nil {
-		return err
+		a.log.ErrorFields("Markdown drop confirm dialog failed", logger.LogFields{"error": err.Error()})
+		return false
 	}
-	passphrase, err := a.secrets.GetPassphrase(profile.ID)
-	if err != nil {
-		return err
-	}
-	if password != "" {
-		profile.Password = password
-	}
-	if passphrase != "" {
-		profile.PrivateKeyPassphrase = passphrase
-	}
-	return nil
+	a.log.InfoFields("Dialog result", logger.LogFields{"result": res})
+	// Windows MessageDialog with QuestionDialog type returns "Yes"/"No" instead of custom button text
+	return res == "Open" || res == "Yes"
 }
 
+// migrateSecrets migrates plaintext passwords to secure storage.
 func (a *App) migrateSecrets() {
 	profiles, err := a.store.ListProfiles()
 	if err != nil {
@@ -710,590 +265,6 @@ func (a *App) migrateSecrets() {
 		_ = a.store.SaveProfiles(profiles)
 	}
 	a.store.CleanupBackups()
-}
-
-func (a *App) touchProfile(id string) {
-	profiles, err := a.store.ListProfiles()
-	if err != nil {
-		return
-	}
-	for i := range profiles {
-		if profiles[i].ID == id {
-			profiles[i].LastConnectedAt = time.Now()
-			profiles[i].UpdatedAt = time.Now()
-			_ = a.store.SaveProfiles(profiles)
-			return
-		}
-	}
-}
-
-func normalizeProfile(profile *types.Profile) {
-	if profile.Port <= 0 {
-		profile.Port = 22
-	}
-	if profile.AuthType == "" {
-		profile.AuthType = types.AuthPassword
-	}
-	if strings.TrimSpace(profile.Name) == "" {
-		profile.Name = fmt.Sprintf("%s@%s", profile.Username, profile.Host)
-	}
-	if profile.Tags == nil {
-		profile.Tags = []string{}
-	}
-}
-
-func sanitizeProfiles(profiles []types.Profile) []types.Profile {
-	out := make([]types.Profile, len(profiles))
-	for i, profile := range profiles {
-		out[i] = sanitizeProfile(profile)
-	}
-	return out
-}
-
-func sanitizeProfile(profile types.Profile) types.Profile {
-	profile.Password = ""
-	profile.PrivateKeyPassphrase = ""
-	return profile
-}
-
-func (a *App) TraceRoute(sessionID string) (*types.NetworkPath, error) {
-	info, err := a.ssh.Get(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	profile, err := a.getProfileForConnect(info.ProfileID)
-	if err != nil {
-		return nil, err
-	}
-	return a.net.TraceRoute(profile.Host)
-}
-
-func (a *App) PingHost(sessionID string, count int) (*types.NetworkPath, error) {
-	client, err := a.ssh.Client(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	info, err := a.ssh.Get(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	profile, err := a.getProfileForConnect(info.ProfileID)
-	if err != nil {
-		return nil, err
-	}
-	return a.net.Ping(client, profile.Host, count)
-}
-
-func (a *App) StartNetworkPing(sessionID string, intervalSec int) error {
-	client, err := a.ssh.Client(sessionID)
-	if err != nil {
-		return err
-	}
-	info, err := a.ssh.Get(sessionID)
-	if err != nil {
-		return err
-	}
-	profile, err := a.getProfileForConnect(info.ProfileID)
-	if err != nil {
-		return err
-	}
-	a.net.StartPing(sessionID, client, profile.Host, intervalSec)
-	return nil
-}
-
-func (a *App) StopNetworkPing(sessionID string) {
-	a.net.StopPing(sessionID)
-}
-
-func (a *App) GetNetworkPath(sessionID string) (*types.NetworkPath, error) {
-	client, err := a.ssh.Client(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	info, err := a.ssh.Get(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	profile, err := a.getProfileForConnect(info.ProfileID)
-	if err != nil {
-		return nil, err
-	}
-	path := a.net.GetPath(profile.Host)
-	if path == nil {
-		return a.net.Ping(client, profile.Host, 4)
-	}
-	return path, nil
-}
-
-func (a *App) ListTunnelStatus(sessionID string) []types.TunnelStatus {
-	return a.tunnels.ListStatus(sessionID)
-}
-
-func (a *App) RestartTunnels(sessionID string) ([]types.TunnelStatus, error) {
-	info, err := a.ssh.Get(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	profile, err := a.getProfileForConnect(info.ProfileID)
-	if err != nil {
-		return nil, err
-	}
-	client, err := a.ssh.Client(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	a.tunnels.StopTunnels(sessionID)
-	return a.tunnels.StartTunnels(sessionID, client, profile.Tunnels), nil
-}
-
-func (a *App) AddTunnelRule(sessionID string, rule types.TunnelRule) (types.TunnelStatus, error) {
-	info, err := a.ssh.Get(sessionID)
-	if err != nil {
-		return types.TunnelStatus{}, err
-	}
-	client, err := a.ssh.Client(sessionID)
-	if err != nil {
-		return types.TunnelStatus{}, err
-	}
-	if rule.ID == "" {
-		rule.ID = types.NewID("tunnel")
-	}
-	status := a.tunnels.AddTunnel(sessionID, client, rule)
-	if status.Active {
-		profile, perr := a.getProfileForConnect(info.ProfileID)
-		if perr == nil {
-			profile.Tunnels = append(profile.Tunnels, rule)
-			_, _ = a.UpdateProfile(profile)
-		}
-	}
-	return status, nil
-}
-
-func (a *App) RemoveTunnelRule(sessionID string, ruleID string) error {
-	info, err := a.ssh.Get(sessionID)
-	if err != nil {
-		return err
-	}
-	a.tunnels.RemoveTunnel(sessionID, ruleID)
-	profile, perr := a.getProfileForConnect(info.ProfileID)
-	if perr == nil {
-		for i, r := range profile.Tunnels {
-			if r.ID == ruleID {
-				profile.Tunnels = append(profile.Tunnels[:i], profile.Tunnels[i+1:]...)
-				_, _ = a.UpdateProfile(profile)
-				break
-			}
-		}
-	}
-	return nil
-}
-
-func (a *App) ListLocalDir(dir string) ([]types.LocalFile, error) {
-	return localfs.ListDir(dir)
-}
-
-func (a *App) LocalHomeDir() string {
-	return localfs.HomeDir()
-}
-
-func (a *App) SaveAiConfig(provider, apiKey, endpoint, model string) error {
-	if strings.Contains(apiKey, "****") {
-		existing := a.ai.GetConfig()
-		apiKey = existing.APIKey
-	}
-	a.log.Info(fmt.Sprintf("SaveAiConfig: provider=%q model=%q endpoint=%q apiKeyLen=%d", provider, model, endpoint, len(apiKey)))
-	a.ai.UpdateConfig(ai.Config{
-		Provider: ai.Provider(provider),
-		APIKey:   apiKey,
-		Endpoint: endpoint,
-		Model:    model,
-	})
-	verifyCfg := a.ai.GetConfig()
-	a.log.Info(fmt.Sprintf("SaveAiConfig memory verify: provider=%q model=%q endpoint=%q", verifyCfg.Provider, verifyCfg.Model, verifyCfg.Endpoint))
-	settings, err := a.store.GetSettings()
-	if err != nil {
-		a.log.Error("SaveAiConfig: failed to read settings: " + err.Error())
-		return err
-	}
-	if apiKey == "" {
-		a.secrets.Delete(aiConfigSecretID)
-	} else if err := a.secrets.SavePassword(aiConfigSecretID, apiKey); err != nil {
-		a.log.Error("SaveAiConfig: failed to save API key: " + err.Error())
-		return err
-	}
-	settings.Ai = types.AiConfig{
-		Provider: provider,
-		Endpoint: endpoint,
-		Model:    model,
-	}
-	if err := a.store.SaveSettings(settings); err != nil {
-		a.log.Error("SaveAiConfig: failed to save settings: " + err.Error())
-		return err
-	}
-	a.log.Info("SaveAiConfig: saved to file successfully")
-	return nil
-}
-
-func (a *App) GetAiConfig() types.AiConfig {
-	cfg := a.ai.GetConfig()
-	maskedKey := ""
-	if cfg.APIKey != "" {
-		if len(cfg.APIKey) > 8 {
-			maskedKey = cfg.APIKey[:4] + "****" + cfg.APIKey[len(cfg.APIKey)-4:]
-		} else {
-			maskedKey = "****"
-		}
-	}
-	return types.AiConfig{
-		Provider: string(cfg.Provider),
-		APIKey:   maskedKey,
-		Endpoint: cfg.Endpoint,
-		Model:    cfg.Model,
-	}
-}
-
-func (a *App) AiChat(req types.AiChatRequest) error {
-	cfg := a.ai.GetConfig()
-	a.log.Info(fmt.Sprintf("AI chat request: provider=%s model=%s endpoint=%s session=%s msgs=%d contextLen=%d", cfg.Provider, cfg.Model, cfg.Endpoint, req.SessionID, len(req.Messages), len(req.Context)))
-
-	go func() {
-		aiReq := ai.ChatRequest{
-			Messages: make([]ai.Message, len(req.Messages)),
-			Context:  req.Context,
-		}
-		for i, m := range req.Messages {
-			aiReq.Messages[i] = ai.Message{Role: m.Role, Content: m.Content}
-		}
-		if len(aiReq.Messages) > 0 {
-			lastMsg := aiReq.Messages[len(aiReq.Messages)-1]
-			a.log.Info(fmt.Sprintf("AI chat last msg: role=%s contentLen=%d contentPreview=%q", lastMsg.Role, len(lastMsg.Content), truncate(lastMsg.Content, 200)))
-		}
-		err := a.ai.Chat(aiReq, func(resp ai.ChatResponse) {
-			if a.ctx != nil {
-				event := map[string]any{
-					"content":          resp.Content,
-					"finish":           resp.Finish,
-					"promptTokens":     resp.PromptTk,
-					"completionTokens": resp.CompleteTk,
-				}
-				if resp.ReasoningContent != "" {
-					event["reasoningContent"] = resp.ReasoningContent
-				}
-				if len(resp.ToolCalls) > 0 {
-					a.registerAuthorizedAiToolCalls(req.SessionID, resp.ToolCalls)
-					tcData := make([]map[string]any, len(resp.ToolCalls))
-					for i, tc := range resp.ToolCalls {
-						tcData[i] = map[string]any{
-							"id":   tc.ID,
-							"type": tc.Type,
-							"function": map[string]any{
-								"name":      tc.Function.Name,
-								"arguments": tc.Function.Arguments,
-							},
-						}
-					}
-					event["toolCalls"] = tcData
-				}
-				runtime.EventsEmit(a.ctx, "ai:chunk", event)
-			}
-		})
-		if err != nil && a.ctx != nil {
-			a.log.Error("AI chat error: " + err.Error())
-			runtime.EventsEmit(a.ctx, "ai:error", map[string]any{"error": err.Error()})
-		}
-	}()
-	return nil
-}
-
-func (a *App) AiExecuteTool(sessionID string, toolCallID string) string {
-	toolCall, err := a.claimAuthorizedAiToolCall(sessionID, toolCallID)
-	if err != nil {
-		a.log.Error(fmt.Sprintf("AI tool authorization failed: session=%s toolCallID=%s error=%s", sessionID, toolCallID, err.Error()))
-		return "BLOCKED: " + err.Error()
-	}
-	toolName := toolCall.ToolName
-	arguments := toolCall.Arguments
-	a.log.Info(fmt.Sprintf("AI execute authorized tool: session=%s toolCallID=%s tool=%s args=%s", sessionID, toolCallID, toolName, truncate(arguments, 200)))
-
-	var output string
-	switch toolName {
-	case "execute_command":
-		var args struct {
-			Command string `json:"command"`
-		}
-		if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-			output = "Error parsing command arguments: " + err.Error()
-			break
-		}
-		if warn, blocked := checkDangerousCommand(args.Command); blocked {
-			output = "BLOCKED: " + warn
-			a.log.Error("AI tool blocked dangerous command: " + args.Command)
-			break
-		}
-		result, err := a.ssh.ExecuteCommand(sessionID, args.Command, aiToolTimeout, aiToolOutputLimit)
-		if err != nil {
-			output = "Error executing command: " + err.Error()
-		} else {
-			if result == "" {
-				output = "(command produced no output)"
-			} else {
-				output = result
-			}
-		}
-		a.log.Info(fmt.Sprintf("AI tool result: tool=%s outputLen=%d", toolName, len(output)))
-
-	case "read_file":
-		var args struct {
-			Path string `json:"path"`
-		}
-		if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-			output = "Error parsing file path arguments: " + err.Error()
-			break
-		}
-		if warn, blocked := checkSensitivePath(args.Path); blocked {
-			output = "BLOCKED: " + warn
-			a.log.Error("AI tool blocked sensitive file read: " + args.Path)
-			break
-		}
-		cmd := "cat " + shellescape(args.Path)
-		result, err := a.ssh.ExecuteCommand(sessionID, cmd, aiToolTimeout, aiToolOutputLimit)
-		if err != nil {
-			output = "Error reading file: " + err.Error()
-		} else {
-			if result == "" {
-				output = "(file is empty)"
-			} else {
-				output = result
-			}
-		}
-		a.log.Info(fmt.Sprintf("AI tool result: tool=%s path=%s outputLen=%d", toolName, args.Path, len(output)))
-
-	default:
-		output = "Unknown tool: " + toolName
-	}
-
-	return output
-}
-
-func (a *App) registerAuthorizedAiToolCalls(sessionID string, toolCalls []ai.ToolCall) {
-	if sessionID == "" || len(toolCalls) == 0 {
-		return
-	}
-	now := time.Now()
-	a.aiToolMu.Lock()
-	defer a.aiToolMu.Unlock()
-	if a.aiTools == nil {
-		a.aiTools = map[string]authorizedAIToolCall{}
-	}
-	a.pruneExpiredAuthorizedAiToolCallsLocked(now)
-	for _, tc := range toolCalls {
-		if tc.ID == "" || !isAllowedAiTool(tc.Function.Name) {
-			continue
-		}
-		a.aiTools[aiToolAuthorizationKey(sessionID, tc.ID)] = authorizedAIToolCall{
-			SessionID:  sessionID,
-			ToolCallID: tc.ID,
-			ToolName:   tc.Function.Name,
-			Arguments:  tc.Function.Arguments,
-			ExpiresAt:  now.Add(aiToolAuthorizationTTL),
-		}
-	}
-}
-
-func (a *App) claimAuthorizedAiToolCall(sessionID string, toolCallID string) (authorizedAIToolCall, error) {
-	if sessionID == "" || toolCallID == "" {
-		return authorizedAIToolCall{}, errors.New("missing AI tool authorization")
-	}
-	now := time.Now()
-	a.aiToolMu.Lock()
-	defer a.aiToolMu.Unlock()
-	if a.aiTools == nil {
-		a.aiTools = map[string]authorizedAIToolCall{}
-	}
-	a.pruneExpiredAuthorizedAiToolCallsLocked(now)
-	key := aiToolAuthorizationKey(sessionID, toolCallID)
-	toolCall, ok := a.aiTools[key]
-	if !ok {
-		return authorizedAIToolCall{}, errors.New("AI tool call was not authorized by the backend")
-	}
-	delete(a.aiTools, key)
-	if now.After(toolCall.ExpiresAt) {
-		return authorizedAIToolCall{}, errors.New("AI tool authorization expired")
-	}
-	return toolCall, nil
-}
-
-func (a *App) discardAuthorizedAiToolCalls(sessionID string) {
-	if sessionID == "" {
-		return
-	}
-	a.aiToolMu.Lock()
-	defer a.aiToolMu.Unlock()
-	for key, toolCall := range a.aiTools {
-		if toolCall.SessionID == sessionID {
-			delete(a.aiTools, key)
-		}
-	}
-}
-
-func (a *App) pruneExpiredAuthorizedAiToolCallsLocked(now time.Time) {
-	for key, toolCall := range a.aiTools {
-		if now.After(toolCall.ExpiresAt) {
-			delete(a.aiTools, key)
-		}
-	}
-}
-
-func aiToolAuthorizationKey(sessionID string, toolCallID string) string {
-	return sessionID + "\x00" + toolCallID
-}
-
-func isAllowedAiTool(toolName string) bool {
-	return toolName == "execute_command" || toolName == "read_file"
-}
-
-func (a *App) AiContinueChat(req types.AiChatRequest) error {
-	a.log.Info(fmt.Sprintf("AI continue chat: session=%s msgs=%d", req.SessionID, len(req.Messages)))
-
-	go func() {
-		aiReq := ai.ChatRequest{
-			Messages: make([]ai.Message, len(req.Messages)),
-			Context:  req.Context,
-		}
-		for i, m := range req.Messages {
-			aiReq.Messages[i] = ai.Message{
-				Role:             m.Role,
-				Content:          m.Content,
-				ReasoningContent: m.ReasoningContent,
-				ToolCallID:       m.ToolCallID,
-			}
-			for _, tc := range m.ToolCalls {
-				aiReq.Messages[i].ToolCalls = append(aiReq.Messages[i].ToolCalls, ai.ToolCall{
-					ID:   tc.ID,
-					Type: tc.Type,
-					Function: ai.FunctionCall{
-						Name:      tc.Function.Name,
-						Arguments: tc.Function.Arguments,
-					},
-				})
-			}
-		}
-
-		err := a.ai.Chat(aiReq, func(resp ai.ChatResponse) {
-			if a.ctx != nil {
-				event := map[string]any{
-					"content":          resp.Content,
-					"finish":           resp.Finish,
-					"promptTokens":     resp.PromptTk,
-					"completionTokens": resp.CompleteTk,
-				}
-				if resp.ReasoningContent != "" {
-					event["reasoningContent"] = resp.ReasoningContent
-				}
-				if len(resp.ToolCalls) > 0 {
-					a.registerAuthorizedAiToolCalls(req.SessionID, resp.ToolCalls)
-					tcData := make([]map[string]any, len(resp.ToolCalls))
-					for i, tc := range resp.ToolCalls {
-						tcData[i] = map[string]any{
-							"id":   tc.ID,
-							"type": tc.Type,
-							"function": map[string]any{
-								"name":      tc.Function.Name,
-								"arguments": tc.Function.Arguments,
-							},
-						}
-					}
-					event["toolCalls"] = tcData
-				}
-				runtime.EventsEmit(a.ctx, "ai:chunk", event)
-			}
-		})
-		if err != nil && a.ctx != nil {
-			a.log.Error("AI continue chat error: " + err.Error())
-			runtime.EventsEmit(a.ctx, "ai:error", map[string]any{"error": err.Error()})
-		}
-	}()
-	return nil
-}
-
-func (a *App) GetAiUsage() types.AiTokenUsage {
-	u := a.ai.GetUsage()
-	return types.AiTokenUsage{
-		PromptTokens:     u.PromptTokens,
-		CompletionTokens: u.CompletionTokens,
-		TotalTokens:      u.TotalTokens,
-	}
-}
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}
-
-func shellescape(s string) string {
-	if s == "" {
-		return "''"
-	}
-	safe := true
-	for _, c := range s {
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '/') {
-			safe = false
-			break
-		}
-	}
-	if safe {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
-func (a *App) ResetAiUsage() {
-	a.ai.ResetUsage()
-}
-
-func (a *App) ListAiModels(provider, apiKey, endpoint string) ([]string, error) {
-	if strings.Contains(apiKey, "****") {
-		apiKey = a.ai.GetConfig().APIKey
-	}
-	return a.ai.ListModels(ai.Config{
-		Provider: ai.Provider(provider),
-		APIKey:   apiKey,
-		Endpoint: endpoint,
-	})
-}
-
-func (a *App) ListContainers(sessionID string, all bool) ([]types.ContainerInfo, error) {
-	return a.docker.ListContainers(sessionID, all)
-}
-
-func (a *App) ContainerLogs(sessionID, containerID string, tail int) (string, error) {
-	return a.docker.ContainerLogs(sessionID, containerID, tail)
-}
-
-func (a *App) StreamContainerLogs(sessionID, containerID string, tail int) error {
-	return a.docker.StreamContainerLogs(sessionID, containerID, tail)
-}
-
-func (a *App) StopContainerLogs(sessionID, containerID string) {
-	a.docker.StopContainerLogs(sessionID, containerID)
-}
-
-func (a *App) RestartContainer(sessionID, containerID string) error {
-	return a.docker.RestartContainer(sessionID, containerID)
-}
-
-func (a *App) StopContainer(sessionID, containerID string) error {
-	return a.docker.StopContainer(sessionID, containerID)
-}
-
-func (a *App) StartContainer(sessionID, containerID string) error {
-	return a.docker.StartContainer(sessionID, containerID)
-}
-
-func (a *App) RemoveContainer(sessionID, containerID string, force bool) error {
-	return a.docker.RemoveContainer(sessionID, containerID, force)
 }
 
 var dangerousCmdPatterns = []struct {
@@ -1332,6 +303,7 @@ var dangerousCmdRegexps = sync.OnceValue(func() []struct {
 	return result
 })
 
+// checkDangerousCommand validates if a command is safe to execute.
 func checkDangerousCommand(cmd string) (string, bool) {
 	trimmed := strings.TrimSpace(cmd)
 	base := trimmed
@@ -1364,6 +336,7 @@ var sensitivePaths = []struct {
 	{"/home/", "user home SSH private keys"},
 }
 
+// checkSensitivePath validates if a path contains sensitive files.
 func checkSensitivePath(p string) (string, bool) {
 	lower := strings.ToLower(p)
 	for _, sp := range sensitivePaths {

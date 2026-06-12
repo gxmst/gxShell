@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,6 +23,9 @@ type Logger struct {
 	mu          sync.Mutex
 }
 
+// LogFields represents structured log fields.
+type LogFields map[string]interface{}
+
 func New(dir string) *Logger {
 	return &Logger{
 		path:        filepath.Join(dir, "logs", "app.log"),
@@ -30,18 +34,63 @@ func New(dir string) *Logger {
 }
 
 func (l *Logger) Info(message string) {
-	l.Write("info", message)
+	l.Write("info", message, nil)
 }
 
 func (l *Logger) Error(message string) {
-	l.Write("error", message)
+	l.Write("error", message, nil)
 }
 
-func (l *Logger) Write(level, message string) {
+// InfoFields logs an info message with structured fields.
+func (l *Logger) InfoFields(message string, fields LogFields) {
+	l.Write("info", message, fields)
+}
+
+// ErrorFields logs an error message with structured fields.
+func (l *Logger) ErrorFields(message string, fields LogFields) {
+	l.Write("error", message, fields)
+}
+
+func (l *Logger) Write(level, message string, fields LogFields) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
 	message = redact(message)
-	line := fmt.Sprintf("%s [%s] %s\n", time.Now().Format(time.RFC3339), strings.ToUpper(level), message)
+
+	// Create structured log entry
+	entry := map[string]interface{}{
+		"timestamp": time.Now().Format(time.RFC3339),
+		"level":     strings.ToUpper(level),
+		"message":   message,
+	}
+
+	// Add fields if provided
+	if fields != nil {
+		for k, v := range fields {
+			// Redact sensitive field values
+			if isSensitiveKey(k) {
+				entry[k] = "<redacted>"
+			} else if str, ok := v.(string); ok {
+				entry[k] = redact(str)
+			} else {
+				entry[k] = v
+			}
+		}
+	}
+
+	// Serialize to JSON
+	jsonBytes, err := json.Marshal(entry)
+	if err != nil {
+		// Fallback to plain text
+		line := fmt.Sprintf("%s [%s] %s\n", entry["timestamp"], level, message)
+		l.writeToFile(line)
+		return
+	}
+
+	l.writeToFile(string(jsonBytes) + "\n")
+}
+
+func (l *Logger) writeToFile(content string) {
 	_ = os.MkdirAll(filepath.Dir(l.path), 0755)
 	if info, err := os.Stat(l.path); err == nil && info.Size() >= int64(maxLogSize) {
 		_ = os.Rename(l.path, l.path+".1")
@@ -51,14 +100,17 @@ func (l *Logger) Write(level, message string) {
 		return
 	}
 	defer f.Close()
-	_, _ = f.WriteString(line)
+	_, _ = f.WriteString(content)
 }
 
 func (l *Logger) LogCommand(sessionID, host string, line string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	ts := time.Now().Format("2006-01-02 15:04:05")
-	entry := fmt.Sprintf("[%s] [%s@%s] %s\n", ts, sessionID, host, strings.TrimSpace(line))
+	// Redact inline secrets (e.g. `mysql -psecret`, `export TOKEN=...`) before
+	// persisting the command to history.log.
+	safeLine := redact(strings.TrimSpace(line))
+	entry := fmt.Sprintf("[%s] [%s@%s] %s\n", ts, sessionID, host, safeLine)
 	_ = os.MkdirAll(filepath.Dir(l.historyPath), 0755)
 	f, err := os.OpenFile(l.historyPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
@@ -92,19 +144,38 @@ func (l *Logger) ReadLatest(limit int) []types.LogEntry {
 	}
 	start := len(lines) - limit
 	entries := make([]types.LogEntry, 0, limit)
-	lineRe := regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^ ]*)\s+\[(\w+)\]\s+(.*)`)
+
 	for _, line := range lines[start:] {
 		entry := types.LogEntry{
 			Time:    time.Now(),
 			Level:   "info",
 			Message: line,
 		}
-		if matches := lineRe.FindStringSubmatch(line); len(matches) == 4 {
-			if t, err := time.Parse(time.RFC3339, matches[1]); err == nil {
-				entry.Time = t
+
+		// Try to parse as JSON first
+		var jsonEntry map[string]interface{}
+		if err := json.Unmarshal([]byte(line), &jsonEntry); err == nil {
+			if ts, ok := jsonEntry["timestamp"].(string); ok {
+				if t, err := time.Parse(time.RFC3339, ts); err == nil {
+					entry.Time = t
+				}
 			}
-			entry.Level = strings.ToLower(matches[2])
-			entry.Message = matches[3]
+			if level, ok := jsonEntry["level"].(string); ok {
+				entry.Level = strings.ToLower(level)
+			}
+			if msg, ok := jsonEntry["message"].(string); ok {
+				entry.Message = msg
+			}
+		} else {
+			// Fallback to old plain text format
+			lineRe := regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^ ]*)\s+\[(\w+)\]\s+(.*)`)
+			if matches := lineRe.FindStringSubmatch(line); len(matches) == 4 {
+				if t, err := time.Parse(time.RFC3339, matches[1]); err == nil {
+					entry.Time = t
+				}
+				entry.Level = strings.ToLower(matches[2])
+				entry.Message = matches[3]
+			}
 		}
 		entries = append(entries, entry)
 	}
@@ -112,8 +183,17 @@ func (l *Logger) ReadLatest(limit int) []types.LogEntry {
 }
 
 var redactPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)(password|passphrase|privateKey|private_key|secret|token)\s*[:=]\s*[^,\s}]+`),
-	regexp.MustCompile(`(?i)("?(password|passphrase|privateKey|private_key|secret|token)"?\s*:\s*)"[^"]*"`),
+	regexp.MustCompile(`(?i)(password|passphrase|privateKey|private_key|secret|token|apikey|api_key)\s*[:=]\s*[^,\s}]+`),
+	regexp.MustCompile(`(?i)("?(password|passphrase|privateKey|private_key|secret|token|apikey|api_key)"?\s*:\s*)"[^"]*"`),
+}
+
+var sensitiveKeys = map[string]bool{
+	"password": true, "passphrase": true, "privatekey": true, "private_key": true,
+	"secret": true, "token": true, "apikey": true, "api_key": true,
+}
+
+func isSensitiveKey(key string) bool {
+	return sensitiveKeys[strings.ToLower(key)]
 }
 
 func redact(s string) string {

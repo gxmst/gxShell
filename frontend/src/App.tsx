@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { types } from "../wailsjs/go/models";
-import { CreateCommand, DeleteCommand, ListCommands, OpenDataDir, ReadLogFile, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, UpdateCommand } from "../wailsjs/go/main/App";
+import { CreateCommand, DeleteCommand, ListCommands, ListMarkdownFilesInDir, OpenDataDir, ReadLogFile, SelectMarkdownFile, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, UpdateCommand } from "../wailsjs/go/main/App";
 import { emptyProfile } from "./constants";
 import type { Drawer } from "./types";
 import type { SplitPane, Tab } from "./types";
@@ -26,7 +26,11 @@ import { ProgressBar } from "./components/ProgressBar/ProgressBar";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastStack } from "./components/ToastStack";
 import { TransfersProvider } from "./hooks/useTransfers";
-import { EventsOn } from "../wailsjs/runtime/runtime";
+import { EventsOn, OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
+
+const normalizeLocalPath = (filePath: string) => filePath.replace(/\\/g, "/");
+
+const newMarkdownTabId = () => `md-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 function App() {
   const { toasts, notify } = useToasts();
@@ -44,6 +48,7 @@ function App() {
   const [floatingTabIds, setFloatingTabIds] = usePersistedState<string[]>("gx:floatingTabIds", []);
   const [splitPane, setSplitPane] = useState<SplitPane | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{x:number, y:number, items:{label:string, action:()=>void, danger?:boolean}[]} | null>(null);
+  const [markdownSiblings, setMarkdownSiblings] = useState<string[]>([]);
 
   useEffect(() => {
     const hide = () => setCtxMenu(null);
@@ -59,13 +64,99 @@ function App() {
     disposeTerminal: (id) => terminalBridge.current.disposeTerminal(id),
     confirmOnDisconnect: profileState.settings?.confirmOnDisconnect,
   });
+  const tabsRef = useRef(sessions.tabs);
+  tabsRef.current = sessions.tabs;
 
   const activeMetrics = sessions.active ? metrics[sessions.active.id] : undefined;
   const sftp = useSftp(sessions.active, drawer, notify);
 
-  const activeTerminal = useTerminal(sessions.activeTab, profileState.settings, notify, sidebarCollapsed, splitPane);
-  const { writeOutput, disposeTerminal, findNext, focusTerminal, refitTerminal, reattachTerminal } = activeTerminal;      
+  const activeIsTerminal = !!sessions.active && sessions.active.type !== "markdown";
+  const activeTerminal = useTerminal(sessions.activeTab, activeIsTerminal, profileState.settings, notify, sidebarCollapsed, splitPane);
+  const { writeOutput, disposeTerminal, findNext, focusTerminal, refitTerminal, reattachTerminal } = activeTerminal;
   terminalBridge.current.disposeTerminal = disposeTerminal;
+
+  const openMarkdownFile = useCallback(async (filePath: string) => {
+    const normalizedPath = normalizeLocalPath(filePath);
+    const existing = tabsRef.current.find((tab) => tab.type === "markdown" && tab.filePath && normalizeLocalPath(tab.filePath) === normalizedPath);
+    if (existing) {
+      sessions.setActiveTab(existing.id);
+      setDrawer("sftp");
+      try {
+        const siblings = await ListMarkdownFilesInDir(filePath);
+        setMarkdownSiblings(siblings || []);
+      } catch {
+        setMarkdownSiblings([]);
+      }
+      return;
+    }
+
+    const fileName = filePath.split(/[\\/]/).pop() || 'Markdown';
+    const newTab: Tab = {
+      id: newMarkdownTabId(),
+      profileId: "",
+      title: fileName,
+      state: "connected",
+      type: "markdown",
+      filePath: filePath
+    };
+
+    sessions.setTabs(prev => [...prev, newTab]);
+    sessions.setActiveTab(newTab.id);
+    setDrawer("sftp");
+
+    try {
+      const siblings = await ListMarkdownFilesInDir(filePath);
+      setMarkdownSiblings(siblings || []);
+    } catch {
+      setMarkdownSiblings([]);
+    }
+  }, [sessions.setActiveTab, sessions.setTabs, setDrawer]);
+
+  const handleOpenMarkdown = useCallback(async () => {
+    try {
+      const filePath = await SelectMarkdownFile();
+      if (filePath) {
+        openMarkdownFile(filePath);
+      }
+    } catch (err) {
+      notify(String(err), "error");
+    }
+  }, [openMarkdownFile, notify]);
+
+  useEffect(() => {
+    OnFileDrop((_x, _y, _paths) => {
+      // The browser-side callback only installs Wails' drop listener. The
+      // trusted open path is handled in Go, where dropped paths are confirmed
+      // with a native dialog before they are added to the local-file allowlist.
+    }, false);
+
+    const unsubFileOpen = EventsOn("file:open", (filePath: string) => {
+      if (filePath.toLowerCase().endsWith(".md")) {
+        openMarkdownFile(filePath);
+      }
+    });
+
+    // 托盘菜单事件监听
+    const unsubTrayNewConnection = EventsOn("tray:new-connection", () => {
+      setProfileModal(emptyProfile());
+    });
+
+    const unsubTrayOpenMarkdown = EventsOn("tray:open-markdown", () => {
+      handleOpenMarkdown();
+    });
+
+    const unsubTraySettings = EventsOn("tray:settings", () => {
+      setDrawer("settings");
+    });
+
+    return () => {
+      if (unsubFileOpen) unsubFileOpen();
+      if (unsubTrayNewConnection) unsubTrayNewConnection();
+      if (unsubTrayOpenMarkdown) unsubTrayOpenMarkdown();
+      if (unsubTraySettings) unsubTraySettings();
+      OnFileDropOff();
+    };
+  }, [openMarkdownFile, handleOpenMarkdown, setDrawer]);
 
   const handleTearOff = useCallback((tab: Tab) => {
     setFloatingTabIds((prev) => prev.includes(tab.id) ? prev : [...prev, tab.id]);
@@ -82,7 +173,7 @@ function App() {
     setFloatingTabIds((prev) => prev.filter((fid) => fid !== id));
     sessions.setActiveTab(id);
     // reattachTerminal is called from FloatingTerminal's cleanup effect,
-    // which includes a delayed refitTerminal — no need to call it here.
+    // which includes a delayed refitTerminal, so no extra call is needed here.
   }, [sessions.setActiveTab]);
 
   const handleCloseFloating = useCallback(async (id: string) => {
@@ -97,6 +188,19 @@ function App() {
       setSplitPane(null);
     }
   }, [sessions.tabs]);
+
+  useEffect(() => {
+    const activeTab = sessions.tabs.find(t => t.id === sessions.activeTab);
+    if (activeTab?.type === 'markdown' && activeTab.filePath) {
+      ListMarkdownFilesInDir(activeTab.filePath).then(siblings => {
+        setMarkdownSiblings(siblings || []);
+      }).catch(() => {
+        setMarkdownSiblings([]);
+      });
+    } else {
+      setMarkdownSiblings([]);
+    }
+  }, [sessions.activeTab, sessions.tabs]);
 
   useEffect(() => {
     const offData = EventsOn("terminal:data", (payload: { sessionId: string; data: string }) => {
@@ -184,6 +288,8 @@ function App() {
           remotePath={sftp.remotePath}
           remoteFiles={sftp.remoteFiles}
           sftpBusy={sftp.sftpBusy}
+          markdownSiblings={markdownSiblings}
+          onOpenMarkdownFile={openMarkdownFile}
           onNewProfile={() => setProfileModal(emptyProfile())}
           onEditProfile={(profile) => setProfileModal(new types.Profile(profile))}
           onConnectProfile={sessions.connectProfile}
@@ -227,6 +333,8 @@ function App() {
           onReconnect={sessions.reconnectTab}
           onNewConnection={handleNewConnection}
           onNewLocal={sessions.connectLocal}
+          onOpenMarkdown={handleOpenMarkdown}
+          onNotify={notify}
           onTearOff={handleTearOff}
           language={profileState.settings?.language || "en"}
           logViewer={logViewer}

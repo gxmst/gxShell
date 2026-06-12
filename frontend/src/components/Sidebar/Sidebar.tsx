@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { Edit3, MoreHorizontal, Play, Plus, Search, Trash2, ArrowUpRight } from "lucide-react";
+import { Edit3, FileText, MoreHorizontal, Play, Plus, Search, Trash2, ArrowUpRight } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { TraceRoute, PingHost, UpdateSettings } from "../../../wailsjs/go/main/App";
 import type { Drawer, Tab, Toast } from "../../types";
@@ -35,6 +35,8 @@ export function Sidebar(props: {
   remotePath: string;
   remoteFiles: types.RemoteFile[];
   sftpBusy: boolean;
+  markdownSiblings?: string[];
+  onOpenMarkdownFile?: (path: string) => void;
   onNewProfile: () => void;
   onEditProfile: (profile: types.Profile) => void;
   onConnectProfile: (profile: types.Profile) => void;
@@ -131,6 +133,7 @@ export function Sidebar(props: {
   };
 
   const isMonitor = props.drawer === "monitor";
+  const activeIsMarkdown = props.active?.type === "markdown";
 
   return (
     <aside className="left-rail" ref={sidebarEl}>
@@ -219,7 +222,34 @@ export function Sidebar(props: {
           </div>
 
           <div className="tool-body-full">
-            {props.drawer === "sftp" && <SftpPanel active={props.active} path={props.remotePath} files={props.remoteFiles} busy={props.sftpBusy} locale={lang} onRefresh={props.onRefreshSftp} onNotify={props.onNotify} setCtxMenu={props.setCtxMenu} />}
+            {props.drawer === "monitor" && <MonitorPanel metrics={props.activeMetrics} active={props.active} onStart={props.onStartMonitor} onPingClick={() => openFloat("network")} onMemClick={() => openFloat("memory")} locale={lang} />}
+            {props.drawer === "sftp" && (
+              <div className="space-y-2">
+                {props.markdownSiblings && props.markdownSiblings.length > 0 && (
+                  <div className="markdown-file-list">
+                    <div className="section-title subtle"><span>Markdown</span></div>
+                    <div className="server-list">
+                      {props.markdownSiblings.map((file) => {
+                        const isActive = props.active?.type === "markdown" && props.active?.filePath === file;
+                        return (
+                          <div key={file} className={clsx("server-row cursor-pointer", isActive && "bg-accent/10")} onClick={() => props.onOpenMarkdownFile?.(file)}>
+                            <div className="flex min-w-0 items-center gap-2">
+                              <FileText size={14} className={clsx("shrink-0", isActive ? "text-accent" : "text-muted")} />
+                              <div className="truncate text-sm">{file.split(/[\\/]/).pop()}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                {activeIsMarkdown ? (
+                  <div className="empty compact">{t(lang, "connectFirstSftp")}</div>
+                ) : (
+                  <SftpPanel active={props.active} path={props.remotePath} files={props.remoteFiles} busy={props.sftpBusy} locale={lang} onRefresh={props.onRefreshSftp} onNotify={props.onNotify} setCtxMenu={props.setCtxMenu} />
+                )}
+              </div>
+            )}
             {props.drawer === "commands" && <CommandPanel commands={props.commands} active={props.active} locale={lang} onRun={props.onRunCommand} onRunAll={props.onRunCommandAll} onEdit={props.onEditCommand} onDelete={props.onDeleteCommand} onNew={props.onNewCommand} />}
             {props.drawer === "tunnels" && <TunnelPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
             {props.drawer === "logs" && <LogsPanel locale={lang} onOpenLog={props.onOpenLog} />}

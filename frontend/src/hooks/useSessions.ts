@@ -113,13 +113,16 @@ export function useSessions(options: UseSessionsOptions) {
 
   const closeTab = useCallback(async (id: string, skipConfirm = false) => {
     const tab = tabs.find((item) => item.id === id);
-    if (!skipConfirm && options.confirmOnDisconnect && !tab?.local) {
+    const isMarkdown = tab?.type === "markdown";
+    if (!skipConfirm && options.confirmOnDisconnect && !tab?.local && !isMarkdown) {
       const shouldClose = window.confirm("Are you sure you want to disconnect?");
       if (!shouldClose) return;
     }
-    await StopMonitor(id).catch(() => undefined);
-    await Disconnect(id).catch(() => undefined);
-    disposeTerminalRef.current(id);
+    if (!isMarkdown) {
+      await StopMonitor(id).catch(() => undefined);
+      await Disconnect(id).catch(() => undefined);
+      disposeTerminalRef.current(id);
+    }
     setTabs((items) => {
       const next = items.filter((tab) => tab.id !== id);
       if (activeTabRef.current === id) setActiveTab(next[0]?.id || "");
@@ -129,6 +132,7 @@ export function useSessions(options: UseSessionsOptions) {
 
   return {
     tabs,
+    setTabs,
     activeTab,
     active,
     setActiveTab,

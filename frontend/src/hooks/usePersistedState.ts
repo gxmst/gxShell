@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 export function usePersistedState<T>(key: string, defaultValue: T): [T, React.Dispatch<React.SetStateAction<T>>] {
   const [value, setValue] = useState<T>(() => {
@@ -9,7 +9,7 @@ export function usePersistedState<T>(key: string, defaultValue: T): [T, React.Di
     return defaultValue;
   });
 
-  const persistSetValue = (action: React.SetStateAction<T>) => {
+  const persistSetValue = useCallback((action: React.SetStateAction<T>) => {
     setValue((prev) => {
       const next = action instanceof Function ? action(prev) : action;
       try {
@@ -17,7 +17,7 @@ export function usePersistedState<T>(key: string, defaultValue: T): [T, React.Di
       } catch {}
       return next;
     });
-  };
+  }, [key]);
 
   return [value, persistSetValue];
 }

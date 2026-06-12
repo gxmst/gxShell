@@ -1,4 +1,6 @@
 build/bin
+build/*.exe
+build/windows/installer/tmp/
 node_modules
 frontend/dist
 release/

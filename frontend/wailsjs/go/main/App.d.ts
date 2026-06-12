@@ -64,6 +64,8 @@ export function ListLocalDir(arg1:string):Promise<Array<types.LocalFile>>;
 
 export function ListLogFiles():Promise<Array<types.LogFile>>;
 
+export function ListMarkdownFilesInDir(arg1:string):Promise<Array<string>>;
+
 export function ListProfiles():Promise<Array<types.Profile>>;
 
 export function ListRemoteDir(arg1:string,arg2:string):Promise<Array<types.RemoteFile>>;
@@ -79,6 +81,8 @@ export function LogCommand(arg1:string,arg2:string):Promise<void>;
 export function OpenDataDir():Promise<void>;
 
 export function PingHost(arg1:string,arg2:number):Promise<types.NetworkPath>;
+
+export function ReadLocalFile(arg1:string):Promise<string>;
 
 export function ReadLogFile(arg1:string):Promise<string>;
 
@@ -105,6 +109,8 @@ export function RestartTunnels(arg1:string):Promise<Array<types.TunnelStatus>>;
 export function SaveAiConfig(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function SelectDownloadPath(arg1:string):Promise<string>;
+
+export function SelectMarkdownFile():Promise<string>;
 
 export function SelectPrivateKey():Promise<string>;
 
@@ -139,5 +145,7 @@ export function UpdateProfile(arg1:types.Profile):Promise<types.Profile>;
 export function UpdateSettings(arg1:types.AppSettings):Promise<types.AppSettings>;
 
 export function UploadFile(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function WriteLocalFile(arg1:string,arg2:string):Promise<void>;
 
 export function WriteToTerminal(arg1:string,arg2:string):Promise<void>;

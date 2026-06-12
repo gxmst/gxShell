@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -90,5 +92,72 @@ func TestDiscardAuthorizedAiToolCalls(t *testing.T) {
 	}
 	if _, err := app.claimAuthorizedAiToolCall("sess-2", "call-2"); err != nil {
 		t.Fatalf("other session tool call should remain claimable: %v", err)
+	}
+}
+
+func TestReadLocalFileRequiresAllowedFile(t *testing.T) {
+	app := NewApp()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "note.md")
+	if err := os.WriteFile(path, []byte("# hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := app.ReadLocalFile(path); err == nil {
+		t.Fatal("unallowed file should not be readable")
+	}
+
+	allowed := app.allowFile(path)
+	got, err := app.ReadLocalFile(allowed)
+	if err != nil {
+		t.Fatalf("allowed file should be readable: %v", err)
+	}
+	if got != "# hello" {
+		t.Fatalf("content = %q, want %q", got, "# hello")
+	}
+}
+
+func TestListMarkdownFilesInDirAuthorizesOnlyMarkdownSiblings(t *testing.T) {
+	app := NewApp()
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.md")
+	second := filepath.Join(dir, "second.MD")
+	text := filepath.Join(dir, "notes.txt")
+	for path, content := range map[string]string{
+		first:  "# first",
+		second: "# second",
+		text:   "plain text",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	app.allowFile(first)
+	files, err := app.ListMarkdownFilesInDir(first)
+	if err != nil {
+		t.Fatalf("ListMarkdownFilesInDir error: %v", err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("markdown files = %#v, want 2 files", files)
+	}
+	if _, err := app.ReadLocalFile(second); err != nil {
+		t.Fatalf("markdown sibling should be authorized: %v", err)
+	}
+	if _, err := app.ReadLocalFile(text); err == nil {
+		t.Fatal("non-markdown sibling should not be authorized")
+	}
+}
+
+func TestListMarkdownFilesInDirRejectsNonMarkdownFile(t *testing.T) {
+	app := NewApp()
+	path := filepath.Join(t.TempDir(), "notes.txt")
+	if err := os.WriteFile(path, []byte("plain text"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	app.allowFile(path)
+
+	if _, err := app.ListMarkdownFilesInDir(path); err == nil {
+		t.Fatal("non-markdown file should be rejected")
 	}
 }

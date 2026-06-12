@@ -5,6 +5,7 @@ import type { SplitPane, Tab } from "../../types";
 import { TabBar } from "../TabBar/TabBar";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
+import MarkdownViewer from "../MarkdownViewer/MarkdownViewer";
 
 export const TerminalArea = memo(function TerminalArea(props: {
   tabs: Tab[];
@@ -18,6 +19,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
   onReconnect: (tab: Tab) => void;
   onNewConnection: () => void;
   onNewLocal?: () => void;
+  onOpenMarkdown?: () => void;
   onTearOff?: (tab: Tab) => void;
   language: string;
   logViewer?: { name: string; content: string } | null;
@@ -26,6 +28,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
   splitPane?: SplitPane | null;
   onSplitChange?: (split: SplitPane | null) => void;
   refitTerminal?: (id: string) => void;
+  onNotify?: (text: string, tone?: "info" | "error" | "success") => void;
 }) {
   const lang = props.language;
   const floatingSet = new Set(props.floatingTabIds || []);
@@ -65,7 +68,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
 
   return (
     <section className="terminal-pane">
-      <TabBar tabs={visibleTabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} onTearOff={props.onTearOff} onNewConnection={props.onNewConnection} onNewLocal={props.onNewLocal} language={lang} onSplitToggle={(tabId, direction) => {
+      <TabBar tabs={visibleTabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} onTearOff={props.onTearOff} onNewConnection={props.onNewConnection} onNewLocal={props.onNewLocal} onOpenMarkdown={props.onOpenMarkdown} language={lang} onSplitToggle={(tabId, direction) => {
         if (!props.onSplitChange) return;
         if (isSplitVisible) {
           const leftId = split!.left;
@@ -125,7 +128,15 @@ export const TerminalArea = memo(function TerminalArea(props: {
               style={hostStyle}
               ref={(el) => { props.terminalHosts.current[tab.id] = el; }}
               onClick={isSplitTab ? () => props.onActive(tab.id) : undefined}
-            />
+            >
+              {tab.type === 'markdown' && tab.filePath && (
+                <MarkdownViewer
+                  filePath={tab.filePath}
+                  onClose={() => props.onClose(tab.id)}
+                  onNotify={props.onNotify}
+                />
+              )}
+            </div>
           );
         })}
         <div
