@@ -189,15 +189,35 @@ func (m *Manager) Ping(client *ssh.Client, target string, count int) (*types.Net
 	return &result, nil
 }
 
+// syncBuffer is a concurrency-safe writer. The SSH session writes to it from a
+// background goroutine while the caller may read it on the timeout path, so the
+// buffer must guard against concurrent read/write (strings.Builder does not).
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func (m *Manager) remoteExec(client *ssh.Client, command string) (string, error) {
 	s, err := client.NewSession()
 	if err != nil {
 		return "", err
 	}
 	defer s.Close()
-	var buf strings.Builder
-	s.Stdout = &buf
-	s.Stderr = &buf
+	buf := &syncBuffer{}
+	s.Stdout = buf
+	s.Stderr = buf
 	done := make(chan struct{})
 	var runErr error
 	go func() {
@@ -209,6 +229,11 @@ func (m *Manager) remoteExec(client *ssh.Client, command string) (string, error)
 		return buf.String(), runErr
 	case <-time.After(10 * time.Second):
 		s.Close()
+		// Wait for Run to actually return so no further writes race our read.
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
 		return buf.String(), fmt.Errorf("command timed out")
 	}
 }

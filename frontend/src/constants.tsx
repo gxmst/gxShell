@@ -1,4 +1,4 @@
-import { Activity, ArrowRightLeft, Bot, Box, Command, FileText, Folder, Settings, TerminalSquare } from "lucide-react";
+import { Activity, ArrowRightLeft, Bot, Box, Command, FileText, Folder, Settings } from "lucide-react";
 import { types } from "../wailsjs/go/models";
 import type { Drawer } from "./types";
 
@@ -110,6 +110,12 @@ export function drawerIcon(item: Drawer, size = 15) {
 }
 
 export function AppIcon() {
-  return <TerminalSquare size={18} />;
+  return (
+    <img
+      src={new URL('./assets/images/logo.png', import.meta.url).href}
+      alt="gxShell"
+      style={{ width: 28, height: 28, objectFit: 'contain' }}
+    />
+  );
 }
 

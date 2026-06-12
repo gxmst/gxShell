@@ -18,6 +18,8 @@ export type Tab = {
   state: string;
   local?: boolean;
   error?: string;
+  type?: 'ssh' | 'local' | 'markdown';
+  filePath?: string;
 };
 
 export type Toast = {

@@ -126,6 +126,10 @@ export function ListLogFiles() {
   return window['go']['main']['App']['ListLogFiles']();
 }
 
+export function ListMarkdownFilesInDir(arg1) {
+  return window['go']['main']['App']['ListMarkdownFilesInDir'](arg1);
+}
+
 export function ListProfiles() {
   return window['go']['main']['App']['ListProfiles']();
 }
@@ -156,6 +160,10 @@ export function OpenDataDir() {
 
 export function PingHost(arg1, arg2) {
   return window['go']['main']['App']['PingHost'](arg1, arg2);
+}
+
+export function ReadLocalFile(arg1) {
+  return window['go']['main']['App']['ReadLocalFile'](arg1);
 }
 
 export function ReadLogFile(arg1) {
@@ -208,6 +216,10 @@ export function SaveAiConfig(arg1, arg2, arg3, arg4) {
 
 export function SelectDownloadPath(arg1) {
   return window['go']['main']['App']['SelectDownloadPath'](arg1);
+}
+
+export function SelectMarkdownFile() {
+  return window['go']['main']['App']['SelectMarkdownFile']();
 }
 
 export function SelectPrivateKey() {
@@ -276,6 +288,10 @@ export function UpdateSettings(arg1) {
 
 export function UploadFile(arg1, arg2, arg3) {
   return window['go']['main']['App']['UploadFile'](arg1, arg2, arg3);
+}
+
+export function WriteLocalFile(arg1, arg2) {
+  return window['go']['main']['App']['WriteLocalFile'](arg1, arg2);
 }
 
 export function WriteToTerminal(arg1, arg2) {

@@ -120,12 +120,13 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 		targetAddr := sshAddress(profile.Host, profile.Port)
 		dialCtx, dialCancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
 		targetConn, err := jumpClient.DialContext(dialCtx, "tcp", targetAddr)
-		dialCancel()
 		if err != nil {
+			dialCancel()
 			m.failConnect(id, fmt.Errorf("jump host cannot reach target %s: %w", targetAddr, err), nil, jumpClient, nil)
 			return info, err
 		}
 		targetClientConn, chans, reqs, err := ssh.NewClientConn(targetConn, targetAddr, config)
+		dialCancel()
 		if err != nil {
 			_ = targetConn.Close()
 			m.failConnect(id, fmt.Errorf("target SSH handshake via jump failed: %w", err), nil, jumpClient, nil)

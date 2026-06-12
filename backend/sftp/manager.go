@@ -22,8 +22,14 @@ type SSHClientProvider interface {
 }
 
 type cachedClient struct {
-	client  *sftp.Client
+	client   *sftp.Client
 	lastUsed time.Time
+	// refs counts in-flight operations holding this client. closing marks the
+	// client as removed from the cache (evicted or invalidated); the underlying
+	// handle is only Closed once the last in-flight operation releases it, so we
+	// never close a client another goroutine is mid-transfer on.
+	refs    int
+	closing bool
 }
 
 type Manager struct {
@@ -31,6 +37,9 @@ type Manager struct {
 	emit     func(event string, data any)
 	mu       sync.Mutex
 	cache    map[string]*cachedClient
+	// createMu serializes client creation per session so concurrent cache
+	// misses don't each open a client and close one another's in-use handle.
+	createMu map[string]*sync.Mutex
 }
 
 const maxSFTPCache = 10
@@ -40,63 +49,140 @@ func NewManager(sessions SSHClientProvider, emit func(event string, data any)) *
 		sessions: sessions,
 		emit:     emit,
 		cache:    map[string]*cachedClient{},
+		createMu: map[string]*sync.Mutex{},
 	}
 	go m.evictLoop()
 	return m
 }
 
-func (m *Manager) withClient(sessionID string) (*sftp.Client, error) {
+// sessionCreateLock returns the per-session creation mutex, allocating it on
+// first use.
+func (m *Manager) sessionCreateLock(sessionID string) *sync.Mutex {
 	m.mu.Lock()
-	if cc, ok := m.cache[sessionID]; ok {
-		client := cc.client
+	defer m.mu.Unlock()
+	lock, ok := m.createMu[sessionID]
+	if !ok {
+		lock = &sync.Mutex{}
+		m.createMu[sessionID] = lock
+	}
+	return lock
+}
+
+// acquire returns a healthy SFTP client for the session together with a release
+// function the caller MUST invoke (defer) when done. The client is reference
+// counted: eviction and invalidation only detach it from the cache; the actual
+// Close happens when the last holder releases it, so an in-flight transfer is
+// never cut off under it.
+func (m *Manager) acquire(sessionID string) (*sftp.Client, func(), error) {
+	// Fast path: a healthy cached client.
+	m.mu.Lock()
+	if cc, ok := m.cache[sessionID]; ok && !cc.closing {
 		cc.lastUsed = time.Now()
+		cc.refs++
+		client := cc.client
 		m.mu.Unlock()
 		if _, err := client.Getwd(); err != nil {
-			m.InvalidateClient(sessionID)
-		} else {
-			return client, nil
+			// Health check failed: detach it and retry via the slow path.
+			m.release(sessionID, cc, true)
+			return m.acquireSlow(sessionID)
 		}
+		return client, func() { m.release(sessionID, cc, false) }, nil
 	}
-	if len(m.cache) >= maxSFTPCache {
-		var oldestID string
-		var oldestTime time.Time
-		for id, cc := range m.cache {
-			if oldestID == "" || cc.lastUsed.Before(oldestTime) {
-				oldestID = id
-				oldestTime = cc.lastUsed
-			}
-		}
-		if oldestID != "" {
-			_ = m.cache[oldestID].client.Close()
-			delete(m.cache, oldestID)
-		}
+	m.mu.Unlock()
+	return m.acquireSlow(sessionID)
+}
+
+// acquireSlow opens a new client under the per-session creation lock.
+func (m *Manager) acquireSlow(sessionID string) (*sftp.Client, func(), error) {
+	createLock := m.sessionCreateLock(sessionID)
+	createLock.Lock()
+	defer createLock.Unlock()
+
+	// Re-check: another goroutine may have created one while we waited.
+	m.mu.Lock()
+	if cc, ok := m.cache[sessionID]; ok && !cc.closing {
+		cc.lastUsed = time.Now()
+		cc.refs++
+		client := cc.client
+		m.mu.Unlock()
+		return client, func() { m.release(sessionID, cc, false) }, nil
 	}
+	m.evictLRULocked()
 	m.mu.Unlock()
 
 	sshClient, err := m.sessions.Client(sessionID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	client, err := sftp.NewClient(sshClient)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	m.mu.Lock()
-	if old, ok := m.cache[sessionID]; ok {
-		_ = old.client.Close()
-	}
-	m.cache[sessionID] = &cachedClient{client: client, lastUsed: time.Now()}
+	cc := &cachedClient{client: client, lastUsed: time.Now(), refs: 1}
+	m.cache[sessionID] = cc
 	m.mu.Unlock()
-	return client, nil
+	return client, func() { m.release(sessionID, cc, false) }, nil
 }
 
+// release drops one reference. If detach is true (or the entry was already
+// detached) and no references remain, the underlying client is closed.
+func (m *Manager) release(sessionID string, cc *cachedClient, detach bool) {
+	m.mu.Lock()
+	if detach && !cc.closing {
+		// Detach from the cache so no new caller can acquire it.
+		if cur, ok := m.cache[sessionID]; ok && cur == cc {
+			delete(m.cache, sessionID)
+		}
+		cc.closing = true
+	}
+	if cc.refs > 0 {
+		cc.refs--
+	}
+	shouldClose := cc.closing && cc.refs == 0
+	m.mu.Unlock()
+	if shouldClose {
+		_ = cc.client.Close()
+	}
+}
+
+// evictLRULocked removes the least-recently-used entry when the cache is full.
+// Must hold m.mu. The evicted client is detached and closed lazily by release.
+func (m *Manager) evictLRULocked() {
+	if len(m.cache) < maxSFTPCache {
+		return
+	}
+	var oldestID string
+	var oldest *cachedClient
+	for id, cc := range m.cache {
+		if oldest == nil || cc.lastUsed.Before(oldest.lastUsed) {
+			oldestID = id
+			oldest = cc
+		}
+	}
+	if oldest != nil {
+		oldest.closing = true
+		delete(m.cache, oldestID)
+		if oldest.refs == 0 {
+			_ = oldest.client.Close()
+		}
+	}
+}
+
+// InvalidateClient detaches a session's client from the cache. The handle is
+// closed once any in-flight operations release it.
 func (m *Manager) InvalidateClient(sessionID string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if cc, ok := m.cache[sessionID]; ok {
-		_ = cc.client.Close()
+	cc, ok := m.cache[sessionID]
+	if ok {
+		cc.closing = true
 		delete(m.cache, sessionID)
+	}
+	shouldClose := ok && cc.refs == 0
+	m.mu.Unlock()
+	if shouldClose {
+		_ = cc.client.Close()
 	}
 }
 
@@ -108,8 +194,11 @@ func (m *Manager) evictLoop() {
 		now := time.Now()
 		for id, cc := range m.cache {
 			if now.Sub(cc.lastUsed) > 5*time.Minute {
-				_ = cc.client.Close()
+				cc.closing = true
 				delete(m.cache, id)
+				if cc.refs == 0 {
+					_ = cc.client.Close()
+				}
 			}
 		}
 		m.mu.Unlock()
@@ -121,10 +210,11 @@ func (m *Manager) ListRemoteDir(sessionID string, remotePath string) ([]types.Re
 		remotePath = "."
 	}
 	remotePath = cleanRemotePath(remotePath)
-	client, err := m.withClient(sessionID)
+	client, release, err := m.acquire(sessionID)
 	if err != nil {
 		return nil, err
 	}
+	defer release()
 	entries, err := client.ReadDir(remotePath)
 	if err != nil {
 		m.InvalidateClient(sessionID)
@@ -153,10 +243,11 @@ func (m *Manager) ListRemoteDir(sessionID string, remotePath string) ([]types.Re
 
 func (m *Manager) UploadFile(sessionID, localPath, remotePath string) error {
 	remotePath = cleanRemotePath(remotePath)
-	client, err := m.withClient(sessionID)
+	client, release, err := m.acquire(sessionID)
 	if err != nil {
 		return err
 	}
+	defer release()
 
 	src, err := os.Open(localPath)
 	if err != nil {
@@ -190,10 +281,11 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) error {
 
 func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) error {
 	remotePath = cleanRemotePath(remotePath)
-	client, err := m.withClient(sessionID)
+	client, release, err := m.acquire(sessionID)
 	if err != nil {
 		return err
 	}
+	defer release()
 
 	src, err := client.Open(remotePath)
 	if err != nil {
@@ -228,10 +320,11 @@ func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) error {
 
 func (m *Manager) DeleteRemoteFile(sessionID, remotePath string) error {
 	remotePath = cleanRemotePath(remotePath)
-	client, err := m.withClient(sessionID)
+	client, release, err := m.acquire(sessionID)
 	if err != nil {
 		return err
 	}
+	defer release()
 	err = client.Remove(remotePath)
 	if err != nil {
 		m.InvalidateClient(sessionID)
@@ -242,10 +335,11 @@ func (m *Manager) DeleteRemoteFile(sessionID, remotePath string) error {
 func (m *Manager) RenameRemoteFile(sessionID, oldPath, newPath string) error {
 	oldPath = cleanRemotePath(oldPath)
 	newPath = cleanRemotePath(newPath)
-	client, err := m.withClient(sessionID)
+	client, release, err := m.acquire(sessionID)
 	if err != nil {
 		return err
 	}
+	defer release()
 	err = client.Rename(oldPath, newPath)
 	if err != nil {
 		m.InvalidateClient(sessionID)
@@ -255,10 +349,11 @@ func (m *Manager) RenameRemoteFile(sessionID, oldPath, newPath string) error {
 
 func (m *Manager) CreateRemoteDir(sessionID, remotePath string) error {
 	remotePath = cleanRemotePath(remotePath)
-	client, err := m.withClient(sessionID)
+	client, release, err := m.acquire(sessionID)
 	if err != nil {
 		return err
 	}
+	defer release()
 	err = client.MkdirAll(remotePath)
 	if err != nil {
 		m.InvalidateClient(sessionID)
@@ -268,19 +363,27 @@ func (m *Manager) CreateRemoteDir(sessionID, remotePath string) error {
 
 func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) error {
 	remotePath = cleanRemotePath(remotePath)
-	client, err := m.withClient(sessionID)
+	client, release, err := m.acquire(sessionID)
 	if err != nil {
 		return err
 	}
+	defer release()
 
 	cleanRemote := path.Clean(remotePath)
 	if err := os.MkdirAll(localDir, 0755); err != nil {
 		return err
 	}
+	// Resolve the local root once so we can confine every extracted entry to it.
+	localRoot, err := filepath.Abs(localDir)
+	if err != nil {
+		return fmt.Errorf("invalid local directory: %w", err)
+	}
+	localRoot = filepath.Clean(localRoot)
+	rootPrefix := localRoot + string(os.PathSeparator)
 
 	var files []struct {
 		remotePath string
-		localRel   string
+		localPath  string
 		isDir      bool
 		size       int64
 	}
@@ -290,21 +393,34 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) error {
 			m.InvalidateClient(sessionID)
 			return err
 		}
+		stat := walker.Stat()
+		// Skip symlinks: a malicious server could use them to escape localDir or
+		// to make the walk follow links outside the requested tree.
+		if stat.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
 		rp := walker.Path()
-		rel, relErr := filepath.Rel(cleanRemote, rp)
+		// Remote paths are forward-slash; compute the relative segment with the
+		// remote-path package, then convert to OS separators for local use.
+		rel, relErr := relRemote(cleanRemote, rp)
 		if relErr != nil {
 			return fmt.Errorf("invalid path: %w", relErr)
 		}
-		isDir := walker.Stat().IsDir()
+		localPath := filepath.Join(localRoot, filepath.FromSlash(rel))
+		// Containment check (zip-slip guard): the resolved path must stay within
+		// localRoot. localRoot itself (rel == ".") is allowed.
+		if localPath != localRoot && !strings.HasPrefix(localPath, rootPrefix) {
+			return fmt.Errorf("refusing to write outside destination: %s", rel)
+		}
+		isDir := stat.IsDir()
 		files = append(files, struct {
 			remotePath string
-			localRel   string
+			localPath  string
 			isDir      bool
 			size       int64
-		}{remotePath: rp, localRel: rel, isDir: isDir})
+		}{remotePath: rp, localPath: localPath, isDir: isDir})
 		if isDir {
-			localSub := filepath.Join(localDir, rel)
-			if err := os.MkdirAll(localSub, 0755); err != nil {
+			if err := os.MkdirAll(localPath, 0755); err != nil {
 				return err
 			}
 		}
@@ -314,7 +430,7 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) error {
 		if f.isDir {
 			continue
 		}
-		localPath := filepath.Join(localDir, f.localRel)
+		localPath := f.localPath
 		m.emit("sftp:progress", map[string]any{
 			"sessionId": sessionID,
 			"path":      f.remotePath,
@@ -382,6 +498,30 @@ func copyWithProgress(dst io.Writer, src io.Reader, progress func(int64)) (int64
 			return total, readErr
 		}
 	}
+}
+
+// relRemote returns rp expressed relative to base, operating purely on
+// forward-slash remote paths (never OS separators). It returns an error if rp
+// is not within base, so callers can reject entries that escape the requested
+// tree (e.g. a server returning paths above the download root).
+func relRemote(base, rp string) (string, error) {
+	base = path.Clean(base)
+	rp = path.Clean(rp)
+	if rp == base {
+		return ".", nil
+	}
+	prefix := base
+	if prefix != "/" {
+		prefix += "/"
+	}
+	if !strings.HasPrefix(rp, prefix) {
+		return "", fmt.Errorf("path %q is outside %q", rp, base)
+	}
+	rel := strings.TrimPrefix(rp, prefix)
+	if rel == "" || strings.HasPrefix(rel, "/") || rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", fmt.Errorf("invalid relative path %q", rel)
+	}
+	return rel, nil
 }
 
 func cleanRemotePath(p string) string {

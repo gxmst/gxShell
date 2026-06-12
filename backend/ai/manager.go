@@ -3,12 +3,14 @@ package ai
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Provider string
@@ -80,6 +82,9 @@ type Manager struct {
 }
 
 func NewManager() *Manager {
+	// No client-level Timeout: streaming chat relies on a per-request context
+	// (ChatWithContext) and a hard client timeout would truncate long streams.
+	// Non-streaming calls (ListModels) attach their own context deadline instead.
 	return &Manager{
 		client: &http.Client{},
 	}
@@ -131,7 +136,9 @@ func (m *Manager) ListModels(cfg Config) ([]string, error) {
 		}
 	}
 
-	req, err := http.NewRequest("GET", url, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -235,7 +242,13 @@ func getToolsDefinition() []map[string]any {
 
 type CommandExecutor func(sessionID string, command string) (string, error)
 
+// Chat sends a chat request with default context.
 func (m *Manager) Chat(req ChatRequest, onChunk func(ChatResponse)) error {
+	return m.ChatWithContext(context.Background(), req, onChunk)
+}
+
+// ChatWithContext sends a chat request with cancellation support.
+func (m *Manager) ChatWithContext(ctx context.Context, req ChatRequest, onChunk func(ChatResponse)) error {
 	m.mu.RLock()
 	cfg := m.config
 	m.mu.RUnlock()
@@ -298,7 +311,7 @@ func (m *Manager) Chat(req ChatRequest, onChunk func(ChatResponse)) error {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	httpReq, err := http.NewRequest("POST", endpoint, bytes.NewReader(bodyBytes))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -315,25 +328,20 @@ func (m *Manager) Chat(req ChatRequest, onChunk func(ChatResponse)) error {
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		msgSummary := ""
-		for i, msg := range apiMessages {
+		// Summarize only the message shape (role + counts), never the content.
+		// Message bodies and tool output can contain terminal data or secrets, and
+		// this error is surfaced to the frontend and written to the app log.
+		roleCounts := map[string]int{}
+		toolCallMsgs := 0
+		for _, msg := range apiMessages {
 			role, _ := msg["role"].(string)
-			tcId, _ := msg["tool_call_id"].(string)
-			content, _ := msg["content"].(string)
-			if len(content) > 80 {
-				content = content[:80] + "..."
+			roleCounts[role]++
+			if _, ok := msg["tool_calls"].([]map[string]any); ok {
+				toolCallMsgs++
 			}
-			hasTC := ""
-			if tcs, ok := msg["tool_calls"].([]map[string]any); ok {
-				hasTC = fmt.Sprintf(" tool_calls=%d", len(tcs))
-			}
-			tcIdStr := ""
-			if tcId != "" {
-				tcIdStr = fmt.Sprintf(" tool_call_id=%s", tcId)
-			}
-			msgSummary += fmt.Sprintf("\n  [%d] role=%s content=%q%s%s", i, role, content, hasTC, tcIdStr)
 		}
-		return fmt.Errorf("API error (%d): %s\nMessages:%s", resp.StatusCode, string(respBody), msgSummary)
+		return fmt.Errorf("API error (%d): %s (messages=%d roles=%v toolCallMsgs=%d)",
+			resp.StatusCode, string(respBody), len(apiMessages), roleCounts, toolCallMsgs)
 	}
 
 	if cfg.Provider == ProviderOllama {
@@ -387,6 +395,7 @@ IMPORTANT notes about command execution:
 
 func (m *Manager) parseOllamaStream(body io.Reader, onChunk func(ChatResponse)) error {
 	scanner := bufio.NewScanner(body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	var promptTk, completeTk int
 
 	for scanner.Scan() {

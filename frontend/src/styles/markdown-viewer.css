@@ -1,0 +1,129 @@
+.markdown-viewer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg);
+}
+
+/* Floating control bar in the top-right corner, above the content. */
+.markdown-viewer-float {
+  position: absolute;
+  top: 10px;
+  right: 14px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-secondary) 88%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(6px);
+}
+
+.markdown-viewer-zoom {
+  width: 96px;
+  height: 4px;
+  margin-right: 4px;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+.markdown-viewer-fbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.markdown-viewer-fbtn:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.1));
+}
+
+.markdown-viewer-fbtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.markdown-viewer-sidebar {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.markdown-viewer-sidebar-title {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.markdown-viewer-file-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 4px 8px;
+  font-size: 12px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text);
+  transition: background 0.2s;
+}
+
+.markdown-viewer-file-item:hover {
+  background: var(--bg-hover, rgba(255,255,255,0.05));
+}
+
+.markdown-viewer-file-item.active {
+  background: var(--accent);
+  color: white;
+}
+
+.markdown-viewer-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.markdown-viewer-editor {
+  flex: 1;
+  width: 100%;
+  resize: none;
+  border: none;
+  outline: none;
+  padding: 24px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: var(--md-zoom, 14px);
+  line-height: 1.6;
+  tab-size: 2;
+  caret-color: var(--accent);
+}
+
+.markdown-viewer-loading,
+.markdown-viewer-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--muted);
+}
+
+.markdown-viewer-error {
+  color: var(--error, #ef4444);
+}
