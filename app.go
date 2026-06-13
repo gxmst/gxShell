@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -41,6 +42,7 @@ type App struct {
 	local           *localterm.Manager
 	aiToolMu        sync.Mutex
 	aiTools         map[string]authorizedAIToolCall
+	cliMu           sync.Mutex
 	rateLimiter     *connectionRateLimiter
 	startupFilePath string
 	startedAt       time.Time
@@ -147,6 +149,9 @@ func (a *App) startup(ctx context.Context) {
 
 	a.migrateSecrets()
 	a.log.Info("gxShell started")
+
+	// Start CLI server for external command-line access
+	go a.startCliServer()
 }
 
 // domReady is called when the frontend is ready.
@@ -336,19 +341,174 @@ var sensitivePaths = []struct {
 	{"/home/", "user home SSH private keys"},
 }
 
-// checkSensitivePath validates if a path contains sensitive files.
+// checkSensitivePath validates if a path contains sensitive files. The input may
+// be a full shell command, so it checks a few conservative normalizations to
+// catch common shell/path obfuscation such as /etc//shadow, /etc/../etc/shadow,
+// quoted path fragments, and backslash-escaped characters.
 func checkSensitivePath(p string) (string, bool) {
-	lower := strings.ToLower(p)
-	for _, sp := range sensitivePaths {
-		if strings.Contains(lower, strings.ToLower(sp.pattern)) {
-			if sp.pattern == "/home/" {
-				if strings.Contains(lower, "/.ssh/id_") && !strings.Contains(lower, ".pub") {
+	for _, candidate := range sensitivePathCandidates(p) {
+		lower := strings.ToLower(normalizeSensitivePathText(candidate))
+		for _, sp := range sensitivePaths {
+			pattern := strings.ToLower(sp.pattern)
+			if pattern == "/home/" {
+				if containsPrivateSSHKeyReference(lower) {
 					return sp.reason, true
 				}
 				continue
 			}
-			return sp.reason, true
+			if strings.Contains(lower, pattern) {
+				return sp.reason, true
+			}
 		}
 	}
 	return "", false
+}
+
+func sensitivePathCandidates(input string) []string {
+	stripped := stripShellPathObfuscation(input)
+	candidates := []string{input, stripped}
+	for _, field := range strings.Fields(stripped) {
+		candidates = append(candidates, field)
+		if cleaned := cleanRemotePathToken(field); cleaned != "" {
+			candidates = append(candidates, cleaned)
+		}
+	}
+	return candidates
+}
+
+func stripShellPathObfuscation(s string) string {
+	replacer := strings.NewReplacer("'", "", `"`, "", `\`, "")
+	return replacer.Replace(s)
+}
+
+func normalizeSensitivePathText(s string) string {
+	for strings.Contains(s, "//") {
+		s = strings.ReplaceAll(s, "//", "/")
+	}
+	for strings.Contains(s, "/./") {
+		s = strings.ReplaceAll(s, "/./", "/")
+	}
+	return s
+}
+
+func cleanRemotePathToken(token string) string {
+	token = normalizeSensitivePathText(token)
+	if token == "" {
+		return ""
+	}
+	if strings.HasPrefix(token, "~/") {
+		return path.Clean("/home/__self__/" + strings.TrimPrefix(token, "~/"))
+	}
+	if strings.HasPrefix(token, "~root/") {
+		return path.Clean("/root/" + strings.TrimPrefix(token, "~root/"))
+	}
+	if strings.HasPrefix(token, "~") {
+		if slash := strings.Index(token, "/"); slash > 1 {
+			return path.Clean("/home/" + token[1:])
+		}
+	}
+	if strings.HasPrefix(token, "/") {
+		return path.Clean(token)
+	}
+	return ""
+}
+
+func containsPrivateSSHKeyReference(lower string) bool {
+	for _, field := range strings.Fields(lower) {
+		field = normalizeSensitivePathText(field)
+		if strings.Contains(field, "/.ssh/id_") && !strings.HasSuffix(field, ".pub") {
+			return true
+		}
+	}
+	return false
+}
+
+// readOnlyCommands lists binaries that only inspect state. A command whose
+// program name is in this set is allowed to run without an explicit human
+// confirmation when the caller explicitly allows the read-only shortcut. The
+// set is intentionally conservative: shell operators, quoting, expansion, and
+// globbing are rejected separately by isReadOnlyCommand, so each entry only
+// needs to be safe as a standalone command with literal arguments. Every entry
+// here must be unable to mutate state OR execute another program even when
+// given arbitrary flags. Commands with a known mutating flag (date -s, ss -K,
+// dmesg -C, hostname NAME, sort -o, sed -i, find -exec) and command wrappers
+// (env, command, xargs, sudo, watch, timeout, awk, sed, sh, ...) are deliberately
+// excluded so they fall through to confirmation.
+var readOnlyCommands = map[string]struct{}{
+	"echo": {},
+	// File content inspection
+	"cat": {}, "tac": {}, "nl": {}, "head": {}, "tail": {}, "wc": {},
+	"cksum": {}, "md5sum": {}, "sha1sum": {}, "sha256sum": {}, "sha512sum": {}, "zcat": {},
+	// Read-only text search
+	"grep": {}, "egrep": {}, "fgrep": {}, "zgrep": {},
+	// Filesystem inspection
+	"ls": {}, "pwd": {}, "df": {}, "du": {}, "stat": {}, "file": {},
+	"realpath": {}, "readlink": {}, "basename": {}, "dirname": {}, "tree": {},
+	// Process / network / environment inspection
+	"ps": {}, "pgrep": {}, "pstree": {}, "lsof": {}, "netstat": {}, "getent": {}, "printenv": {},
+	// System / identity info
+	"uptime": {}, "uname": {}, "whoami": {}, "id": {}, "arch": {}, "nproc": {},
+	"w": {}, "who": {}, "last": {}, "groups": {},
+	"lscpu": {}, "lsblk": {}, "lsusb": {}, "lspci": {}, "free": {}, "vmstat": {}, "iostat": {}, "mpstat": {},
+	// Locators
+	"which": {}, "whereis": {}, "type": {},
+}
+
+// isReadOnlyCommand reports whether cmd is a single read-only command that may
+// run without a confirmation prompt. It is deliberately conservative: any shell
+// metacharacter that could chain, redirect, background or substitute commands
+// disqualifies the command (returning false), as does an environment-assignment
+// prefix or a program name that is not on the read-only allowlist. A false
+// result is always safe because it only means the caller must confirm.
+func isReadOnlyCommand(cmd string) bool {
+	trimmed := strings.TrimSpace(cmd)
+	if trimmed == "" {
+		return false
+	}
+	// Reject anything that can chain, redirect, background, substitute, quote,
+	// escape, expand paths, or glob. That is stricter than a shell parser, but
+	// false only means the caller asks for confirmation.
+	if strings.ContainsAny(trimmed, ";|&<>`$\\'\"~*?[]{}\n\r") {
+		return false
+	}
+	first := strings.Fields(trimmed)[0]
+	// Reject an environment-assignment prefix such as `FOO=bar cmd`.
+	if strings.Contains(first, "=") {
+		return false
+	}
+	// Strip any leading path (remote paths are always unix-style, so split on
+	// '/' rather than using filepath which would use the host separator).
+	base := first
+	if idx := strings.LastIndex(base, "/"); idx >= 0 {
+		base = base[idx+1:]
+	}
+	_, ok := readOnlyCommands[base]
+	return ok
+}
+
+// guardCommand applies the shared pre-execution safety policy used by both the
+// in-app AI assistant and the external CLI: the dangerous-command and
+// sensitive-path blocklists, then a human confirmation gate. When
+// allowReadOnlyWithoutConfirm is true, commands on the read-only allowlist skip
+// confirmation; every other command requires confirm() to return true. confirm
+// must be backed by a native dialog the renderer cannot forge. It returns
+// ok=true when the command may run; when ok=false, reason is a short
+// human-readable explanation (a blocklist hit or a declined prompt).
+//
+// Ordering matters: the sensitive-path check runs before the read-only check so
+// that, e.g., `cat /etc/shadow` is blocked rather than waved through as a read.
+func guardCommand(command string, allowReadOnlyWithoutConfirm bool, confirm func() bool) (reason string, ok bool) {
+	if warn, blocked := checkDangerousCommand(command); blocked {
+		return warn, false
+	}
+	if warn, blocked := checkSensitivePath(command); blocked {
+		return warn, false
+	}
+	if allowReadOnlyWithoutConfirm && isReadOnlyCommand(command) {
+		return "", true
+	}
+	if !confirm() {
+		return "user declined execution", false
+	}
+	return "", true
 }

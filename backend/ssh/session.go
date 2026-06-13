@@ -453,23 +453,36 @@ func (m *Manager) get(id string) (*Session, error) {
 	return session, nil
 }
 
+type CommandExecutionResult struct {
+	Output    string
+	ExitCode  int
+	TimedOut  bool
+	Truncated bool
+}
+
 func (m *Manager) ExecuteCommand(sessionID string, command string, timeout time.Duration, maxOutput int64) (string, error) {
+	result, err := m.ExecuteCommandResult(sessionID, command, timeout, maxOutput)
+	return result.Output, err
+}
+
+func (m *Manager) ExecuteCommandResult(sessionID string, command string, timeout time.Duration, maxOutput int64) (CommandExecutionResult, error) {
+	var result CommandExecutionResult
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
 	session, err := m.get(sessionID)
 	if err != nil {
-		return "", err
+		return result, err
 	}
 	session.mu.RLock()
 	client := session.client
 	session.mu.RUnlock()
 	if client == nil {
-		return "", errors.New("SSH client not available")
+		return result, errors.New("SSH client not available")
 	}
 	sshSession, err := client.NewSession()
 	if err != nil {
-		return "", fmt.Errorf("failed to create SSH session: %w", err)
+		return result, fmt.Errorf("failed to create SSH session: %w", err)
 	}
 	defer sshSession.Close()
 	stdout := newLimitedBuffer(maxOutput)
@@ -487,6 +500,8 @@ func (m *Manager) ExecuteCommand(sessionID string, command string, timeout time.
 	case <-time.After(timeout):
 		_ = sshSession.Close()
 		err = errors.New("remote command timeout")
+		result.TimedOut = true
+		result.ExitCode = 124
 		select {
 		case <-done:
 		case <-time.After(2 * time.Second):
@@ -500,15 +515,21 @@ func (m *Manager) ExecuteCommand(sessionID string, command string, timeout time.
 	if err != nil {
 		var exitErr *ssh.ExitError
 		if errors.As(err, &exitErr) {
-			output = appendLine(output, fmt.Sprintf("(exit code: %d)", exitErr.ExitStatus()))
+			result.ExitCode = exitErr.ExitStatus()
+			output = appendLine(output, fmt.Sprintf("(exit code: %d)", result.ExitCode))
 		} else {
+			if result.ExitCode == 0 {
+				result.ExitCode = 1
+			}
 			output = appendLine(output, "error: "+err.Error())
 		}
 	}
 	if stdout.Truncated() || stderr.Truncated() {
+		result.Truncated = true
 		output = appendLine(output, fmt.Sprintf("(output truncated after %d bytes)", maxOutput))
 	}
-	return output, nil
+	result.Output = output
+	return result, nil
 }
 
 func (m *Manager) remove(id string) {

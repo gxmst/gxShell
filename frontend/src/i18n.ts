@@ -18,8 +18,8 @@ export type LangKey =
   | "exportHistory" | "savePassword"
   | "editServer" | "newServer" | "name" | "group" | "host" | "port"
   | "username" | "auth" | "password" | "privateKey" | "passphrase"
-  | "favorite" | "description" | "delete" | "duplicate"
-  | "hostRequired" | "usernameRequired" | "portRange"
+  | "favorite" | "aiServerAccess" | "aiServerAlias" | "description" | "delete" | "duplicate"
+  | "hostRequired" | "usernameRequired" | "aiAliasRequired" | "aiAliasDuplicate" | "portRange"
   | "category" | "command" | "saveCommand" | "editCommand" | "newCommandModal"
   | "confirm" | "copyFailed" | "monitorLinuxOnly"
   | "networkPath" | "refresh" | "jitter" | "loss" | "routeHops"
@@ -113,11 +113,15 @@ const en: Record<LangKey, string> = {
   privateKey: "Private key",
   passphrase: "Passphrase",
   favorite: "Favorite",
+  aiServerAccess: "Allow AI/CLI access",
+  aiServerAlias: "AI/CLI alias",
   description: "Description",
   delete: "Delete",
   duplicate: "Duplicate",
   hostRequired: "Host is required",
   usernameRequired: "Username is required",
+  aiAliasRequired: "AI/CLI alias is required when access is enabled",
+  aiAliasDuplicate: "AI/CLI alias is already used by another profile",
   portRange: "Port must be 1-65535",
   category: "Category",
   command: "Command",
@@ -301,11 +305,15 @@ const zhCN: Record<LangKey, string> = {
   privateKey: "私钥",
   passphrase: "密钥密码",
   favorite: "收藏",
+  aiServerAccess: "允许 AI/CLI 访问",
+  aiServerAlias: "AI/CLI 别名",
   description: "描述",
   delete: "删除",
   duplicate: "复制",
   hostRequired: "主机地址不能为空",
   usernameRequired: "用户名不能为空",
+  aiAliasRequired: "启用 AI/CLI 访问时必须填写别名",
+  aiAliasDuplicate: "AI/CLI 别名已被其他配置使用",
   portRange: "端口范围 1-65535",
   category: "分类",
   command: "命令",

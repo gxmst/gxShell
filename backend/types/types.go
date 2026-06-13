@@ -25,6 +25,8 @@ type Profile struct {
 	Description          string       `json:"description"`
 	Tags                 []string     `json:"tags"`
 	Favorite             bool         `json:"favorite"`
+	AIEnabled            bool         `json:"aiEnabled"`
+	AIAlias              string       `json:"aiAlias,omitempty"`
 	Tunnels              []TunnelRule `json:"tunnels"`
 	AutoReconnect        bool         `json:"autoReconnect"`
 	LastConnectedAt      time.Time    `json:"lastConnectedAt,omitempty"`

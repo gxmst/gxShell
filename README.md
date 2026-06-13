@@ -15,6 +15,7 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 - SSH tunnel management for local, remote, and dynamic SOCKS forwarding.
 - Network diagnostics with ping and traceroute parsing.
 - AI assistant for OpenAI-compatible APIs, with streaming responses, model listing, token usage, terminal context, and explicit native confirmation before remote tool execution.
+- External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands on opted-in profiles through the running app, without exposing saved SSH credentials. Read-only commands run directly; anything else requires native confirmation. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
 - Local Markdown viewer/editor with sanitized rendering, file-open support, drag-and-drop opening, sibling file navigation, zoom, edit, save, and refresh.
 - Windows tray menu for showing the app, creating a connection, opening Markdown, settings, and quit.
 - Windows `.md` file association support when installed.
@@ -28,6 +29,7 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 - Older plaintext profile secrets are migrated on startup.
 - AI tool calls are registered by the backend, expire after a short TTL, are single-use, and require a native confirmation dialog before command execution or remote file reads.
 - Dangerous commands and sensitive remote paths are blocked for AI tools.
+- The external `gxshell-cli` interface requires a local bearer token, exposes only opted-in profile aliases (never hosts, users, or ports), blocks dangerous commands and sensitive paths, and requires native confirmation for anything that is not a simple read-only command.
 - Logs redact common secret fields and avoid persisting AI message content previews.
 - Local Markdown read/write is limited to files the user opened through the native dialog, OS file-open, drag-and-drop, or authorized Markdown siblings.
 
@@ -52,6 +54,7 @@ gxShell/
 ├── main.go                    # Wails entry point
 ├── app.go                     # App wiring and lifecycle
 ├── app_*.go                   # Bound backend methods split by feature
+├── cmd/gxshell-cli/           # External command-line client (separate binary)
 ├── backend/
 │   ├── ai/                    # AI providers, streaming, model listing
 │   ├── config/                # JSON config store
@@ -105,6 +108,12 @@ build/bin/gxShell.exe
 
 Some local release experiments may also produce `gxShell.exe` at the repository root. That file is ignored by Git and should be uploaded as a release asset, not committed.
 
+The CLI client is a separate binary from the Wails desktop app. Build it explicitly when you want to use or ship `gxshell-cli`:
+
+```powershell
+go build -o gxshell-cli.exe .\cmd\gxshell-cli
+```
+
 ## Release
 
 1. Verify tests and frontend build:
@@ -122,10 +131,16 @@ cd ..
 wails build -clean
 ```
 
-3. Create a GitHub release with the built executable as an asset:
+3. Build the CLI client:
 
 ```powershell
-gh release create v1.1.0 .\gxShell.exe --title "gxShell v1.1.0" --notes-file .\release-notes.md
+go build -o gxshell-cli.exe .\cmd\gxshell-cli
+```
+
+4. Create a GitHub release with the built executables as assets:
+
+```powershell
+gh release create v1.1.0 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.1.0" --notes-file .\release-notes.md
 ```
 
 Use release notes that describe behavior and fixes only. Do not include local paths, tokens, API keys, server addresses, private hostnames, or log output.

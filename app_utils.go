@@ -448,6 +448,26 @@ func normalizeProfile(profile *types.Profile) {
 	if profile.Tags == nil {
 		profile.Tags = []string{}
 	}
+	profile.AIAlias = strings.TrimSpace(profile.AIAlias)
+}
+
+func validateProfileAISettings(profile types.Profile, profiles []types.Profile) error {
+	if !profile.AIEnabled {
+		return nil
+	}
+	alias := strings.TrimSpace(profile.AIAlias)
+	if alias == "" {
+		return errors.New("AI/CLI alias is required when access is enabled")
+	}
+	for _, existing := range profiles {
+		if existing.ID == profile.ID || !existing.AIEnabled {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(existing.AIAlias), alias) {
+			return fmt.Errorf("AI/CLI alias %q is already used", alias)
+		}
+	}
+	return nil
 }
 
 // sanitizeProfiles removes sensitive data from a list of profiles.

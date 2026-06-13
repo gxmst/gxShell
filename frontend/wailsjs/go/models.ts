@@ -619,6 +619,8 @@ export namespace types {
 	    description: string;
 	    tags: string[];
 	    favorite: boolean;
+	    aiEnabled: boolean;
+	    aiAlias?: string;
 	    tunnels: TunnelRule[];
 	    autoReconnect: boolean;
 	    // Go type: time
@@ -649,6 +651,8 @@ export namespace types {
 	        this.description = source["description"];
 	        this.tags = source["tags"];
 	        this.favorite = source["favorite"];
+	        this.aiEnabled = source["aiEnabled"];
+	        this.aiAlias = source["aiAlias"];
 	        this.tunnels = this.convertValues(source["tunnels"], TunnelRule);
 	        this.autoReconnect = source["autoReconnect"];
 	        this.lastConnectedAt = this.convertValues(source["lastConnectedAt"], null);
