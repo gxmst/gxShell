@@ -1,8 +1,6 @@
 # gxShell
 
-gxShell 是一个基于 Wails v2、Go 和 React 的 Windows 桌面 SSH 工作台。它把终端、SFTP、系统监控、Docker、SSH 隧道、AI 助手和 Markdown 查看编辑放在一个本地应用里。
-
-gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. It combines terminal sessions, SFTP, monitoring, Docker tools, SSH tunnels, an AI assistant, and a local Markdown viewer in one app.
+gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. It combines terminal sessions, SFTP, monitoring, Docker tools, SSH tunnels, an AI assistant, an external CLI, and a local Markdown viewer in one app.
 
 ## Features
 
@@ -15,7 +13,7 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 - SSH tunnel management for local, remote, and dynamic SOCKS forwarding.
 - Network diagnostics with ping and traceroute parsing.
 - AI assistant for OpenAI-compatible APIs, with streaming responses, model listing, token usage, terminal context, and explicit native confirmation before remote tool execution.
-- External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands on opted-in profiles through the running app, without exposing saved SSH credentials. Read-only commands run directly; anything else requires native confirmation. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
+- External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands on opted-in profiles through the running app, without exposing saved SSH credentials. The CLI reuses active SSH sessions when possible, follows each profile's ProxyJump setting, runs simple read-only commands directly, and requires native confirmation for anything else. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
 - Local Markdown viewer/editor with sanitized rendering, file-open support, drag-and-drop opening, sibling file navigation, zoom, edit, save, and refresh.
 - Windows tray menu for showing the app, creating a connection, opening Markdown, settings, and quit.
 - Windows `.md` file association support when installed.
@@ -29,7 +27,8 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 - Older plaintext profile secrets are migrated on startup.
 - AI tool calls are registered by the backend, expire after a short TTL, are single-use, and require a native confirmation dialog before command execution or remote file reads.
 - Dangerous commands and sensitive remote paths are blocked for AI tools.
-- The external `gxshell-cli` interface requires a local bearer token, exposes only opted-in profile aliases (never hosts, users, or ports), blocks dangerous commands and sensitive paths, and requires native confirmation for anything that is not a simple read-only command.
+- The external `gxshell-cli` interface requires a local bearer token, exposes only opted-in profile aliases (never hosts, users, ports, profile IDs, or jump-host details), blocks dangerous commands and sensitive paths, and requires native confirmation for anything that is not a simple read-only command.
+- CLI commands run through gxShell-managed SSH sessions. Existing sessions may be reused, but each command uses a separate short-lived SSH exec channel rather than typing into the interactive terminal.
 - Logs redact common secret fields and avoid persisting AI message content previews.
 - Local Markdown read/write is limited to files the user opened through the native dialog, OS file-open, drag-and-drop, or authorized Markdown siblings.
 
@@ -51,33 +50,33 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 
 ```text
 gxShell/
-├── main.go                    # Wails entry point
-├── app.go                     # App wiring and lifecycle
-├── app_*.go                   # Bound backend methods split by feature
-├── cmd/gxshell-cli/           # External command-line client (separate binary)
-├── backend/
-│   ├── ai/                    # AI providers, streaming, model listing
-│   ├── config/                # JSON config store
-│   ├── docker/                # Docker commands over SSH
-│   ├── localfs/               # Local filesystem helpers
-│   ├── localterm/             # Local terminal sessions
-│   ├── logger/                # Structured logs and history
-│   ├── monitor/               # Linux host metrics
-│   ├── network/               # Ping and traceroute
-│   ├── secrets/               # Credential storage and fallback encryption
-│   ├── sftp/                  # SFTP client cache and transfers
-│   ├── ssh/                   # SSH sessions and host-key trust
-│   ├── tunnel/                # SSH forwarding
-│   └── types/                 # Shared backend types
-├── frontend/
-│   ├── src/
-│   │   ├── components/        # UI panels and dialogs
-│   │   ├── hooks/             # React state and terminal hooks
-│   │   ├── styles/            # CSS
-│   │   └── types.ts           # Frontend types
-│   └── wailsjs/               # Generated Wails bindings
-├── build/                     # Icons and Windows packaging metadata
-└── doc/                       # Project notes and technical docs
+|-- main.go                    # Wails entry point
+|-- app.go                     # App wiring and lifecycle
+|-- app_*.go                   # Bound backend methods split by feature
+|-- cmd/gxshell-cli/           # External command-line client (separate binary)
+|-- backend/
+|   |-- ai/                    # AI providers, streaming, model listing
+|   |-- config/                # JSON config store
+|   |-- docker/                # Docker commands over SSH
+|   |-- localfs/               # Local filesystem helpers
+|   |-- localterm/             # Local terminal sessions
+|   |-- logger/                # Structured logs and history
+|   |-- monitor/               # Linux host metrics
+|   |-- network/               # Ping and traceroute
+|   |-- secrets/               # Credential storage and fallback encryption
+|   |-- sftp/                  # SFTP client cache and transfers
+|   |-- ssh/                   # SSH sessions and host-key trust
+|   |-- tunnel/                # SSH forwarding
+|   `-- types/                 # Shared backend types
+|-- frontend/
+|   |-- src/
+|   |   |-- components/        # UI panels and dialogs
+|   |   |-- hooks/             # React state and terminal hooks
+|   |   |-- styles/            # CSS
+|   |   `-- types.ts           # Frontend types
+|   `-- wailsjs/               # Generated Wails bindings
+|-- build/                     # Icons and Windows packaging metadata
+`-- doc/                       # Project notes and technical docs
 ```
 
 ## Development
@@ -151,6 +150,7 @@ Use release notes that describe behavior and fixes only. Do not include local pa
 - System monitoring expects Linux-style remote hosts.
 - Docker management runs over SSH and does not use a local Docker socket.
 - ProxyJump supports one jump host level.
+- `gxshell-cli` follows the target profile's ProxyJump setting automatically, but it does not have a command-line flag for choosing or overriding the jump host.
 - Terminal split view is designed for two visible terminals at a time.
 
 ## License
