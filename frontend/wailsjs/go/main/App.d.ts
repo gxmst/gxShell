@@ -54,6 +54,8 @@ export function GetProfile(arg1:string):Promise<types.Profile>;
 
 export function GetSettings():Promise<types.AppSettings>;
 
+export function IsMarkdownContextMenuRegistered():Promise<boolean>;
+
 export function ListAiModels(arg1:string,arg2:string,arg3:string):Promise<Array<string>>;
 
 export function ListCommands():Promise<Array<types.CommandTemplate>>;
@@ -91,6 +93,8 @@ export function ReadLogs(arg1:number):Promise<Array<types.LogEntry>>;
 export function Reconnect(arg1:string):Promise<types.SessionInfo>;
 
 export function ReconnectWithSecrets(arg1:string,arg2:string,arg3:string):Promise<types.SessionInfo>;
+
+export function RegisterMarkdownContextMenu():Promise<void>;
 
 export function RemoveContainer(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
@@ -137,6 +141,8 @@ export function StopNetworkPing(arg1:string):Promise<void>;
 export function StreamContainerLogs(arg1:string,arg2:string,arg3:number):Promise<void>;
 
 export function TraceRoute(arg1:string):Promise<types.NetworkPath>;
+
+export function UnregisterMarkdownContextMenu():Promise<void>;
 
 export function UpdateCommand(arg1:types.CommandTemplate):Promise<types.CommandTemplate>;
 

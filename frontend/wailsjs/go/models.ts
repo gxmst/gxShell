@@ -196,6 +196,7 @@ export namespace types {
 	    savePasswords: boolean;
 	    smartHighlight: boolean;
 	    confirmOnDisconnect: boolean;
+	    cliServerEnabled: boolean;
 	    ai: AiConfig;
 	
 	    static createFrom(source: any = {}) {
@@ -216,6 +217,7 @@ export namespace types {
 	        this.savePasswords = source["savePasswords"];
 	        this.smartHighlight = source["smartHighlight"];
 	        this.confirmOnDisconnect = source["confirmOnDisconnect"];
+	        this.cliServerEnabled = source["cliServerEnabled"];
 	        this.ai = this.convertValues(source["ai"], AiConfig);
 	    }
 	
@@ -619,6 +621,10 @@ export namespace types {
 	    description: string;
 	    tags: string[];
 	    favorite: boolean;
+	    cliEnabled: boolean;
+	    cliAlias?: string;
+	    aiEnabled?: boolean;
+	    aiAlias?: string;
 	    tunnels: TunnelRule[];
 	    autoReconnect: boolean;
 	    // Go type: time
@@ -649,6 +655,10 @@ export namespace types {
 	        this.description = source["description"];
 	        this.tags = source["tags"];
 	        this.favorite = source["favorite"];
+	        this.cliEnabled = source["cliEnabled"];
+	        this.cliAlias = source["cliAlias"];
+	        this.aiEnabled = source["aiEnabled"];
+	        this.aiAlias = source["aiAlias"];
 	        this.tunnels = this.convertValues(source["tunnels"], TunnelRule);
 	        this.autoReconnect = source["autoReconnect"];
 	        this.lastConnectedAt = this.convertValues(source["lastConnectedAt"], null);

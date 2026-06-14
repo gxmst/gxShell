@@ -8,6 +8,7 @@ release/
 *.log
 *.tmp
 gxShell.exe
+gxshell-cli.exe
 *.bak
 *.dat
 .secretkey

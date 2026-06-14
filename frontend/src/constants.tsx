@@ -35,7 +35,9 @@ export const emptyProfile = (): types.Profile =>
     privateKeyPassphrase: "",
     description: "",
     tags: [],
-    favorite: false
+    favorite: false,
+    cliEnabled: false,
+    cliAlias: ""
   });
 
 export const terminalThemes: Record<string, any> = {

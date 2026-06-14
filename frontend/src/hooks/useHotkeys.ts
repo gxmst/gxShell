@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 
 type HotkeyOptions = {
   activeTab: string;
+  activeIsMarkdown: boolean;
   onGlobalSearch: () => void;
   onTerminalSearch: () => void;
   onCloseTab: (id: string) => void;
@@ -19,6 +20,9 @@ export function useHotkeys(options: HotkeyOptions) {
         opts.onGlobalSearch();
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
+        // When a markdown tab is active, its viewer owns Ctrl+F (in-document
+        // find). Yield so we neither open the terminal search nor fight it.
+        if (opts.activeIsMarkdown) return;
         event.preventDefault();
         opts.onTerminalSearch();
       }

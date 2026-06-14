@@ -36,6 +36,12 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
   const handleSave = () => {
     if (!draft.host.trim()) { setError(t(lang, "hostRequired")); return; }
     if (!draft.username.trim()) { setError(t(lang, "usernameRequired")); return; }
+    if (draft.cliEnabled && !(draft.cliAlias || "").trim()) { setError(t(lang, "cliAliasRequired")); return; }
+    if (draft.cliEnabled) {
+      const alias = (draft.cliAlias || "").trim().toLowerCase();
+      const duplicate = (props.profiles || []).some((p) => p.id !== draft.id && p.cliEnabled && (p.cliAlias || "").trim().toLowerCase() === alias);
+      if (duplicate) { setError(t(lang, "cliAliasDuplicate")); return; }
+    }
     if (draft.port < 1 || draft.port > 65535) { setError(t(lang, "portRange")); return; }
     props.onSave(draft);
   };
@@ -58,6 +64,8 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
         </>}
         <Label text={t(lang, "proxyJump")}><select className="input compact-input" value={draft.proxyJumpId || ""} onChange={(e) => update({ proxyJumpId: e.target.value })}><option value="">— {t(lang, "none")} —</option>{(props.profiles || []).filter((p) => p.id !== draft.id && !p.proxyJumpId).map((p) => <option key={p.id} value={p.id}>{p.name} ({p.host})</option>)}</select></Label>
         <label className="check col-span-2"><input type="checkbox" checked={draft.favorite} onChange={(e) => update({ favorite: e.target.checked })} /> {t(lang, "favorite")}</label>
+        <label className="check col-span-2"><input type="checkbox" checked={draft.cliEnabled || false} onChange={(e) => update({ cliEnabled: e.target.checked })} /> {t(lang, "cliServerAccess")}</label>
+        {draft.cliEnabled && <Label text={t(lang, "cliServerAlias")}><input className="input compact-input" value={draft.cliAlias || ""} onChange={(e) => update({ cliAlias: e.target.value })} placeholder={draft.name || "prod-web"} /></Label>}
         <label className="check col-span-2"><input type="checkbox" checked={draft.rememberPassword || false} onChange={(e) => update({ rememberPassword: e.target.checked })} /> {t(lang, "savePassword")}</label>
         <label className="check col-span-2"><input type="checkbox" checked={draft.autoReconnect || false} onChange={(e) => update({ autoReconnect: e.target.checked })} /> {t(lang, "autoReconnect")}</label>
         <Label text={t(lang, "description")}><textarea className="input compact-input min-h-[56px]" value={draft.description} onChange={(e) => update({ description: e.target.value })} /></Label>

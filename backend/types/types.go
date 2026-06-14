@@ -10,26 +10,38 @@ const (
 )
 
 type Profile struct {
-	ID                   string       `json:"id"`
-	Name                 string       `json:"name"`
-	Group                string       `json:"group"`
-	Host                 string       `json:"host"`
-	Port                 int          `json:"port"`
-	Username             string       `json:"username"`
-	AuthType             AuthType     `json:"authType"`
-	Password             string       `json:"password,omitempty"`
-	PrivateKeyPath       string       `json:"privateKeyPath,omitempty"`
-	PrivateKeyPassphrase string       `json:"privateKeyPassphrase,omitempty"`
-	RememberPassword     bool         `json:"rememberPassword"`
-	ProxyJumpID          string       `json:"proxyJumpId,omitempty"`
-	Description          string       `json:"description"`
-	Tags                 []string     `json:"tags"`
-	Favorite             bool         `json:"favorite"`
-	Tunnels              []TunnelRule `json:"tunnels"`
-	AutoReconnect        bool         `json:"autoReconnect"`
-	LastConnectedAt      time.Time    `json:"lastConnectedAt,omitempty"`
-	CreatedAt            time.Time    `json:"createdAt"`
-	UpdatedAt            time.Time    `json:"updatedAt"`
+	ID                   string   `json:"id"`
+	Name                 string   `json:"name"`
+	Group                string   `json:"group"`
+	Host                 string   `json:"host"`
+	Port                 int      `json:"port"`
+	Username             string   `json:"username"`
+	AuthType             AuthType `json:"authType"`
+	Password             string   `json:"password,omitempty"`
+	PrivateKeyPath       string   `json:"privateKeyPath,omitempty"`
+	PrivateKeyPassphrase string   `json:"privateKeyPassphrase,omitempty"`
+	RememberPassword     bool     `json:"rememberPassword"`
+	ProxyJumpID          string   `json:"proxyJumpId,omitempty"`
+	Description          string   `json:"description"`
+	Tags                 []string `json:"tags"`
+	Favorite             bool     `json:"favorite"`
+	// CliEnabled opts a profile in to the external gxshell-cli interface. When
+	// false the CLI cannot see, list, or execute against this profile. This is a
+	// CLI-only flag; the in-app AI assistant operates on the active session and
+	// always requires a per-command native confirmation regardless of this value.
+	CliEnabled bool   `json:"cliEnabled"`
+	CliAlias   string `json:"cliAlias,omitempty"`
+	// Deprecated: legacyAIEnabled/legacyAIAlias hold values written by versions
+	// that named this flag "aiEnabled"/"aiAlias". They are migrated into
+	// CliEnabled/CliAlias on startup (see App.migrateCliProfileFlags) and then
+	// cleared, so they only exist to avoid losing an existing user's opt-in.
+	LegacyAIEnabled bool         `json:"aiEnabled,omitempty"`
+	LegacyAIAlias   string       `json:"aiAlias,omitempty"`
+	Tunnels         []TunnelRule `json:"tunnels"`
+	AutoReconnect   bool         `json:"autoReconnect"`
+	LastConnectedAt time.Time    `json:"lastConnectedAt,omitempty"`
+	CreatedAt       time.Time    `json:"createdAt"`
+	UpdatedAt       time.Time    `json:"updatedAt"`
 }
 
 type AppSettings struct {
@@ -45,7 +57,11 @@ type AppSettings struct {
 	SavePasswords       bool             `json:"savePasswords"`
 	SmartHighlight      bool             `json:"smartHighlight"`
 	ConfirmOnDisconnect bool             `json:"confirmOnDisconnect"`
-	Ai                  AiConfig         `json:"ai"`
+	// CliServerEnabled controls whether the local gxshell-cli HTTP server runs.
+	// When false the server does not listen at all, so no local process can use
+	// the CLI interface regardless of per-profile opt-in. Defaults to true.
+	CliServerEnabled bool     `json:"cliServerEnabled"`
+	Ai               AiConfig `json:"ai"`
 }
 
 type TerminalSettings struct {

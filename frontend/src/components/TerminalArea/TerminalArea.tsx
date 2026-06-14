@@ -132,6 +132,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
               {tab.type === 'markdown' && tab.filePath && (
                 <MarkdownViewer
                   filePath={tab.filePath}
+                  active={isActive && !isFloating}
                   onClose={() => props.onClose(tab.id)}
                   onNotify={props.onNotify}
                 />

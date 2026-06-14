@@ -270,23 +270,14 @@ func (a *App) AiExecuteTool(sessionID string, toolCallID string) string {
 			output = "Error parsing command arguments: " + err.Error()
 			break
 		}
-		if warn, blocked := checkDangerousCommand(args.Command); blocked {
-			output = "BLOCKED: " + warn
-			a.log.ErrorFields("AI tool blocked dangerous command", LogFields{"command": args.Command})
-			break
-		}
-		// Apply the same sensitive-path guard used by read_file so the two tools
-		// cannot be played against each other (e.g. `cat /etc/shadow`).
-		if warn, blocked := checkSensitivePath(args.Command); blocked {
-			output = "BLOCKED: " + warn
-			a.log.ErrorFields("AI tool blocked sensitive path in command", LogFields{"command": args.Command})
-			break
-		}
-		// Require an explicit, native user confirmation that a compromised
-		// renderer cannot forge. The frontend "Run tool" button alone is not a
-		// trustworthy approval signal.
-		if !a.confirmAiToolExecution(toolName, args.Command) {
-			output = "BLOCKED: user declined execution"
+		// Shared safety policy: dangerous-command and sensitive-path blocklists,
+		// then an explicit native confirmation a compromised renderer cannot
+		// forge. AI tools keep confirmation for every allowed command.
+		if reason, ok := guardCommand(args.Command, false, func() bool {
+			return a.confirmAiToolExecution(toolName, args.Command)
+		}); !ok {
+			output = "BLOCKED: " + reason
+			a.log.ErrorFields("AI tool command blocked", LogFields{"command": args.Command, "reason": reason})
 			break
 		}
 		result, err := a.ssh.ExecuteCommand(sessionID, args.Command, aiToolTimeout, aiToolOutputLimit)
@@ -312,16 +303,18 @@ func (a *App) AiExecuteTool(sessionID string, toolCallID string) string {
 			output = "Error parsing file path arguments: " + err.Error()
 			break
 		}
-		if warn, blocked := checkSensitivePath(args.Path); blocked {
-			output = "BLOCKED: " + warn
-			a.log.ErrorFields("AI tool blocked sensitive file read", LogFields{"path": args.Path})
-			break
-		}
-		if !a.confirmAiToolExecution(toolName, args.Path) {
-			output = "BLOCKED: user declined execution"
-			break
-		}
 		cmd := "cat " + shellescape(args.Path)
+		// Same shared policy as execute_command. The sensitive-path blocklist
+		// (checked inside guardCommand against the full command) still blocks
+		// reads of /etc/shadow, SSH keys, etc.; AI file reads still require a
+		// native confirmation after passing those guards.
+		if reason, ok := guardCommand(cmd, false, func() bool {
+			return a.confirmAiToolExecution(toolName, args.Path)
+		}); !ok {
+			output = "BLOCKED: " + reason
+			a.log.ErrorFields("AI tool file read blocked", LogFields{"path": args.Path, "reason": reason})
+			break
+		}
 		result, err := a.ssh.ExecuteCommand(sessionID, cmd, aiToolTimeout, aiToolOutputLimit)
 		if err != nil {
 			output = "Error reading file: " + err.Error()

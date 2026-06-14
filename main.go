@@ -14,9 +14,6 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-//go:embed logo.png
-var appIcon []byte
-
 func main() {
 	// Create an instance of the app structure
 	app := NewApp()
@@ -46,6 +43,12 @@ func main() {
 		OnStartup:  app.startup,
 		OnDomReady: app.domReady,
 		OnShutdown: app.shutdown,
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: "gxshell-2f6c1d8a-single-instance",
+			OnSecondInstanceLaunch: func(data options.SecondInstanceData) {
+				app.handleSecondInstanceLaunch(data.Args)
+			},
+		},
 		Bind: []interface{}{
 			app,
 		},

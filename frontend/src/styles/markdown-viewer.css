@@ -127,3 +127,55 @@
 .markdown-viewer-error {
   color: var(--error, #ef4444);
 }
+
+/* Find bar: sits just under the floating control cluster, same visual style. */
+.markdown-search-bar {
+  position: absolute;
+  top: 48px;
+  right: 14px;
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-secondary) 92%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(6px);
+}
+
+.markdown-search-input {
+  width: 160px;
+  height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  outline: none;
+}
+
+.markdown-search-input:focus {
+  border-color: var(--accent);
+}
+
+.markdown-search-count {
+  min-width: 38px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* CSS Custom Highlight API styling for preview-mode search matches. */
+::highlight(md-search) {
+  background-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: inherit;
+}
+
+::highlight(md-search-active) {
+  background-color: var(--accent);
+  color: #fff;
+}
