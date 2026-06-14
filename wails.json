@@ -11,16 +11,7 @@
     "productName": "gxShell",
     "productVersion": "1.1.1",
     "copyright": "Copyright 2026",
-    "comments": "SSH Client with Markdown Viewer",
-    "fileAssociations": [
-      {
-        "ext": "md",
-        "name": "Markdown.Document",
-        "description": "Markdown Document",
-        "iconName": "AppIcon",
-        "role": "Viewer"
-      }
-    ]
+    "comments": "SSH Client with Markdown Viewer"
   },
   "author": {
     "name": "",
