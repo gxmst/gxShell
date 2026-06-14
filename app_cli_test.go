@@ -54,7 +54,7 @@ func TestLoadOrCreateCliTokenPersistsToken(t *testing.T) {
 }
 
 func TestCliProfileNamePrefersAlias(t *testing.T) {
-	profile := types.Profile{Name: "root@10.0.0.1", AIAlias: "prod-web"}
+	profile := types.Profile{Name: "root@10.0.0.1", CliAlias: "prod-web"}
 	if got := cliProfileName(profile); got != "prod-web" {
 		t.Fatalf("got %q", got)
 	}

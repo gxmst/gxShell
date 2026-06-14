@@ -36,8 +36,8 @@ export const emptyProfile = (): types.Profile =>
     description: "",
     tags: [],
     favorite: false,
-    aiEnabled: false,
-    aiAlias: ""
+    cliEnabled: false,
+    cliAlias: ""
   });
 
 export const terminalThemes: Record<string, any> = {

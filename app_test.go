@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"gxShell/backend/ai"
+	"gxShell/backend/config"
+	"gxShell/backend/logger"
 	"gxShell/backend/types"
 )
 
@@ -266,22 +268,62 @@ func TestGuardCommand(t *testing.T) {
 	}
 }
 
-func TestValidateProfileAISettings(t *testing.T) {
+func TestMigrateCliProfileFlagsMovesLegacyValues(t *testing.T) {
+	app := NewApp()
+	dir := t.TempDir()
+	// Seed a profiles.json written under the old aiEnabled/aiAlias keys.
+	legacy := `[{"id":"p1","aiEnabled":true,"aiAlias":"prod-web"},{"id":"p2","aiEnabled":false}]`
+	if err := os.WriteFile(filepath.Join(dir, "profiles.json"), []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// NewStoreAt's ensureDefaults only writes profiles.json when absent, so the
+	// legacy seed above survives.
+	store, err := config.NewStoreAt(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.store = store
+	app.log = logger.New(dir)
+
+	app.migrateCliProfileFlags()
+
+	profiles, err := store.ListProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p1 *types.Profile
+	for i := range profiles {
+		if profiles[i].ID == "p1" {
+			p1 = &profiles[i]
+		}
+	}
+	if p1 == nil {
+		t.Fatal("p1 missing after migration")
+	}
+	if !p1.CliEnabled || p1.CliAlias != "prod-web" {
+		t.Fatalf("legacy flags not migrated: %#v", p1)
+	}
+	if p1.LegacyAIEnabled || p1.LegacyAIAlias != "" {
+		t.Fatalf("legacy fields not cleared: %#v", p1)
+	}
+}
+
+func TestValidateProfileCliSettings(t *testing.T) {
 	existing := []types.Profile{
-		{ID: "p1", AIEnabled: true, AIAlias: "prod-web"},
-		{ID: "p2", AIEnabled: false, AIAlias: "dev-box"},
+		{ID: "p1", CliEnabled: true, CliAlias: "prod-web"},
+		{ID: "p2", CliEnabled: false, CliAlias: "dev-box"},
 	}
 
-	if err := validateProfileAISettings(types.Profile{ID: "p3", AIEnabled: true, AIAlias: "  staging  "}, existing); err != nil {
+	if err := validateProfileCliSettings(types.Profile{ID: "p3", CliEnabled: true, CliAlias: "  staging  "}, existing); err != nil {
 		t.Fatalf("unique alias should be accepted: %v", err)
 	}
-	if err := validateProfileAISettings(types.Profile{ID: "p3", AIEnabled: true, AIAlias: ""}, existing); err == nil {
+	if err := validateProfileCliSettings(types.Profile{ID: "p3", CliEnabled: true, CliAlias: ""}, existing); err == nil {
 		t.Fatal("enabled profile without alias should be rejected")
 	}
-	if err := validateProfileAISettings(types.Profile{ID: "p3", AIEnabled: true, AIAlias: "PROD-WEB"}, existing); err == nil {
+	if err := validateProfileCliSettings(types.Profile{ID: "p3", CliEnabled: true, CliAlias: "PROD-WEB"}, existing); err == nil {
 		t.Fatal("duplicate alias should be rejected case-insensitively")
 	}
-	if err := validateProfileAISettings(types.Profile{ID: "p3", AIEnabled: true, AIAlias: "dev-box"}, existing); err != nil {
+	if err := validateProfileCliSettings(types.Profile{ID: "p3", CliEnabled: true, CliAlias: "dev-box"}, existing); err != nil {
 		t.Fatalf("alias on disabled profile should not reserve CLI name: %v", err)
 	}
 }

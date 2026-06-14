@@ -21,7 +21,7 @@ import (
 func (a *App) GetAppInfo() map[string]string {
 	return map[string]string{
 		"name":    "gxShell",
-		"version": "1.1",
+		"version": "1.1.1",
 		"dataDir": a.store.DataDir(),
 	}
 }
@@ -448,23 +448,23 @@ func normalizeProfile(profile *types.Profile) {
 	if profile.Tags == nil {
 		profile.Tags = []string{}
 	}
-	profile.AIAlias = strings.TrimSpace(profile.AIAlias)
+	profile.CliAlias = strings.TrimSpace(profile.CliAlias)
 }
 
-func validateProfileAISettings(profile types.Profile, profiles []types.Profile) error {
-	if !profile.AIEnabled {
+func validateProfileCliSettings(profile types.Profile, profiles []types.Profile) error {
+	if !profile.CliEnabled {
 		return nil
 	}
-	alias := strings.TrimSpace(profile.AIAlias)
+	alias := strings.TrimSpace(profile.CliAlias)
 	if alias == "" {
-		return errors.New("AI/CLI alias is required when access is enabled")
+		return errors.New("CLI alias is required when access is enabled")
 	}
 	for _, existing := range profiles {
-		if existing.ID == profile.ID || !existing.AIEnabled {
+		if existing.ID == profile.ID || !existing.CliEnabled {
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(existing.AIAlias), alias) {
-			return fmt.Errorf("AI/CLI alias %q is already used", alias)
+		if strings.EqualFold(strings.TrimSpace(existing.CliAlias), alias) {
+			return fmt.Errorf("CLI alias %q is already used", alias)
 		}
 	}
 	return nil

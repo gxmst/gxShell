@@ -28,7 +28,7 @@ const (
 )
 
 // startCliServer starts an authenticated localhost HTTP server for CLI access.
-// Profiles must opt in with AIEnabled before the CLI can see or execute them.
+// Profiles must opt in with CliEnabled before the CLI can see or execute them.
 func (a *App) startCliServer() {
 	token, err := loadOrCreateCliToken(a.store.DataDir())
 	if err != nil {
@@ -161,7 +161,7 @@ func (a *App) handleCliList(w http.ResponseWriter, r *http.Request) {
 
 	servers := make([]map[string]string, 0, len(profiles))
 	for _, profile := range profiles {
-		if !profile.AIEnabled {
+		if !profile.CliEnabled {
 			continue
 		}
 		name := cliProfileName(profile)
@@ -186,7 +186,7 @@ func (a *App) handleCliStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	allowedProfiles := make(map[string]string)
 	for _, profile := range profiles {
-		if !profile.AIEnabled {
+		if !profile.CliEnabled {
 			continue
 		}
 		name := cliProfileName(profile)
@@ -226,7 +226,7 @@ func (a *App) findCliProfile(name string) (types.Profile, error) {
 	var match *types.Profile
 	for i := range profiles {
 		profile := profiles[i]
-		if !profile.AIEnabled {
+		if !profile.CliEnabled {
 			continue
 		}
 		if !strings.EqualFold(cliProfileName(profile), name) {
@@ -280,7 +280,7 @@ func (a *App) confirmCliExecution(serverName, command string) bool {
 }
 
 func cliProfileName(profile types.Profile) string {
-	return strings.TrimSpace(profile.AIAlias)
+	return strings.TrimSpace(profile.CliAlias)
 }
 
 func isAuthorizedCliRequest(r *http.Request, token string) bool {

@@ -148,10 +148,20 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	a.migrateSecrets()
+	a.migrateCliProfileFlags()
+	a.store.MigrateSettingsDefaults()
 	a.log.Info("gxShell started")
 
-	// Start CLI server for external command-line access
-	go a.startCliServer()
+	// Start the CLI server only when the user has left it enabled. A missing
+	// setting is migrated to true by MigrateSettingsDefaults above, so existing
+	// installs keep their prior behaviour.
+	if settings, err := a.store.GetSettings(); err != nil {
+		a.log.ErrorFields("CLI server disabled because settings could not be read", logger.LogFields{"error": err.Error()})
+	} else if settings.CliServerEnabled {
+		go a.startCliServer()
+	} else {
+		a.log.Info("CLI server disabled by settings")
+	}
 }
 
 // domReady is called when the frontend is ready.
@@ -214,6 +224,34 @@ func (a *App) shutdown(ctx context.Context) {
 	})
 }
 
+// handleSecondInstanceLaunch runs when the user starts gxShell again while an
+// instance is already running (for example by double-clicking a .md file). The
+// single-instance lock forwards the new process's arguments here instead of
+// opening a second window. We bring the existing window to the front and, if an
+// argument is a markdown file, open it in a tab via the same trusted path used
+// for startup files.
+func (a *App) handleSecondInstanceLaunch(args []string) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.WindowShow(a.ctx)
+	runtime.WindowUnminimise(a.ctx)
+
+	for _, arg := range args {
+		if !isMarkdownPath(arg) {
+			continue
+		}
+		// The path came from an OS "open with"/double-click, so it is a genuine
+		// user choice; authorize it for ReadLocalFile/WriteLocalFile.
+		allowed := a.allowFile(arg)
+		if allowed == "" {
+			continue
+		}
+		a.log.InfoFields("Second instance opened file", logger.LogFields{"fileName": filepath.Base(allowed)})
+		runtime.EventsEmit(a.ctx, "file:open", allowed)
+	}
+}
+
 func (a *App) confirmOpenDroppedMarkdown(paths []string) bool {
 	if a.ctx == nil {
 		return false
@@ -270,6 +308,38 @@ func (a *App) migrateSecrets() {
 		_ = a.store.SaveProfiles(profiles)
 	}
 	a.store.CleanupBackups()
+}
+
+// migrateCliProfileFlags moves opt-in values written by older versions under the
+// "aiEnabled"/"aiAlias" JSON keys into the current CliEnabled/CliAlias fields,
+// then clears the legacy fields so they are not written back. It is a one-time,
+// idempotent migration: once profiles are re-saved without the legacy keys it
+// becomes a no-op.
+func (a *App) migrateCliProfileFlags() {
+	profiles, err := a.store.ListProfiles()
+	if err != nil {
+		return
+	}
+	changed := false
+	for i := range profiles {
+		p := &profiles[i]
+		if p.LegacyAIEnabled && !p.CliEnabled {
+			p.CliEnabled = true
+			changed = true
+		}
+		if p.LegacyAIAlias != "" && p.CliAlias == "" {
+			p.CliAlias = p.LegacyAIAlias
+			changed = true
+		}
+		if p.LegacyAIEnabled || p.LegacyAIAlias != "" {
+			p.LegacyAIEnabled = false
+			p.LegacyAIAlias = ""
+			changed = true
+		}
+	}
+	if changed {
+		_ = a.store.SaveProfiles(profiles)
+	}
 }
 
 var dangerousCmdPatterns = []struct {

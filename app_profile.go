@@ -43,7 +43,7 @@ func (a *App) CreateProfile(profile types.Profile) (types.Profile, error) {
 	profile.CreatedAt = now
 	profile.UpdatedAt = now
 	normalizeProfile(&profile)
-	if err := validateProfileAISettings(profile, profiles); err != nil {
+	if err := validateProfileCliSettings(profile, profiles); err != nil {
 		return types.Profile{}, err
 	}
 	if err := a.saveProfileSecrets(&profile); err != nil {
@@ -73,7 +73,7 @@ func (a *App) UpdateProfile(profile types.Profile) (types.Profile, error) {
 			profile.CreatedAt = profiles[i].CreatedAt
 			profile.UpdatedAt = time.Now()
 			normalizeProfile(&profile)
-			if err := validateProfileAISettings(profile, profiles); err != nil {
+			if err := validateProfileCliSettings(profile, profiles); err != nil {
 				return types.Profile{}, err
 			}
 			if err := a.saveProfileSecrets(&profile); err != nil {

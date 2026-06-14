@@ -211,6 +211,7 @@ function App() {
 
   useHotkeys({
     activeTab: sessions.activeTab,
+    activeIsMarkdown: sessions.active?.type === "markdown",
     onGlobalSearch: () => { setGlobalQuery(""); setGlobalSearchOpen(true); },
     onTerminalSearch: () => setTerminalSearchOpen(true),
     onCloseTab: sessions.closeTab

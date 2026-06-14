@@ -23,7 +23,13 @@ func NewStore() (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(base, "gxShell")
+	return NewStoreAt(filepath.Join(base, "gxShell"))
+}
+
+// NewStoreAt builds a Store rooted at an explicit directory. It is used by the
+// default NewStore (which resolves the per-user config dir) and by tests that
+// need an isolated store under a temp dir.
+func NewStoreAt(dir string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "logs"), 0755); err != nil {
 		return nil, err
 	}
@@ -150,6 +156,37 @@ func (s *Store) SaveSettings(settings types.AppSettings) error {
 	return s.writeJSON("settings.json", settings)
 }
 
+// MigrateSettingsDefaults backfills fields that older settings.json files did
+// not contain. JSON unmarshalling cannot distinguish a missing boolean from an
+// explicit false, so for keys whose safe default is true we inspect the raw
+// file: only when the key is genuinely absent do we write the default. This
+// runs once on startup and is a no-op once the key has been persisted.
+func (s *Store) MigrateSettingsDefaults() {
+	s.mu.RLock()
+	data, err := os.ReadFile(filepath.Join(s.dir, "settings.json"))
+	s.mu.RUnlock()
+	if err != nil || len(data) == 0 {
+		return
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return
+	}
+	if _, present := raw["cliServerEnabled"]; present {
+		return
+	}
+	// Start from DefaultSettings and overlay the on-disk file so any field the
+	// old file omitted keeps its real default (e.g. fontSize 14, timeout 15)
+	// instead of being persisted as a Go zero value. The absent cliServerEnabled
+	// then stays at the default true, preserving the prior always-on behaviour.
+	settings := DefaultSettings()
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return
+	}
+	settings.CliServerEnabled = true
+	_ = s.SaveSettings(settings)
+}
+
 func (s *Store) ListCommands() ([]types.CommandTemplate, error) {
 	var commands []types.CommandTemplate
 	return commands, s.readJSON("commands.json", &commands)
@@ -169,6 +206,7 @@ func DefaultSettings() types.AppSettings {
 		SavePasswords:      false,
 		SmartHighlight:     false,
 		HighlightLevel:     "off",
+		CliServerEnabled:   true,
 		Terminal: types.TerminalSettings{
 			FontFamily:        "JetBrains Mono, Cascadia Code, Consolas, monospace",
 			FontSize:          14,

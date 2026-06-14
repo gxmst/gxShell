@@ -1,17 +1,36 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { FileText, HardDrive, Save } from "lucide-react";
-import { ExportHistory } from "../../../wailsjs/go/main/App";
+import { ExportHistory, IsMarkdownContextMenuRegistered, RegisterMarkdownContextMenu, UnregisterMarkdownContextMenu } from "../../../wailsjs/go/main/App";
 import { types } from "../../../wailsjs/go/models";
 import { appThemes, fontPresets, terminalThemes } from "../../constants";
 import { normalizeAppTheme } from "../../utils/format";
 import { t } from "../../i18n";
 import { Label } from "../modals/ModalShell";
 
-export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir }: { settings: types.AppSettings; language: string; onSave: (settings: types.AppSettings) => void; onOpenData: () => void; dataDir: string }) {
+export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir, onNotify }: { settings: types.AppSettings; language: string; onSave: (settings: types.AppSettings) => void; onOpenData: () => void; dataDir: string; onNotify?: (text: string, tone?: 'info' | 'error' | 'success') => void }) {
   const lang = language;
   const [draft, setDraft] = useState(new types.AppSettings(settings));
+  const [mdMenu, setMdMenu] = useState(false);
   const update = (patch: any) => setDraft(prev => new types.AppSettings({ ...prev, ...patch }));
   const updateTerm = (patch: any) => setDraft(prev => new types.AppSettings({ ...prev, terminal: { ...prev.terminal, ...patch } }));
+
+  // The right-click registration reflects live registry state, not settings.json,
+  // so it is read on mount and toggled immediately rather than saved with the form.
+  useEffect(() => {
+    IsMarkdownContextMenuRegistered().then(setMdMenu).catch(() => setMdMenu(false));
+  }, []);
+
+  const toggleMdMenu = async (checked: boolean) => {
+    try {
+      if (checked) await RegisterMarkdownContextMenu();
+      else await UnregisterMarkdownContextMenu();
+      setMdMenu(checked);
+    } catch (err) {
+      onNotify?.(`${t(lang, "mdContextMenuFailed")}: ${String(err)}`, "error");
+      // Re-read so the checkbox reflects the real state after a failure.
+      IsMarkdownContextMenuRegistered().then(setMdMenu).catch(() => {});
+    }
+  };
   const setAppTheme = (theme: string) => {
     const termTheme = draft.terminal.themeName;
     const syncedThemes = [draft.themeName, "Dark", "gx Dark", "Light", "Deep Blue"];
@@ -36,6 +55,10 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir 
         <label className="check"><input type="checkbox" checked={draft.monitorEnabled} onChange={(e) => update({ monitorEnabled: e.target.checked })} /> {t(lang, "enableMonitor")}</label>
         <Label text={t(lang, "highlighting")}><select className="input compact-input" value={draft.highlightLevel || "off"} onChange={(e) => update({ highlightLevel: e.target.value })}><option value="off">{t(lang, "highlightOff")}</option><option value="basic">{t(lang, "highlightBasic")}</option><option value="full">{t(lang, "highlightFull")}</option></select></Label>
         <label className="check"><input type="checkbox" checked={draft.confirmOnDisconnect || false} onChange={(e) => update({ confirmOnDisconnect: e.target.checked })} /> {t(lang, "confirmClose")}</label>
+        <label className="check"><input type="checkbox" checked={draft.cliServerEnabled ?? true} onChange={(e) => update({ cliServerEnabled: e.target.checked })} /> {t(lang, "cliServerEnabled")}</label>
+        <div className="text-[10px] text-muted leading-snug">{t(lang, "cliServerEnabledHint")}</div>
+        <label className="check"><input type="checkbox" checked={mdMenu} onChange={(e) => toggleMdMenu(e.target.checked)} /> {t(lang, "mdContextMenu")}</label>
+        <div className="text-[10px] text-muted leading-snug">{t(lang, "mdContextMenuHint")}</div>
       </div>
       <button className="btn-primary w-full text-[11px]" onClick={() => onSave(draft)}><Save size={13} /> {t(lang, "save")}</button>
 

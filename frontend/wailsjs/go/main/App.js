@@ -106,6 +106,10 @@ export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
 }
 
+export function IsMarkdownContextMenuRegistered() {
+  return window['go']['main']['App']['IsMarkdownContextMenuRegistered']();
+}
+
 export function ListAiModels(arg1, arg2, arg3) {
   return window['go']['main']['App']['ListAiModels'](arg1, arg2, arg3);
 }
@@ -180,6 +184,10 @@ export function Reconnect(arg1) {
 
 export function ReconnectWithSecrets(arg1, arg2, arg3) {
   return window['go']['main']['App']['ReconnectWithSecrets'](arg1, arg2, arg3);
+}
+
+export function RegisterMarkdownContextMenu() {
+  return window['go']['main']['App']['RegisterMarkdownContextMenu']();
 }
 
 export function RemoveContainer(arg1, arg2, arg3) {
@@ -272,6 +280,10 @@ export function StreamContainerLogs(arg1, arg2, arg3) {
 
 export function TraceRoute(arg1) {
   return window['go']['main']['App']['TraceRoute'](arg1);
+}
+
+export function UnregisterMarkdownContextMenu() {
+  return window['go']['main']['App']['UnregisterMarkdownContextMenu']();
 }
 
 export function UpdateCommand(arg1) {

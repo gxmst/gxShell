@@ -57,7 +57,7 @@ export function Sidebar(props: {
   activeTabId: string;
 }) {
   const lang = props.settings?.language || "en";
-  const appVersion = props.appInfo.version || "1.1";
+  const appVersion = props.appInfo.version || "1.1.1";
   const navItems: Drawer[] = ["monitor", "sftp", "commands", "tunnels", "logs", "containers", "ai", "settings"];
   const [splitPct, setSplitPct] = useState(45);
   const dragRef = useRef({ active: false, startY: 0, startPct: 0 });
@@ -255,7 +255,7 @@ export function Sidebar(props: {
             {props.drawer === "logs" && <LogsPanel locale={lang} onOpenLog={props.onOpenLog} />}
             {props.drawer === "containers" && <ContainerPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
             {props.drawer === "ai" && <AiPanel active={props.active} locale={lang} onNotify={props.onNotify} getTerminalLines={props.getTerminalLines} activeTabId={props.activeTabId} />}
-            {props.drawer === "settings" && props.settings && <SettingsPanel settings={props.settings} language={lang} onSave={props.onSaveSettings} onOpenData={props.onOpenData} dataDir={props.appInfo.dataDir || ""} />}
+            {props.drawer === "settings" && props.settings && <SettingsPanel settings={props.settings} language={lang} onSave={props.onSaveSettings} onOpenData={props.onOpenData} dataDir={props.appInfo.dataDir || ""} onNotify={props.onNotify} />}
           </div>
         </section>
       )}
