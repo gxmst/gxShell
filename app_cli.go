@@ -50,6 +50,7 @@ func (a *App) startCliServer() {
 		WriteTimeout:      5 * time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
+	a.cliServer = server
 
 	a.log.Info("CLI server listening on " + cliAddress)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -243,21 +244,79 @@ func (a *App) findCliProfile(name string) (types.Profile, error) {
 	return *match, nil
 }
 
-func (a *App) cliSessionForProfile(profileID string) (string, error) {
-	a.cliMu.Lock()
-	defer a.cliMu.Unlock()
+// cliConnectCall represents an in-flight connection attempt for a profile.
+// The leader stores its result in res and closes done; waiters block on done
+// then read res, so every caller observes the same sessionID/error rather than
+// a generic "no session" message.
+type cliConnectCall struct {
+	done chan struct{}
+	res  cliConnectResult
+}
 
-	for _, session := range a.ssh.List() {
-		if session.ProfileID == profileID && session.State == types.SessionConnected {
-			return session.ID, nil
+type cliConnectResult struct {
+	sessionID string
+	err       error
+}
+
+func (a *App) cliSessionForProfile(profileID string) (string, error) {
+	// Fast path: reuse an existing connected session without holding cliMu.
+	if sid := a.findCliSession(profileID); sid != "" {
+		return sid, nil
+	}
+
+	// Deduplicate concurrent connection attempts for the same profile. The
+	// leader registers a *cliConnectCall, performs Connect outside the lock,
+	// stores the result, and closes done. Waiters block on done and read the
+	// shared result, so they receive the real error (auth failure, network
+	// timeout, etc.) instead of a generic message.
+	a.cliMu.Lock()
+	if call, ok := a.cliConnecting[profileID]; ok {
+		a.cliMu.Unlock()
+		<-call.done
+		return call.res.sessionID, call.res.err
+	}
+	call := &cliConnectCall{done: make(chan struct{})}
+	a.cliConnecting[profileID] = call
+	a.cliMu.Unlock()
+
+	defer func() {
+		a.cliMu.Lock()
+		// Only delete the map entry if it still points at this call. A later
+		// caller cannot have replaced it (the leader is the only one that
+		// creates entries and it's still in flight), but the guard keeps the
+		// invariant explicit.
+		if cur, ok := a.cliConnecting[profileID]; ok && cur == call {
+			delete(a.cliConnecting, profileID)
 		}
+		a.cliMu.Unlock()
+		close(call.done)
+	}()
+
+	// Double-check after claiming the slot: another goroutine may have just
+	// finished connecting.
+	if sid := a.findCliSession(profileID); sid != "" {
+		call.res = cliConnectResult{sessionID: sid}
+		return sid, nil
 	}
 
 	info, err := a.Connect(profileID, 120, 34)
 	if err != nil {
+		call.res = cliConnectResult{err: err}
 		return "", err
 	}
+	call.res = cliConnectResult{sessionID: info.ID}
 	return info.ID, nil
+}
+
+// findCliSession returns the session ID of a connected SSH session for the
+// given profile, or "" if none exists.
+func (a *App) findCliSession(profileID string) string {
+	for _, session := range a.ssh.List() {
+		if session.ProfileID == profileID && session.State == types.SessionConnected {
+			return session.ID
+		}
+	}
+	return ""
 }
 
 func (a *App) confirmCliExecution(serverName, command string) bool {

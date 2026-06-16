@@ -308,6 +308,68 @@ func TestMigrateCliProfileFlagsMovesLegacyValues(t *testing.T) {
 	}
 }
 
+func TestMigrateCliProfileFlagsPreservesFailedSecretMigrationPlaintext(t *testing.T) {
+	app := NewApp()
+	dir := t.TempDir()
+	legacy := `[
+		{"id":"p1","aiEnabled":true,"aiAlias":"prod-web","rememberPassword":true,"password":"retry-me"},
+		{"id":"p2","aiEnabled":true,"aiAlias":"dev-box","rememberPassword":true,"password":"strip-me"}
+	]`
+	if err := os.WriteFile(filepath.Join(dir, "profiles.json"), []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := config.NewStoreAt(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.store = store
+
+	app.migrateCliProfileFlags(map[string]bool{"p1": true})
+
+	profiles, err := store.ListProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]types.Profile{}
+	for _, p := range profiles {
+		byID[p.ID] = p
+	}
+	if byID["p1"].Password != "retry-me" {
+		t.Fatalf("failed secret migration plaintext was not preserved: %#v", byID["p1"])
+	}
+	if byID["p2"].Password != "" {
+		t.Fatalf("unpreserved plaintext should be stripped: %#v", byID["p2"])
+	}
+	if !byID["p1"].CliEnabled || byID["p1"].CliAlias != "prod-web" {
+		t.Fatalf("legacy CLI flags were not migrated for preserved profile: %#v", byID["p1"])
+	}
+}
+
+func TestCheckDangerousCommandRmForce(t *testing.T) {
+	blocked := []string{
+		"rm -rf /",
+		"rm -fr /tmp/x",
+		"rm --force /tmp/x",
+		"rm --recursive --force /",
+		"rm --force /home/alice/project",
+	}
+	for _, cmd := range blocked {
+		if reason, ok := checkDangerousCommand(cmd); !ok || reason == "" {
+			t.Errorf("expected %q to be blocked, got ok=%v reason=%q", cmd, ok, reason)
+		}
+	}
+	// rm without force targeting a normal path is not auto-blocked (it still
+	// goes through confirmation, but the dangerous-command gate should pass).
+	for _, cmd := range []string{
+		"rm /tmp/somefile",
+		"rm -r /tmp/dir",
+	} {
+		if _, ok := checkDangerousCommand(cmd); ok {
+			t.Errorf("expected %q to NOT be blocked by dangerous-command check", cmd)
+		}
+	}
+}
+
 func TestValidateProfileCliSettings(t *testing.T) {
 	existing := []types.Profile{
 		{ID: "p1", CliEnabled: true, CliAlias: "prod-web"},

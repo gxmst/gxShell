@@ -182,9 +182,25 @@ func (l *Logger) ReadLatest(limit int) []types.LogEntry {
 	return entries
 }
 
-var redactPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)(password|passphrase|privateKey|private_key|secret|token|apikey|api_key)\s*[:=]\s*[^,\s}]+`),
-	regexp.MustCompile(`(?i)("?(password|passphrase|privateKey|private_key|secret|token|apikey|api_key)"?\s*:\s*)"[^"]*"`),
+var redactPatterns = []struct {
+	re      *regexp.Regexp
+	replace string
+}{
+	{
+		regexp.MustCompile(`(?i)(password|passphrase|privateKey|private_key|secret|token|apikey|api_key)(\s*[:=]\s*)[^,\s}]+`),
+		`${1}${2}<redacted>`,
+	},
+	{
+		regexp.MustCompile(`(?i)("?(password|passphrase|privateKey|private_key|secret|token|apikey|api_key)"?\s*:\s*)"[^"]*"`),
+		`${1}"<redacted>"`,
+	},
+	// Inline passwords glued to short flags, e.g. `mysql -ppassword` where the
+	// secret immediately follows -p with no separator. Scoped to known database
+	// CLIs to avoid false positives on other -p flags (e.g. -p8080 for port).
+	{
+		regexp.MustCompile(`(?i)(mysql|mysqldump|mariadb)([^\n|]*\s-p)\S+`),
+		`${1}${2}<redacted>`,
+	},
 }
 
 var sensitiveKeys = map[string]bool{
@@ -197,15 +213,8 @@ func isSensitiveKey(key string) bool {
 }
 
 func redact(s string) string {
-	for _, re := range redactPatterns {
-		s = re.ReplaceAllStringFunc(s, func(match string) string {
-			if strings.Contains(match, ":") {
-				parts := strings.SplitN(match, ":", 2)
-				return parts[0] + `:"<redacted>"`
-			}
-			parts := strings.SplitN(match, "=", 2)
-			return parts[0] + "=<redacted>"
-		})
+	for _, p := range redactPatterns {
+		s = p.re.ReplaceAllString(s, p.replace)
 	}
 	return s
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -43,6 +44,8 @@ type App struct {
 	aiToolMu        sync.Mutex
 	aiTools         map[string]authorizedAIToolCall
 	cliMu           sync.Mutex
+	cliConnecting   map[string]*cliConnectCall
+	cliServer       *http.Server
 	rateLimiter     *connectionRateLimiter
 	startupFilePath string
 	startedAt       time.Time
@@ -76,9 +79,10 @@ type authorizedAIToolCall struct {
 // NewApp creates a new App instance.
 func NewApp() *App {
 	return &App{
-		aiTools:      map[string]authorizedAIToolCall{},
-		rateLimiter:  newConnectionRateLimiter(),
-		allowedFiles: map[string]bool{},
+		aiTools:       map[string]authorizedAIToolCall{},
+		rateLimiter:   newConnectionRateLimiter(),
+		allowedFiles:  map[string]bool{},
+		cliConnecting: map[string]*cliConnectCall{},
 	}
 }
 
@@ -147,8 +151,8 @@ func (a *App) startup(ctx context.Context) {
 		})
 	}
 
-	a.migrateSecrets()
-	a.migrateCliProfileFlags()
+	preserveSecretIDs := a.migrateSecrets()
+	a.migrateCliProfileFlags(preserveSecretIDs)
 	a.store.MigrateSettingsDefaults()
 	a.log.Info("gxShell started")
 
@@ -179,7 +183,11 @@ func (a *App) domReady(ctx context.Context) {
 		if len(mdPaths) == 0 {
 			return
 		}
-		a.log.InfoFields("Files dropped, opening directly", logger.LogFields{"count": len(mdPaths)})
+		if !a.confirmOpenDroppedMarkdown(mdPaths) {
+			a.log.Info("User cancelled dropped markdown open")
+			return
+		}
+		a.log.InfoFields("Files dropped, opening after confirm", logger.LogFields{"count": len(mdPaths)})
 		for _, path := range mdPaths {
 			if allowed := a.allowFile(path); allowed != "" {
 				a.log.InfoFields("Emitting file:open", logger.LogFields{"fileName": filepath.Base(allowed)})
@@ -212,6 +220,11 @@ func (a *App) domReady(ctx context.Context) {
 
 // shutdown cleans up resources before application exit.
 func (a *App) shutdown(ctx context.Context) {
+	if a.cliServer != nil {
+		shutdownCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		_ = a.cliServer.Shutdown(shutdownCtx)
+		cancel()
+	}
 	a.ssh.Shutdown()
 	a.local.Shutdown()
 	a.net.StopAll()
@@ -285,29 +298,50 @@ func (a *App) confirmOpenDroppedMarkdown(paths []string) bool {
 	return res == "Open" || res == "Yes"
 }
 
-// migrateSecrets migrates plaintext passwords to secure storage.
-func (a *App) migrateSecrets() {
+// migrateSecrets migrates plaintext passwords to secure storage. It returns the
+// IDs of profiles whose plaintext credentials had to remain in profiles.json
+// because secure storage failed, so later startup migrations do not wipe them.
+func (a *App) migrateSecrets() map[string]bool {
 	profiles, err := a.store.ListProfiles()
 	if err != nil {
-		return
+		return nil
 	}
 	changed := false
+	preserveSecretIDs := map[string]bool{}
 	for i := range profiles {
-		if profiles[i].RememberPassword && (profiles[i].Password != "" || profiles[i].PrivateKeyPassphrase != "") {
-			if err := a.saveProfileSecrets(&profiles[i]); err == nil {
+		p := &profiles[i]
+		if p.RememberPassword && (p.Password != "" || p.PrivateKeyPassphrase != "") {
+			pw, pp := p.Password, p.PrivateKeyPassphrase
+			saveErr := a.secrets.SavePassword(p.ID, pw)
+			if saveErr == nil && pp != "" {
+				saveErr = a.secrets.SavePassphrase(p.ID, pp)
+			}
+			if saveErr == nil {
+				p.Password = ""
+				p.PrivateKeyPassphrase = ""
 				changed = true
+			} else {
+				// Keep plaintext in p so it is persisted for retry.
+				preserveSecretIDs[p.ID] = true
+				a.log.ErrorFields("secret migration failed; plaintext retained on disk for retry", logger.LogFields{
+					"profileId": p.ID, "error": saveErr.Error(),
+				})
 			}
 		}
-		if !profiles[i].RememberPassword && (profiles[i].Password != "" || profiles[i].PrivateKeyPassphrase != "") {
-			profiles[i].Password = ""
-			profiles[i].PrivateKeyPassphrase = ""
+		if !p.RememberPassword && (p.Password != "" || p.PrivateKeyPassphrase != "") {
+			p.Password = ""
+			p.PrivateKeyPassphrase = ""
 			changed = true
 		}
 	}
 	if changed {
-		_ = a.store.SaveProfiles(profiles)
+		_ = a.store.SaveProfilesPreservingSecrets(profiles, preserveSecretIDs)
 	}
 	a.store.CleanupBackups()
+	if len(preserveSecretIDs) == 0 {
+		return nil
+	}
+	return preserveSecretIDs
 }
 
 // migrateCliProfileFlags moves opt-in values written by older versions under the
@@ -315,7 +349,7 @@ func (a *App) migrateSecrets() {
 // then clears the legacy fields so they are not written back. It is a one-time,
 // idempotent migration: once profiles are re-saved without the legacy keys it
 // becomes a no-op.
-func (a *App) migrateCliProfileFlags() {
+func (a *App) migrateCliProfileFlags(preserveSecretIDs ...map[string]bool) {
 	profiles, err := a.store.ListProfiles()
 	if err != nil {
 		return
@@ -338,7 +372,11 @@ func (a *App) migrateCliProfileFlags() {
 		}
 	}
 	if changed {
-		_ = a.store.SaveProfiles(profiles)
+		var preserve map[string]bool
+		if len(preserveSecretIDs) > 0 {
+			preserve = preserveSecretIDs[0]
+		}
+		_ = a.store.SaveProfilesPreservingSecrets(profiles, preserve)
 	}
 }
 
@@ -346,7 +384,7 @@ var dangerousCmdPatterns = []struct {
 	pattern string
 	reason  string
 }{
-	{`rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|/)`, "destructive rm command"},
+	{`rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|.*--force\b|/\s|$)`, "destructive rm command"},
 	{`mkfs`, "filesystem format"},
 	{`dd\s+`, "raw disk write"},
 	{`:\(\)\{\s*:\|:\&\s*\}\s*;`, "fork bomb"},

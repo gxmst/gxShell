@@ -136,7 +136,18 @@ func (s *Store) ListProfiles() ([]types.Profile, error) {
 }
 
 func (s *Store) SaveProfiles(profiles []types.Profile) error {
+	return s.SaveProfilesPreservingSecrets(profiles, nil)
+}
+
+// SaveProfilesPreservingSecrets writes profiles while retaining plaintext
+// credentials only for the explicitly listed profile IDs. It exists for startup
+// migrations that must keep failed secret migrations retryable; normal callers
+// should use SaveProfiles so credentials are never persisted to profiles.json.
+func (s *Store) SaveProfilesPreservingSecrets(profiles []types.Profile, preserveSecretIDs map[string]bool) error {
 	for i := range profiles {
+		if preserveSecretIDs != nil && preserveSecretIDs[profiles[i].ID] {
+			continue
+		}
 		profiles[i].Password = ""
 		profiles[i].PrivateKeyPassphrase = ""
 	}

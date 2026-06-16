@@ -30,6 +30,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const pendingWriteFrames = useRef<Record<string, number>>({});
   const lastHostSize = useRef<Record<string, string>>({});
   const throughputRef = useRef<Record<string, number>>({});
+  const refitTimers = useRef<Record<string, number>>({});
 
   const addTimer = useCallback((ms: number, fn: () => void) => {
     const id = window.setTimeout(() => {
@@ -358,7 +359,6 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     searches.current[id]?.findNext(query);
   }, []);
 
-  const refitTimers = useRef<Record<string, number>>({});
   const refitTerminal = useCallback((id: string, _depth = 0) => {
     const fit = fits.current[id];
     const term = terminals.current[id];

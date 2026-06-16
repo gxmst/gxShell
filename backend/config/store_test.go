@@ -173,3 +173,24 @@ func TestSaveProfilesStripsLegacyAndSecrets(t *testing.T) {
 		t.Fatalf("CLI fields not persisted: %#v", got[0])
 	}
 }
+
+func TestSaveProfilesPreservingSecretsRetainsOnlyListedProfiles(t *testing.T) {
+	s := newTestStore(t)
+	profiles := []types.Profile{
+		{ID: "keep", Password: "retry-password", PrivateKeyPassphrase: "retry-passphrase"},
+		{ID: "clear", Password: "clear-password", PrivateKeyPassphrase: "clear-passphrase"},
+	}
+	if err := s.SaveProfilesPreservingSecrets(profiles, map[string]bool{"keep": true}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ListProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Password != "retry-password" || got[0].PrivateKeyPassphrase != "retry-passphrase" {
+		t.Fatalf("preserved profile credentials were not retained: %#v", got[0])
+	}
+	if got[1].Password != "" || got[1].PrivateKeyPassphrase != "" {
+		t.Fatalf("unpreserved profile credentials were not stripped: %#v", got[1])
+	}
+}
