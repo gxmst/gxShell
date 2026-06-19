@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowUpDown, Copy, Download, Edit3, File, Folder, FolderDown, FolderPlus, RefreshCw, Trash2, Upload } from "lucide-react";
+import { ArrowUpDown, Copy, Download, Edit3, File, FileText, Folder, FolderDown, FolderPlus, RefreshCw, Trash2, Upload } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { CreateRemoteDir, DeleteRemoteFile, DownloadFile, DownloadFolder, RenameRemoteFile, SelectDownloadPath, SelectUploadFile, UploadFile } from "../../../wailsjs/go/main/App";
 import type { Tab, Toast } from "../../types";
@@ -15,7 +15,7 @@ type DialogState =
   | { type: "delete"; file: types.RemoteFile }
   | null;
 
-export function SftpPanel(props: { active?: Tab; path: string; files: types.RemoteFile[]; busy: boolean; locale?: string; onRefresh: (path?: string) => void; onNotify: (text: string, tone?: Toast["tone"]) => void; setCtxMenu: any }) {
+export function SftpPanel(props: { active?: Tab; path: string; files: types.RemoteFile[]; busy: boolean; locale?: string; onRefresh: (path?: string) => void; onNotify: (text: string, tone?: Toast["tone"]) => void; setCtxMenu: any; onOpenMarkdownFile?: (sessionId: string, path: string) => void }) {
   const { active, path, files, busy, locale, onRefresh, onNotify, setCtxMenu } = props;
   const [draftPath, setDraftPath] = useState(path);
   const [dialog, setDialog] = useState<DialogState>(null);
@@ -62,23 +62,29 @@ export function SftpPanel(props: { active?: Tab; path: string; files: types.Remo
       </div>
       <div className="file-table">
         {busy && <div className="empty compact">Loading...</div>}
-        {!busy && files.map((file) => (
-          <div key={file.path} className="file-row" onDoubleClick={() => file.isDir ? onRefresh(file.path) : download(file)}>
-            <span>{file.isDir ? <Folder size={14} className="text-accent" /> : <File size={14} className="text-muted" />}</span>
-            <span className="min-w-0 flex-1 truncate">{file.name}</span>
-            <span className="w-14 text-right text-muted">{file.isDir ? "dir" : formatFileSize(file.size)}</span>
-            <div className="file-actions">
-              {file.isDir ? (
-                <button className="mini-btn bg-accent/10 border border-accent/30 hover:border-accent/50" onClick={() => downloadFolder(file)} title="Download folder"><FolderDown size={12} /></button>
-              ) : (
-                <button className="mini-btn bg-accent/10 border border-accent/30 hover:border-accent/50" onClick={() => download(file)} title="Download"><Download size={12} /></button>
-              )}
-              <button className="mini-btn" onClick={() => { navigator.clipboard?.writeText(file.path).then(() => onNotify("Copied to clipboard", "success")).catch(() => onNotify("Copy failed", "error")); }} title="Copy path"><Copy size={11} /></button>
-              <button className="mini-btn" onClick={() => setDialog({ type: "rename", file })} title="Rename"><Edit3 size={11} /></button>
-              <button className="mini-btn danger" onClick={() => setDialog({ type: "delete", file })} title="Delete"><Trash2 size={11} /></button>
+        {!busy && files.map((file) => {
+          const isMarkdown = !file.isDir && file.name.toLowerCase().endsWith(".md");
+          return (
+            <div key={file.path} className="file-row" onDoubleClick={() => file.isDir ? onRefresh(file.path) : isMarkdown ? props.onOpenMarkdownFile?.(active.id, file.path) : download(file)}>
+              <span>{file.isDir ? <Folder size={14} className="text-accent" /> : isMarkdown ? <FileText size={14} className="text-accent" /> : <File size={14} className="text-muted" />}</span>
+              <span className="min-w-0 flex-1 truncate">{file.name}</span>
+              <span className="w-14 text-right text-muted">{file.isDir ? "dir" : formatFileSize(file.size)}</span>
+              <div className="file-actions">
+                {isMarkdown && (
+                  <button className="mini-btn bg-accent/10 border border-accent/30 hover:border-accent/50" onClick={() => props.onOpenMarkdownFile?.(active.id, file.path)} title="Open Markdown"><FileText size={12} /></button>
+                )}
+                {file.isDir ? (
+                  <button className="mini-btn bg-accent/10 border border-accent/30 hover:border-accent/50" onClick={() => downloadFolder(file)} title="Download folder"><FolderDown size={12} /></button>
+                ) : (
+                  <button className="mini-btn bg-accent/10 border border-accent/30 hover:border-accent/50" onClick={() => download(file)} title="Download"><Download size={12} /></button>
+                )}
+                <button className="mini-btn" onClick={() => { navigator.clipboard?.writeText(file.path).then(() => onNotify("Copied to clipboard", "success")).catch(() => onNotify("Copy failed", "error")); }} title="Copy path"><Copy size={11} /></button>
+                <button className="mini-btn" onClick={() => setDialog({ type: "rename", file })} title="Rename"><Edit3 size={11} /></button>
+                <button className="mini-btn danger" onClick={() => setDialog({ type: "delete", file })} title="Delete"><Trash2 size={11} /></button>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {dialog?.type === "mkdir" && <TextInputDialog title="New folder" label="Folder name" onClose={() => setDialog(null)} onSubmit={async (name) => { try { await CreateRemoteDir(active.id, `${path}/${name}`); setDialog(null); onRefresh(path); } catch (err) { onNotify(String(err), "error"); } }} />}

@@ -142,6 +142,10 @@ export function ListRemoteDir(arg1, arg2) {
   return window['go']['main']['App']['ListRemoteDir'](arg1, arg2);
 }
 
+export function ListRemoteMarkdownFilesInDir(arg1, arg2) {
+  return window['go']['main']['App']['ListRemoteMarkdownFilesInDir'](arg1, arg2);
+}
+
 export function ListSessions() {
   return window['go']['main']['App']['ListSessions']();
 }
@@ -162,6 +166,10 @@ export function OpenDataDir() {
   return window['go']['main']['App']['OpenDataDir']();
 }
 
+export function OpenRecentMarkdownFile(arg1) {
+  return window['go']['main']['App']['OpenRecentMarkdownFile'](arg1);
+}
+
 export function PingHost(arg1, arg2) {
   return window['go']['main']['App']['PingHost'](arg1, arg2);
 }
@@ -170,12 +178,24 @@ export function ReadLocalFile(arg1) {
   return window['go']['main']['App']['ReadLocalFile'](arg1);
 }
 
+export function ReadLocalMarkdownResourceDataURL(arg1, arg2) {
+  return window['go']['main']['App']['ReadLocalMarkdownResourceDataURL'](arg1, arg2);
+}
+
 export function ReadLogFile(arg1) {
   return window['go']['main']['App']['ReadLogFile'](arg1);
 }
 
 export function ReadLogs(arg1) {
   return window['go']['main']['App']['ReadLogs'](arg1);
+}
+
+export function ReadRemoteMarkdownFile(arg1, arg2) {
+  return window['go']['main']['App']['ReadRemoteMarkdownFile'](arg1, arg2);
+}
+
+export function ReadRemoteMarkdownResourceDataURL(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ReadRemoteMarkdownResourceDataURL'](arg1, arg2, arg3);
 }
 
 export function Reconnect(arg1) {
@@ -208,6 +228,14 @@ export function ResetAiUsage() {
 
 export function ResizeTerminal(arg1, arg2, arg3) {
   return window['go']['main']['App']['ResizeTerminal'](arg1, arg2, arg3);
+}
+
+export function ResolveLocalMarkdownLink(arg1, arg2) {
+  return window['go']['main']['App']['ResolveLocalMarkdownLink'](arg1, arg2);
+}
+
+export function ResolveRemoteMarkdownLink(arg1, arg2) {
+  return window['go']['main']['App']['ResolveRemoteMarkdownLink'](arg1, arg2);
 }
 
 export function RestartContainer(arg1, arg2) {
@@ -304,6 +332,10 @@ export function UploadFile(arg1, arg2, arg3) {
 
 export function WriteLocalFile(arg1, arg2) {
   return window['go']['main']['App']['WriteLocalFile'](arg1, arg2);
+}
+
+export function WriteRemoteMarkdownFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['WriteRemoteMarkdownFile'](arg1, arg2, arg3);
 }
 
 export function WriteToTerminal(arg1, arg2) {

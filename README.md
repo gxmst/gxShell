@@ -7,14 +7,14 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 - SSH terminal sessions with xterm.js, WebGL rendering, reconnect, resize, search, split view, and tear-off floating terminals.
 - Password and private-key authentication, including passphrase support and ProxyJump through one jump host.
 - Local terminal sessions alongside remote SSH sessions.
-- SFTP file management with upload, download, folder download, rename, delete, transfer progress, and safer remote path handling.
+- SFTP file management with upload, download, folder download, rename, delete, transfer progress, safer remote path handling, and a guarded shared SFTP client cache for concurrent operations.
 - Server monitoring for Linux hosts, including CPU, memory, disk, network, and top processes.
 - Docker container management over SSH, including list, logs, follow logs, start, stop, restart, and remove.
 - SSH tunnel management for local, remote, and dynamic SOCKS forwarding.
 - Network diagnostics with ping and traceroute parsing.
 - AI assistant for OpenAI-compatible APIs, with streaming responses, model listing, token usage, terminal context, and explicit native confirmation before remote tool execution.
 - External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands on opted-in profiles through the running app, without exposing saved SSH credentials. The CLI can be disabled globally, reuses active SSH sessions when possible, follows each profile's ProxyJump setting, runs simple read-only commands directly, and requires native confirmation for anything else. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
-- Local Markdown viewer/editor with sanitized rendering, file-open support, drag-and-drop opening, sibling file navigation, in-document search, zoom, edit, save, and refresh.
+- Local and remote Markdown viewer/editor with sanitized rendering, file-open support, drag-and-drop opening, recent files, sibling and relative-link navigation, relative image previews, table of contents, code highlighting, Mermaid diagrams, in-document search, zoom, edit, save, split preview, and refresh.
 - Windows tray menu for showing the app, creating a connection, opening Markdown, settings, and quit.
 - Windows `.md` integration, including installed file-association metadata and an optional per-user "Open with gxShell" right-click menu entry.
 
@@ -43,7 +43,7 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 | SSH | `golang.org/x/crypto/ssh` |
 | SFTP | `github.com/pkg/sftp` |
 | Secrets | `go-keyring`, AES-256-GCM, Windows DPAPI fallback wrapping |
-| Markdown | `marked`, `DOMPurify` |
+| Markdown | `marked`, `DOMPurify`, `highlight.js`, `mermaid` |
 | Tray | `github.com/getlantern/systray` |
 
 ## Project Layout
@@ -139,7 +139,7 @@ go build -o gxshell-cli.exe .\cmd\gxshell-cli
 4. Create a GitHub release with the built executables as assets:
 
 ```powershell
-gh release create v1.1.1 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.1.1" --notes-file .\release-notes.md
+gh release create v1.1.2 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.1.2" --notes-file .\release-notes.md
 ```
 
 Use release notes that describe behavior and fixes only. Do not include local paths, tokens, API keys, server addresses, private hostnames, or log output.

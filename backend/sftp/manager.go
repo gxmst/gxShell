@@ -1,6 +1,7 @@
 package sftpmanager
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -316,6 +317,83 @@ func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) error {
 		m.emit("sftp:progress", map[string]any{"sessionId": sessionID, "path": remotePath, "done": written, "total": total, "direction": "download", "finished": true})
 	}
 	return err
+}
+
+func (m *Manager) ReadRemoteFile(sessionID string, remotePath string, maxSize int64) ([]byte, error) {
+	remotePath = cleanRemotePath(remotePath)
+	client, release, err := m.acquire(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	src, err := client.Open(remotePath)
+	if err != nil {
+		m.InvalidateClient(sessionID)
+		return nil, err
+	}
+	defer src.Close()
+
+	stat, err := src.Stat()
+	if err != nil {
+		m.InvalidateClient(sessionID)
+		return nil, err
+	}
+	if stat.IsDir() {
+		return nil, fmt.Errorf("remote path is a directory, not a file")
+	}
+	if maxSize > 0 && stat.Size() > maxSize {
+		return nil, fmt.Errorf("remote file too large")
+	}
+
+	limit := maxSize
+	if limit <= 0 {
+		limit = stat.Size()
+	}
+	data, err := io.ReadAll(io.LimitReader(src, limit+1))
+	if err != nil {
+		m.InvalidateClient(sessionID)
+		return nil, err
+	}
+	if maxSize > 0 && int64(len(data)) > maxSize {
+		return nil, fmt.Errorf("remote file too large")
+	}
+	return data, nil
+}
+
+func (m *Manager) WriteRemoteFile(sessionID string, remotePath string, data []byte) error {
+	remotePath = cleanRemotePath(remotePath)
+	client, release, err := m.acquire(sessionID)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	var mode os.FileMode
+	if stat, statErr := client.Stat(remotePath); statErr == nil {
+		if stat.IsDir() {
+			return fmt.Errorf("remote path is a directory, not a file")
+		}
+		mode = stat.Mode().Perm()
+	}
+
+	dst, err := client.OpenFile(remotePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	if err != nil {
+		m.InvalidateClient(sessionID)
+		return err
+	}
+	_, writeErr := io.Copy(dst, bytes.NewReader(data))
+	closeErr := dst.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if mode != 0 {
+		_ = client.Chmod(remotePath, mode)
+	}
+	return nil
 }
 
 func (m *Manager) DeleteRemoteFile(sessionID, remotePath string) error {

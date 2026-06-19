@@ -5,7 +5,7 @@
 
 .file-row {
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) 52px 72px;
+  grid-template-columns: 16px minmax(0, 1fr) 52px 98px;
   gap: 5px;
   align-items: center;
   min-height: 28px;

@@ -152,6 +152,37 @@
   padding-top: 6px;
 }
 
+.section-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--terminal-top) 45%, transparent);
+}
+
+.section-switch button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 19px;
+  height: 18px;
+  border-radius: 5px;
+  color: var(--muted);
+}
+
+.section-switch button:hover,
+.section-switch button.active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+.section-switch button.active {
+  color: var(--accent);
+}
+
 .group-tabs {
   display: flex;
   gap: 3px;
@@ -253,6 +284,10 @@
 
 .server-row:hover .row-actions {
   opacity: 1;
+}
+
+.markdown-recent-row {
+  cursor: pointer;
 }
 
 .status-dot {

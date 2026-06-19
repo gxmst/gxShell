@@ -2,10 +2,9 @@ import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { types } from "../wailsjs/go/models";
-import { CreateCommand, DeleteCommand, ListCommands, ListMarkdownFilesInDir, OpenDataDir, ReadLogFile, SelectMarkdownFile, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, UpdateCommand } from "../wailsjs/go/main/App";
+import { CreateCommand, DeleteCommand, ListCommands, ListMarkdownFilesInDir, ListRemoteMarkdownFilesInDir, OpenDataDir, OpenRecentMarkdownFile, ReadLogFile, SelectMarkdownFile, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, UpdateCommand } from "../wailsjs/go/main/App";
 import { emptyProfile } from "./constants";
-import type { Drawer } from "./types";
-import type { SplitPane, Tab } from "./types";
+import type { Drawer, MarkdownOpenTarget, RecentMarkdownItem, SplitPane, Tab } from "./types";
 import { normalizeAppTheme } from "./utils/format";
 import { useToasts } from "./hooks/useToasts";
 import { useProfiles } from "./hooks/useProfiles";
@@ -32,6 +31,13 @@ const normalizeLocalPath = (filePath: string) => filePath.replace(/\\/g, "/");
 
 const newMarkdownTabId = () => `md-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
+const fileNameFromPath = (filePath: string) => filePath.split(/[\\/]/).pop() || "Markdown";
+
+const recentMarkdownId = (item: Pick<RecentMarkdownItem, "source" | "path" | "profileId" | "sessionId">) => {
+  if (item.source === "local") return `local:${normalizeLocalPath(item.path).toLowerCase()}`;
+  return `remote:${item.profileId || item.sessionId || ""}:${item.path}`;
+};
+
 function App() {
   const { toasts, notify } = useToasts();
   const profileState = useProfiles(notify);
@@ -49,6 +55,7 @@ function App() {
   const [splitPane, setSplitPane] = useState<SplitPane | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{x:number, y:number, items:{label:string, action:()=>void, danger?:boolean}[]} | null>(null);
   const [markdownSiblings, setMarkdownSiblings] = useState<string[]>([]);
+  const [recentMarkdown, setRecentMarkdown] = usePersistedState<RecentMarkdownItem[]>("gx:recentMarkdown", []);
 
   useEffect(() => {
     const hide = () => setCtxMenu(null);
@@ -75,9 +82,19 @@ function App() {
   const { writeOutput, disposeTerminal, findNext, focusTerminal, refitTerminal, reattachTerminal } = activeTerminal;
   terminalBridge.current.disposeTerminal = disposeTerminal;
 
+  const rememberMarkdown = useCallback((item: Omit<RecentMarkdownItem, "id" | "openedAt">) => {
+    const nextItem: RecentMarkdownItem = {
+      ...item,
+      id: recentMarkdownId(item),
+      openedAt: Date.now(),
+    };
+    setRecentMarkdown((prev) => [nextItem, ...prev.filter((old) => old.id !== nextItem.id)].slice(0, 30));
+  }, [setRecentMarkdown]);
+
   const openMarkdownFile = useCallback(async (filePath: string) => {
     const normalizedPath = normalizeLocalPath(filePath);
     const existing = tabsRef.current.find((tab) => tab.type === "markdown" && tab.filePath && normalizeLocalPath(tab.filePath) === normalizedPath);
+    rememberMarkdown({ source: "local", path: filePath, title: fileNameFromPath(filePath) });
     if (existing) {
       sessions.setActiveTab(existing.id);
       setDrawer("sftp");
@@ -90,13 +107,14 @@ function App() {
       return;
     }
 
-    const fileName = filePath.split(/[\\/]/).pop() || 'Markdown';
+    const fileName = fileNameFromPath(filePath);
     const newTab: Tab = {
       id: newMarkdownTabId(),
       profileId: "",
       title: fileName,
       state: "connected",
       type: "markdown",
+      markdownSource: "local",
       filePath: filePath
     };
 
@@ -110,7 +128,67 @@ function App() {
     } catch {
       setMarkdownSiblings([]);
     }
-  }, [sessions.setActiveTab, sessions.setTabs, setDrawer]);
+  }, [rememberMarkdown, sessions.setActiveTab, sessions.setTabs, setDrawer]);
+
+  const openRemoteMarkdownFile = useCallback(async (sessionID: string, remotePath: string) => {
+    const sessionTab = tabsRef.current.find((tab) => tab.id === sessionID);
+    const profile = sessionTab ? profileState.profiles.find((item) => item.id === sessionTab.profileId) : undefined;
+    const existing = tabsRef.current.find((tab) => (
+      tab.type === "markdown" &&
+      tab.markdownSource === "remote" &&
+      tab.remoteSessionId === sessionID &&
+      tab.remotePath === remotePath
+    ));
+    rememberMarkdown({
+      source: "remote",
+      path: remotePath,
+      title: fileNameFromPath(remotePath),
+      sessionId: sessionID,
+      profileId: sessionTab?.profileId,
+      host: profile ? `${profile.username}@${profile.host}` : sessionTab?.title,
+    });
+    if (existing) {
+      sessions.setActiveTab(existing.id);
+      setDrawer("sftp");
+      try {
+        const siblings = await ListRemoteMarkdownFilesInDir(sessionID, remotePath);
+        setMarkdownSiblings(siblings || []);
+      } catch {
+        setMarkdownSiblings([]);
+      }
+      return;
+    }
+
+    const newTab: Tab = {
+      id: newMarkdownTabId(),
+      profileId: sessionTab?.profileId || "",
+      title: fileNameFromPath(remotePath),
+      state: "connected",
+      type: "markdown",
+      markdownSource: "remote",
+      remotePath,
+      remoteSessionId: sessionID,
+    };
+
+    sessions.setTabs(prev => [...prev, newTab]);
+    sessions.setActiveTab(newTab.id);
+    setDrawer("sftp");
+
+    try {
+      const siblings = await ListRemoteMarkdownFilesInDir(sessionID, remotePath);
+      setMarkdownSiblings(siblings || []);
+    } catch {
+      setMarkdownSiblings([]);
+    }
+  }, [profileState.profiles, rememberMarkdown, sessions.setActiveTab, sessions.setTabs, setDrawer]);
+
+  const openMarkdownTarget = useCallback((target: MarkdownOpenTarget) => {
+    if (target.source === "remote") {
+      openRemoteMarkdownFile(target.sessionId, target.path);
+    } else {
+      openMarkdownFile(target.path);
+    }
+  }, [openMarkdownFile, openRemoteMarkdownFile]);
 
   const handleOpenMarkdown = useCallback(async () => {
     try {
@@ -122,6 +200,42 @@ function App() {
       notify(String(err), "error");
     }
   }, [openMarkdownFile, notify]);
+
+  const handleOpenRecentMarkdown = useCallback(async (item: RecentMarkdownItem) => {
+    try {
+      if (item.source === "local") {
+        const allowed = await OpenRecentMarkdownFile(item.path);
+        if (allowed) openMarkdownFile(allowed);
+        return;
+      }
+
+      const liveSession = sessions.tabs.find((tab) => (
+        tab.type !== "markdown" &&
+        (tab.id === item.sessionId || (!!item.profileId && tab.profileId === item.profileId)) &&
+        tab.state === "connected"
+      ));
+      if (!liveSession) {
+        notify("Connect the server first, then reopen this Markdown file.", "info");
+        return;
+      }
+      openRemoteMarkdownFile(liveSession.id, item.path);
+    } catch (err) {
+      notify(String(err), "error");
+    }
+  }, [notify, openMarkdownFile, openRemoteMarkdownFile, sessions.tabs]);
+
+  const handleRemoveRecentMarkdown = useCallback((id: string) => {
+    setRecentMarkdown((prev) => prev.filter((item) => item.id !== id));
+  }, [setRecentMarkdown]);
+
+  const handleOpenMarkdownSibling = useCallback((path: string) => {
+    const activeTab = tabsRef.current.find((tab) => tab.id === sessions.activeTab);
+    if (activeTab?.type === "markdown" && activeTab.markdownSource === "remote" && activeTab.remoteSessionId) {
+      openRemoteMarkdownFile(activeTab.remoteSessionId, path);
+      return;
+    }
+    openMarkdownFile(path);
+  }, [openMarkdownFile, openRemoteMarkdownFile, sessions.activeTab]);
 
   useEffect(() => {
     OnFileDrop((_x, _y, _paths) => {
@@ -191,7 +305,13 @@ function App() {
 
   useEffect(() => {
     const activeTab = sessions.tabs.find(t => t.id === sessions.activeTab);
-    if (activeTab?.type === 'markdown' && activeTab.filePath) {
+    if (activeTab?.type === 'markdown' && activeTab.markdownSource === "remote" && activeTab.remoteSessionId && activeTab.remotePath) {
+      ListRemoteMarkdownFilesInDir(activeTab.remoteSessionId, activeTab.remotePath).then(siblings => {
+        setMarkdownSiblings(siblings || []);
+      }).catch(() => {
+        setMarkdownSiblings([]);
+      });
+    } else if (activeTab?.type === 'markdown' && activeTab.filePath) {
       ListMarkdownFilesInDir(activeTab.filePath).then(siblings => {
         setMarkdownSiblings(siblings || []);
       }).catch(() => {
@@ -290,7 +410,11 @@ function App() {
           remoteFiles={sftp.remoteFiles}
           sftpBusy={sftp.sftpBusy}
           markdownSiblings={markdownSiblings}
-          onOpenMarkdownFile={openMarkdownFile}
+          recentMarkdown={recentMarkdown}
+          onOpenMarkdownFile={handleOpenMarkdownSibling}
+          onOpenRemoteMarkdownFile={openRemoteMarkdownFile}
+          onOpenRecentMarkdown={handleOpenRecentMarkdown}
+          onRemoveRecentMarkdown={handleRemoveRecentMarkdown}
           onNewProfile={() => setProfileModal(emptyProfile())}
           onEditProfile={(profile) => setProfileModal(new types.Profile(profile))}
           onConnectProfile={sessions.connectProfile}
@@ -335,6 +459,7 @@ function App() {
           onNewConnection={handleNewConnection}
           onNewLocal={sessions.connectLocal}
           onOpenMarkdown={handleOpenMarkdown}
+          onOpenMarkdownFile={openMarkdownTarget}
           onNotify={notify}
           onTearOff={handleTearOff}
           language={profileState.settings?.language || "en"}

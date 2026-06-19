@@ -11,6 +11,23 @@ export type SplitPane = {
   ratio: number;
 };
 
+export type MarkdownSource = "local" | "remote";
+
+export type MarkdownOpenTarget =
+  | { source: "local"; path: string }
+  | { source: "remote"; sessionId: string; path: string };
+
+export type RecentMarkdownItem = {
+  id: string;
+  source: MarkdownSource;
+  path: string;
+  title: string;
+  openedAt: number;
+  sessionId?: string;
+  profileId?: string;
+  host?: string;
+};
+
 export type Tab = {
   id: string;
   profileId: string;
@@ -20,6 +37,9 @@ export type Tab = {
   error?: string;
   type?: 'ssh' | 'local' | 'markdown';
   filePath?: string;
+  markdownSource?: MarkdownSource;
+  remotePath?: string;
+  remoteSessionId?: string;
 };
 
 export type Toast = {

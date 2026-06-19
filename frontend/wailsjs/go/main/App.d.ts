@@ -72,6 +72,8 @@ export function ListProfiles():Promise<Array<types.Profile>>;
 
 export function ListRemoteDir(arg1:string,arg2:string):Promise<Array<types.RemoteFile>>;
 
+export function ListRemoteMarkdownFilesInDir(arg1:string,arg2:string):Promise<Array<string>>;
+
 export function ListSessions():Promise<Array<types.SessionInfo>>;
 
 export function ListTunnelStatus(arg1:string):Promise<Array<types.TunnelStatus>>;
@@ -82,13 +84,21 @@ export function LogCommand(arg1:string,arg2:string):Promise<void>;
 
 export function OpenDataDir():Promise<void>;
 
+export function OpenRecentMarkdownFile(arg1:string):Promise<string>;
+
 export function PingHost(arg1:string,arg2:number):Promise<types.NetworkPath>;
 
 export function ReadLocalFile(arg1:string):Promise<string>;
 
+export function ReadLocalMarkdownResourceDataURL(arg1:string,arg2:string):Promise<string>;
+
 export function ReadLogFile(arg1:string):Promise<string>;
 
 export function ReadLogs(arg1:number):Promise<Array<types.LogEntry>>;
+
+export function ReadRemoteMarkdownFile(arg1:string,arg2:string):Promise<string>;
+
+export function ReadRemoteMarkdownResourceDataURL(arg1:string,arg2:string,arg3:string):Promise<string>;
 
 export function Reconnect(arg1:string):Promise<types.SessionInfo>;
 
@@ -105,6 +115,10 @@ export function RenameRemoteFile(arg1:string,arg2:string,arg3:string):Promise<vo
 export function ResetAiUsage():Promise<void>;
 
 export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void>;
+
+export function ResolveLocalMarkdownLink(arg1:string,arg2:string):Promise<string>;
+
+export function ResolveRemoteMarkdownLink(arg1:string,arg2:string):Promise<string>;
 
 export function RestartContainer(arg1:string,arg2:string):Promise<void>;
 
@@ -153,5 +167,7 @@ export function UpdateSettings(arg1:types.AppSettings):Promise<types.AppSettings
 export function UploadFile(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function WriteLocalFile(arg1:string,arg2:string):Promise<void>;
+
+export function WriteRemoteMarkdownFile(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function WriteToTerminal(arg1:string,arg2:string):Promise<void>;

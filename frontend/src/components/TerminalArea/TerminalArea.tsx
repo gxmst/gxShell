@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { memo, useCallback, useRef } from "react";
 import { Plus, TerminalSquare, X } from "lucide-react";
-import type { SplitPane, Tab } from "../../types";
+import type { MarkdownOpenTarget, SplitPane, Tab } from "../../types";
 import { TabBar } from "../TabBar/TabBar";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
@@ -20,6 +20,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
   onNewConnection: () => void;
   onNewLocal?: () => void;
   onOpenMarkdown?: () => void;
+  onOpenMarkdownFile?: (target: MarkdownOpenTarget) => void;
   onTearOff?: (tab: Tab) => void;
   language: string;
   logViewer?: { name: string; content: string } | null;
@@ -129,12 +130,16 @@ export const TerminalArea = memo(function TerminalArea(props: {
               ref={(el) => { props.terminalHosts.current[tab.id] = el; }}
               onClick={isSplitTab ? () => props.onActive(tab.id) : undefined}
             >
-              {tab.type === 'markdown' && tab.filePath && (
+              {tab.type === 'markdown' && (tab.filePath || tab.remotePath) && (
                 <MarkdownViewer
+                  source={tab.markdownSource || (tab.remotePath ? 'remote' : 'local')}
                   filePath={tab.filePath}
+                  remotePath={tab.remotePath}
+                  sessionId={tab.remoteSessionId}
                   active={isActive && !isFloating}
                   onClose={() => props.onClose(tab.id)}
                   onNotify={props.onNotify}
+                  onOpenMarkdownFile={props.onOpenMarkdownFile}
                 />
               )}
             </div>

@@ -1,8 +1,12 @@
 package main
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"mime"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +19,11 @@ import (
 	"gxShell/backend/types"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+)
+
+const (
+	maxMarkdownFileSize     = 5 * 1024 * 1024
+	maxMarkdownResourceSize = 8 * 1024 * 1024
 )
 
 // GetAppInfo returns application metadata.
@@ -554,8 +563,7 @@ func (a *App) ReadLocalFile(filePath string) (string, error) {
 		return "", fmt.Errorf("path is a directory, not a file")
 	}
 
-	const maxFileSize = 5 * 1024 * 1024
-	if info.Size() > maxFileSize {
+	if info.Size() > maxMarkdownFileSize {
 		return "", fmt.Errorf("file too large (max 5MB)")
 	}
 
@@ -580,8 +588,7 @@ func (a *App) WriteLocalFile(filePath string, content string) error {
 		return fmt.Errorf("access denied: file was not opened by the user")
 	}
 
-	const maxFileSize = 5 * 1024 * 1024
-	if len(content) > maxFileSize {
+	if len(content) > maxMarkdownFileSize {
 		return fmt.Errorf("content too large (max 5MB)")
 	}
 
@@ -598,6 +605,88 @@ func (a *App) WriteLocalFile(filePath string, content string) error {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 	return nil
+}
+
+// OpenRecentMarkdownFile re-authorizes a previously seen Markdown path after a
+// native confirmation. Recent paths are stored renderer-side, so this keeps the
+// same user-consent boundary as a fresh file-open.
+func (a *App) OpenRecentMarkdownFile(filePath string) (string, error) {
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return "", fmt.Errorf("invalid file path: %w", err)
+	}
+	absPath = filepath.Clean(absPath)
+	if !isMarkdownPath(absPath) {
+		return "", fmt.Errorf("file is not a Markdown file")
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return "", fmt.Errorf("file not found: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("path is a directory, not a file")
+	}
+	if a.ctx != nil {
+		a.nativeDialogMu.Lock()
+		defer a.nativeDialogMu.Unlock()
+		res, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+			Type:          runtime.QuestionDialog,
+			Title:         "Open recent Markdown file",
+			Message:       truncate(fmt.Sprintf("Open this recent Markdown file?\n\n%s", absPath), 1200),
+			Buttons:       []string{"Open", "Cancel"},
+			DefaultButton: "Cancel",
+			CancelButton:  "Cancel",
+		})
+		if err != nil {
+			return "", err
+		}
+		if res != "Open" && res != "Yes" {
+			return "", fmt.Errorf("user cancelled open")
+		}
+	}
+	return a.allowFile(absPath), nil
+}
+
+// ResolveLocalMarkdownLink resolves and authorizes a relative .md link from an
+// already opened Markdown file. Links may point inside the opened file's folder
+// tree, but never above it.
+func (a *App) ResolveLocalMarkdownLink(markdownPath string, href string) (string, error) {
+	target, err := a.resolveLocalMarkdownRelativePath(markdownPath, href, map[string]bool{".md": true})
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return "", fmt.Errorf("linked file not found: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("linked path is a directory")
+	}
+	return a.allowFile(target), nil
+}
+
+// ReadLocalMarkdownResourceDataURL reads a relative image used by an opened
+// Markdown file and returns it as a data URL for the sanitized renderer.
+func (a *App) ReadLocalMarkdownResourceDataURL(markdownPath string, href string) (string, error) {
+	target, err := a.resolveLocalMarkdownRelativePath(markdownPath, href, supportedMarkdownImageExts())
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return "", fmt.Errorf("resource not found: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("resource path is a directory")
+	}
+	if info.Size() > maxMarkdownResourceSize {
+		return "", fmt.Errorf("resource too large (max 8MB)")
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		return "", fmt.Errorf("failed to read resource: %w", err)
+	}
+	return markdownDataURL(target, data), nil
 }
 
 // SelectMarkdownFile opens a file dialog to select a Markdown file.
@@ -660,4 +749,145 @@ func (a *App) ListMarkdownFilesInDir(filePath string) ([]string, error) {
 
 func isMarkdownPath(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".md")
+}
+
+func (a *App) resolveLocalMarkdownRelativePath(markdownPath string, href string, allowedExts map[string]bool) (string, error) {
+	absBase, err := filepath.Abs(markdownPath)
+	if err != nil {
+		return "", fmt.Errorf("invalid markdown path: %w", err)
+	}
+	absBase = filepath.Clean(absBase)
+	if !isMarkdownPath(absBase) {
+		return "", fmt.Errorf("base file is not a Markdown file")
+	}
+	if !a.isFileAllowed(absBase) {
+		return "", fmt.Errorf("access denied: base file was not opened by the user")
+	}
+
+	hrefPath, err := cleanMarkdownRelativeHref(href)
+	if err != nil {
+		return "", err
+	}
+	if filepath.IsAbs(hrefPath) || filepath.VolumeName(hrefPath) != "" {
+		return "", fmt.Errorf("only relative paths are supported")
+	}
+	rel := filepath.Clean(filepath.FromSlash(hrefPath))
+	if rel == "." || rel == "" || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("path must stay inside the Markdown folder")
+	}
+	if !isAllowedMarkdownExt(rel, allowedExts) {
+		return "", fmt.Errorf("unsupported linked file type")
+	}
+
+	baseDir := filepath.Dir(absBase)
+	target := filepath.Clean(filepath.Join(baseDir, rel))
+	if !pathWithinDir(target, baseDir) {
+		return "", fmt.Errorf("path must stay inside the Markdown folder")
+	}
+	if !realPathWithinDir(target, baseDir) {
+		return "", fmt.Errorf("path resolves outside the Markdown folder")
+	}
+	return target, nil
+}
+
+func cleanMarkdownRelativeHref(raw string) (string, error) {
+	href := strings.TrimSpace(raw)
+	if href == "" || strings.HasPrefix(href, "#") {
+		return "", fmt.Errorf("empty relative path")
+	}
+	if idx := strings.Index(href, "#"); idx >= 0 {
+		href = href[:idx]
+	}
+	if idx := strings.Index(href, "?"); idx >= 0 {
+		href = href[:idx]
+	}
+	if href == "" {
+		return "", fmt.Errorf("empty relative path")
+	}
+	parsed, err := url.Parse(href)
+	if err == nil && parsed.Scheme != "" {
+		return "", fmt.Errorf("external URLs are not local files")
+	}
+	if err == nil && parsed.Host != "" {
+		return "", fmt.Errorf("external URLs are not local files")
+	}
+	if strings.HasPrefix(href, "/") || strings.HasPrefix(href, "\\") {
+		return "", fmt.Errorf("only relative paths are supported")
+	}
+	if decoded, err := url.PathUnescape(href); err == nil {
+		href = decoded
+	}
+	if strings.HasPrefix(href, "/") || strings.HasPrefix(href, "\\") {
+		return "", fmt.Errorf("only relative paths are supported")
+	}
+	href = strings.ReplaceAll(href, "\\", "/")
+	cleaned := pathCleanSlash(href)
+	if cleaned == "." || cleaned == "" || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("path must stay inside the Markdown folder")
+	}
+	return cleaned, nil
+}
+
+func pathCleanSlash(p string) string {
+	p = strings.ReplaceAll(p, "\\", "/")
+	for strings.Contains(p, "//") {
+		p = strings.ReplaceAll(p, "//", "/")
+	}
+	parts := strings.Split(p, "/")
+	stack := make([]string, 0, len(parts))
+	for _, part := range parts {
+		switch part {
+		case "", ".":
+			continue
+		case "..":
+			if len(stack) == 0 {
+				return "../" + strings.Join(parts, "/")
+			}
+			stack = stack[:len(stack)-1]
+		default:
+			stack = append(stack, part)
+		}
+	}
+	return strings.Join(stack, "/")
+}
+
+func pathWithinDir(target string, dir string) bool {
+	target = filepath.Clean(target)
+	dir = filepath.Clean(dir)
+	if target == dir {
+		return true
+	}
+	prefix := dir + string(os.PathSeparator)
+	return strings.HasPrefix(target, prefix)
+}
+
+func realPathWithinDir(target string, dir string) bool {
+	realTarget, targetErr := filepath.EvalSymlinks(target)
+	realDir, dirErr := filepath.EvalSymlinks(dir)
+	if targetErr != nil || dirErr != nil {
+		return pathWithinDir(target, dir)
+	}
+	return pathWithinDir(realTarget, realDir)
+}
+
+func supportedMarkdownImageExts() map[string]bool {
+	return map[string]bool{
+		".png": true, ".jpg": true, ".jpeg": true, ".gif": true,
+		".webp": true, ".bmp": true, ".svg": true,
+	}
+}
+
+func isAllowedMarkdownExt(p string, allowedExts map[string]bool) bool {
+	if len(allowedExts) == 0 {
+		return true
+	}
+	return allowedExts[strings.ToLower(filepath.Ext(p))]
+}
+
+func markdownDataURL(name string, data []byte) string {
+	mimeType := mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))
+	if mimeType == "" {
+		mimeType = http.DetectContentType(data)
+	}
+	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
 }

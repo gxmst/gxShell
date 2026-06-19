@@ -41,6 +41,7 @@ type App struct {
 	ai              *ai.Manager
 	docker          *docker.Manager
 	local           *localterm.Manager
+	nativeDialogMu  sync.Mutex
 	aiToolMu        sync.Mutex
 	aiTools         map[string]authorizedAIToolCall
 	cliMu           sync.Mutex
@@ -110,6 +111,8 @@ func (a *App) startup(ctx context.Context) {
 		if a.ctx == nil {
 			return false
 		}
+		a.nativeDialogMu.Lock()
+		defer a.nativeDialogMu.Unlock()
 		res, _ := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
 			Type:          runtime.QuestionDialog,
 			Title:         "Unknown Host Key",
@@ -269,6 +272,8 @@ func (a *App) confirmOpenDroppedMarkdown(paths []string) bool {
 	if a.ctx == nil {
 		return false
 	}
+	a.nativeDialogMu.Lock()
+	defer a.nativeDialogMu.Unlock()
 	message := ""
 	if len(paths) == 1 {
 		message = fmt.Sprintf("Open this dropped Markdown file?\n\n%s", paths[0])

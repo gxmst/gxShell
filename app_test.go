@@ -165,6 +165,70 @@ func TestListMarkdownFilesInDirRejectsNonMarkdownFile(t *testing.T) {
 	}
 }
 
+func TestResolveLocalMarkdownLinkAuthorizesRelativeChild(t *testing.T) {
+	app := NewApp()
+	dir := t.TempDir()
+	base := filepath.Join(dir, "readme.md")
+	childDir := filepath.Join(dir, "docs")
+	child := filepath.Join(childDir, "next.md")
+	if err := os.MkdirAll(childDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(base, []byte("[next](docs/next.md)"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(child, []byte("# next"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	app.allowFile(base)
+	got, err := app.ResolveLocalMarkdownLink(base, "docs/next.md#intro")
+	if err != nil {
+		t.Fatalf("ResolveLocalMarkdownLink error: %v", err)
+	}
+	if filepath.Clean(got) != filepath.Clean(child) {
+		t.Fatalf("resolved path = %q, want %q", got, child)
+	}
+	if _, err := app.ReadLocalFile(child); err != nil {
+		t.Fatalf("resolved markdown should be authorized: %v", err)
+	}
+}
+
+func TestReadLocalMarkdownResourceDataURLRejectsParentTraversal(t *testing.T) {
+	app := NewApp()
+	dir := t.TempDir()
+	docDir := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(docDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(docDir, "readme.md")
+	outside := filepath.Join(dir, "secret.png")
+	if err := os.WriteFile(base, []byte("![x](../secret.png)"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, []byte("png"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	app.allowFile(base)
+	if _, err := app.ReadLocalMarkdownResourceDataURL(base, "../secret.png"); err == nil {
+		t.Fatal("parent traversal image should be rejected")
+	}
+	if dataURL, err := app.ReadLocalMarkdownResourceDataURL(base, "readme.md"); err == nil {
+		t.Fatalf("non-image resource should be rejected, got %q", dataURL)
+	}
+}
+
+func TestResolveRemoteMarkdownLinkAllowsCurrentDirSibling(t *testing.T) {
+	got, err := resolveRemoteMarkdownRelativePath("readme.md", "other.md#intro", map[string]bool{".md": true})
+	if err != nil {
+		t.Fatalf("resolveRemoteMarkdownRelativePath error: %v", err)
+	}
+	if got != "other.md" {
+		t.Fatalf("resolved path = %q, want %q", got, "other.md")
+	}
+}
+
 func TestIsReadOnlyCommand(t *testing.T) {
 	readOnly := []string{
 		"uptime",

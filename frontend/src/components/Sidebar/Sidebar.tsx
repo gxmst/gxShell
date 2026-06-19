@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { Edit3, FileText, MoreHorizontal, Play, Plus, Search, Trash2, ArrowUpRight } from "lucide-react";
+import { Edit3, FileText, MoreHorizontal, Play, Plus, Search, Server, Trash2, X, ArrowUpRight } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { TraceRoute, PingHost, UpdateSettings } from "../../../wailsjs/go/main/App";
-import type { Drawer, Tab, Toast } from "../../types";
+import type { Drawer, RecentMarkdownItem, Tab, Toast } from "../../types";
 import { AppIcon, drawerIcon } from "../../constants";
 import { stateClass } from "../../utils/format";
 import { t, navLabel } from "../../i18n";
@@ -36,7 +36,11 @@ export function Sidebar(props: {
   remoteFiles: types.RemoteFile[];
   sftpBusy: boolean;
   markdownSiblings?: string[];
+  recentMarkdown?: RecentMarkdownItem[];
   onOpenMarkdownFile?: (path: string) => void;
+  onOpenRemoteMarkdownFile?: (sessionId: string, path: string) => void;
+  onOpenRecentMarkdown?: (item: RecentMarkdownItem) => void;
+  onRemoveRecentMarkdown?: (id: string) => void;
   onNewProfile: () => void;
   onEditProfile: (profile: types.Profile) => void;
   onConnectProfile: (profile: types.Profile) => void;
@@ -67,6 +71,7 @@ export function Sidebar(props: {
   const [floats, setFloats] = useState<Record<FloatKey, boolean>>({ network: false, memory: false });
 
   const [activeGroup, setActiveGroup] = useState<string>("__all__");
+  const [monitorListMode, setMonitorListMode] = useState<"servers" | "markdown">("servers");
 
   const groups = useMemo(() => {
     const set = new Set<string>();
@@ -158,11 +163,23 @@ export function Sidebar(props: {
           </div>
 
           <div className="section-title">
-            <span>{t(lang, "servers")}</span>
-            <button className="text-button" onClick={props.onNewProfile}><Plus size={13} /> {t(lang, "new")}</button>
-            <button className="text-button" onClick={props.onOpenSearch}><Search size={13} /> {t(lang, "search")}</button>
+            <span>{monitorListMode === "servers" ? t(lang, "servers") : "Markdown"}</span>
+            <div className="section-switch" title="Switch list">
+              <button className={clsx(monitorListMode === "servers" && "active")} onClick={() => setMonitorListMode("servers")} title={t(lang, "servers")}>
+                <Server size={11} />
+              </button>
+              <button className={clsx(monitorListMode === "markdown" && "active")} onClick={() => setMonitorListMode("markdown")} title="Recent Markdown">
+                <FileText size={11} />
+              </button>
+            </div>
+            {monitorListMode === "servers" && (
+              <>
+                <button className="text-button" onClick={props.onNewProfile}><Plus size={13} /> {t(lang, "new")}</button>
+                <button className="text-button" onClick={props.onOpenSearch}><Search size={13} /> {t(lang, "search")}</button>
+              </>
+            )}
           </div>
-          {groups.length > 1 && (
+          {monitorListMode === "servers" && groups.length > 1 && (
             <div className="group-tabs">
               <button className={clsx("group-tab", activeGroup === "__all__" && "group-tab-active")} onClick={() => setActiveGroup("__all__")}>{t(lang, "allGroups")}</button>
               {groups.map((g) => (
@@ -171,23 +188,46 @@ export function Sidebar(props: {
             </div>
           )}
           <div className="server-list">
-            {filteredProfiles.map((profile) => (
-              <div key={profile.id} className="server-row group" onDoubleClick={() => props.onConnectProfile(profile)}>
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className={clsx("status-dot", props.active?.profileId === profile.id ? stateClass(props.active.state) : "bg-muted")} />
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium">{profile.name || profile.host}</div>
-                    <div className="truncate text-xs text-muted">{profile.username}@{profile.host}:{profile.port}{profile.proxyJumpId && <ArrowUpRight size={10} className="inline ml-1 opacity-50" />}</div>
+            {monitorListMode === "servers" ? (
+              <>
+                {filteredProfiles.map((profile) => (
+                  <div key={profile.id} className="server-row group" onDoubleClick={() => props.onConnectProfile(profile)}>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className={clsx("status-dot", props.active?.profileId === profile.id ? stateClass(props.active.state) : "bg-muted")} />
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium">{profile.name || profile.host}</div>
+                        <div className="truncate text-xs text-muted">{profile.username}@{profile.host}:{profile.port}{profile.proxyJumpId && <ArrowUpRight size={10} className="inline ml-1 opacity-50" />}</div>
+                      </div>
+                    </div>
+                    <div className="row-actions">
+                      <button className="mini-btn" onClick={() => props.onConnectProfile(profile)} title="Connect"><Play size={13} /></button>
+                      <button className="mini-btn" onClick={() => props.onEditProfile(profile)} title="Edit"><Edit3 size={13} /></button>
+                      <button className="mini-btn danger" onClick={(e) => { e.stopPropagation(); props.onDeleteProfile(profile.id); }} title="Delete"><Trash2 size={12} /></button>
+                    </div>
                   </div>
-                </div>
-                <div className="row-actions">
-                  <button className="mini-btn" onClick={() => props.onConnectProfile(profile)} title="Connect"><Play size={13} /></button>
-                  <button className="mini-btn" onClick={() => props.onEditProfile(profile)} title="Edit"><Edit3 size={13} /></button>
-                  <button className="mini-btn danger" onClick={(e) => { e.stopPropagation(); props.onDeleteProfile(profile.id); }} title="Delete"><Trash2 size={12} /></button>
-                </div>
-              </div>
-            ))}
-            {!filteredProfiles.length && <div className="empty">{t(lang, "noServers")}</div>}
+                ))}
+                {!filteredProfiles.length && <div className="empty">{t(lang, "noServers")}</div>}
+              </>
+            ) : (
+              <>
+                {(props.recentMarkdown || []).map((item) => (
+                  <div key={item.id} className="server-row markdown-recent-row" onDoubleClick={() => props.onOpenRecentMarkdown?.(item)}>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <FileText size={14} className={clsx("shrink-0", item.source === "remote" ? "text-accent" : "text-muted")} />
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-medium">{item.title}</div>
+                        <div className="truncate text-xs text-muted">{item.source === "remote" ? (item.host || "Remote") : "Local"} / {item.path}</div>
+                      </div>
+                    </div>
+                    <div className="row-actions">
+                      <button className="mini-btn" onClick={() => props.onOpenRecentMarkdown?.(item)} title="Open"><Play size={12} /></button>
+                      <button className="mini-btn danger" onClick={(e) => { e.stopPropagation(); props.onRemoveRecentMarkdown?.(item.id); }} title="Remove"><X size={12} /></button>
+                    </div>
+                  </div>
+                ))}
+                {!(props.recentMarkdown || []).length && <div className="empty">No recent Markdown</div>}
+              </>
+            )}
           </div>
 
           <div className="split-handle" onMouseDown={onDragStart} />
@@ -246,7 +286,7 @@ export function Sidebar(props: {
                 {activeIsMarkdown ? (
                   <div className="empty compact">{t(lang, "connectFirstSftp")}</div>
                 ) : (
-                  <SftpPanel active={props.active} path={props.remotePath} files={props.remoteFiles} busy={props.sftpBusy} locale={lang} onRefresh={props.onRefreshSftp} onNotify={props.onNotify} setCtxMenu={props.setCtxMenu} />
+                  <SftpPanel active={props.active} path={props.remotePath} files={props.remoteFiles} busy={props.sftpBusy} locale={lang} onRefresh={props.onRefreshSftp} onNotify={props.onNotify} setCtxMenu={props.setCtxMenu} onOpenMarkdownFile={props.onOpenRemoteMarkdownFile} />
                 )}
               </div>
             )}

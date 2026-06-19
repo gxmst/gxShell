@@ -1,7 +1,7 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "1.1.1",
+  "version": "1.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,12 +15,15 @@
     "@xterm/xterm": "^6.0.0",
     "clsx": "^2.1.1",
     "dompurify": "^3.4.3",
+    "highlight.js": "^11.11.1",
     "lucide-react": "^1.14.0",
     "marked": "^18.0.3",
+    "mermaid": "^10.9.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@types/d3-dispatch": "^3.0.6",
     "@types/dompurify": "^3.0.5",
     "@types/react": "^18.0.17",
     "@types/react-dom": "^18.0.6",

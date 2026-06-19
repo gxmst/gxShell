@@ -475,6 +475,8 @@ func (a *App) confirmAiToolExecution(toolName, detail string) bool {
 	default:
 		return false
 	}
+	a.nativeDialogMu.Lock()
+	defer a.nativeDialogMu.Unlock()
 	res, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
 		Type:          runtime.QuestionDialog,
 		Title:         title,

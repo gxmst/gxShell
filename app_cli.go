@@ -323,6 +323,8 @@ func (a *App) confirmCliExecution(serverName, command string) bool {
 	if a.ctx == nil {
 		return false
 	}
+	a.nativeDialogMu.Lock()
+	defer a.nativeDialogMu.Unlock()
 	res, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
 		Type:          runtime.QuestionDialog,
 		Title:         "CLI wants to run a command",
