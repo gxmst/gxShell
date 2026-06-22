@@ -137,6 +137,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
                   remotePath={tab.remotePath}
                   sessionId={tab.remoteSessionId}
                   active={isActive && !isFloating}
+                  locale={lang}
                   onClose={() => props.onClose(tab.id)}
                   onNotify={props.onNotify}
                   onOpenMarkdownFile={props.onOpenMarkdownFile}

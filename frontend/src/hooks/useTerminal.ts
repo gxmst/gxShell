@@ -10,6 +10,7 @@ import { highlight, type HighlightLevel } from "../utils/highlight";
 import type { SplitPane } from "../types";
 
 const MAX_BUFFERED_CHUNKS = 100;
+const MAX_COMMAND_BUFFER_CHARS = 8192;
 const RESIZE_SETTLE_MS = 80;
 
 export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null) {
@@ -183,7 +184,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
           cmdBuffer.current[activeTab] = "";
         } else if (data === "\x7f" || data === "\b") {
           cmdBuffer.current[activeTab] = buf.slice(0, -1);
-        } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
+        } else if (data.length === 1 && data.charCodeAt(0) >= 32 && buf.length < MAX_COMMAND_BUFFER_CHARS) {
           cmdBuffer.current[activeTab] = buf + data;
         }
       });

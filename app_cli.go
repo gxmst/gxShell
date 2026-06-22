@@ -22,9 +22,11 @@ import (
 const (
 	cliAddress        = "127.0.0.1:56789"
 	cliTokenFilename  = "cli_token"
-	cliMaxRequestSize = 32 * 1024
+	cliMaxRequestSize = 2 * 1024 * 1024
 	cliCommandTimeout = 30 * time.Second
+	cliMaxTimeout     = 30 * time.Minute
 	cliOutputLimit    = 1024 * 1024
+	cliApprovalDelay  = time.Second
 )
 
 // startCliServer starts an authenticated localhost HTTP server for CLI access.
@@ -47,7 +49,7 @@ func (a *App) startCliServer() {
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      5 * time.Minute,
+		WriteTimeout:      cliMaxTimeout + time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
 	a.cliServer = server
@@ -61,7 +63,7 @@ func (a *App) startCliServer() {
 func (a *App) requireCliAuth(token string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !isAuthorizedCliRequest(r, token) {
-			writeCliJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized CLI request"})
+			writeCliError(w, http.StatusUnauthorized, "auth", "unauthorized CLI request")
 			return
 		}
 		next(w, r)
@@ -70,30 +72,43 @@ func (a *App) requireCliAuth(token string, next http.HandlerFunc) http.HandlerFu
 
 func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		writeCliJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		writeCliError(w, http.StatusMethodNotAllowed, "validation", "method not allowed")
 		return
 	}
 
 	var req struct {
-		Server  string `json:"server"`
-		Command string `json:"command"`
+		Server    string `json:"server"`
+		Command   string `json:"command"`
+		TimeoutMs int    `json:"timeoutMs,omitempty"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, cliMaxRequestSize))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		writeCliJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body: " + err.Error()})
+		writeCliError(w, http.StatusBadRequest, "validation", "invalid request body: "+err.Error())
 		return
 	}
 	req.Server = strings.TrimSpace(req.Server)
 	req.Command = strings.TrimSpace(req.Command)
 	if req.Server == "" || req.Command == "" {
-		writeCliJSON(w, http.StatusBadRequest, map[string]string{"error": "server and command are required"})
+		writeCliError(w, http.StatusBadRequest, "validation", "server and command are required")
 		return
+	}
+	timeout := cliCommandTimeout
+	if req.TimeoutMs > 0 {
+		timeout = time.Duration(req.TimeoutMs) * time.Millisecond
+		if timeout < time.Second {
+			writeCliError(w, http.StatusBadRequest, "validation", "timeout must be at least 1 second")
+			return
+		}
+		if timeout > cliMaxTimeout {
+			writeCliError(w, http.StatusBadRequest, "validation", "timeout must be 30 minutes or less")
+			return
+		}
 	}
 
 	profile, err := a.findCliProfile(req.Server)
 	if err != nil {
-		writeCliJSON(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+		writeCliJSON(w, http.StatusNotFound, map[string]any{"error": err.Error(), "errorKind": "daemon"})
 		return
 	}
 	serverName := cliProfileName(profile)
@@ -107,9 +122,11 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 			"reason":  reason,
 		})
 		writeCliJSON(w, http.StatusForbidden, map[string]any{
-			"error":   "BLOCKED: " + reason,
-			"blocked": true,
-			"reason":  reason,
+			"alias":     serverName,
+			"error":     "BLOCKED: " + reason,
+			"errorKind": "blocked",
+			"blocked":   true,
+			"reason":    reason,
 		})
 		return
 	}
@@ -120,37 +137,55 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		"command":   req.Command,
 	})
 
-	sessionID, err := a.cliSessionForProfile(profile.ID)
+	sessionID, reusedConnection, err := a.cliSessionForProfile(profile.ID)
 	if err != nil {
-		writeCliJSON(w, http.StatusBadGateway, map[string]string{"error": "failed to connect: " + err.Error()})
+		writeCliJSON(w, http.StatusBadGateway, map[string]any{
+			"alias":     serverName,
+			"error":     "failed to connect: " + err.Error(),
+			"errorKind": "connect",
+		})
 		return
 	}
 
-	result, err := a.ssh.ExecuteCommandResult(sessionID, req.Command, cliCommandTimeout, cliOutputLimit)
+	result, err := a.ssh.ExecuteCommandResult(sessionID, req.Command, timeout, cliOutputLimit)
 	if err != nil {
 		writeCliJSON(w, http.StatusBadGateway, map[string]any{
-			"error": err.Error(),
+			"alias":            serverName,
+			"reusedConnection": reusedConnection,
+			"error":            err.Error(),
+			"errorKind":        "ssh",
 		})
 		return
 	}
 
 	payload := map[string]any{
-		"output":    result.Output,
-		"exitCode":  result.ExitCode,
-		"timedOut":  result.TimedOut,
-		"truncated": result.Truncated,
+		"alias":            serverName,
+		"reusedConnection": reusedConnection,
+		"exitCode":         result.ExitCode,
+		"stdout":           result.Stdout,
+		"stderr":           result.Stderr,
+		"output":           result.Output,
+		"summary":          result.Summary,
+		"displayOutput":    result.DisplayOutput(),
+		"durationMs":       result.Duration.Milliseconds(),
+		"timedOut":         result.TimedOut,
+		"truncated":        result.Truncated,
 	}
 	status := http.StatusOK
 	if result.TimedOut {
 		payload["error"] = "remote command timeout"
+		payload["errorKind"] = "remote"
 		status = http.StatusGatewayTimeout
+	} else if result.Error != "" {
+		payload["error"] = result.Error
+		payload["errorKind"] = "remote"
 	}
 	writeCliJSON(w, status, payload)
 }
 
 func (a *App) handleCliList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeCliJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		writeCliError(w, http.StatusMethodNotAllowed, "validation", "method not allowed")
 		return
 	}
 
@@ -176,7 +211,7 @@ func (a *App) handleCliList(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleCliStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeCliJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		writeCliError(w, http.StatusMethodNotAllowed, "validation", "method not allowed")
 		return
 	}
 
@@ -212,7 +247,7 @@ func (a *App) handleCliStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleCliPing(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeCliJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		writeCliError(w, http.StatusMethodNotAllowed, "validation", "method not allowed")
 		return
 	}
 	writeCliJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -255,13 +290,25 @@ type cliConnectCall struct {
 
 type cliConnectResult struct {
 	sessionID string
+	reused    bool
 	err       error
 }
 
-func (a *App) cliSessionForProfile(profileID string) (string, error) {
+type cliApprovalRequest struct {
+	serverName string
+	command    string
+	result     chan bool
+}
+
+type cliApprovalBatch struct {
+	serverName string
+	requests   []*cliApprovalRequest
+}
+
+func (a *App) cliSessionForProfile(profileID string) (string, bool, error) {
 	// Fast path: reuse an existing connected session without holding cliMu.
 	if sid := a.findCliSession(profileID); sid != "" {
-		return sid, nil
+		return sid, true, nil
 	}
 
 	// Deduplicate concurrent connection attempts for the same profile. The
@@ -273,7 +320,7 @@ func (a *App) cliSessionForProfile(profileID string) (string, error) {
 	if call, ok := a.cliConnecting[profileID]; ok {
 		a.cliMu.Unlock()
 		<-call.done
-		return call.res.sessionID, call.res.err
+		return call.res.sessionID, call.res.reused, call.res.err
 	}
 	call := &cliConnectCall{done: make(chan struct{})}
 	a.cliConnecting[profileID] = call
@@ -295,17 +342,17 @@ func (a *App) cliSessionForProfile(profileID string) (string, error) {
 	// Double-check after claiming the slot: another goroutine may have just
 	// finished connecting.
 	if sid := a.findCliSession(profileID); sid != "" {
-		call.res = cliConnectResult{sessionID: sid}
-		return sid, nil
+		call.res = cliConnectResult{sessionID: sid, reused: true}
+		return sid, true, nil
 	}
 
 	info, err := a.Connect(profileID, 120, 34)
 	if err != nil {
 		call.res = cliConnectResult{err: err}
-		return "", err
+		return "", false, err
 	}
-	call.res = cliConnectResult{sessionID: info.ID}
-	return info.ID, nil
+	call.res = cliConnectResult{sessionID: info.ID, reused: false}
+	return info.ID, false, nil
 }
 
 // findCliSession returns the session ID of a connected SSH session for the
@@ -323,13 +370,71 @@ func (a *App) confirmCliExecution(serverName, command string) bool {
 	if a.ctx == nil {
 		return false
 	}
+	req := &cliApprovalRequest{
+		serverName: serverName,
+		command:    command,
+		result:     make(chan bool, 1),
+	}
+	key := strings.ToLower(serverName)
+	a.cliApprovalMu.Lock()
+	if a.cliApprovals == nil {
+		a.cliApprovals = map[string]*cliApprovalBatch{}
+	}
+	batch := a.cliApprovals[key]
+	if batch == nil {
+		batch = &cliApprovalBatch{serverName: serverName}
+		a.cliApprovals[key] = batch
+		time.AfterFunc(cliApprovalDelay, func() {
+			a.flushCliApprovalBatch(key)
+		})
+	}
+	batch.requests = append(batch.requests, req)
+	a.cliApprovalMu.Unlock()
+
+	return <-req.result
+}
+
+func (a *App) flushCliApprovalBatch(key string) {
+	a.cliApprovalMu.Lock()
+	batch := a.cliApprovals[key]
+	if batch == nil {
+		a.cliApprovalMu.Unlock()
+		return
+	}
+	delete(a.cliApprovals, key)
+	requests := append([]*cliApprovalRequest(nil), batch.requests...)
+	a.cliApprovalMu.Unlock()
+
+	allowed := a.confirmCliExecutionBatch(batch.serverName, requests)
+	for _, req := range requests {
+		req.result <- allowed
+		close(req.result)
+	}
+}
+
+func (a *App) confirmCliExecutionBatch(serverName string, requests []*cliApprovalRequest) bool {
+	if a.ctx == nil || len(requests) == 0 {
+		return false
+	}
+	commands := make([]string, 0, len(requests))
+	for _, req := range requests {
+		commands = append(commands, req.command)
+	}
+	title := "CLI wants to run commands"
+	buttons := []string{"Allow all", "Deny"}
+	message := fmt.Sprintf("An external CLI request wants to run %d command(s) on %s:\n\n%s\n\nAllow all of these?", len(commands), serverName, formatApprovalList(commands))
+	if len(commands) == 1 {
+		title = "CLI wants to run a command"
+		buttons = []string{"Allow", "Deny"}
+		message = fmt.Sprintf("An external CLI request wants to run this command on %s:\n\n%s\n\nAllow this?", serverName, truncate(commands[0], 500))
+	}
 	a.nativeDialogMu.Lock()
 	defer a.nativeDialogMu.Unlock()
 	res, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
 		Type:          runtime.QuestionDialog,
-		Title:         "CLI wants to run a command",
-		Message:       fmt.Sprintf("An external CLI request wants to run this command on %s:\n\n%s\n\nAllow this?", serverName, truncate(command, 500)),
-		Buttons:       []string{"Allow", "Deny"},
+		Title:         title,
+		Message:       message,
+		Buttons:       buttons,
 		DefaultButton: "Deny",
 		CancelButton:  "Deny",
 	})
@@ -337,7 +442,7 @@ func (a *App) confirmCliExecution(serverName, command string) bool {
 		a.log.ErrorFields("CLI confirm dialog failed", logger.LogFields{"error": err.Error()})
 		return false
 	}
-	return res == "Allow" || res == "Yes"
+	return res == "Allow all" || res == "Allow" || res == "Yes"
 }
 
 func cliProfileName(profile types.Profile) string {
@@ -396,4 +501,8 @@ func writeCliJSON(w http.ResponseWriter, status int, payload any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func writeCliError(w http.ResponseWriter, status int, kind string, message string) {
+	writeCliJSON(w, status, map[string]any{"error": message, "errorKind": kind})
 }

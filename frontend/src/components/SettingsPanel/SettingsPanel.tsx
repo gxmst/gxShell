@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { FileText, HardDrive, Save } from "lucide-react";
-import { ExportHistory, IsMarkdownContextMenuRegistered, RegisterMarkdownContextMenu, UnregisterMarkdownContextMenu } from "../../../wailsjs/go/main/App";
+import { ExportHistory, IsTextContextMenuRegistered, RegisterTextContextMenu, UnregisterTextContextMenu } from "../../../wailsjs/go/main/App";
 import { types } from "../../../wailsjs/go/models";
 import { appThemes, fontPresets, terminalThemes } from "../../constants";
 import { normalizeAppTheme } from "../../utils/format";
@@ -17,23 +17,23 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
   // The right-click registration reflects live registry state, not settings.json,
   // so it is read on mount and toggled immediately rather than saved with the form.
   useEffect(() => {
-    IsMarkdownContextMenuRegistered().then(setMdMenu).catch(() => setMdMenu(false));
+    IsTextContextMenuRegistered().then(setMdMenu).catch(() => setMdMenu(false));
   }, []);
 
   const toggleMdMenu = async (checked: boolean) => {
     try {
-      if (checked) await RegisterMarkdownContextMenu();
-      else await UnregisterMarkdownContextMenu();
+      if (checked) await RegisterTextContextMenu();
+      else await UnregisterTextContextMenu();
       setMdMenu(checked);
     } catch (err) {
       onNotify?.(`${t(lang, "mdContextMenuFailed")}: ${String(err)}`, "error");
       // Re-read so the checkbox reflects the real state after a failure.
-      IsMarkdownContextMenuRegistered().then(setMdMenu).catch(() => {});
+      IsTextContextMenuRegistered().then(setMdMenu).catch(() => {});
     }
   };
   const setAppTheme = (theme: string) => {
     const termTheme = draft.terminal.themeName;
-    const syncedThemes = [draft.themeName, "Dark", "gx Dark", "Light", "Deep Blue"];
+    const syncedThemes = [draft.themeName, "gx Dark", ...appThemes];
     if (syncedThemes.includes(termTheme)) {
       setDraft(prev => new types.AppSettings({ ...prev, themeName: theme, terminal: { ...prev.terminal, themeName: theme } }));
     } else {

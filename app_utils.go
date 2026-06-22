@@ -22,7 +22,8 @@ import (
 )
 
 const (
-	maxMarkdownFileSize     = 5 * 1024 * 1024
+	maxTextFileSize         = 5 * 1024 * 1024
+	maxMarkdownFileSize     = maxTextFileSize
 	maxMarkdownResourceSize = 8 * 1024 * 1024
 )
 
@@ -30,7 +31,7 @@ const (
 func (a *App) GetAppInfo() map[string]string {
 	return map[string]string{
 		"name":    "gxShell",
-		"version": "1.1.1",
+		"version": "1.1.3",
 		"dataDir": a.store.DataDir(),
 	}
 }
@@ -563,7 +564,7 @@ func (a *App) ReadLocalFile(filePath string) (string, error) {
 		return "", fmt.Errorf("path is a directory, not a file")
 	}
 
-	if info.Size() > maxMarkdownFileSize {
+	if info.Size() > maxTextFileSize {
 		return "", fmt.Errorf("file too large (max 5MB)")
 	}
 
@@ -588,7 +589,7 @@ func (a *App) WriteLocalFile(filePath string, content string) error {
 		return fmt.Errorf("access denied: file was not opened by the user")
 	}
 
-	if len(content) > maxMarkdownFileSize {
+	if len(content) > maxTextFileSize {
 		return fmt.Errorf("content too large (max 5MB)")
 	}
 
@@ -607,17 +608,17 @@ func (a *App) WriteLocalFile(filePath string, content string) error {
 	return nil
 }
 
-// OpenRecentMarkdownFile re-authorizes a previously seen Markdown path after a
-// native confirmation. Recent paths are stored renderer-side, so this keeps the
-// same user-consent boundary as a fresh file-open.
-func (a *App) OpenRecentMarkdownFile(filePath string) (string, error) {
+// OpenRecentTextFile re-authorizes a previously seen text path after a native
+// confirmation. Recent paths are stored renderer-side, so this keeps the same
+// user-consent boundary as a fresh file-open.
+func (a *App) OpenRecentTextFile(filePath string) (string, error) {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
 		return "", fmt.Errorf("invalid file path: %w", err)
 	}
 	absPath = filepath.Clean(absPath)
-	if !isMarkdownPath(absPath) {
-		return "", fmt.Errorf("file is not a Markdown file")
+	if !isSupportedTextPath(absPath) {
+		return "", fmt.Errorf("file is not a supported text file")
 	}
 	info, err := os.Stat(absPath)
 	if err != nil {
@@ -631,8 +632,8 @@ func (a *App) OpenRecentMarkdownFile(filePath string) (string, error) {
 		defer a.nativeDialogMu.Unlock()
 		res, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
 			Type:          runtime.QuestionDialog,
-			Title:         "Open recent Markdown file",
-			Message:       truncate(fmt.Sprintf("Open this recent Markdown file?\n\n%s", absPath), 1200),
+			Title:         "Open recent text file",
+			Message:       truncate(fmt.Sprintf("Open this recent text file?\n\n%s", absPath), 1200),
 			Buttons:       []string{"Open", "Cancel"},
 			DefaultButton: "Cancel",
 			CancelButton:  "Cancel",
@@ -647,11 +648,20 @@ func (a *App) OpenRecentMarkdownFile(filePath string) (string, error) {
 	return a.allowFile(absPath), nil
 }
 
+// OpenRecentMarkdownFile is kept for older frontend builds and preserves the
+// original Markdown-only contract.
+func (a *App) OpenRecentMarkdownFile(filePath string) (string, error) {
+	if !isMarkdownPath(filePath) {
+		return "", fmt.Errorf("file is not a Markdown file")
+	}
+	return a.OpenRecentTextFile(filePath)
+}
+
 // ResolveLocalMarkdownLink resolves and authorizes a relative .md link from an
 // already opened Markdown file. Links may point inside the opened file's folder
 // tree, but never above it.
 func (a *App) ResolveLocalMarkdownLink(markdownPath string, href string) (string, error) {
-	target, err := a.resolveLocalMarkdownRelativePath(markdownPath, href, map[string]bool{".md": true})
+	target, err := a.resolveLocalMarkdownRelativePath(markdownPath, href, supportedTextFileExts())
 	if err != nil {
 		return "", err
 	}
@@ -689,12 +699,33 @@ func (a *App) ReadLocalMarkdownResourceDataURL(markdownPath string, href string)
 	return markdownDataURL(target, data), nil
 }
 
-// SelectMarkdownFile opens a file dialog to select a Markdown file.
+// SelectTextFile opens a file dialog to select a supported text file.
+func (a *App) SelectTextFile() (string, error) {
+	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+		Title: "Select text file",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Text Files", Pattern: supportedTextFileDialogPattern()},
+			{DisplayName: "Markdown Files (*.md;*.markdown)", Pattern: "*.md;*.markdown"},
+			{DisplayName: "Log/Text Files (*.log;*.txt)", Pattern: "*.log;*.txt"},
+			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
+		},
+	})
+	if err != nil || path == "" {
+		return path, err
+	}
+	if !isSupportedTextPath(path) {
+		return "", fmt.Errorf("selected file is not a supported text file")
+	}
+	return a.allowFile(path), nil
+}
+
+// SelectMarkdownFile is kept for older frontend builds and preserves the
+// original Markdown-only contract.
 func (a *App) SelectMarkdownFile() (string, error) {
 	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
 		Title: "Select Markdown file",
 		Filters: []runtime.FileFilter{
-			{DisplayName: "Markdown Files (*.md)", Pattern: "*.md"},
+			{DisplayName: "Markdown Files (*.md;*.markdown)", Pattern: "*.md;*.markdown"},
 			{DisplayName: "All Files (*.*)", Pattern: "*.*"},
 		},
 	})
@@ -707,9 +738,48 @@ func (a *App) SelectMarkdownFile() (string, error) {
 	return a.allowFile(path), nil
 }
 
-// ListMarkdownFilesInDir lists all .md files in the same directory as the given file.
+// ListTextFilesInDir lists supported text files in the same directory as the given file.
 // The returned siblings are authorized for reading, matching the viewer's behavior
-// of letting the user step between markdown files in the opened folder.
+// of letting the user step between text files in the opened folder.
+func (a *App) ListTextFilesInDir(filePath string) ([]string, error) {
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid file path: %w", err)
+	}
+	absPath = filepath.Clean(absPath)
+	if !isSupportedTextPath(absPath) {
+		return nil, fmt.Errorf("file is not a supported text file")
+	}
+	if !a.isFileAllowed(absPath) {
+		return nil, fmt.Errorf("access denied: file was not opened by the user")
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("file not found: %w", err)
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("path is a directory, not a file")
+	}
+
+	dir := filepath.Dir(absPath)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var textFiles []string
+	for _, entry := range entries {
+		if !entry.IsDir() && isSupportedTextPath(entry.Name()) {
+			full := filepath.Join(dir, entry.Name())
+			a.allowFile(full)
+			textFiles = append(textFiles, full)
+		}
+	}
+	return textFiles, nil
+}
+
+// ListMarkdownFilesInDir is kept for older frontend builds and preserves the
+// original Markdown-only sibling list.
 func (a *App) ListMarkdownFilesInDir(filePath string) ([]string, error) {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
@@ -748,7 +818,39 @@ func (a *App) ListMarkdownFilesInDir(filePath string) ([]string, error) {
 }
 
 func isMarkdownPath(path string) bool {
-	return strings.EqualFold(filepath.Ext(path), ".md")
+	ext := strings.ToLower(filepath.Ext(path))
+	return ext == ".md" || ext == ".markdown"
+}
+
+func isSupportedTextPath(path string) bool {
+	return supportedTextFileExts()[strings.ToLower(filepath.Ext(path))]
+}
+
+func supportedTextFileDialogPattern() string {
+	patterns := make([]string, 0, len(supportedTextFileExtensionList()))
+	for _, ext := range supportedTextFileExtensionList() {
+		patterns = append(patterns, "*"+ext)
+	}
+	return strings.Join(patterns, ";")
+}
+
+func supportedTextFileExtensionList() []string {
+	return []string{
+		".md", ".markdown", ".txt", ".text", ".log",
+		".conf", ".cfg", ".ini", ".env",
+		".json", ".jsonl", ".yaml", ".yml", ".toml", ".xml",
+		".csv", ".tsv",
+		".sh", ".bash", ".zsh", ".fish",
+		".ps1", ".bat", ".cmd", ".sql", ".service",
+	}
+}
+
+func supportedTextFileExts() map[string]bool {
+	exts := map[string]bool{}
+	for _, ext := range supportedTextFileExtensionList() {
+		exts[ext] = true
+	}
+	return exts
 }
 
 func (a *App) resolveLocalMarkdownRelativePath(markdownPath string, href string, allowedExts map[string]bool) (string, error) {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"gxShell/backend/ai"
@@ -23,6 +24,7 @@ const (
 	aiToolOutputLimit      = 128 * 1024
 	aiToolAuthorizationTTL = 15 * time.Minute
 	aiChatTimeout          = 5 * time.Minute
+	aiMaxParallelTools     = 4
 )
 
 // SaveAiConfig saves AI provider configuration and API key.
@@ -239,102 +241,161 @@ func (a *App) AiContinueChat(req types.AiChatRequest) error {
 	return nil
 }
 
-// AiExecuteTool executes an authorized AI tool call after user confirmation.
+type aiToolExecutionPlan struct {
+	ToolCallID   string
+	ToolName     string
+	Command      string
+	Detail       string
+	EmptyMessage string
+}
+
+// AiExecuteTool executes one authorized AI tool call after user confirmation.
 func (a *App) AiExecuteTool(sessionID string, toolCallID string) string {
-	toolCall, err := a.claimAuthorizedAiToolCall(sessionID, toolCallID)
-	if err != nil {
-		a.log.ErrorFields("AI tool authorization failed", LogFields{
-			"session":    sessionID,
-			"toolCallID": toolCallID,
-			"error":      err.Error(),
-		})
-		return "BLOCKED: " + err.Error()
+	results := a.AiExecuteTools(sessionID, []string{toolCallID})
+	if output, ok := results[toolCallID]; ok {
+		return output
+	}
+	return "BLOCKED: missing AI tool result"
+}
+
+// AiExecuteTools executes multiple authorized AI tool calls after one native
+// confirmation. Independent commands are run in parallel after approval.
+func (a *App) AiExecuteTools(sessionID string, toolCallIDs []string) map[string]string {
+	results := map[string]string{}
+	if sessionID == "" || len(toolCallIDs) == 0 {
+		return results
 	}
 
-	toolName := toolCall.ToolName
-	arguments := toolCall.Arguments
-	a.log.InfoFields("AI execute authorized tool", LogFields{
-		"session":    sessionID,
-		"toolCallID": toolCallID,
-		"tool":       toolName,
-		"args":       truncate(arguments, 200),
-	})
+	plans := make([]aiToolExecutionPlan, 0, len(toolCallIDs))
+	for _, toolCallID := range toolCallIDs {
+		toolCall, err := a.claimAuthorizedAiToolCall(sessionID, toolCallID)
+		if err != nil {
+			a.log.ErrorFields("AI tool authorization failed", LogFields{
+				"session":    sessionID,
+				"toolCallID": toolCallID,
+				"error":      err.Error(),
+			})
+			results[toolCallID] = "BLOCKED: " + err.Error()
+			continue
+		}
+		a.log.InfoFields("AI execute authorized tool", LogFields{
+			"session":    sessionID,
+			"toolCallID": toolCallID,
+			"tool":       toolCall.ToolName,
+			"args":       truncate(toolCall.Arguments, 200),
+		})
+		plan, output, ok := a.prepareAiToolExecution(toolCall)
+		if !ok {
+			results[toolCall.ToolCallID] = output
+			continue
+		}
+		plans = append(plans, plan)
+	}
 
-	var output string
-	switch toolName {
+	if len(plans) == 0 {
+		return results
+	}
+	if !a.confirmAiToolExecutionBatch(plans) {
+		for _, plan := range plans {
+			results[plan.ToolCallID] = "BLOCKED: user declined execution"
+		}
+		return results
+	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, aiMaxParallelTools)
+	for _, plan := range plans {
+		plan := plan
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			output := a.executeAiToolPlan(sessionID, plan)
+			mu.Lock()
+			results[plan.ToolCallID] = output
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return results
+}
+
+func (a *App) prepareAiToolExecution(toolCall authorizedAIToolCall) (aiToolExecutionPlan, string, bool) {
+	switch toolCall.ToolName {
 	case "execute_command":
 		var args struct {
 			Command string `json:"command"`
 		}
-		if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-			output = "Error parsing command arguments: " + err.Error()
-			break
+		if err := json.Unmarshal([]byte(toolCall.Arguments), &args); err != nil {
+			return aiToolExecutionPlan{}, "Error parsing command arguments: " + err.Error(), false
 		}
-		// Shared safety policy: dangerous-command and sensitive-path blocklists,
-		// then an explicit native confirmation a compromised renderer cannot
-		// forge. AI tools keep confirmation for every allowed command.
-		if reason, ok := guardCommand(args.Command, false, func() bool {
-			return a.confirmAiToolExecution(toolName, args.Command)
-		}); !ok {
-			output = "BLOCKED: " + reason
+		if reason, ok := validateAiToolCommand(args.Command); !ok {
 			a.log.ErrorFields("AI tool command blocked", LogFields{"command": args.Command, "reason": reason})
-			break
+			return aiToolExecutionPlan{}, "BLOCKED: " + reason, false
 		}
-		result, err := a.ssh.ExecuteCommand(sessionID, args.Command, aiToolTimeout, aiToolOutputLimit)
-		if err != nil {
-			output = "Error executing command: " + err.Error()
-		} else {
-			if result == "" {
-				output = "(command produced no output)"
-			} else {
-				output = result
-			}
-		}
-		a.log.InfoFields("AI tool result", LogFields{
-			"tool":      toolName,
-			"outputLen": len(output),
-		})
+		return aiToolExecutionPlan{
+			ToolCallID:   toolCall.ToolCallID,
+			ToolName:     toolCall.ToolName,
+			Command:      args.Command,
+			Detail:       args.Command,
+			EmptyMessage: "(command produced no output)",
+		}, "", true
 
 	case "read_file":
 		var args struct {
 			Path string `json:"path"`
 		}
-		if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-			output = "Error parsing file path arguments: " + err.Error()
-			break
+		if err := json.Unmarshal([]byte(toolCall.Arguments), &args); err != nil {
+			return aiToolExecutionPlan{}, "Error parsing file path arguments: " + err.Error(), false
 		}
 		cmd := "cat " + shellescape(args.Path)
-		// Same shared policy as execute_command. The sensitive-path blocklist
-		// (checked inside guardCommand against the full command) still blocks
-		// reads of /etc/shadow, SSH keys, etc.; AI file reads still require a
-		// native confirmation after passing those guards.
-		if reason, ok := guardCommand(cmd, false, func() bool {
-			return a.confirmAiToolExecution(toolName, args.Path)
-		}); !ok {
-			output = "BLOCKED: " + reason
+		if reason, ok := validateAiToolCommand(cmd); !ok {
 			a.log.ErrorFields("AI tool file read blocked", LogFields{"path": args.Path, "reason": reason})
-			break
+			return aiToolExecutionPlan{}, "BLOCKED: " + reason, false
 		}
-		result, err := a.ssh.ExecuteCommand(sessionID, cmd, aiToolTimeout, aiToolOutputLimit)
-		if err != nil {
-			output = "Error reading file: " + err.Error()
-		} else {
-			if result == "" {
-				output = "(file is empty)"
-			} else {
-				output = result
-			}
-		}
-		a.log.InfoFields("AI tool result", LogFields{
-			"tool":      toolName,
-			"path":      args.Path,
-			"outputLen": len(output),
-		})
+		return aiToolExecutionPlan{
+			ToolCallID:   toolCall.ToolCallID,
+			ToolName:     toolCall.ToolName,
+			Command:      cmd,
+			Detail:       args.Path,
+			EmptyMessage: "(file is empty)",
+		}, "", true
 
 	default:
-		output = "Unknown tool: " + toolName
+		return aiToolExecutionPlan{}, "Unknown tool: " + toolCall.ToolName, false
 	}
+}
 
+func validateAiToolCommand(command string) (string, bool) {
+	if warn, blocked := checkDangerousCommand(command); blocked {
+		return warn, false
+	}
+	if warn, blocked := checkSensitivePath(command); blocked {
+		return warn, false
+	}
+	return "", true
+}
+
+func (a *App) executeAiToolPlan(sessionID string, plan aiToolExecutionPlan) string {
+	result, err := a.ssh.ExecuteCommand(sessionID, plan.Command, aiToolTimeout, aiToolOutputLimit)
+	var output string
+	if err != nil {
+		if plan.ToolName == "read_file" {
+			output = "Error reading file: " + err.Error()
+		} else {
+			output = "Error executing command: " + err.Error()
+		}
+	} else if result == "" {
+		output = plan.EmptyMessage
+	} else {
+		output = result
+	}
+	a.log.InfoFields("AI tool result", LogFields{
+		"tool":      plan.ToolName,
+		"outputLen": len(output),
+	})
 	return output
 }
 
@@ -461,27 +522,57 @@ func isAllowedAiTool(toolName string) bool {
 // this native dialog, so the model can never run a command without a real human
 // approving the exact action.
 func (a *App) confirmAiToolExecution(toolName, detail string) bool {
+	return a.confirmAiToolExecutionBatch([]aiToolExecutionPlan{{
+		ToolName: toolName,
+		Detail:   detail,
+	}})
+}
+
+func (a *App) confirmAiToolExecutionBatch(plans []aiToolExecutionPlan) bool {
 	if a.ctx == nil {
 		return false
 	}
-	var title, action string
-	switch toolName {
-	case "execute_command":
-		title = "AI wants to run a command"
-		action = "Command"
-	case "read_file":
-		title = "AI wants to read a file"
-		action = "Path"
-	default:
+	if len(plans) == 0 {
 		return false
+	}
+	title := "AI wants to run tools"
+	message := ""
+	if len(plans) == 1 {
+		plan := plans[0]
+		var action string
+		switch plan.ToolName {
+		case "execute_command":
+			title = "AI wants to run a command"
+			action = "Command"
+		case "read_file":
+			title = "AI wants to read a file"
+			action = "Path"
+		default:
+			return false
+		}
+		message = fmt.Sprintf("The AI assistant requested the following on your remote server:\n\n%s: %s\n\nAllow this?", action, truncate(plan.Detail, 500))
+	} else {
+		items := make([]string, 0, len(plans))
+		for _, plan := range plans {
+			prefix := "Command"
+			if plan.ToolName == "read_file" {
+				prefix = "Read file"
+			}
+			items = append(items, prefix+": "+plan.Detail)
+		}
+		message = fmt.Sprintf("The AI assistant requested %d actions on your remote server:\n\n%s\n\nAllow all of these?", len(plans), formatApprovalList(items))
 	}
 	a.nativeDialogMu.Lock()
 	defer a.nativeDialogMu.Unlock()
+	buttons := []string{"Allow all", "Deny"}
+	if len(plans) == 1 {
+		buttons = []string{"Allow", "Deny"}
+	}
 	res, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
 		Type:          runtime.QuestionDialog,
 		Title:         title,
-		Message:       fmt.Sprintf("The AI assistant requested the following on your remote server:\n\n%s: %s\n\nAllow this?", action, truncate(detail, 500)),
-		Buttons:       []string{"Allow", "Deny"},
+		Message:       message,
+		Buttons:       buttons,
 		DefaultButton: "Deny",
 		CancelButton:  "Deny",
 	})
@@ -489,5 +580,5 @@ func (a *App) confirmAiToolExecution(toolName, detail string) bool {
 		a.log.ErrorFields("AI tool confirm dialog failed", LogFields{"error": err.Error()})
 		return false
 	}
-	return res == "Allow" || res == "Yes"
+	return res == "Allow all" || res == "Allow" || res == "Yes"
 }

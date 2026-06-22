@@ -46,6 +46,8 @@ type App struct {
 	aiTools         map[string]authorizedAIToolCall
 	cliMu           sync.Mutex
 	cliConnecting   map[string]*cliConnectCall
+	cliApprovalMu   sync.Mutex
+	cliApprovals    map[string]*cliApprovalBatch
 	cliServer       *http.Server
 	rateLimiter     *connectionRateLimiter
 	startupFilePath string
@@ -84,6 +86,7 @@ func NewApp() *App {
 		rateLimiter:   newConnectionRateLimiter(),
 		allowedFiles:  map[string]bool{},
 		cliConnecting: map[string]*cliConnectCall{},
+		cliApprovals:  map[string]*cliApprovalBatch{},
 	}
 }
 
@@ -157,6 +160,7 @@ func (a *App) startup(ctx context.Context) {
 	preserveSecretIDs := a.migrateSecrets()
 	a.migrateCliProfileFlags(preserveSecretIDs)
 	a.store.MigrateSettingsDefaults()
+	a.store.MigrateCommandDefaults()
 	a.log.Info("gxShell started")
 
 	// Start the CLI server only when the user has left it enabled. A missing
@@ -177,21 +181,21 @@ func (a *App) domReady(ctx context.Context) {
 	runtime.WindowCenter(ctx)
 
 	runtime.OnFileDrop(ctx, func(_ int, _ int, paths []string) {
-		mdPaths := make([]string, 0, len(paths))
+		textPaths := make([]string, 0, len(paths))
 		for _, path := range paths {
-			if strings.EqualFold(filepath.Ext(path), ".md") {
-				mdPaths = append(mdPaths, path)
+			if isSupportedTextPath(path) {
+				textPaths = append(textPaths, path)
 			}
 		}
-		if len(mdPaths) == 0 {
+		if len(textPaths) == 0 {
 			return
 		}
-		if !a.confirmOpenDroppedMarkdown(mdPaths) {
-			a.log.Info("User cancelled dropped markdown open")
+		if !a.confirmOpenDroppedTextFiles(textPaths) {
+			a.log.Info("User cancelled dropped text-file open")
 			return
 		}
-		a.log.InfoFields("Files dropped, opening after confirm", logger.LogFields{"count": len(mdPaths)})
-		for _, path := range mdPaths {
+		a.log.InfoFields("Files dropped, opening after confirm", logger.LogFields{"count": len(textPaths)})
+		for _, path := range textPaths {
 			if allowed := a.allowFile(path); allowed != "" {
 				a.log.InfoFields("Emitting file:open", logger.LogFields{"fileName": filepath.Base(allowed)})
 				runtime.EventsEmit(ctx, "file:open", allowed)
@@ -202,7 +206,7 @@ func (a *App) domReady(ctx context.Context) {
 	})
 
 	if a.startupFilePath != "" {
-		if !isMarkdownPath(a.startupFilePath) {
+		if !isSupportedTextPath(a.startupFilePath) {
 			a.log.ErrorFields("Ignoring unsupported startup file", logger.LogFields{
 				"fileName": filepath.Base(a.startupFilePath),
 			})
@@ -244,7 +248,7 @@ func (a *App) shutdown(ctx context.Context) {
 // instance is already running (for example by double-clicking a .md file). The
 // single-instance lock forwards the new process's arguments here instead of
 // opening a second window. We bring the existing window to the front and, if an
-// argument is a markdown file, open it in a tab via the same trusted path used
+// argument is a supported text file, open it in a tab via the same trusted path used
 // for startup files.
 func (a *App) handleSecondInstanceLaunch(args []string) {
 	if a.ctx == nil {
@@ -254,7 +258,7 @@ func (a *App) handleSecondInstanceLaunch(args []string) {
 	runtime.WindowUnminimise(a.ctx)
 
 	for _, arg := range args {
-		if !isMarkdownPath(arg) {
+		if !isSupportedTextPath(arg) {
 			continue
 		}
 		// The path came from an OS "open with"/double-click, so it is a genuine
@@ -268,7 +272,7 @@ func (a *App) handleSecondInstanceLaunch(args []string) {
 	}
 }
 
-func (a *App) confirmOpenDroppedMarkdown(paths []string) bool {
+func (a *App) confirmOpenDroppedTextFiles(paths []string) bool {
 	if a.ctx == nil {
 		return false
 	}
@@ -276,7 +280,7 @@ func (a *App) confirmOpenDroppedMarkdown(paths []string) bool {
 	defer a.nativeDialogMu.Unlock()
 	message := ""
 	if len(paths) == 1 {
-		message = fmt.Sprintf("Open this dropped Markdown file?\n\n%s", paths[0])
+		message = fmt.Sprintf("Open this dropped text file?\n\n%s", paths[0])
 	} else {
 		shown := paths
 		suffix := ""
@@ -284,18 +288,18 @@ func (a *App) confirmOpenDroppedMarkdown(paths []string) bool {
 			shown = paths[:5]
 			suffix = fmt.Sprintf("\n...and %d more", len(paths)-len(shown))
 		}
-		message = fmt.Sprintf("Open these %d dropped Markdown files?\n\n%s%s", len(paths), strings.Join(shown, "\n"), suffix)
+		message = fmt.Sprintf("Open these %d dropped text files?\n\n%s%s", len(paths), strings.Join(shown, "\n"), suffix)
 	}
 	res, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
 		Type:          runtime.QuestionDialog,
-		Title:         "Open Markdown file",
+		Title:         "Open text file",
 		Message:       truncate(message, 1200),
 		Buttons:       []string{"Open", "Cancel"},
 		DefaultButton: "Cancel",
 		CancelButton:  "Cancel",
 	})
 	if err != nil {
-		a.log.ErrorFields("Markdown drop confirm dialog failed", logger.LogFields{"error": err.Error()})
+		a.log.ErrorFields("Text-file drop confirm dialog failed", logger.LogFields{"error": err.Error()})
 		return false
 	}
 	a.log.InfoFields("Dialog result", logger.LogFields{"result": res})

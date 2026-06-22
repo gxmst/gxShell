@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Bot, Check, MessageSquarePlus, Play, RefreshCw, Send, Settings2, Stethoscope, X } from "lucide-react";
+import { Bot, Check, ListChecks, MessageSquarePlus, Play, RefreshCw, Send, Settings2, Stethoscope, X } from "lucide-react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { types } from "../../../wailsjs/go/models";
-import { AiChat, AiContinueChat, AiExecuteTool, GetAiConfig, GetAiUsage, ListAiModels, ResetAiUsage, SaveAiConfig } from "../../../wailsjs/go/main/App";
+import { AiChat, AiContinueChat, AiExecuteTools, GetAiConfig, GetAiUsage, ListAiModels, ResetAiUsage, SaveAiConfig } from "../../../wailsjs/go/main/App";
 import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import { t } from "../../i18n";
 import type { Tab, Toast } from "../../types";
@@ -151,7 +151,9 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
   const onNotifyRef = useRef(props.onNotify);
   onNotifyRef.current = props.onNotify;
 
-  const executeToolAndContinue = useCallback(async (sessionId: string, tc: ToolCallData) => {
+  const executeToolsAndContinue = useCallback(async (sessionId: string, toolCalls: ToolCallData[]) => {
+    const toolCallIds = toolCalls.map((tc) => tc.id).filter(Boolean);
+    if (toolCallIds.length === 0) return;
     const sid = activeSessionIdRef.current;
     setSessions((prev) => prev.map((s) => {
       if (s.id !== sid) return s;
@@ -159,7 +161,7 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
       const last = msgs[msgs.length - 1];
       if (last.role === "assistant" && last.toolResults) {
         const newResults = last.toolResults.map((tr) =>
-          tr.toolCallId === tc.id ? { ...tr, executing: true } : tr
+          toolCallIds.includes(tr.toolCallId) ? { ...tr, executing: true } : tr
         );
         msgs[msgs.length - 1] = { ...last, toolResults: newResults };
       }
@@ -167,14 +169,16 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
     }));
 
     try {
-      const output = await AiExecuteTool(sessionId, tc.id);
+      const outputs = await AiExecuteTools(sessionId, toolCallIds);
       setSessions((prev) => prev.map((s) => {
         if (s.id !== sid) return s;
         const msgs = [...s.messages];
         const last = msgs[msgs.length - 1];
         if (last.role === "assistant" && last.toolResults) {
           const newResults = last.toolResults.map((tr) =>
-            tr.toolCallId === tc.id ? { ...tr, content: output, executing: false, executed: true } : tr
+            toolCallIds.includes(tr.toolCallId)
+              ? { ...tr, content: outputs?.[tr.toolCallId] || "Error: missing tool result", executing: false, executed: true }
+              : tr
           );
           msgs[msgs.length - 1] = { ...last, toolResults: newResults };
         }
@@ -188,7 +192,7 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
         const last = msgs[msgs.length - 1];
         if (last.role === "assistant" && last.toolResults) {
           const newResults = last.toolResults.map((tr) =>
-            tr.toolCallId === tc.id ? { ...tr, content: "Error: " + String(err), executing: false, executed: true } : tr
+            toolCallIds.includes(tr.toolCallId) ? { ...tr, content: "Error: " + String(err), executing: false, executed: true } : tr
           );
           msgs[msgs.length - 1] = { ...last, toolResults: newResults };
         }
@@ -196,6 +200,10 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
       }));
     }
   }, []);
+
+  const executeToolAndContinue = useCallback((sessionId: string, tc: ToolCallData) => {
+    executeToolsAndContinue(sessionId, [tc]);
+  }, [executeToolsAndContinue]);
 
   useEffect(() => {
     if (streaming) return;
@@ -503,15 +511,32 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
                 <span className="ai-typing-indicator"><span /><span /><span /></span>
               ) : msg.role === "assistant" && !msg.content && !msg.toolCalls ? null : msg.role === "user" ? msg.content : ""}
 
-              {msg.toolCalls && msg.toolCalls.map((tc, j) => (
-                <ToolCallBlock
-                  key={tc.id || j}
-                  tc={tc}
-                  result={msg.toolResults?.find((tr) => tr.toolCallId === tc.id)}
-                  onApprove={() => executeToolAndContinue(boundTerminalSessionId, tc)}
-                  lang={lang}
-                />
-              ))}
+              {msg.toolCalls && (() => {
+                const pending = msg.toolCalls.filter((tc) => {
+                  const result = msg.toolResults?.find((tr) => tr.toolCallId === tc.id);
+                  return !result?.executed && !result?.executing;
+                });
+                return (
+                  <>
+                    {pending.length > 1 && (
+                      <div className="ai-tool-call-bulk">
+                        <button className="ai-tool-approve-btn" onClick={() => executeToolsAndContinue(boundTerminalSessionId, pending)}>
+                          <ListChecks size={10} /> {t(lang, "aiRunAllTools")} ({pending.length})
+                        </button>
+                      </div>
+                    )}
+                    {msg.toolCalls.map((tc, j) => (
+                      <ToolCallBlock
+                        key={tc.id || j}
+                        tc={tc}
+                        result={msg.toolResults?.find((tr) => tr.toolCallId === tc.id)}
+                        onApprove={() => executeToolAndContinue(boundTerminalSessionId, tc)}
+                        lang={lang}
+                      />
+                    ))}
+                  </>
+                );
+              })()}
             </div>
           </div>
         ))}

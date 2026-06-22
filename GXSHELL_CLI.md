@@ -12,7 +12,7 @@
 - A profile must have `Allow CLI access` enabled before it appears in `gxshell-cli list`.
 - The CLI lists aliases only. It does not return hostnames, IP addresses, usernames, ports, profile IDs, or jump-host details.
 - Simple read-only commands (`ls`, `cat`, `df`, `uptime`, and similar inspection tools) run without a prompt.
-- Any other command triggers a native confirmation dialog in gxShell each time before it runs.
+- Any other command triggers a native confirmation dialog in gxShell before it runs. Requests for the same alias that arrive within a short window are batched into one approval prompt.
 - Dangerous commands and sensitive paths are blocked before confirmation.
 
 Localhost is not treated as a complete security boundary. The token and confirmation dialog are the real guardrails.
@@ -22,10 +22,10 @@ Localhost is not treated as a complete security boundary. The token and confirma
 For an external caller (including an AI agent), every `exec` ends in one of three outcomes:
 
 - **Runs immediately, no prompt** - only when the command is a single read-only command on a fixed allowlist (`ls`, `cat`, `head`, `tail`, `df`, `du`, `uptime`, `ps`, `free`, `grep`, `stat`, `whoami`, and similar inspection tools), with only simple literal arguments.
-- **Asks for native confirmation each time** - everything else. This includes any command that writes or changes state, and any command containing shell operators or expansion syntax such as a pipe, redirect, chaining (`;`, `&&`), command substitution (`$(...)`, backticks), quotes, backslash escapes, variables, tilde expansion, or globs. Even `cat x | grep y` prompts because the allowlist only matches one simple command.
+- **Asks for native confirmation** - everything else. This includes any command that writes or changes state, and any command containing shell operators or expansion syntax such as a pipe, redirect, chaining (`;`, `&&`), command substitution (`$(...)`, backticks), quotes, backslash escapes, variables, tilde expansion, or globs. Even `cat x | grep y` prompts because the allowlist only matches one simple command. If several matching CLI requests arrive for the same alias within about one second, gxShell shows one batched prompt.
 - **Blocked outright, before any prompt or connection** - dangerous commands (for example destructive `rm`, `mkfs`, `shutdown`) and sensitive paths (for example `/etc/shadow`, SSH private keys).
 
-`exec` is capped at a 30-second remote command timeout and about 1 MB of output. A new SSH connection can also spend time in the profile's connection timeout before the command starts. Long-running or very chatty commands should be run inside the GUI terminal instead.
+`exec` defaults to a 30-second remote command timeout and about 1 MB of output. Use `--timeout` to raise the command timeout up to 30 minutes. A new SSH connection can also spend time in the profile's connection timeout before the command starts. Long-running or very chatty interactive work should still be run inside the GUI terminal.
 
 ## Session Behavior
 
@@ -84,10 +84,36 @@ go build -o gxshell-cli.exe .\cmd\gxshell-cli
 .\gxshell-cli.exe ping
 .\gxshell-cli.exe list
 .\gxshell-cli.exe exec prod-web "uptime"
+.\gxshell-cli.exe exec prod-web "journalctl -u nginx -n 200" --timeout 2m
+.\gxshell-cli.exe exec prod-web "uptime" --json
+.\gxshell-cli.exe exec-file prod-web .\script.sh
+Get-Content .\script.sh -Raw | .\gxshell-cli.exe exec-stdin prod-web
 .\gxshell-cli.exe status
 ```
 
-Simple read-only commands run immediately. Any other `exec` request asks for approval in gxShell every time before it runs.
+Simple read-only commands run immediately. Any other `exec` request asks for approval in gxShell before it runs.
+
+`exec-file` and `exec-stdin` send the script text in the JSON request body instead of forcing the whole command through PowerShell argument quoting. Before sending, gxShell strips a leading UTF-8 BOM and normalizes CRLF/CR line endings to LF, which avoids common PowerShell pipeline and here-doc terminator surprises. They still use the same approval, timeout, output limit, and SSH exec-channel behavior as `exec`. The local CLI request body is capped at about 2 MB.
+
+`--json` is supported on `ping`, `list`, `status`, `exec`, `exec-file`, and `exec-stdin`. For `exec`, the result includes:
+
+```json
+{
+  "alias": "prod-web",
+  "reusedConnection": true,
+  "exitCode": 0,
+  "stdout": "...",
+  "stderr": "",
+  "output": "...",
+  "summary": "",
+  "displayOutput": "...",
+  "durationMs": 123,
+  "timedOut": false,
+  "truncated": false
+}
+```
+
+`stdout`, `stderr`, and `output` contain remote output only. Synthetic CLI notes such as `(exit code: 1)` or truncation notices are reported in `summary`; `displayOutput` is the human-readable combination used by the non-JSON CLI output.
 
 ## Troubleshooting
 
@@ -96,7 +122,7 @@ Simple read-only commands run immediately. Any other `exec` request asks for app
 - `server "<alias>" is not available to CLI`: check the alias spelling and whether the profile is opted in.
 - Slow first command but fast later commands: the first command likely paid the SSH connection cost, while later commands reused the connected session.
 - Direct connection is slow but ProxyJump is fast: the target profile can keep using ProxyJump; the CLI follows that profile setting automatically.
-- `remote command timeout`: the command exceeded the 30-second remote command timeout. Use the GUI terminal for longer work.
+- `remote command timeout`: the command exceeded the remote command timeout. Use `--timeout 2m` or the GUI terminal for longer work.
 
 ## API
 

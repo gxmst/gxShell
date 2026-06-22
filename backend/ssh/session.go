@@ -454,15 +454,24 @@ func (m *Manager) get(id string) (*Session, error) {
 }
 
 type CommandExecutionResult struct {
+	Stdout    string
+	Stderr    string
 	Output    string
+	Summary   string
 	ExitCode  int
 	TimedOut  bool
 	Truncated bool
+	Duration  time.Duration
+	Error     string
+}
+
+func (r CommandExecutionResult) DisplayOutput() string {
+	return appendLine(r.Output, r.Summary)
 }
 
 func (m *Manager) ExecuteCommand(sessionID string, command string, timeout time.Duration, maxOutput int64) (string, error) {
 	result, err := m.ExecuteCommandResult(sessionID, command, timeout, maxOutput)
-	return result.Output, err
+	return result.DisplayOutput(), err
 }
 
 func (m *Manager) ExecuteCommandResult(sessionID string, command string, timeout time.Duration, maxOutput int64) (CommandExecutionResult, error) {
@@ -490,6 +499,7 @@ func (m *Manager) ExecuteCommandResult(sessionID string, command string, timeout
 	sshSession.Stdout = stdout
 	sshSession.Stderr = stderr
 
+	started := time.Now()
 	done := make(chan error, 1)
 	go func() {
 		done <- sshSession.Run(command)
@@ -507,26 +517,33 @@ func (m *Manager) ExecuteCommandResult(sessionID string, command string, timeout
 		case <-time.After(2 * time.Second):
 		}
 	}
+	result.Duration = time.Since(started)
 
-	output := stdout.String()
-	if stderrStr := stderr.String(); stderrStr != "" {
+	stdoutStr := stdout.String()
+	stderrStr := stderr.String()
+	result.Stdout = stdoutStr
+	result.Stderr = stderrStr
+
+	output := stdoutStr
+	if stderrStr != "" {
 		output = appendLine(output, stderrStr)
 	}
 	if err != nil {
 		var exitErr *ssh.ExitError
 		if errors.As(err, &exitErr) {
 			result.ExitCode = exitErr.ExitStatus()
-			output = appendLine(output, fmt.Sprintf("(exit code: %d)", result.ExitCode))
+			result.Summary = appendLine(result.Summary, fmt.Sprintf("(exit code: %d)", result.ExitCode))
 		} else {
 			if result.ExitCode == 0 {
 				result.ExitCode = 1
 			}
-			output = appendLine(output, "error: "+err.Error())
+			result.Error = err.Error()
+			result.Summary = appendLine(result.Summary, "error: "+err.Error())
 		}
 	}
 	if stdout.Truncated() || stderr.Truncated() {
 		result.Truncated = true
-		output = appendLine(output, fmt.Sprintf("(output truncated after %d bytes)", maxOutput))
+		result.Summary = appendLine(result.Summary, fmt.Sprintf("(output truncated after %d bytes)", maxOutput))
 	}
 	result.Output = output
 	return result, nil

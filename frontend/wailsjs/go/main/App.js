@@ -18,6 +18,10 @@ export function AiExecuteTool(arg1, arg2) {
   return window['go']['main']['App']['AiExecuteTool'](arg1, arg2);
 }
 
+export function AiExecuteTools(arg1, arg2) {
+  return window['go']['main']['App']['AiExecuteTools'](arg1, arg2);
+}
+
 export function Connect(arg1, arg2, arg3) {
   return window['go']['main']['App']['Connect'](arg1, arg2, arg3);
 }
@@ -110,6 +114,10 @@ export function IsMarkdownContextMenuRegistered() {
   return window['go']['main']['App']['IsMarkdownContextMenuRegistered']();
 }
 
+export function IsTextContextMenuRegistered() {
+  return window['go']['main']['App']['IsTextContextMenuRegistered']();
+}
+
 export function ListAiModels(arg1, arg2, arg3) {
   return window['go']['main']['App']['ListAiModels'](arg1, arg2, arg3);
 }
@@ -146,8 +154,16 @@ export function ListRemoteMarkdownFilesInDir(arg1, arg2) {
   return window['go']['main']['App']['ListRemoteMarkdownFilesInDir'](arg1, arg2);
 }
 
+export function ListRemoteTextFilesInDir(arg1, arg2) {
+  return window['go']['main']['App']['ListRemoteTextFilesInDir'](arg1, arg2);
+}
+
 export function ListSessions() {
   return window['go']['main']['App']['ListSessions']();
+}
+
+export function ListTextFilesInDir(arg1) {
+  return window['go']['main']['App']['ListTextFilesInDir'](arg1);
 }
 
 export function ListTunnelStatus(arg1) {
@@ -168,6 +184,10 @@ export function OpenDataDir() {
 
 export function OpenRecentMarkdownFile(arg1) {
   return window['go']['main']['App']['OpenRecentMarkdownFile'](arg1);
+}
+
+export function OpenRecentTextFile(arg1) {
+  return window['go']['main']['App']['OpenRecentTextFile'](arg1);
 }
 
 export function PingHost(arg1, arg2) {
@@ -198,6 +218,10 @@ export function ReadRemoteMarkdownResourceDataURL(arg1, arg2, arg3) {
   return window['go']['main']['App']['ReadRemoteMarkdownResourceDataURL'](arg1, arg2, arg3);
 }
 
+export function ReadRemoteTextFile(arg1, arg2) {
+  return window['go']['main']['App']['ReadRemoteTextFile'](arg1, arg2);
+}
+
 export function Reconnect(arg1) {
   return window['go']['main']['App']['Reconnect'](arg1);
 }
@@ -208,6 +232,10 @@ export function ReconnectWithSecrets(arg1, arg2, arg3) {
 
 export function RegisterMarkdownContextMenu() {
   return window['go']['main']['App']['RegisterMarkdownContextMenu']();
+}
+
+export function RegisterTextContextMenu() {
+  return window['go']['main']['App']['RegisterTextContextMenu']();
 }
 
 export function RemoveContainer(arg1, arg2, arg3) {
@@ -262,6 +290,10 @@ export function SelectPrivateKey() {
   return window['go']['main']['App']['SelectPrivateKey']();
 }
 
+export function SelectTextFile() {
+  return window['go']['main']['App']['SelectTextFile']();
+}
+
 export function SelectUploadFile() {
   return window['go']['main']['App']['SelectUploadFile']();
 }
@@ -314,6 +346,10 @@ export function UnregisterMarkdownContextMenu() {
   return window['go']['main']['App']['UnregisterMarkdownContextMenu']();
 }
 
+export function UnregisterTextContextMenu() {
+  return window['go']['main']['App']['UnregisterTextContextMenu']();
+}
+
 export function UpdateCommand(arg1) {
   return window['go']['main']['App']['UpdateCommand'](arg1);
 }
@@ -336,6 +372,10 @@ export function WriteLocalFile(arg1, arg2) {
 
 export function WriteRemoteMarkdownFile(arg1, arg2, arg3) {
   return window['go']['main']['App']['WriteRemoteMarkdownFile'](arg1, arg2, arg3);
+}
+
+export function WriteRemoteTextFile(arg1, arg2, arg3) {
+  return window['go']['main']['App']['WriteRemoteTextFile'](arg1, arg2, arg3);
 }
 
 export function WriteToTerminal(arg1, arg2) {

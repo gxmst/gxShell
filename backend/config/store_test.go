@@ -148,6 +148,70 @@ func TestSaveAndGetSettingsRoundTripCliFlag(t *testing.T) {
 	}
 }
 
+func TestMigrateCommandDefaultsAppendsMissingBuiltIns(t *testing.T) {
+	s := newTestStore(t)
+	commands := []types.CommandTemplate{
+		{
+			ID:          "custom-1",
+			Name:        "查看磁盘",
+			Command:     "df -h",
+			Category:    "Custom",
+			Description: "user edited",
+		},
+		{
+			ID:       "custom-2",
+			Name:     "自定义巡检",
+			Command:  "echo ok",
+			Category: "Custom",
+		},
+	}
+	if err := s.SaveCommands(commands); err != nil {
+		t.Fatal(err)
+	}
+
+	s.MigrateCommandDefaults()
+	got, err := s.ListCommands()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	countDF := 0
+	foundNewBuiltin := false
+	foundCustom := false
+	for _, command := range got {
+		if command.Command == "df -h" {
+			countDF++
+			if command.Category != "Custom" {
+				t.Fatal("existing command was overwritten")
+			}
+		}
+		if command.Command == "systemctl --failed" {
+			foundNewBuiltin = true
+		}
+		if command.Command == "echo ok" {
+			foundCustom = true
+		}
+	}
+	if countDF != 1 {
+		t.Fatalf("df -h command count = %d, want 1", countDF)
+	}
+	if !foundNewBuiltin {
+		t.Fatal("missing built-in command was not appended")
+	}
+	if !foundCustom {
+		t.Fatal("custom command was removed")
+	}
+
+	s.MigrateCommandDefaults()
+	again, err := s.ListCommands()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != len(got) {
+		t.Fatal("migration should be idempotent")
+	}
+}
+
 func TestSaveProfilesStripsLegacyAndSecrets(t *testing.T) {
 	s := newTestStore(t)
 	profiles := []types.Profile{{

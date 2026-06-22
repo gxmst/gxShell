@@ -10,6 +10,8 @@ export function AiContinueChat(arg1:types.AiChatRequest):Promise<void>;
 
 export function AiExecuteTool(arg1:string,arg2:string):Promise<string>;
 
+export function AiExecuteTools(arg1:string,arg2:Array<string>):Promise<Record<string, string>>;
+
 export function Connect(arg1:string,arg2:number,arg3:number):Promise<types.SessionInfo>;
 
 export function ConnectLocal(arg1:number,arg2:number):Promise<types.SessionInfo>;
@@ -56,6 +58,8 @@ export function GetSettings():Promise<types.AppSettings>;
 
 export function IsMarkdownContextMenuRegistered():Promise<boolean>;
 
+export function IsTextContextMenuRegistered():Promise<boolean>;
+
 export function ListAiModels(arg1:string,arg2:string,arg3:string):Promise<Array<string>>;
 
 export function ListCommands():Promise<Array<types.CommandTemplate>>;
@@ -74,7 +78,11 @@ export function ListRemoteDir(arg1:string,arg2:string):Promise<Array<types.Remot
 
 export function ListRemoteMarkdownFilesInDir(arg1:string,arg2:string):Promise<Array<string>>;
 
+export function ListRemoteTextFilesInDir(arg1:string,arg2:string):Promise<Array<string>>;
+
 export function ListSessions():Promise<Array<types.SessionInfo>>;
+
+export function ListTextFilesInDir(arg1:string):Promise<Array<string>>;
 
 export function ListTunnelStatus(arg1:string):Promise<Array<types.TunnelStatus>>;
 
@@ -85,6 +93,8 @@ export function LogCommand(arg1:string,arg2:string):Promise<void>;
 export function OpenDataDir():Promise<void>;
 
 export function OpenRecentMarkdownFile(arg1:string):Promise<string>;
+
+export function OpenRecentTextFile(arg1:string):Promise<string>;
 
 export function PingHost(arg1:string,arg2:number):Promise<types.NetworkPath>;
 
@@ -100,11 +110,15 @@ export function ReadRemoteMarkdownFile(arg1:string,arg2:string):Promise<string>;
 
 export function ReadRemoteMarkdownResourceDataURL(arg1:string,arg2:string,arg3:string):Promise<string>;
 
+export function ReadRemoteTextFile(arg1:string,arg2:string):Promise<string>;
+
 export function Reconnect(arg1:string):Promise<types.SessionInfo>;
 
 export function ReconnectWithSecrets(arg1:string,arg2:string,arg3:string):Promise<types.SessionInfo>;
 
 export function RegisterMarkdownContextMenu():Promise<void>;
+
+export function RegisterTextContextMenu():Promise<void>;
 
 export function RemoveContainer(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
@@ -132,6 +146,8 @@ export function SelectMarkdownFile():Promise<string>;
 
 export function SelectPrivateKey():Promise<string>;
 
+export function SelectTextFile():Promise<string>;
+
 export function SelectUploadFile():Promise<string>;
 
 export function SendCommandToAll(arg1:string):Promise<void>;
@@ -158,6 +174,8 @@ export function TraceRoute(arg1:string):Promise<types.NetworkPath>;
 
 export function UnregisterMarkdownContextMenu():Promise<void>;
 
+export function UnregisterTextContextMenu():Promise<void>;
+
 export function UpdateCommand(arg1:types.CommandTemplate):Promise<types.CommandTemplate>;
 
 export function UpdateProfile(arg1:types.Profile):Promise<types.Profile>;
@@ -169,5 +187,7 @@ export function UploadFile(arg1:string,arg2:string,arg3:string):Promise<void>;
 export function WriteLocalFile(arg1:string,arg2:string):Promise<void>;
 
 export function WriteRemoteMarkdownFile(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function WriteRemoteTextFile(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function WriteToTerminal(arg1:string,arg2:string):Promise<void>;

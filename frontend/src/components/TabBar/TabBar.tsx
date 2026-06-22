@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronDown, Columns2, FileText, PanelLeft, Plus, RefreshCw, Rows2, Terminal, X } from "lucide-react";
+import { ChevronDown, Columns2, FileText, PanelLeft, Plus, RefreshCw, Rows2, Server, Terminal, X } from "lucide-react";
 import type { SplitDirection, Tab } from "../../types";
 import { stateClass } from "../../utils/format";
 import { types } from "../../../wailsjs/go/models";
@@ -8,6 +8,7 @@ import { t } from "../../i18n";
 
 export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSidebar, onActive, onClose, onReconnect, onTearOff, onSplitToggle, onNewConnection, onNewLocal, onOpenMarkdown, language }: { tabs: Tab[]; activeTab: string; profiles: types.Profile[]; sidebarCollapsed: boolean; onToggleSidebar: () => void; onActive: (id: string) => void; onClose: (id: string) => void; onReconnect: (tab: Tab) => void; onTearOff?: (tab: Tab) => void; onSplitToggle?: (tabId: string, direction: SplitDirection) => void; onNewConnection?: () => void; onNewLocal?: () => void; onOpenMarkdown?: () => void; language?: string }) {
   const active = tabs.find((tab) => tab.id === activeTab);
+  const lang = language || "en";
   const dragRef = useRef<{ tabId: string; startX: number; startY: number; active: boolean } | null>(null);
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -73,7 +74,7 @@ export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSi
   return (
     <div className="tabbar">
       {sidebarCollapsed && (
-        <button className="tab-action" onClick={onToggleSidebar} title="Show sidebar"><PanelLeft size={14} /></button>
+        <button className="tab-action" onClick={onToggleSidebar} title={t(lang, "showSidebar")}><PanelLeft size={14} /></button>
       )}
       <div className="tabs-scroll">
         {tabs.map((tab) => {
@@ -90,29 +91,30 @@ export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSi
       </div>
       <div className="tab-actions">
         <div className="relative" ref={menuRef}>
-          <button className="tab-action" onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }} title="New">
+          <button className="tab-action" onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }} title={t(lang, "new")}>
             <Plus size={14} />
             <ChevronDown size={10} className="opacity-50 ml-px" />
           </button>
           {menuOpen && (
             <div className="tab-action-dropdown" onClick={(e) => e.stopPropagation()}>
               <button className="tab-action-item" onClick={() => { setMenuOpen(false); onNewConnection?.(); }}>
-                SSH Connection
+                <Server size={12} />
+                {t(lang, "sshConnection")}
               </button>
               <button className="tab-action-item" onClick={() => { setMenuOpen(false); onNewLocal?.(); }}>
                 <Terminal size={12} />
-                {t(language || "en", "localTerminal")}
+                {t(lang, "localTerminal")}
               </button>
               <button className="tab-action-item" onClick={() => { setMenuOpen(false); onOpenMarkdown?.(); }}>
                 <FileText size={12} />
-                Open Markdown File
+                {t(lang, "openTextFile")}
               </button>
             </div>
           )}
         </div>
-        <button className="tab-action" disabled={!active || tabs.length < 2} onClick={() => active && onSplitToggle?.(active.id, "horizontal")} title="Split Horizontal"><Columns2 size={14} /></button>
-        <button className="tab-action" disabled={!active || tabs.length < 2} onClick={() => active && onSplitToggle?.(active.id, "vertical")} title="Split Vertical"><Rows2 size={14} /></button>
-        <button className="tab-action" disabled={!active || active.local || active.type === "markdown"} onClick={() => active && onReconnect(active)}><RefreshCw size={14} /></button>
+        <button className="tab-action" disabled={!active || tabs.length < 2} onClick={() => active && onSplitToggle?.(active.id, "horizontal")} title={t(lang, "splitHorizontal")}><Columns2 size={14} /></button>
+        <button className="tab-action" disabled={!active || tabs.length < 2} onClick={() => active && onSplitToggle?.(active.id, "vertical")} title={t(lang, "splitVertical")}><Rows2 size={14} /></button>
+        <button className="tab-action" disabled={!active || active.local || active.type === "markdown"} onClick={() => active && onReconnect(active)} title={t(lang, "reconnect")}><RefreshCw size={14} /></button>
       </div>
     </div>
   );

@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { types } from "../wailsjs/go/models";
-import { CreateCommand, DeleteCommand, ListCommands, ListMarkdownFilesInDir, ListRemoteMarkdownFilesInDir, OpenDataDir, OpenRecentMarkdownFile, ReadLogFile, SelectMarkdownFile, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, UpdateCommand } from "../wailsjs/go/main/App";
+import { CreateCommand, DeleteCommand, ListCommands, ListTextFilesInDir, ListRemoteTextFilesInDir, OpenDataDir, OpenRecentTextFile, ReadLogFile, SelectTextFile, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, UpdateCommand } from "../wailsjs/go/main/App";
 import { emptyProfile } from "./constants";
 import type { Drawer, MarkdownOpenTarget, RecentMarkdownItem, SplitPane, Tab } from "./types";
 import { normalizeAppTheme } from "./utils/format";
@@ -26,12 +26,14 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastStack } from "./components/ToastStack";
 import { TransfersProvider } from "./hooks/useTransfers";
 import { EventsOn, OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
+import { isSupportedTextPath } from "./utils/textFiles";
+import { t } from "./i18n";
 
 const normalizeLocalPath = (filePath: string) => filePath.replace(/\\/g, "/");
 
-const newMarkdownTabId = () => `md-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const newMarkdownTabId = () => `text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-const fileNameFromPath = (filePath: string) => filePath.split(/[\\/]/).pop() || "Markdown";
+const fileNameFromPath = (filePath: string) => filePath.split(/[\\/]/).pop() || "Text file";
 
 const recentMarkdownId = (item: Pick<RecentMarkdownItem, "source" | "path" | "profileId" | "sessionId">) => {
   if (item.source === "local") return `local:${normalizeLocalPath(item.path).toLowerCase()}`;
@@ -99,7 +101,7 @@ function App() {
       sessions.setActiveTab(existing.id);
       setDrawer("sftp");
       try {
-        const siblings = await ListMarkdownFilesInDir(filePath);
+        const siblings = await ListTextFilesInDir(filePath);
         setMarkdownSiblings(siblings || []);
       } catch {
         setMarkdownSiblings([]);
@@ -123,7 +125,7 @@ function App() {
     setDrawer("sftp");
 
     try {
-      const siblings = await ListMarkdownFilesInDir(filePath);
+      const siblings = await ListTextFilesInDir(filePath);
       setMarkdownSiblings(siblings || []);
     } catch {
       setMarkdownSiblings([]);
@@ -151,7 +153,7 @@ function App() {
       sessions.setActiveTab(existing.id);
       setDrawer("sftp");
       try {
-        const siblings = await ListRemoteMarkdownFilesInDir(sessionID, remotePath);
+        const siblings = await ListRemoteTextFilesInDir(sessionID, remotePath);
         setMarkdownSiblings(siblings || []);
       } catch {
         setMarkdownSiblings([]);
@@ -175,7 +177,7 @@ function App() {
     setDrawer("sftp");
 
     try {
-      const siblings = await ListRemoteMarkdownFilesInDir(sessionID, remotePath);
+      const siblings = await ListRemoteTextFilesInDir(sessionID, remotePath);
       setMarkdownSiblings(siblings || []);
     } catch {
       setMarkdownSiblings([]);
@@ -192,7 +194,7 @@ function App() {
 
   const handleOpenMarkdown = useCallback(async () => {
     try {
-      const filePath = await SelectMarkdownFile();
+      const filePath = await SelectTextFile();
       if (filePath) {
         openMarkdownFile(filePath);
       }
@@ -204,7 +206,7 @@ function App() {
   const handleOpenRecentMarkdown = useCallback(async (item: RecentMarkdownItem) => {
     try {
       if (item.source === "local") {
-        const allowed = await OpenRecentMarkdownFile(item.path);
+        const allowed = await OpenRecentTextFile(item.path);
         if (allowed) openMarkdownFile(allowed);
         return;
       }
@@ -215,7 +217,7 @@ function App() {
         tab.state === "connected"
       ));
       if (!liveSession) {
-        notify("Connect the server first, then reopen this Markdown file.", "info");
+        notify(t(profileState.settings?.language || "en", "connectServerFirstTextFile"), "info");
         return;
       }
       openRemoteMarkdownFile(liveSession.id, item.path);
@@ -245,7 +247,7 @@ function App() {
     }, false);
 
     const unsubFileOpen = EventsOn("file:open", (filePath: string) => {
-      if (filePath.toLowerCase().endsWith(".md")) {
+      if (isSupportedTextPath(filePath)) {
         openMarkdownFile(filePath);
       }
     });
@@ -306,13 +308,13 @@ function App() {
   useEffect(() => {
     const activeTab = sessions.tabs.find(t => t.id === sessions.activeTab);
     if (activeTab?.type === 'markdown' && activeTab.markdownSource === "remote" && activeTab.remoteSessionId && activeTab.remotePath) {
-      ListRemoteMarkdownFilesInDir(activeTab.remoteSessionId, activeTab.remotePath).then(siblings => {
+      ListRemoteTextFilesInDir(activeTab.remoteSessionId, activeTab.remotePath).then(siblings => {
         setMarkdownSiblings(siblings || []);
       }).catch(() => {
         setMarkdownSiblings([]);
       });
     } else if (activeTab?.type === 'markdown' && activeTab.filePath) {
-      ListMarkdownFilesInDir(activeTab.filePath).then(siblings => {
+      ListTextFilesInDir(activeTab.filePath).then(siblings => {
         setMarkdownSiblings(siblings || []);
       }).catch(() => {
         setMarkdownSiblings([]);
@@ -435,7 +437,7 @@ function App() {
           onEditCommand={(cmd) => setCommandModal(cmd)}
           onDeleteCommand={async (id) => { await DeleteCommand(id); profileState.setCommands(await ListCommands()); }}
           onNewCommand={() => setCommandModal(new types.CommandTemplate({ id: "", name: "", command: "", category: "Custom", description: "", tags: [] }))}
-          onSaveSettings={async (next) => { await profileState.saveSettings(next); notify("Settings saved", "success"); }}
+          onSaveSettings={async (next) => { await profileState.saveSettings(next); notify(t(profileState.settings?.language || "en", "settingsSaved"), "success"); }}
           onOpenData={OpenDataDir}
           onOpenLog={async (name) => {
             try {
@@ -476,9 +478,9 @@ function App() {
         if (!tab) return null;
         return <FloatingTerminal key={id} tab={tab} terminalHosts={activeTerminal.terminalHosts} onDock={handleDockFloating} onClose={handleCloseFloating} refitTerminal={refitTerminal} reattachTerminal={reattachTerminal} />;
       })}
-      {globalSearchOpen && <GlobalSearchModal query={globalQuery} onQuery={setGlobalQuery} results={globalResults} onClose={() => setGlobalSearchOpen(false)} />}
-      {terminalSearchOpen && <TerminalSearchModal query={terminalSearch} onQuery={setTerminalSearch} onNext={() => activeTerminal.findNext(sessions.activeTab, terminalSearch)} onClose={() => setTerminalSearchOpen(false)} />}
-      {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={async (id) => { await profileState.deleteProfile(id); setProfileModal(null); }} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify("Profile copied. Saved credentials are not copied.", "info"); }} />}
+      {globalSearchOpen && <GlobalSearchModal query={globalQuery} onQuery={setGlobalQuery} results={globalResults} onClose={() => setGlobalSearchOpen(false)} locale={profileState.settings?.language || "en"} />}
+      {terminalSearchOpen && <TerminalSearchModal query={terminalSearch} onQuery={setTerminalSearch} onNext={() => activeTerminal.findNext(sessions.activeTab, terminalSearch)} onClose={() => setTerminalSearchOpen(false)} locale={profileState.settings?.language || "en"} />}
+      {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={async (id) => { await profileState.deleteProfile(id); setProfileModal(null); }} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify(t(profileState.settings?.language || "en", "profileCopied"), "info"); }} />}
       {commandModal && <CommandModal command={commandModal} language={profileState.settings?.language || "en"} onClose={() => setCommandModal(null)} onSave={saveCommand} />}
       {sessions.secretRequest && <SecretModal request={sessions.secretRequest} language={profileState.settings?.language || "en"} onClose={() => sessions.setSecretRequest(null)} onSubmit={async (password, passphrase) => { const request = sessions.secretRequest; sessions.setSecretRequest(null); if (request) await sessions.submitSecret(request, password, passphrase); }} />}
       <ProgressBar />

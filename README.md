@@ -1,6 +1,6 @@
 # gxShell
 
-gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. It combines terminal sessions, SFTP, monitoring, Docker tools, SSH tunnels, an AI assistant, an external CLI, and a local Markdown viewer in one app.
+gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. It combines terminal sessions, SFTP, monitoring, Docker tools, SSH tunnels, an AI assistant, an external CLI, and a local text/Markdown viewer in one app.
 
 ## Features
 
@@ -13,10 +13,12 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 - SSH tunnel management for local, remote, and dynamic SOCKS forwarding.
 - Network diagnostics with ping and traceroute parsing.
 - AI assistant for OpenAI-compatible APIs, with streaming responses, model listing, token usage, terminal context, and explicit native confirmation before remote tool execution.
-- External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands on opted-in profiles through the running app, without exposing saved SSH credentials. The CLI can be disabled globally, reuses active SSH sessions when possible, follows each profile's ProxyJump setting, runs simple read-only commands directly, and requires native confirmation for anything else. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
-- Local and remote Markdown viewer/editor with sanitized rendering, file-open support, drag-and-drop opening, recent files, sibling and relative-link navigation, relative image previews, table of contents, code highlighting, Mermaid diagrams, in-document search, zoom, edit, save, split preview, and refresh.
-- Windows tray menu for showing the app, creating a connection, opening Markdown, settings, and quit.
-- Windows `.md` integration, including installed file-association metadata and an optional per-user "Open with gxShell" right-click menu entry.
+- External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands on opted-in profiles through the running app, without exposing saved SSH credentials. The CLI can be disabled globally, reuses active SSH sessions when possible, follows each profile's ProxyJump setting, runs simple read-only commands directly, batches approval prompts for nearby external requests, supports `--json`, `--timeout`, `exec-file`, and `exec-stdin`, and requires native confirmation for anything else. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
+- Local and remote text/Markdown viewer/editor with sanitized Markdown rendering, plain-text viewing for logs and other text formats, file-open support, drag-and-drop opening, recent files, sibling and relative-link navigation, relative image previews for Markdown, table of contents, code highlighting, Mermaid diagrams, in-document search, zoom, edit, save, split preview, and refresh.
+- Windows tray menu for showing the app, creating a connection, opening a text file, settings, and quit.
+- Windows text-file integration, including installed file-association metadata and an optional per-user "Open with gxShell" right-click menu entry for supported text formats.
+
+Supported text viewer/editor extensions: `.md`, `.markdown`, `.txt`, `.text`, `.log`, `.conf`, `.cfg`, `.ini`, `.env`, `.json`, `.jsonl`, `.yaml`, `.yml`, `.toml`, `.xml`, `.csv`, `.tsv`, `.sh`, `.bash`, `.zsh`, `.fish`, `.ps1`, `.bat`, `.cmd`, `.sql`, and `.service`.
 
 ## Security
 
@@ -25,12 +27,12 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 - If the keyring is unavailable, secrets are stored in an AES-256-GCM fallback file.
 - On Windows, the fallback encryption key is wrapped with DPAPI before it is written to disk.
 - Older plaintext profile secrets are migrated on startup.
-- AI tool calls are registered by the backend, expire after a short TTL, are single-use, and require a native confirmation dialog before command execution or remote file reads.
+- AI tool calls are registered by the backend, expire after a short TTL, are single-use, and require a native confirmation dialog before command execution or remote file reads. Multiple pending AI tools can be approved together and independent commands run in parallel after approval.
 - Dangerous commands and sensitive remote paths are blocked for AI tools.
-- The external `gxshell-cli` interface can be disabled globally, requires a local bearer token when enabled, exposes only opted-in profile aliases (never hosts, users, ports, profile IDs, or jump-host details), blocks dangerous commands and sensitive paths, and requires native confirmation for anything that is not a simple read-only command.
+- The external `gxshell-cli` interface can be disabled globally, requires a local bearer token when enabled, exposes only opted-in profile aliases (never hosts, users, ports, profile IDs, or jump-host details), blocks dangerous commands and sensitive paths, and requires native confirmation for anything that is not a simple read-only command. Nearby requests for the same alias are batched into one native prompt.
 - CLI commands run through gxShell-managed SSH sessions. Existing sessions may be reused, but each command uses a separate short-lived SSH exec channel rather than typing into the interactive terminal.
 - Logs redact common secret fields and avoid persisting AI message content previews.
-- Local Markdown read/write is limited to files the user opened through the native dialog, OS file-open, drag-and-drop, or authorized Markdown siblings.
+- Local text-file read/write is limited to files the user opened through the native dialog, OS file-open, drag-and-drop, or authorized text-file siblings.
 
 ## Tech Stack
 
@@ -43,7 +45,7 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 | SSH | `golang.org/x/crypto/ssh` |
 | SFTP | `github.com/pkg/sftp` |
 | Secrets | `go-keyring`, AES-256-GCM, Windows DPAPI fallback wrapping |
-| Markdown | `marked`, `DOMPurify`, `highlight.js`, `mermaid` |
+| Text/Markdown | `marked`, `DOMPurify`, `highlight.js`, `mermaid` |
 | Tray | `github.com/getlantern/systray` |
 
 ## Project Layout
@@ -139,7 +141,7 @@ go build -o gxshell-cli.exe .\cmd\gxshell-cli
 4. Create a GitHub release with the built executables as assets:
 
 ```powershell
-gh release create v1.1.2 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.1.2" --notes-file .\release-notes.md
+gh release create v1.1.3 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.1.3" --notes-file .\release-notes.md
 ```
 
 Use release notes that describe behavior and fixes only. Do not include local paths, tokens, API keys, server addresses, private hostnames, or log output.

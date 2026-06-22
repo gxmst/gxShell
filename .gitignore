@@ -19,3 +19,4 @@ frontend/package.json.md5
 *.key
 .env
 .env.*
+.codex/

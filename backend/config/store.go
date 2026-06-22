@@ -198,6 +198,35 @@ func (s *Store) MigrateSettingsDefaults() {
 	_ = s.SaveSettings(settings)
 }
 
+// MigrateCommandDefaults appends built-in command templates that older installs
+// are missing, while preserving any user-created or edited commands.
+func (s *Store) MigrateCommandDefaults() {
+	commands, err := s.ListCommands()
+	if err != nil {
+		return
+	}
+	seen := map[string]bool{}
+	for _, command := range commands {
+		key := strings.TrimSpace(command.Command)
+		if key != "" {
+			seen[key] = true
+		}
+	}
+	changed := false
+	for _, command := range defaultCommands() {
+		key := strings.TrimSpace(command.Command)
+		if key == "" || seen[key] {
+			continue
+		}
+		commands = append(commands, command)
+		seen[key] = true
+		changed = true
+	}
+	if changed {
+		_ = s.SaveCommands(commands)
+	}
+}
+
 func (s *Store) ListCommands() ([]types.CommandTemplate, error) {
 	var commands []types.CommandTemplate
 	return commands, s.readJSON("commands.json", &commands)
@@ -237,15 +266,38 @@ func defaultCommands() []types.CommandTemplate {
 		name, command, category, desc string
 	}{
 		{"查看磁盘", "df -h", "系统", "查看磁盘占用"},
+		{"查看 Inode", "df -ih", "系统", "查看 inode 使用情况"},
 		{"查看内存", "free -h", "系统", "查看内存占用"},
 		{"查看负载", "uptime", "系统", "查看系统运行时间和负载"},
+		{"CPU 信息", "lscpu", "系统", "查看 CPU 架构与核心信息"},
+		{"CPU 占用排行", "ps -eo pid,ppid,user,%cpu,%mem,etime,cmd --sort=-%cpu | head -20", "系统", "查看 CPU 占用最高的进程"},
+		{"内存占用排行", "ps -eo pid,ppid,user,%cpu,%mem,etime,cmd --sort=-%mem | head -20", "系统", "查看内存占用最高的进程"},
+		{"实时进程快照", "top -b -n 1 | head -40", "系统", "查看当前进程与资源快照"},
+		{"系统版本", "uname -a && cat /etc/os-release", "系统", "查看内核与发行版信息"},
+		{"登录用户", "who && w", "系统", "查看当前登录用户与会话"},
+		{"僵尸进程", "ps aux | awk '$8 ~ /Z/ {print}'", "系统", "查找僵尸进程"},
+		{"目录占用 Top", "du -xhd1 /var 2>/dev/null | sort -h", "磁盘", "查看 /var 下一级目录占用"},
+		{"大文件 Top", "find / -xdev -type f -size +100M -printf '%s %p\\n' 2>/dev/null | sort -nr | head -20", "磁盘", "查找当前文件系统的大文件"},
 		{"Docker 容器", "docker ps", "Docker", "查看运行中的容器"},
 		{"Docker 镜像", "docker images", "Docker", "查看镜像列表"},
+		{"Docker 资源", "docker stats --no-stream", "Docker", "查看容器资源占用"},
+		{"Docker 日志", "docker logs --tail=200 <container>", "Docker", "查看容器最近日志"},
 		{"Nginx 状态", "systemctl status nginx", "服务", "查看 Nginx 服务状态"},
+		{"Nginx 配置检查", "nginx -t", "服务", "检查 Nginx 配置语法"},
 		{"服务状态", "systemctl status <service>", "服务", "查看指定服务状态"},
+		{"失败服务", "systemctl --failed", "服务", "查看失败的 systemd 服务"},
+		{"服务日志", "journalctl -u <service> -n 200 --no-pager", "日志", "查看指定服务最近日志"},
 		{"查看日志", "tail -f /var/log/syslog", "日志", "跟踪系统日志"},
+		{"系统告警日志", "journalctl -p warning..alert -n 100 --no-pager", "日志", "查看最近系统告警"},
+		{"内核日志", "dmesg -T | tail -100", "日志", "查看最近内核日志"},
 		{"查看端口", "ss -tunlp", "网络", "查看监听端口"},
+		{"监听端口", "ss -lntup", "网络", "查看 TCP/UDP 监听端口详情"},
+		{"连接统计", "ss -s", "网络", "查看 socket 连接统计"},
+		{"网络接口", "ip -br addr && ip route", "网络", "查看网卡地址与路由"},
+		{"DNS 配置", "resolvectl status || cat /etc/resolv.conf", "网络", "查看 DNS 配置"},
 		{"查看进程", "ps aux --sort=-%mem | head", "系统", "查看内存占用最高的进程"},
+		{"K8s Pod", "kubectl get pods -A -o wide", "Kubernetes", "查看所有命名空间 Pod"},
+		{"K8s 事件", "kubectl get events -A --sort-by=.lastTimestamp | tail -50", "Kubernetes", "查看最近 Kubernetes 事件"},
 	}
 	commands := make([]types.CommandTemplate, 0, len(items))
 	for i, item := range items {

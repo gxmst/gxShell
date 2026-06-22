@@ -14,7 +14,7 @@ export function CommandPanel(props: { commands: types.CommandTemplate[]; active?
             <div className="truncate text-[11px] font-medium">{cmd.name}</div>
             <div className="truncate font-mono text-[10px] text-muted">{cmd.command}</div>
           </div>
-          <button className="mini-btn" disabled={!props.active} onClick={(e) => { e.stopPropagation(); props.onRun(cmd); }} title="Run"><Play size={10} /></button>
+          <button className="mini-btn" disabled={!props.active} onClick={(e) => { e.stopPropagation(); props.onRun(cmd); }} title={t(props.locale, "run")}><Play size={10} /></button>
           <button className="mini-btn" onClick={(e) => { e.stopPropagation(); props.onRunAll(cmd); }} title={t(props.locale, "runAll")}><Zap size={10} /></button>
           <button className="mini-btn" onClick={(e) => { e.stopPropagation(); props.onEdit(new types.CommandTemplate(cmd)); }}><Edit3 size={10} /></button>
           <button className="mini-btn danger" onClick={(e) => { e.stopPropagation(); props.onDelete(cmd.id); }}><Trash2 size={10} /></button>

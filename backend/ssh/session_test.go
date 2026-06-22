@@ -70,6 +70,19 @@ func TestAppendLine(t *testing.T) {
 	}
 }
 
+func TestCommandExecutionResultDisplayOutput(t *testing.T) {
+	result := CommandExecutionResult{
+		Output:  "stdout\nstderr",
+		Summary: "(exit code: 1)",
+	}
+	if got := result.Output; got != "stdout\nstderr" {
+		t.Fatalf("Output = %q", got)
+	}
+	if got := result.DisplayOutput(); got != "stdout\nstderr\n(exit code: 1)" {
+		t.Fatalf("DisplayOutput = %q", got)
+	}
+}
+
 func TestLimitedBufferZeroLimitUsesLargeLimit(t *testing.T) {
 	buf := newLimitedBuffer(0)
 	data := strings.Repeat("x", 1024)

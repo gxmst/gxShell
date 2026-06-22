@@ -165,6 +165,42 @@ func TestListMarkdownFilesInDirRejectsNonMarkdownFile(t *testing.T) {
 	}
 }
 
+func TestListTextFilesInDirAuthorizesSupportedTextSiblings(t *testing.T) {
+	app := NewApp()
+	dir := t.TempDir()
+	readme := filepath.Join(dir, "readme.md")
+	notes := filepath.Join(dir, "notes.txt")
+	logFile := filepath.Join(dir, "service.log")
+	binary := filepath.Join(dir, "image.bin")
+	for path, content := range map[string]string{
+		readme:  "# readme",
+		notes:   "plain text",
+		logFile: "log line",
+		binary:  "binary-ish",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	app.allowFile(readme)
+	files, err := app.ListTextFilesInDir(readme)
+	if err != nil {
+		t.Fatalf("ListTextFilesInDir error: %v", err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("text files = %#v, want 3 files", files)
+	}
+	for _, path := range []string{notes, logFile} {
+		if _, err := app.ReadLocalFile(path); err != nil {
+			t.Fatalf("text sibling %s should be authorized: %v", filepath.Base(path), err)
+		}
+	}
+	if _, err := app.ReadLocalFile(binary); err == nil {
+		t.Fatal("unsupported sibling should not be authorized")
+	}
+}
+
 func TestResolveLocalMarkdownLinkAuthorizesRelativeChild(t *testing.T) {
 	app := NewApp()
 	dir := t.TempDir()

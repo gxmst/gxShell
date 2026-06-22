@@ -3,6 +3,7 @@
   --panel: #0b1624;
   --panel-soft: #0e1a2a;
   --panel-raised: #111f31;
+  --bg-secondary: var(--panel-soft);
   --terminal: #030b16;
   --terminal-top: #06111f;
   --border: rgba(116, 142, 174, .18);
@@ -15,6 +16,7 @@
   --ok: #53d18d;
   --warn: #f4c95d;
   --bad: #ff6b6b;
+  --error: var(--bad);
   --radius: 11px;
   height: 100vh;
   overflow: hidden;
@@ -37,11 +39,75 @@
   --accent: #8bd3ff;
 }
 
+.app-shell[data-theme="Yuzu Study"] {
+  --bg: #fcf7ed;
+  --panel: #f3e8d6;
+  --panel-soft: #f0e4cf;
+  --panel-raised: #fffaf0;
+  --bg-secondary: #f3e8d6;
+  --terminal: #fffaf0;
+  --terminal-top: #f6ecda;
+  --border: rgba(169, 116, 63, .22);
+  --border-strong: rgba(169, 116, 63, .36);
+  --text: #342519;
+  --muted: #6b5640;
+  --muted-2: #93795c;
+  --accent: #a9743f;
+  --accent-soft: rgba(169, 116, 63, .12);
+  --ok: #5f8a3f;
+  --warn: #c2870c;
+  --bad: #c0492f;
+  --error: var(--bad);
+}
+
+.app-shell[data-theme="Ember Terminal"] {
+  --bg: #111210;
+  --panel: #0c0d0b;
+  --panel-soft: #1b1d19;
+  --panel-raised: #22251e;
+  --bg-secondary: #1b1d19;
+  --terminal: #090a08;
+  --terminal-top: #111210;
+  --border: rgba(155, 207, 95, .20);
+  --border-strong: rgba(155, 207, 95, .34);
+  --text: #ecf6df;
+  --muted: #aab89a;
+  --muted-2: #7c886e;
+  --accent: #9bcf5f;
+  --accent-soft: rgba(155, 207, 95, .16);
+  --ok: #9bcf5f;
+  --warn: #e0b341;
+  --bad: #e57158;
+  --error: var(--bad);
+}
+
+.app-shell[data-theme="Twilight Amber"] {
+  --bg: #18120e;
+  --panel: #120d09;
+  --panel-soft: #221a14;
+  --panel-raised: #2a2018;
+  --bg-secondary: #221a14;
+  --terminal: #0e0a07;
+  --terminal-top: #18120e;
+  --border: rgba(240, 168, 104, .20);
+  --border-strong: rgba(240, 168, 104, .34);
+  --text: #fff4e6;
+  --muted: #d3bca5;
+  --muted-2: #9f8771;
+  --accent: #f0a868;
+  --accent-soft: rgba(240, 168, 104, .16);
+  --ok: #9ec96b;
+  --warn: #e6b455;
+  --bad: #e8745a;
+  --error: var(--bad);
+}
+
 .app-shell[data-theme="Light"] {
   --bg: #e8edf4;
   --panel: #f0f3f8;
   --panel-soft: #e9eef5;
   --panel-raised: #f8fafd;
+  --bg-secondary: var(--panel-soft);
   --terminal: #f4f7fb;
   --terminal-top: #eef1f7;
   --border: rgba(76, 94, 118, .18);

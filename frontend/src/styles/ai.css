@@ -416,6 +416,12 @@
   border-top: 1px solid color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
+.ai-tool-call-bulk {
+  display: flex;
+  justify-content: flex-end;
+  margin: 6px 0;
+}
+
 .ai-tool-approve-btn {
   display: flex;
   align-items: center;

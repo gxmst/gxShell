@@ -26,34 +26,75 @@ func (a *App) DownloadFile(sessionID, remotePath, localPath string) error {
 	return a.sftp.DownloadFile(sessionID, remotePath, localPath)
 }
 
-// ReadRemoteMarkdownFile reads a remote Markdown file through the active SFTP
-// session. It is intentionally Markdown-only and size-limited for viewer use.
-func (a *App) ReadRemoteMarkdownFile(sessionID, remotePath string) (string, error) {
+// ReadRemoteTextFile reads a remote text file through the active SFTP session.
+// It is intentionally extension-limited and size-limited for viewer use.
+func (a *App) ReadRemoteTextFile(sessionID, remotePath string) (string, error) {
 	remotePath = cleanRemoteMarkdownPath(remotePath)
-	if !isRemoteMarkdownPath(remotePath) {
-		return "", fmt.Errorf("remote file is not a Markdown file")
+	if !isRemoteSupportedTextPath(remotePath) {
+		return "", fmt.Errorf("remote file is not a supported text file")
 	}
-	data, err := a.sftp.ReadRemoteFile(sessionID, remotePath, maxMarkdownFileSize)
+	data, err := a.sftp.ReadRemoteFile(sessionID, remotePath, maxTextFileSize)
 	if err != nil {
 		return "", err
 	}
 	return string(data), nil
 }
 
-// WriteRemoteMarkdownFile writes edited Markdown content back to the remote
-// server. Non-Markdown paths and oversized content are rejected.
-func (a *App) WriteRemoteMarkdownFile(sessionID, remotePath, content string) error {
+// ReadRemoteMarkdownFile is kept for older frontend builds and preserves the
+// original Markdown-only contract.
+func (a *App) ReadRemoteMarkdownFile(sessionID, remotePath string) (string, error) {
 	remotePath = cleanRemoteMarkdownPath(remotePath)
 	if !isRemoteMarkdownPath(remotePath) {
-		return fmt.Errorf("remote file is not a Markdown file")
+		return "", fmt.Errorf("remote file is not a Markdown file")
 	}
-	if len(content) > maxMarkdownFileSize {
+	return a.ReadRemoteTextFile(sessionID, remotePath)
+}
+
+// WriteRemoteTextFile writes edited text content back to the remote server.
+// Unsupported paths and oversized content are rejected.
+func (a *App) WriteRemoteTextFile(sessionID, remotePath, content string) error {
+	remotePath = cleanRemoteMarkdownPath(remotePath)
+	if !isRemoteSupportedTextPath(remotePath) {
+		return fmt.Errorf("remote file is not a supported text file")
+	}
+	if len(content) > maxTextFileSize {
 		return fmt.Errorf("content too large (max 5MB)")
 	}
 	return a.sftp.WriteRemoteFile(sessionID, remotePath, []byte(content))
 }
 
-// ListRemoteMarkdownFilesInDir lists .md siblings for a remote Markdown file.
+// WriteRemoteMarkdownFile is kept for older frontend builds and preserves the
+// original Markdown-only contract.
+func (a *App) WriteRemoteMarkdownFile(sessionID, remotePath, content string) error {
+	remotePath = cleanRemoteMarkdownPath(remotePath)
+	if !isRemoteMarkdownPath(remotePath) {
+		return fmt.Errorf("remote file is not a Markdown file")
+	}
+	return a.WriteRemoteTextFile(sessionID, remotePath, content)
+}
+
+// ListRemoteTextFilesInDir lists supported text siblings for a remote text file.
+func (a *App) ListRemoteTextFilesInDir(sessionID, remotePath string) ([]string, error) {
+	remotePath = cleanRemoteMarkdownPath(remotePath)
+	if !isRemoteSupportedTextPath(remotePath) {
+		return nil, fmt.Errorf("remote file is not a supported text file")
+	}
+	dir := path.Dir(remotePath)
+	files, err := a.sftp.ListRemoteDir(sessionID, dir)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]string, 0)
+	for _, file := range files {
+		if !file.IsDir && isRemoteSupportedTextPath(file.Name) {
+			result = append(result, path.Join(dir, file.Name))
+		}
+	}
+	return result, nil
+}
+
+// ListRemoteMarkdownFilesInDir is kept for older frontend builds and preserves
+// the original Markdown-only sibling list.
 func (a *App) ListRemoteMarkdownFilesInDir(sessionID, remotePath string) ([]string, error) {
 	remotePath = cleanRemoteMarkdownPath(remotePath)
 	if !isRemoteMarkdownPath(remotePath) {
@@ -76,7 +117,7 @@ func (a *App) ListRemoteMarkdownFilesInDir(sessionID, remotePath string) ([]stri
 // ResolveRemoteMarkdownLink resolves a relative .md link from a remote Markdown
 // file. It mirrors local link behavior but returns a remote POSIX path.
 func (a *App) ResolveRemoteMarkdownLink(markdownPath string, href string) (string, error) {
-	return resolveRemoteMarkdownRelativePath(markdownPath, href, map[string]bool{".md": true})
+	return resolveRemoteMarkdownRelativePath(markdownPath, href, supportedTextFileExts())
 }
 
 // ReadRemoteMarkdownResourceDataURL resolves a relative image from a remote
@@ -171,5 +212,10 @@ func cleanRemoteMarkdownPath(p string) string {
 }
 
 func isRemoteMarkdownPath(p string) bool {
-	return strings.EqualFold(path.Ext(p), ".md")
+	ext := strings.ToLower(path.Ext(p))
+	return ext == ".md" || ext == ".markdown"
+}
+
+func isRemoteSupportedTextPath(p string) bool {
+	return supportedTextFileExts()[strings.ToLower(path.Ext(p))]
 }

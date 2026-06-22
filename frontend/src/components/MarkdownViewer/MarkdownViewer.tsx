@@ -7,14 +7,16 @@ import { Columns2, ListTree, Pencil, RefreshCw, Save, WrapText, X, ChevronUp, Ch
 import {
   ReadLocalFile,
   ReadLocalMarkdownResourceDataURL,
-  ReadRemoteMarkdownFile,
+  ReadRemoteTextFile,
   ReadRemoteMarkdownResourceDataURL,
   ResolveLocalMarkdownLink,
   ResolveRemoteMarkdownLink,
   WriteLocalFile,
-  WriteRemoteMarkdownFile,
+  WriteRemoteTextFile,
 } from '../../../wailsjs/go/main/App';
 import type { MarkdownOpenTarget, MarkdownSource } from '../../types';
+import { isMarkdownPath } from '../../utils/textFiles';
+import { t } from '../../i18n';
 
 interface MarkdownViewerProps {
   source?: MarkdownSource;
@@ -22,6 +24,7 @@ interface MarkdownViewerProps {
   remotePath?: string;
   sessionId?: string;
   active?: boolean;
+  locale?: string;
   onClose: () => void;
   onNotify?: (text: string, tone?: 'info' | 'error' | 'success') => void;
   onOpenMarkdownFile?: (target: MarkdownOpenTarget) => void;
@@ -33,9 +36,25 @@ type RenderedMarkdown = { html: string; toc: TocItem[] };
 const EMPTY_RENDERED_MARKDOWN: RenderedMarkdown = { html: '', toc: [] };
 const MIN_ZOOM = 0.7;
 const MAX_ZOOM = 2.2;
+const MIN_TOC_WIDTH = 150;
+const MAX_TOC_WIDTH = 320;
+const DEFAULT_TOC_WIDTH = 210;
 const HL_ALL = 'md-search';
 const HL_ACTIVE = 'md-search-active';
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg)([#?].*)?$/i;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function initialTocWidth() {
+  try {
+    const stored = Number(localStorage.getItem('gx:markdownTocWidth'));
+    return stored ? clamp(stored, MIN_TOC_WIDTH, MAX_TOC_WIDTH) : DEFAULT_TOC_WIDTH;
+  } catch {
+    return DEFAULT_TOC_WIDTH;
+  }
+}
 
 function clearHighlights() {
   const reg = (CSS as any).highlights;
@@ -187,11 +206,13 @@ export default function MarkdownViewer({
   remotePath,
   sessionId,
   active,
+  locale = 'en',
   onClose,
   onNotify,
   onOpenMarkdownFile,
 }: MarkdownViewerProps) {
   const [content, setContent] = useState('');
+  const lang = locale || 'en';
   const [draft, setDraft] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -199,6 +220,7 @@ export default function MarkdownViewer({
   const [saving, setSaving] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [tocOpen, setTocOpen] = useState(true);
+  const [tocWidth, setTocWidth] = useState(initialTocWidth);
   const [activeHeading, setActiveHeading] = useState('');
   const [wrapCode, setWrapCode] = useState(false);
   const [splitPreview, setSplitPreview] = useState(false);
@@ -211,7 +233,7 @@ export default function MarkdownViewer({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const splitPreviewRef = useRef<HTMLDivElement>(null);
-  const contentRootRef = useRef<HTMLDivElement>(null);
+  const contentRootRef = useRef<HTMLElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const rangesRef = useRef<Range[]>([]);
   const editMatchesRef = useRef<{ start: number; end: number }[]>([]);
@@ -220,19 +242,29 @@ export default function MarkdownViewer({
   activeRef.current = active;
 
   const displayPath = source === 'remote' ? remotePath : filePath;
-  const previewDoc = useMemo(() => buildMarkdown(content), [content]);
+  const markdownMode = isMarkdownPath(displayPath || '');
+  const previewDoc = useMemo(() => (markdownMode ? buildMarkdown(content) : EMPTY_RENDERED_MARKDOWN), [content, markdownMode]);
   const draftDoc = useMemo(
-    () => (editing && splitPreview ? buildMarkdown(draft) : EMPTY_RENDERED_MARKDOWN),
-    [draft, editing, splitPreview],
+    () => (markdownMode && editing && splitPreview ? buildMarkdown(draft) : EMPTY_RENDERED_MARKDOWN),
+    [draft, editing, splitPreview, markdownMode],
   );
   const visibleDoc = editing && splitPreview ? draftDoc : previewDoc;
-  const canShowToc = (!editing || splitPreview) && visibleDoc.toc.length > 0;
+  const canShowToc = markdownMode && (!editing || splitPreview) && visibleDoc.toc.length > 0;
+  const viewerMainStyle = canShowToc && tocOpen
+    ? ({ '--md-outline-width': `${tocWidth}px` } as React.CSSProperties)
+    : undefined;
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('gx:markdownTocWidth', String(Math.round(tocWidth)));
+    } catch {}
+  }, [tocWidth]);
 
   const loadFile = useCallback(async () => {
     try {
       setLoading(true);
       const text = source === 'remote'
-        ? await ReadRemoteMarkdownFile(sessionId || '', remotePath || '')
+        ? await ReadRemoteTextFile(sessionId || '', remotePath || '')
         : await ReadLocalFile(filePath || '');
       setContent(text);
       setDraft(text);
@@ -279,7 +311,7 @@ export default function MarkdownViewer({
   };
 
   const cancelEdit = () => {
-    if (dirty && !window.confirm('Discard unsaved changes?')) return;
+    if (dirty && !window.confirm(t(lang, 'discardChanges'))) return;
     captureScrollRatio();
     setDraft(content);
     setEditing(false);
@@ -290,7 +322,7 @@ export default function MarkdownViewer({
     try {
       setSaving(true);
       if (source === 'remote') {
-        await WriteRemoteMarkdownFile(sessionId || '', remotePath || '', draft);
+        await WriteRemoteTextFile(sessionId || '', remotePath || '', draft);
       } else {
         await WriteLocalFile(filePath || '', draft);
       }
@@ -298,7 +330,7 @@ export default function MarkdownViewer({
       setContent(draft);
       setEditing(false);
       setSplitPreview(false);
-      onNotify?.('File saved', 'success');
+      onNotify?.(t(lang, 'fileSaved'), 'success');
     } catch (err: any) {
       onNotify?.(err.toString(), 'error');
     } finally {
@@ -474,6 +506,7 @@ export default function MarkdownViewer({
   };
 
   const onContentClick = useCallback(async (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!markdownMode) return;
     if (!(e.target instanceof HTMLElement)) return;
 
     const copyBtn = e.target.closest('[data-code-copy]');
@@ -482,9 +515,9 @@ export default function MarkdownViewer({
       const code = copyBtn.closest('.md-code-block')?.querySelector('code')?.textContent || '';
       try {
         await navigator.clipboard.writeText(code);
-        onNotify?.('Copied to clipboard', 'success');
+        onNotify?.(t(lang, 'copyToClipboard'), 'success');
       } catch {
-        onNotify?.('Copy failed', 'error');
+        onNotify?.(t(lang, 'copyFailed'), 'error');
       }
       return;
     }
@@ -515,16 +548,31 @@ export default function MarkdownViewer({
     } catch (err: any) {
       onNotify?.(err.toString(), 'error');
     }
-  }, [source, filePath, remotePath, sessionId, onOpenMarkdownFile, onNotify]);
+  }, [markdownMode, source, filePath, remotePath, sessionId, onOpenMarkdownFile, onNotify]);
 
   const jumpToHeading = (id: string) => {
     const el = contentRootRef.current?.querySelector<HTMLElement>(`#${cssEscape(id)}`);
     el?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   };
 
+  const onTocResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = tocWidth;
+    const onMove = (ev: MouseEvent) => {
+      setTocWidth(clamp(startWidth + ev.clientX - startX, MIN_TOC_WIDTH, MAX_TOC_WIDTH));
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [tocWidth]);
+
   useEffect(() => {
     const root = contentRootRef.current;
-    if (!root || !displayPath) return;
+    if (!markdownMode || !root || !displayPath) return;
     let cancelled = false;
     const images = Array.from(root.querySelectorAll<HTMLImageElement>('img[data-md-src]'));
     images.forEach(async (img) => {
@@ -546,9 +594,10 @@ export default function MarkdownViewer({
     return () => {
       cancelled = true;
     };
-  }, [visibleDoc.html, editing, splitPreview, source, filePath, remotePath, sessionId, displayPath]);
+  }, [markdownMode, visibleDoc.html, editing, splitPreview, source, filePath, remotePath, sessionId, displayPath]);
 
   useEffect(() => {
+    if (!markdownMode) return;
     const root = contentRootRef.current;
     if (!root) return;
     let cancelled = false;
@@ -578,7 +627,7 @@ export default function MarkdownViewer({
     return () => {
       cancelled = true;
     };
-  }, [visibleDoc.html, editing, splitPreview]);
+  }, [markdownMode, visibleDoc.html, editing, splitPreview]);
 
   useEffect(() => {
     const scroller = editing && splitPreview ? splitPreviewRef.current : previewRef.current;
@@ -604,7 +653,7 @@ export default function MarkdownViewer({
     return () => scroller.removeEventListener('scroll', updateActiveHeading);
   }, [visibleDoc.html, editing, splitPreview, canShowToc]);
 
-  if (loading) return <div className="markdown-viewer-loading">Loading...</div>;
+  if (loading) return <div className="markdown-viewer-loading">{t(lang, "loading")}</div>;
   if (error) return <div className="markdown-viewer-error">{error}</div>;
 
   return (
@@ -624,18 +673,18 @@ export default function MarkdownViewer({
           onClick={() => setTocOpen((v) => !v)}
           className={clsx('markdown-viewer-fbtn', tocOpen && canShowToc && 'active')}
           disabled={!canShowToc}
-          title="Outline"
+          title={t(lang, "outline")}
         >
           <ListTree size={15} />
         </button>
         <button
           onClick={() => setWrapCode((v) => !v)}
           className={clsx('markdown-viewer-fbtn', wrapCode && 'active')}
-          title="Wrap code"
+          title={markdownMode ? t(lang, "wrapCode") : t(lang, "wrapText")}
         >
           <WrapText size={15} />
         </button>
-        {editing && (
+        {markdownMode && editing && (
           <button
             onClick={() => setSplitPreview((v) => !v)}
             className={clsx('markdown-viewer-fbtn', splitPreview && 'active')}
@@ -674,7 +723,7 @@ export default function MarkdownViewer({
             ref={searchInputRef}
             className="markdown-search-input"
             value={query}
-            placeholder="Find"
+            placeholder={t(lang, "find")}
             spellCheck={false}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={onSearchKeyDown}
@@ -688,26 +737,35 @@ export default function MarkdownViewer({
           <button className="markdown-viewer-fbtn" onClick={goNext} disabled={!matchCount} title="Next (Enter)">
             <ChevronDown size={15} />
           </button>
-          <button className="markdown-viewer-fbtn" onClick={closeSearch} title="Close (Esc)">
+          <button className="markdown-viewer-fbtn" onClick={closeSearch} title={t(lang, "closeEsc")}>
             <X size={15} />
           </button>
         </div>
       )}
 
-      <div className={clsx('markdown-viewer-main', canShowToc && tocOpen && 'with-toc')}>
+      <div className={clsx('markdown-viewer-main', canShowToc && tocOpen && 'with-toc')} style={viewerMainStyle}>
         {canShowToc && tocOpen && (
           <aside className="markdown-viewer-outline">
-            {visibleDoc.toc.map((item) => (
-              <button
-                key={item.id}
-                className={clsx('markdown-outline-item', activeHeading === item.id && 'active')}
-                style={{ paddingLeft: 8 + (item.depth - 1) * 10 }}
-                title={item.text}
-                onClick={() => jumpToHeading(item.id)}
-              >
-                {item.text}
+            <div className="markdown-outline-header">
+              <span>{t(lang, "outline")}</span>
+              <button className="markdown-outline-close" onClick={() => setTocOpen(false)} title={t(lang, "hideOutline")}>
+                <X size={13} />
               </button>
-            ))}
+            </div>
+            <div className="markdown-outline-list">
+              {visibleDoc.toc.map((item) => (
+                <button
+                  key={item.id}
+                  className={clsx('markdown-outline-item', activeHeading === item.id && 'active')}
+                  style={{ paddingLeft: 8 + (item.depth - 1) * 10 }}
+                  title={item.text}
+                  onClick={() => jumpToHeading(item.id)}
+                >
+                  {item.text}
+                </button>
+              ))}
+            </div>
+            <div className="markdown-outline-resizer" onMouseDown={onTocResizeStart} />
           </aside>
         )}
 
@@ -723,10 +781,10 @@ export default function MarkdownViewer({
               onKeyDown={onEditorKeyDown}
               onScroll={syncSplitPreviewScroll}
             />
-            {splitPreview && (
+            {markdownMode && splitPreview && (
               <div className="markdown-viewer-content markdown-viewer-split-content" ref={splitPreviewRef}>
                 <div
-                  ref={contentRootRef}
+                  ref={contentRootRef as React.RefObject<HTMLDivElement>}
                   className={clsx('ai-markdown', 'md-document', wrapCode && 'md-wrap-code')}
                   style={{ zoom: zoom }}
                   onClick={onContentClick}
@@ -737,13 +795,23 @@ export default function MarkdownViewer({
           </div>
         ) : (
           <div className="markdown-viewer-content" ref={previewRef}>
-            <div
-              ref={contentRootRef}
-              className={clsx('ai-markdown', 'md-document', wrapCode && 'md-wrap-code')}
-              style={{ zoom: zoom }}
-              onClick={onContentClick}
-              dangerouslySetInnerHTML={{ __html: previewDoc.html }}
-            />
+            {markdownMode ? (
+              <div
+                ref={contentRootRef as React.RefObject<HTMLDivElement>}
+                className={clsx('ai-markdown', 'md-document', wrapCode && 'md-wrap-code')}
+                style={{ zoom: zoom }}
+                onClick={onContentClick}
+                dangerouslySetInnerHTML={{ __html: previewDoc.html }}
+              />
+            ) : (
+              <pre
+                ref={contentRootRef as React.RefObject<HTMLPreElement>}
+                className={clsx('text-document', wrapCode && 'text-document-wrap')}
+                style={{ zoom: zoom }}
+              >
+                {content}
+              </pre>
+            )}
           </div>
         )}
       </div>

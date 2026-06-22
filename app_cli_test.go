@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -50,6 +52,26 @@ func TestLoadOrCreateCliTokenPersistsToken(t *testing.T) {
 	}
 	if first != second {
 		t.Fatalf("token was not persisted: %q != %q", first, second)
+	}
+}
+
+func TestHandleCliExecValidationErrorKind(t *testing.T) {
+	app := NewApp()
+	body := []byte(`{"server":"prod","command":"uptime","timeoutMs":500}`)
+	req := httptest.NewRequest(http.MethodPost, "/cli/exec", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	app.handleCliExec(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload["errorKind"] != "validation" {
+		t.Fatalf("errorKind = %#v, want validation", payload["errorKind"])
 	}
 }
 
