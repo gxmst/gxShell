@@ -298,11 +298,17 @@
   padding: 7px 8px;
   border: 1px solid transparent;
   background: color-mix(in srgb, var(--panel-raised) 24%, transparent);
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease), transform var(--dur) var(--ease);
 }
 
 .server-row:hover {
   border-color: color-mix(in srgb, var(--accent) 18%, transparent);
   background: color-mix(in srgb, var(--panel-raised) 68%, transparent);
+  transform: translateY(-1px);
+}
+
+.server-row:active {
+  transform: translateY(0);
 }
 
 .server-row-main {
@@ -476,3 +482,49 @@
   word-break: break-all;
 }
 
+
+/* Actionable empty state for the server list: shown on first run when no server
+   profiles exist yet. Guides the user to create their first connection instead
+   of showing a bare "no servers" line. */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 22px 16px;
+  animation: empty-state-in var(--dur-slow) var(--ease-out) both;
+}
+
+.empty-state-icon {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 13px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.empty-state-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.empty-state-text {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+  max-width: 220px;
+}
+
+.empty-state-action {
+  margin-top: 4px;
+}
+
+@keyframes empty-state-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}

@@ -18,6 +18,18 @@
   --bad: #ff6b6b;
   --error: var(--bad);
   --radius: 11px;
+  /* Motion tokens. --ease was referenced across the app but never defined, so
+     every `transition: ... var(--ease)` silently fell back to no easing (and in
+     shorthand, an invalid var voids the whole declaration — killing the
+     transition). Defining it here restores those animations. The scale gives a
+     consistent, modern feel: a standard ease for most UI, a springy ease for
+     entrances/emphasis, plus named durations. */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --dur-slow: 260ms;
   height: 100vh;
   overflow: hidden;
   background: var(--bg);

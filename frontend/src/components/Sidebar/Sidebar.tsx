@@ -15,6 +15,7 @@ import { TunnelPanel } from "../TunnelPanel/TunnelPanel";
 import { LogsPanel } from "../LogsPanel/LogsPanel";
 import { AiPanel } from "../AiPanel/AiPanel";
 import { ContainerPanel } from "../ContainerPanel/ContainerPanel";
+import { RecordingsPanel } from "../RecordingsPanel/RecordingsPanel";
 import { NetworkPathCard } from "../NetworkPathCard/NetworkPathCard";
 import { MemoryCard } from "../MemoryCard/MemoryCard";
 import { MonitorDetailCard, type MonitorDetailKind } from "../MonitorDetailCard/MonitorDetailCard";
@@ -23,7 +24,7 @@ type FloatKey = "path" | "memory" | MonitorDetailKind;
 type PrimaryNav = "connections" | "files" | "tools";
 type FileMode = "remote" | "text";
 
-const toolDrawers: Drawer[] = ["commands", "tunnels", "containers", "logs"];
+const toolDrawers: Drawer[] = ["commands", "tunnels", "containers", "logs", "recordings"];
 
 function primaryForDrawer(drawer: Drawer): PrimaryNav | "ai" | "settings" {
   if (drawer === "monitor") return "connections";
@@ -74,7 +75,7 @@ export function Sidebar(props: {
   activeTabId: string;
 }) {
   const lang = props.settings?.language || "en";
-  const appVersion = props.appInfo.version || "1.1.3";
+  const appVersion = props.appInfo.version || "1.2.0";
   const [splitPct, setSplitPct] = useState(45);
   const dragRef = useRef({ active: false, startY: 0, startPct: 0 });
   const splitRef = useRef(splitPct);
@@ -227,7 +228,18 @@ export function Sidebar(props: {
                   </div>
                 </div>
               ))}
-              {!filteredProfiles.length && <div className="empty">{t(lang, "noServers")}</div>}
+              {!filteredProfiles.length && (
+                props.profiles.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="empty-state-icon"><Server size={22} /></div>
+                    <div className="empty-state-title">{t(lang, "emptyServersTitle")}</div>
+                    <div className="empty-state-text">{t(lang, "emptyServersHint")}</div>
+                    <button className="btn-primary empty-state-action" onClick={props.onNewProfile}><Plus size={13} /> {t(lang, "newConnection")}</button>
+                  </div>
+                ) : (
+                  <div className="empty">{t(lang, "noServers")}</div>
+                )
+              )}
             </div>
 
             <div className="split-handle" onMouseDown={onDragStart} />
@@ -332,6 +344,7 @@ export function Sidebar(props: {
                 {props.drawer === "tunnels" && <TunnelPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
                 {props.drawer === "logs" && <LogsPanel locale={lang} onOpenLog={props.onOpenLog} />}
                 {props.drawer === "containers" && <ContainerPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
+                {props.drawer === "recordings" && <RecordingsPanel active={props.active} locale={lang} onNotify={props.onNotify} settings={props.settings} />}
               </div>
             </>
           )}

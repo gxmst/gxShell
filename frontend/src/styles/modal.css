@@ -7,6 +7,12 @@
   justify-content: center;
   background: rgba(2, 8, 18, .62);
   backdrop-filter: blur(10px);
+  animation: modal-backdrop-in var(--dur) var(--ease);
+}
+
+@keyframes modal-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .modal {
@@ -18,6 +24,12 @@
   background: color-mix(in srgb, var(--panel) 94%, black);
   box-shadow: 0 22px 80px rgba(0, 0, 0, .35);
   padding: 20px;
+  animation: modal-in var(--dur-slow) var(--ease-out);
+}
+
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(8px) scale(.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .modal-compact {

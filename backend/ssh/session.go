@@ -38,6 +38,7 @@ type Session struct {
 	done       chan struct{}
 	closeOnce  sync.Once
 	mu         sync.RWMutex
+	recorder   *castRecorder
 }
 
 func NewManager(knownHostsPath string, emit func(event string, data any), confirm func(host, fingerprint string) bool) *Manager {
@@ -227,10 +228,22 @@ func (m *Manager) forwardOutput(id string, reader io.Reader) {
 	for {
 		n, err := reader.Read(buf)
 		if n > 0 {
+			chunk := string(buf[:n])
 			m.emit("terminal:data", map[string]string{
 				"sessionId": id,
-				"data":      string(buf[:n]),
+				"data":      chunk,
 			})
+			m.mu.RLock()
+			session := m.sessions[id]
+			m.mu.RUnlock()
+			if session != nil {
+				session.mu.RLock()
+				rec := session.recorder
+				session.mu.RUnlock()
+				if rec != nil {
+					rec.writeOutput(chunk)
+				}
+			}
 		}
 		if err != nil {
 			return
@@ -318,7 +331,66 @@ func (m *Manager) Resize(id string, cols int, rows int) error {
 	}
 	session.info.Cols = cols
 	session.info.Rows = rows
+	if session.recorder != nil {
+		session.recorder.writeResize(cols, rows)
+	}
 	return nil
+}
+
+// StartRecording begins recording the session's terminal output to a .cast file
+// at path. It taps only stdout/stderr, not stdin. Shell-echoed commands are part
+// of terminal output, while password prompts with echo disabled are not captured.
+// Returns an error if the session is missing or already recording. The current
+// terminal size seeds the .cast header.
+func (m *Manager) StartRecording(id, path, title string) error {
+	session, err := m.get(id)
+	if err != nil {
+		return err
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.recorder != nil {
+		return recordingError("session is already recording")
+	}
+	cols, rows := session.info.Cols, session.info.Rows
+	rec, err := newCastRecorder(path, title, cols, rows)
+	if err != nil {
+		return err
+	}
+	session.recorder = rec
+	return nil
+}
+
+// StopRecording finalizes the recording and returns the file path. Returns an
+// error if the session is missing or was not recording.
+func (m *Manager) StopRecording(id string) (string, error) {
+	session, err := m.get(id)
+	if err != nil {
+		return "", err
+	}
+	session.mu.Lock()
+	rec := session.recorder
+	session.recorder = nil
+	session.mu.Unlock()
+	if rec == nil {
+		return "", recordingError("session is not recording")
+	}
+	path := rec.filePath()
+	if err := rec.close(); err != nil {
+		return path, err
+	}
+	return path, nil
+}
+
+// IsRecording reports whether the session is currently recording.
+func (m *Manager) IsRecording(id string) bool {
+	session, err := m.get(id)
+	if err != nil {
+		return false
+	}
+	session.mu.RLock()
+	defer session.mu.RUnlock()
+	return session.recorder != nil
 }
 
 func (m *Manager) Disconnect(id string) error {
@@ -331,6 +403,7 @@ func (m *Manager) Disconnect(id string) error {
 	delete(m.sessions, id)
 	m.mu.Unlock()
 
+	var recCloseErr error
 	session.closeOnce.Do(func() {
 		session.mu.Lock()
 		if session.stdin != nil {
@@ -345,15 +418,30 @@ func (m *Manager) Disconnect(id string) error {
 		if session.jumpClient != nil {
 			_ = session.jumpClient.Close()
 		}
+		// Take the recorder under the lock but flush/close it after unlocking:
+		// most disconnects (shell.Wait returning, keepalive failure, user close)
+		// go through here rather than StopRecording, so without this an in-progress
+		// recording would leak its file handle and lose its final buffered output.
+		rec := session.recorder
+		session.recorder = nil
 		close(session.done)
 		if session.info.State != types.SessionError {
 			session.info.State = types.SessionDisconnected
 		}
 		info := session.info
 		session.mu.Unlock()
+		if rec != nil {
+			if err := rec.close(); err != nil {
+				recCloseErr = err
+				m.emit("recording:error", map[string]any{
+					"sessionId": id,
+					"error":     "failed to finalize recording: " + err.Error(),
+				})
+			}
+		}
 		m.emit("terminal:disconnected", info)
 	})
-	return nil
+	return recCloseErr
 }
 
 func (m *Manager) Get(id string) (types.SessionInfo, error) {

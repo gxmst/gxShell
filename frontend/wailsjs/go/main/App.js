@@ -58,6 +58,10 @@ export function DeleteProfile(arg1) {
   return window['go']['main']['App']['DeleteProfile'](arg1);
 }
 
+export function DeleteRecording(arg1) {
+  return window['go']['main']['App']['DeleteRecording'](arg1);
+}
+
 export function DeleteRemoteFile(arg1, arg2) {
   return window['go']['main']['App']['DeleteRemoteFile'](arg1, arg2);
 }
@@ -110,8 +114,16 @@ export function GetSettings() {
   return window['go']['main']['App']['GetSettings']();
 }
 
+export function GetStartupFile() {
+  return window['go']['main']['App']['GetStartupFile']();
+}
+
 export function IsMarkdownContextMenuRegistered() {
   return window['go']['main']['App']['IsMarkdownContextMenuRegistered']();
+}
+
+export function IsRecording(arg1) {
+  return window['go']['main']['App']['IsRecording'](arg1);
 }
 
 export function IsTextContextMenuRegistered() {
@@ -144,6 +156,10 @@ export function ListMarkdownFilesInDir(arg1) {
 
 export function ListProfiles() {
   return window['go']['main']['App']['ListProfiles']();
+}
+
+export function ListRecordings() {
+  return window['go']['main']['App']['ListRecordings']();
 }
 
 export function ListRemoteDir(arg1, arg2) {
@@ -190,6 +206,10 @@ export function OpenRecentTextFile(arg1) {
   return window['go']['main']['App']['OpenRecentTextFile'](arg1);
 }
 
+export function OpenRecordingsDir() {
+  return window['go']['main']['App']['OpenRecordingsDir']();
+}
+
 export function PingHost(arg1, arg2) {
   return window['go']['main']['App']['PingHost'](arg1, arg2);
 }
@@ -208,6 +228,10 @@ export function ReadLogFile(arg1) {
 
 export function ReadLogs(arg1) {
   return window['go']['main']['App']['ReadLogs'](arg1);
+}
+
+export function ReadRecording(arg1) {
+  return window['go']['main']['App']['ReadRecording'](arg1);
 }
 
 export function ReadRemoteMarkdownFile(arg1, arg2) {
@@ -318,6 +342,10 @@ export function StartNetworkPing(arg1, arg2) {
   return window['go']['main']['App']['StartNetworkPing'](arg1, arg2);
 }
 
+export function StartRecording(arg1, arg2) {
+  return window['go']['main']['App']['StartRecording'](arg1, arg2);
+}
+
 export function StopContainer(arg1, arg2) {
   return window['go']['main']['App']['StopContainer'](arg1, arg2);
 }
@@ -332,6 +360,10 @@ export function StopMonitor(arg1) {
 
 export function StopNetworkPing(arg1) {
   return window['go']['main']['App']['StopNetworkPing'](arg1);
+}
+
+export function StopRecording(arg1) {
+  return window['go']['main']['App']['StopRecording'](arg1);
 }
 
 export function StreamContainerLogs(arg1, arg2, arg3) {

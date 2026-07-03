@@ -30,6 +30,8 @@ export function DeleteCommand(arg1:string):Promise<void>;
 
 export function DeleteProfile(arg1:string):Promise<void>;
 
+export function DeleteRecording(arg1:string):Promise<void>;
+
 export function DeleteRemoteFile(arg1:string,arg2:string):Promise<void>;
 
 export function Disconnect(arg1:string):Promise<void>;
@@ -56,7 +58,11 @@ export function GetProfile(arg1:string):Promise<types.Profile>;
 
 export function GetSettings():Promise<types.AppSettings>;
 
+export function GetStartupFile():Promise<string>;
+
 export function IsMarkdownContextMenuRegistered():Promise<boolean>;
+
+export function IsRecording(arg1:string):Promise<boolean>;
 
 export function IsTextContextMenuRegistered():Promise<boolean>;
 
@@ -73,6 +79,8 @@ export function ListLogFiles():Promise<Array<types.LogFile>>;
 export function ListMarkdownFilesInDir(arg1:string):Promise<Array<string>>;
 
 export function ListProfiles():Promise<Array<types.Profile>>;
+
+export function ListRecordings():Promise<Array<types.Recording>>;
 
 export function ListRemoteDir(arg1:string,arg2:string):Promise<Array<types.RemoteFile>>;
 
@@ -96,6 +104,8 @@ export function OpenRecentMarkdownFile(arg1:string):Promise<string>;
 
 export function OpenRecentTextFile(arg1:string):Promise<string>;
 
+export function OpenRecordingsDir():Promise<void>;
+
 export function PingHost(arg1:string,arg2:number):Promise<types.NetworkPath>;
 
 export function ReadLocalFile(arg1:string):Promise<string>;
@@ -105,6 +115,8 @@ export function ReadLocalMarkdownResourceDataURL(arg1:string,arg2:string):Promis
 export function ReadLogFile(arg1:string):Promise<string>;
 
 export function ReadLogs(arg1:number):Promise<Array<types.LogEntry>>;
+
+export function ReadRecording(arg1:string):Promise<string>;
 
 export function ReadRemoteMarkdownFile(arg1:string,arg2:string):Promise<string>;
 
@@ -160,6 +172,8 @@ export function StartMonitor(arg1:string):Promise<void>;
 
 export function StartNetworkPing(arg1:string,arg2:number):Promise<void>;
 
+export function StartRecording(arg1:string,arg2:string):Promise<string>;
+
 export function StopContainer(arg1:string,arg2:string):Promise<void>;
 
 export function StopContainerLogs(arg1:string,arg2:string):Promise<void>;
@@ -167,6 +181,8 @@ export function StopContainerLogs(arg1:string,arg2:string):Promise<void>;
 export function StopMonitor(arg1:string):Promise<void>;
 
 export function StopNetworkPing(arg1:string):Promise<void>;
+
+export function StopRecording(arg1:string):Promise<string>;
 
 export function StreamContainerLogs(arg1:string,arg2:string,arg3:number):Promise<void>;
 

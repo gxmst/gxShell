@@ -4,7 +4,10 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 
 ## Features
 
-- SSH terminal sessions with xterm.js, WebGL rendering, reconnect, resize, search, split view, and tear-off floating terminals.
+- SSH terminal sessions with xterm.js, WebGL rendering, reconnect, resize, search, split view, tear-off floating terminals, and drag-to-reorder tabs.
+- Automatic reconnect for profiles that opt in: dropped sessions retry with backoff (only when the profile can reconnect without prompting for a secret).
+- Synchronized input (broadcast typing) that mirrors keystrokes from the active terminal to every other connected SSH terminal, with a prominent active-broadcast banner.
+- Clickable URLs and remote file paths in terminal output, rendered in the display layer so the SSH output stream is never rewritten. Clicking a URL opens the system browser; clicking a path reveals it in the SFTP drawer.
 - Password and private-key authentication, including passphrase support and ProxyJump through one jump host.
 - Local terminal sessions alongside remote SSH sessions.
 - SFTP file management with upload, download, folder download, rename, delete, transfer progress, safer remote path handling, and a guarded shared SFTP client cache for concurrent operations.
@@ -12,6 +15,8 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 - Docker container management over SSH, including list, logs, follow logs, start, stop, restart, and remove.
 - SSH tunnel management for local, remote, and dynamic SOCKS forwarding.
 - Network diagnostics with ping and traceroute parsing.
+- Session recording of terminal output to asciinema `.cast` files, with a built-in player (play, pause, restart, variable speed) and a recordings panel to play, delete, or reveal saved recordings. Recording taps terminal output only, not stdin; shell-echoed commands can appear in recordings, while password prompts with echo disabled are not captured.
+- Reusable command templates with `<name>` variable placeholders. Running a template with placeholders prompts for each value with a live preview before the command is sent, to the active terminal or broadcast to all sessions.
 - AI assistant for OpenAI-compatible APIs, with streaming responses, model listing, token usage, terminal context, and explicit native confirmation before remote tool execution.
 - External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands on opted-in profiles through the running app, without exposing saved SSH credentials. The CLI can be disabled globally, reuses active SSH sessions when possible, follows each profile's ProxyJump setting, runs simple read-only commands directly, batches approval prompts for nearby external requests, supports `--json`, `--timeout`, `exec-file`, and `exec-stdin`, and requires native confirmation for anything else. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
 - Local and remote text/Markdown viewer/editor with sanitized Markdown rendering, plain-text viewing for logs and other text formats, file-open support, drag-and-drop opening, recent files, sibling and relative-link navigation, relative image previews for Markdown, table of contents, code highlighting, Mermaid diagrams, in-document search, zoom, edit, save, split preview, and refresh.
@@ -141,7 +146,7 @@ go build -o gxshell-cli.exe .\cmd\gxshell-cli
 4. Create a GitHub release with the built executables as assets:
 
 ```powershell
-gh release create v1.1.3 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.1.3" --notes-file .\release-notes.md
+gh release create v1.2.0 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.2.0" --notes-file .\release-notes.md
 ```
 
 Use release notes that describe behavior and fixes only. Do not include local paths, tokens, API keys, server addresses, private hostnames, or log output.

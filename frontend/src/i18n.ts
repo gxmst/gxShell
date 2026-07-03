@@ -15,6 +15,8 @@ export type LangKey =
   | "copyToClipboard" | "all" | "none"
   | "confirmDisconnectBody" | "connecting"
   | "highlighting" | "highlightOff" | "highlightBasic" | "highlightFull"
+  | "clickableLinks" | "clickableLinksHint"
+  | "emptyServersTitle" | "emptyServersHint"
   | "exportHistory" | "savePassword"
   | "editServer" | "newServer" | "name" | "group" | "host" | "port"
   | "username" | "auth" | "password" | "privateKey" | "passphrase"
@@ -29,6 +31,7 @@ export type LangKey =
   | "local" | "remote" | "upload" | "download"
   | "sshTunnels" | "restartTunnels" | "noTunnels" | "tunnelsRestarted"
   | "reconnecting" | "reconnectFailed" | "autoReconnect"
+  | "broadcastToggle" | "broadcastActive" | "broadcastStop"
   | "tunnelRules" | "addTunnel" | "tunnelType" | "tunnelLocal" | "tunnelRemote" | "tunnelDynamic" | "tunnelBindHost" | "removeTunnel" | "tunnelAdded"
   | "proxyJump"
   | "presetWeb" | "presetMySQL" | "presetRedis" | "presetSOCKS"
@@ -41,7 +44,10 @@ export type LangKey =
   | "logs" | "logFiles" | "noLogFiles" | "selectLogFile" | "runAll"
   | "ai" | "aiAssistant" | "aiSettings" | "aiProvider" | "aiModel" | "aiApiKey" | "aiEndpoint" | "aiCustom" | "aiSend" | "aiThinking" | "aiNoConfig" | "aiNoConfigHint" | "aiContext" | "aiTokenUsage" | "aiClear" | "aiDiagnose" | "aiInputPlaceholder" | "aiFetchModels" | "aiSelectModel" | "aiNewChat" | "aiChatHistory" | "aiNoChats"
   | "aiToolExecute" | "aiToolReadFile" | "aiToolRunning" | "aiRunTool" | "aiRunAllTools" | "aiPreset" | "aiOpenAICompatible" | "aiResetUsage" | "aiApiKeySaved" | "aiNoApiKey" | "aiContextReady" | "aiNoContext" | "aiNotConfigured" | "aiSettingsSaved" | "aiNoModels" | "aiNoTerminalOutput"
-  | "containers" | "noContainers" | "showAll" | "viewLogs" | "restart" | "stop" | "start" | "remove" | "noLogs" | "noActiveSession" | "localTerminal";
+  | "containers" | "noContainers" | "showAll" | "viewLogs" | "restart" | "stop" | "start" | "remove" | "noLogs" | "noActiveSession" | "localTerminal"
+  | "recordings" | "recordingsHint" | "noRecordings" | "playRecording" | "deleteRecording" | "openRecordingsDir"
+  | "startRecording" | "stopRecording" | "recordingStarted" | "recordingSaved" | "recordingActive" | "recordingEmpty" | "pause" | "play" | "playbackSpeed"
+  | "commandVarsHint" | "commandPreview";
 
 const en: Record<LangKey, string> = {
   monitor: "Monitor",
@@ -104,6 +110,10 @@ const en: Record<LangKey, string> = {
   highlightOff: "Off",
   highlightBasic: "Basic (errors, warnings)",
   highlightFull: "Full (IP, paths, services)",
+  clickableLinks: "Clickable URLs and paths",
+  clickableLinksHint: "Underline URLs and remote file paths in the terminal. Click a URL to open it, or a path to reveal it in SFTP.",
+  emptyServersTitle: "No servers yet",
+  emptyServersHint: "Add your first SSH server to start connecting.",
   exportHistory: "Export history",
   savePassword: "Save password or passphrase in system credential store",
   editServer: "Edit server",
@@ -160,6 +170,9 @@ const en: Record<LangKey, string> = {
   reconnecting: "Reconnecting...",
   reconnectFailed: "Reconnect failed",
   autoReconnect: "Auto Reconnect",
+  broadcastToggle: "Broadcast input to all terminals",
+  broadcastActive: "Broadcast input on — typing goes to {n} terminals",
+  broadcastStop: "Stop",
   tunnelRules: "Tunnel Rules",
   addTunnel: "Add Tunnel",
   tunnelType: "Type",
@@ -289,6 +302,23 @@ const en: Record<LangKey, string> = {
   noLogs: "No logs available",
   noActiveSession: "No active session",
   localTerminal: "Local Terminal",
+  recordings: "Recordings",
+  noRecordings: "No recordings yet",
+  recordingsHint: "Recordings capture terminal output only, not stdin. Shell-echoed commands may appear; password prompts with echo disabled are not captured.",
+  startRecording: "Record session",
+  stopRecording: "Stop recording",
+  recordingStarted: "Recording started",
+  recordingSaved: "Recording saved: {name}",
+  recordingActive: "Recording",
+  recordingEmpty: "This recording has no output.",
+  playRecording: "Play",
+  deleteRecording: "Delete recording",
+  openRecordingsDir: "Open recordings folder",
+  playbackSpeed: "Playback speed",
+  pause: "Pause",
+  play: "Play",
+  commandVarsHint: "Fill in the values for this command's placeholders.",
+  commandPreview: "Preview",
 };
 
 const zhCN: Record<LangKey, string> = {
@@ -352,6 +382,10 @@ const zhCN: Record<LangKey, string> = {
   highlightOff: "关闭",
   highlightBasic: "基础（错误、警告）",
   highlightFull: "完整（IP、路径、服务）",
+  clickableLinks: "可点击的链接和路径",
+  clickableLinksHint: "在终端中为 URL 和远程文件路径加下划线。点击 URL 直接打开，点击路径在 SFTP 中定位。",
+  emptyServersTitle: "还没有服务器",
+  emptyServersHint: "添加第一台 SSH 服务器，开始连接。",
   exportHistory: "导出历史",
   savePassword: "在系统凭据管理器中保存密码",
   editServer: "编辑服务器",
@@ -408,6 +442,9 @@ const zhCN: Record<LangKey, string> = {
   reconnecting: "正在重连...",
   reconnectFailed: "重连失败",
   autoReconnect: "自动重连",
+  broadcastToggle: "同步输入到所有终端",
+  broadcastActive: "同步输入已开启 · 键入将发送到 {n} 个终端",
+  broadcastStop: "停止",
   tunnelRules: "隧道规则",
   addTunnel: "添加隧道",
   tunnelType: "类型",
@@ -537,6 +574,23 @@ const zhCN: Record<LangKey, string> = {
   noLogs: "暂无日志",
   noActiveSession: "无活动会话",
   localTerminal: "本地终端",
+  recordings: "会话录制",
+  recordingsHint: "录制只捕获终端输出，不读取 stdin。Shell 回显的命令可能出现在录制中；关闭回显的密码提示不会被捕获。",
+  noRecordings: "还没有录制。点击终端标签栏的录制按钮开始。",
+  playRecording: "播放",
+  deleteRecording: "删除录制",
+  openRecordingsDir: "打开录制文件夹",
+  startRecording: "录制会话",
+  stopRecording: "停止录制",
+  recordingStarted: "已开始录制",
+  recordingSaved: "录制已保存：{name}",
+  recordingActive: "录制中",
+  recordingEmpty: "该录制没有输出内容",
+  pause: "暂停",
+  play: "播放",
+  playbackSpeed: "播放速度",
+  commandVarsHint: "填写该命令中占位符的值。",
+  commandPreview: "预览",
 };
 
 const locales: Record<string, Record<LangKey, string>> = { en, "zh-CN": zhCN };
@@ -555,6 +609,7 @@ export function navLabel(key: string, locale: string): string {
     tunnels: "sshTunnels",
     logs: "logs",
     containers: "containers",
+    recordings: "recordings",
     ai: "ai",
     settings: "settings",
   };

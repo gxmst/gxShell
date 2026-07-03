@@ -54,6 +54,8 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
         </div>
         <label className="check"><input type="checkbox" checked={draft.monitorEnabled} onChange={(e) => update({ monitorEnabled: e.target.checked })} /> {t(lang, "enableMonitor")}</label>
         <Label text={t(lang, "highlighting")}><select className="input compact-input" value={draft.highlightLevel || "off"} onChange={(e) => update({ highlightLevel: e.target.value })}><option value="off">{t(lang, "highlightOff")}</option><option value="basic">{t(lang, "highlightBasic")}</option><option value="full">{t(lang, "highlightFull")}</option></select></Label>
+        <label className="check"><input type="checkbox" checked={draft.smartHighlight !== false} onChange={(e) => update({ smartHighlight: e.target.checked })} /> {t(lang, "clickableLinks")}</label>
+        <div className="text-[10px] text-muted leading-snug">{t(lang, "clickableLinksHint")}</div>
         <label className="check"><input type="checkbox" checked={draft.confirmOnDisconnect || false} onChange={(e) => update({ confirmOnDisconnect: e.target.checked })} /> {t(lang, "confirmClose")}</label>
         <label className="check"><input type="checkbox" checked={draft.cliServerEnabled ?? true} onChange={(e) => update({ cliServerEnabled: e.target.checked })} /> {t(lang, "cliServerEnabled")}</label>
         <div className="text-[10px] text-muted leading-snug">{t(lang, "cliServerEnabledHint")}</div>

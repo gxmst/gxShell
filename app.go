@@ -59,6 +59,12 @@ type App struct {
 	// them to read or overwrite arbitrary files on disk.
 	allowedFilesMu sync.Mutex
 	allowedFiles   map[string]bool
+	// pendingOpenFile holds a startup/second-instance text file that has been
+	// authorized but may have been emitted before the frontend registered its
+	// file:open listener. The frontend pulls it once on mount via GetStartupFile
+	// so a first launch that lost the pushed event still opens the file.
+	pendingOpenMu   sync.Mutex
+	pendingOpenFile string
 }
 
 const aiConfigSecretID = "ai-config"
@@ -218,11 +224,36 @@ func (a *App) domReady(ctx context.Context) {
 		if allowed == "" {
 			return
 		}
-		a.log.InfoFields("Emitting file:open event", logger.LogFields{
+		// Stash the file rather than emitting file:open here. On first launch this
+		// domReady runs before React registers its file:open listener, so a pushed
+		// event would be lost (the app opened but the document did not). The
+		// frontend pulls this via GetStartupFile once its listener is ready. Not
+		// emitting also avoids a double-open if the listener happened to be ready.
+		a.log.InfoFields("Stashing startup file for frontend pull", logger.LogFields{
 			"fileName": filepath.Base(allowed),
 		})
-		runtime.EventsEmit(ctx, "file:open", allowed)
+		a.setPendingOpenFile(allowed)
 	}
+}
+
+// setPendingOpenFile stores an authorized text file awaiting a frontend that may
+// not have registered its file:open listener yet.
+func (a *App) setPendingOpenFile(path string) {
+	a.pendingOpenMu.Lock()
+	a.pendingOpenFile = path
+	a.pendingOpenMu.Unlock()
+}
+
+// GetStartupFile returns and clears any pending startup/second-instance text
+// file. The frontend calls this once after it has registered its file:open
+// listener, which closes the race where the pushed file:open event fired before
+// the listener existed (first launch opened the app but not the document).
+func (a *App) GetStartupFile() string {
+	a.pendingOpenMu.Lock()
+	defer a.pendingOpenMu.Unlock()
+	path := a.pendingOpenFile
+	a.pendingOpenFile = ""
+	return path
 }
 
 // shutdown cleans up resources before application exit.

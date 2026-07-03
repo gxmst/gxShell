@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { types } from "../wailsjs/go/models";
-import { CreateCommand, DeleteCommand, ListCommands, ListTextFilesInDir, ListRemoteTextFilesInDir, OpenDataDir, OpenRecentTextFile, ReadLogFile, SelectTextFile, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, UpdateCommand } from "../wailsjs/go/main/App";
+import { CreateCommand, DeleteCommand, GetStartupFile, ListCommands, ListTextFilesInDir, ListRemoteTextFilesInDir, OpenDataDir, OpenRecentTextFile, ReadLogFile, SelectTextFile, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/main/App";
 import { emptyProfile } from "./constants";
 import type { Drawer, MarkdownOpenTarget, RecentMarkdownItem, SplitPane, Tab } from "./types";
 import { normalizeAppTheme } from "./utils/format";
@@ -19,13 +19,15 @@ import { TerminalArea } from "./components/TerminalArea/TerminalArea";
 import { FloatingTerminal } from "./components/FloatingTerminal/FloatingTerminal";
 import { ProfileModal } from "./components/modals/ProfileModal";
 import { CommandModal } from "./components/modals/CommandModal";
+import { CommandVarsDialog } from "./components/modals/CommandVarsDialog";
+import { extractPlaceholders } from "./utils/commandVars";
 import { SecretModal } from "./components/modals/SecretModal";
 import { GlobalSearchModal, TerminalSearchModal } from "./components/modals/SearchModals";
 import { ProgressBar } from "./components/ProgressBar/ProgressBar";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastStack } from "./components/ToastStack";
 import { TransfersProvider } from "./hooks/useTransfers";
-import { EventsOn, OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
+import { BrowserOpenURL, EventsOn, OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
 import { isSupportedTextPath } from "./utils/textFiles";
 import { t } from "./i18n";
 
@@ -47,6 +49,7 @@ function App() {
   const [drawer, setDrawer] = usePersistedState<Drawer>("gx:drawer", "monitor");
   const [profileModal, setProfileModal] = useState<types.Profile | null>(null);
   const [commandModal, setCommandModal] = useState<types.CommandTemplate | null>(null);
+  const [commandVars, setCommandVars] = useState<{ commandName: string; template: string; placeholders: string[]; send: (command: string) => void } | null>(null);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [globalQuery, setGlobalQuery] = useState("");
   const [terminalSearchOpen, setTerminalSearchOpen] = useState(false);
@@ -58,6 +61,10 @@ function App() {
   const [ctxMenu, setCtxMenu] = useState<{x:number, y:number, items:{label:string, action:()=>void, danger?:boolean}[]} | null>(null);
   const [markdownSiblings, setMarkdownSiblings] = useState<string[]>([]);
   const [recentMarkdown, setRecentMarkdown] = usePersistedState<RecentMarkdownItem[]>("gx:recentMarkdown", []);
+  const [broadcastInput, setBroadcastInput] = useState(false);
+  // Session ids currently recording. Backend owns the real state; this mirror
+  // drives the TabBar toggle. Cleared for a session when it stops or closes.
+  const [recordingIds, setRecordingIds] = useState<string[]>([]);
 
   useEffect(() => {
     const hide = () => setCtxMenu(null);
@@ -76,11 +83,81 @@ function App() {
   const tabsRef = useRef(sessions.tabs);
   tabsRef.current = sessions.tabs;
 
+  // Broadcast (synchronized input) target set, kept in a ref so the terminal's
+  // onData closure always reads the current value without re-binding. Targets are
+  // the connected, non-floating SSH terminals; local and markdown tabs are excluded.
+  const broadcastRef = useRef<{ enabled: boolean; targets: string[] }>({ enabled: false, targets: [] });
+  const connectedSshCount = sessions.tabs.filter((tab) => tab.type !== "markdown" && !tab.local && tab.state === "connected").length;
+  broadcastRef.current = {
+    enabled: broadcastInput,
+    targets: sessions.tabs
+      .filter((tab) => tab.type !== "markdown" && !tab.local && tab.state === "connected" && !floatingTabIds.includes(tab.id))
+      .map((tab) => tab.id),
+  };
+  // Turn broadcast off automatically once fewer than two terminals remain.
+  useEffect(() => {
+    if (broadcastInput && connectedSshCount < 2) setBroadcastInput(false);
+  }, [broadcastInput, connectedSshCount]);
+
+  // Drop recording flags for sessions that no longer exist (closed/disconnected).
+  useEffect(() => {
+    // A session records only while connected. Drop ids whose tab is gone OR is no
+    // longer connected (the backend stops and finalizes the recording on
+    // disconnect/error), so the toolbar toggle never shows a stale "recording"
+    // state on a dropped session.
+    const connected = new Set(
+      sessions.tabs.filter((tab) => tab.state === "connected").map((tab) => tab.id)
+    );
+    setRecordingIds((prev) => {
+      const next = prev.filter((id) => connected.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [sessions.tabs]);
+
+  const toggleRecording = useCallback(async (sessionId: string) => {
+    const tab = tabsRef.current.find((item) => item.id === sessionId);
+    if (!tab || tab.local || tab.type === "markdown") return;
+    const isRecording = recordingIds.includes(sessionId);
+    try {
+      if (isRecording) {
+        const file = await StopRecording(sessionId);
+        setRecordingIds((prev) => prev.filter((id) => id !== sessionId));
+        notify(t(profileState.settings?.language || "en", "recordingSaved", { name: file }), "success");
+      } else {
+        const title = tab.title || "session";
+        await StartRecording(sessionId, title);
+        setRecordingIds((prev) => prev.includes(sessionId) ? prev : [...prev, sessionId]);
+        notify(t(profileState.settings?.language || "en", "recordingStarted"), "info");
+      }
+    } catch (err) {
+      notify(String(err), "error");
+    }
+  }, [recordingIds, notify, profileState.settings?.language]);
+
+  const activeRecording = !!sessions.activeTab && recordingIds.includes(sessions.activeTab);
+
   const activeMetrics = sessions.active ? metrics[sessions.active.id] : undefined;
   const sftp = useSftp(sessions.active, drawer, notify);
 
+  // Clickable terminal links. Kept in a ref so useTerminal's per-terminal link
+  // provider always calls the current handlers. openUrl opens the system browser;
+  // openPath reveals the clicked path's directory in the SFTP drawer for the
+  // session that produced the link, which matters in split view.
+  const linkHandlersRef = useRef<{ openUrl: (url: string) => void; openPath: (sessionId: string, path: string) => void }>({ openUrl: () => undefined, openPath: () => undefined });
+  linkHandlersRef.current = {
+    openUrl: (url) => { BrowserOpenURL(url); },
+    openPath: (sessionId, path) => {
+      const tab = tabsRef.current.find((item) => item.id === sessionId);
+      if (!tab || tab.local || tab.type === "markdown") return;
+      const dir = path.replace(/\/+$/, "").replace(/\/[^/]*$/, "") || "/";
+      sessions.setActiveTab(sessionId);
+      setDrawer("sftp");
+      sftp.refreshSftp(dir, sessionId);
+    },
+  };
+
   const activeIsTerminal = !!sessions.active && sessions.active.type !== "markdown";
-  const activeTerminal = useTerminal(sessions.activeTab, activeIsTerminal, profileState.settings, notify, sidebarCollapsed, splitPane);
+  const activeTerminal = useTerminal(sessions.activeTab, activeIsTerminal, profileState.settings, notify, sidebarCollapsed, splitPane, broadcastRef, linkHandlersRef);
   const { writeOutput, disposeTerminal, findNext, focusTerminal, refitTerminal, reattachTerminal } = activeTerminal;
   terminalBridge.current.disposeTerminal = disposeTerminal;
 
@@ -252,6 +329,21 @@ function App() {
       }
     });
 
+    const unsubRecordingError = EventsOn("recording:error", (payload: { error?: string }) => {
+      notify(payload?.error || "Failed to finalize recording", "error");
+    });
+
+    // Pull side of the file-open handshake. On first launch the Go side may emit
+    // "file:open" during OnDomReady, before this listener exists, so the pushed
+    // event is lost and the app opens without the document. Pulling once here,
+    // right after the listener is registered, recovers that file. Both paths are
+    // idempotent because openMarkdownFile de-duplicates by tab.
+    GetStartupFile().then((filePath) => {
+      if (filePath && isSupportedTextPath(filePath)) {
+        openMarkdownFile(filePath);
+      }
+    }).catch(() => undefined);
+
     // 托盘菜单事件监听
     const unsubTrayNewConnection = EventsOn("tray:new-connection", () => {
       setProfileModal(emptyProfile());
@@ -267,12 +359,13 @@ function App() {
 
     return () => {
       if (unsubFileOpen) unsubFileOpen();
+      if (unsubRecordingError) unsubRecordingError();
       if (unsubTrayNewConnection) unsubTrayNewConnection();
       if (unsubTrayOpenMarkdown) unsubTrayOpenMarkdown();
       if (unsubTraySettings) unsubTraySettings();
       OnFileDropOff();
     };
-  }, [openMarkdownFile, handleOpenMarkdown, setDrawer]);
+  }, [openMarkdownFile, handleOpenMarkdown, setDrawer, notify]);
 
   const handleTearOff = useCallback((tab: Tab) => {
     setFloatingTabIds((prev) => prev.includes(tab.id) ? prev : [...prev, tab.id]);
@@ -389,6 +482,32 @@ function App() {
 
   const themeName = normalizeAppTheme(profileState.settings?.themeName);
 
+  // Running a saved command first checks for <name> placeholders. If present, we
+  // open the fill dialog and only send once the user resolves them; otherwise the
+  // command is sent as-is. `send` performs the actual delivery on the resolved
+  // string, so the placeholder path and the direct path share one code path.
+  const runCommandTemplate = useCallback((cmd: types.CommandTemplate, send: (command: string) => void) => {
+    const placeholders = extractPlaceholders(cmd.command);
+    if (placeholders.length === 0) {
+      send(cmd.command);
+      return;
+    }
+    setCommandVars({ commandName: cmd.name, template: cmd.command, placeholders, send });
+  }, []);
+
+  const runOnActive = useCallback((cmd: types.CommandTemplate) => {
+    runCommandTemplate(cmd, (command) => {
+      if (sessions.active) {
+        SendCommandToTerminal(sessions.active.id, command);
+        setTimeout(() => focusTerminal(sessions.activeTab), 10);
+      }
+    });
+  }, [runCommandTemplate, sessions.active, sessions.activeTab, focusTerminal]);
+
+  const runOnAll = useCallback((cmd: types.CommandTemplate) => {
+    runCommandTemplate(cmd, (command) => { SendCommandToAll(command).catch(() => {}); });
+  }, [runCommandTemplate]);
+
   const handleNewConnection = useCallback(() => setProfileModal(emptyProfile()), []);
   const handleToggleSidebar = useCallback(() => setSidebarCollapsed(v => !v), []);
 
@@ -425,15 +544,8 @@ function App() {
           onStartMonitor={() => sessions.active && StartMonitor(sessions.active.id)}
           onRefreshSftp={sftp.refreshSftp}
           onNotify={notify}
-          onRunCommand={(cmd) => { 
-            if (sessions.active) {
-                SendCommandToTerminal(sessions.active.id, cmd.command);
-                setTimeout(() => focusTerminal(sessions.activeTab), 10);
-            }
-          }}     
-          onRunCommandAll={(cmd) => {
-            SendCommandToAll(cmd.command).catch(() => {});
-          }}
+          onRunCommand={runOnActive}
+          onRunCommandAll={runOnAll}
           onEditCommand={(cmd) => setCommandModal(cmd)}
           onDeleteCommand={async (id) => { await DeleteCommand(id); profileState.setCommands(await ListCommands()); }}
           onNewCommand={() => setCommandModal(new types.CommandTemplate({ id: "", name: "", command: "", category: "Custom", description: "", tags: [] }))}
@@ -460,6 +572,7 @@ function App() {
           onReconnect={sessions.reconnectTab}
           onNewConnection={handleNewConnection}
           onNewLocal={sessions.connectLocal}
+          onReorder={sessions.reorderTabs}
           onOpenMarkdown={handleOpenMarkdown}
           onOpenMarkdownFile={openMarkdownTarget}
           onNotify={notify}
@@ -471,6 +584,11 @@ function App() {
           splitPane={splitPane}
           onSplitChange={setSplitPane}
           refitTerminal={refitTerminal}
+          broadcastInput={broadcastInput}
+          broadcastCount={connectedSshCount}
+          onToggleBroadcast={() => setBroadcastInput((v) => !v)}
+          activeRecording={activeRecording}
+          onToggleRecording={toggleRecording}
         />
       </main>
       {floatingTabIds.map((id) => {
@@ -482,6 +600,7 @@ function App() {
       {terminalSearchOpen && <TerminalSearchModal query={terminalSearch} onQuery={setTerminalSearch} onNext={() => activeTerminal.findNext(sessions.activeTab, terminalSearch)} onClose={() => setTerminalSearchOpen(false)} locale={profileState.settings?.language || "en"} />}
       {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={async (id) => { await profileState.deleteProfile(id); setProfileModal(null); }} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify(t(profileState.settings?.language || "en", "profileCopied"), "info"); }} />}
       {commandModal && <CommandModal command={commandModal} language={profileState.settings?.language || "en"} onClose={() => setCommandModal(null)} onSave={saveCommand} />}
+      {commandVars && <CommandVarsDialog commandName={commandVars.commandName} template={commandVars.template} placeholders={commandVars.placeholders} locale={profileState.settings?.language || "en"} onClose={() => setCommandVars(null)} onSubmit={(resolved) => { const send = commandVars.send; setCommandVars(null); send(resolved); }} />}
       {sessions.secretRequest && <SecretModal request={sessions.secretRequest} language={profileState.settings?.language || "en"} onClose={() => sessions.setSecretRequest(null)} onSubmit={async (password, passphrase) => { const request = sessions.secretRequest; sessions.setSecretRequest(null); if (request) await sessions.submitSecret(request, password, passphrase); }} />}
       <ProgressBar />
       <ToastStack toasts={toasts} />

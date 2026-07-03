@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { memo, useCallback, useRef } from "react";
-import { Plus, TerminalSquare, X } from "lucide-react";
+import { Plus, Radio, TerminalSquare, X } from "lucide-react";
 import type { MarkdownOpenTarget, SplitPane, Tab } from "../../types";
 import { TabBar } from "../TabBar/TabBar";
 import { types } from "../../../wailsjs/go/models";
@@ -22,6 +22,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
   onOpenMarkdown?: () => void;
   onOpenMarkdownFile?: (target: MarkdownOpenTarget) => void;
   onTearOff?: (tab: Tab) => void;
+  onReorder?: (draggedId: string, targetId: string) => void;
   language: string;
   logViewer?: { name: string; content: string } | null;
   onCloseLogViewer?: () => void;
@@ -30,6 +31,11 @@ export const TerminalArea = memo(function TerminalArea(props: {
   onSplitChange?: (split: SplitPane | null) => void;
   refitTerminal?: (id: string) => void;
   onNotify?: (text: string, tone?: "info" | "error" | "success") => void;
+  broadcastInput?: boolean;
+  broadcastCount?: number;
+  onToggleBroadcast?: () => void;
+  activeRecording?: boolean;
+  onToggleRecording?: (id: string) => void;
 }) {
   const lang = props.language;
   const floatingSet = new Set(props.floatingTabIds || []);
@@ -69,7 +75,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
 
   return (
     <section className="terminal-pane">
-      <TabBar tabs={visibleTabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} onTearOff={props.onTearOff} onNewConnection={props.onNewConnection} onNewLocal={props.onNewLocal} onOpenMarkdown={props.onOpenMarkdown} language={lang} onSplitToggle={(tabId, direction) => {
+      <TabBar tabs={visibleTabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} onTearOff={props.onTearOff} onReorder={props.onReorder} onNewConnection={props.onNewConnection} onNewLocal={props.onNewLocal} onOpenMarkdown={props.onOpenMarkdown} language={lang} broadcastInput={props.broadcastInput} broadcastAvailable={(props.broadcastCount || 0) > 1} onToggleBroadcast={props.onToggleBroadcast} recording={props.activeRecording} onToggleRecording={props.onToggleRecording} onSplitToggle={(tabId, direction) => {
         if (!props.onSplitChange) return;
         if (isSplitVisible) {
           const leftId = split!.left;
@@ -91,6 +97,13 @@ export const TerminalArea = memo(function TerminalArea(props: {
           }
         }
       }} />
+      {props.broadcastInput && (props.broadcastCount || 0) > 1 && (
+        <div className="broadcast-banner">
+          <Radio size={13} className="shrink-0" />
+          <span>{t(lang, "broadcastActive").replace("{n}", String(props.broadcastCount || 0))}</span>
+          <button className="broadcast-banner-off" onClick={() => props.onToggleBroadcast?.()}>{t(lang, "broadcastStop")}</button>
+        </div>
+      )}
       <div className="terminal-stage" style={stageStyle}>
         {props.tabs.map((tab) => {
           const isFloating = floatingSet.has(tab.id);

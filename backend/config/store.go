@@ -169,9 +169,9 @@ func (s *Store) SaveSettings(settings types.AppSettings) error {
 
 // MigrateSettingsDefaults backfills fields that older settings.json files did
 // not contain. JSON unmarshalling cannot distinguish a missing boolean from an
-// explicit false, so for keys whose safe default is true we inspect the raw
-// file: only when the key is genuinely absent do we write the default. This
-// runs once on startup and is a no-op once the key has been persisted.
+// explicit false, so for keys whose default is true we inspect the raw file:
+// only when the key is genuinely absent do we write the default. This runs once
+// on startup and is a no-op once those keys have been persisted.
 func (s *Store) MigrateSettingsDefaults() {
 	s.mu.RLock()
 	data, err := os.ReadFile(filepath.Join(s.dir, "settings.json"))
@@ -183,18 +183,25 @@ func (s *Store) MigrateSettingsDefaults() {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return
 	}
-	if _, present := raw["cliServerEnabled"]; present {
+	_, hasCliServerEnabled := raw["cliServerEnabled"]
+	_, hasSmartHighlight := raw["smartHighlight"]
+	if hasCliServerEnabled && hasSmartHighlight {
 		return
 	}
 	// Start from DefaultSettings and overlay the on-disk file so any field the
 	// old file omitted keeps its real default (e.g. fontSize 14, timeout 15)
-	// instead of being persisted as a Go zero value. The absent cliServerEnabled
-	// then stays at the default true, preserving the prior always-on behaviour.
+	// instead of being persisted as a Go zero value. Absent true-by-default
+	// booleans then stay true, while explicit false values are preserved.
 	settings := DefaultSettings()
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return
 	}
-	settings.CliServerEnabled = true
+	if !hasCliServerEnabled {
+		settings.CliServerEnabled = true
+	}
+	if !hasSmartHighlight {
+		settings.SmartHighlight = true
+	}
 	_ = s.SaveSettings(settings)
 }
 
@@ -244,7 +251,7 @@ func DefaultSettings() types.AppSettings {
 		ConnectionTimeout:  15,
 		SidebarWidth:       300,
 		SavePasswords:      false,
-		SmartHighlight:     false,
+		SmartHighlight:     true,
 		HighlightLevel:     "off",
 		CliServerEnabled:   true,
 		Terminal: types.TerminalSettings{

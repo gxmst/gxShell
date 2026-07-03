@@ -15,3 +15,32 @@
 @import "./styles/memory-card.css";
 @import "./styles/ai.css";
 @import "./styles/container.css";
+
+/* Respect users who ask the OS to minimize motion: keep transitions near-instant
+   but not fully removed, so state changes are still perceptible. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Tactile press feedback on the shared button classes. Pairs with the
+   existing 140ms transitions so buttons feel responsive, not mushy. */
+.btn-primary:active,
+.btn-secondary:active,
+.btn-danger:active,
+.icon-btn:active,
+.mini-btn:active {
+  transform: scale(0.96);
+}
+
+.btn-primary,
+.btn-secondary,
+.btn-danger,
+.icon-btn,
+.mini-btn {
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}

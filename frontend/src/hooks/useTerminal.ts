@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -7,13 +7,14 @@ import { types } from "../../wailsjs/go/models";
 import { ResizeTerminal, WriteToTerminal, LogCommand } from "../../wailsjs/go/main/App";
 import { getTerminalTheme } from "../utils/format";
 import { highlight, type HighlightLevel } from "../utils/highlight";
+import { createLinkProvider, type TerminalLinkAppHandlers } from "../utils/terminalLinks";
 import type { SplitPane } from "../types";
 
 const MAX_BUFFERED_CHUNKS = 100;
 const MAX_COMMAND_BUFFER_CHARS = 8192;
 const RESIZE_SETTLE_MS = 80;
 
-export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null) {
+export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null, broadcastRef?: MutableRefObject<{ enabled: boolean; targets: string[] }>, linkHandlersRef?: MutableRefObject<TerminalLinkAppHandlers>) {
   const terminals = useRef<Record<string, Terminal>>({});
   const fits = useRef<Record<string, FitAddon>>({});
   const searches = useRef<Record<string, SearchAddon>>({});
@@ -32,6 +33,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const lastHostSize = useRef<Record<string, string>>({});
   const throughputRef = useRef<Record<string, number>>({});
   const refitTimers = useRef<Record<string, number>>({});
+  const linkProviders = useRef<Record<string, { dispose: () => void }>>({});
 
   const addTimer = useCallback((ms: number, fn: () => void) => {
     const id = window.setTimeout(() => {
@@ -133,6 +135,23 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       term.loadAddon(searchAddon);
       term.open(host);
 
+      // Clickable URLs and remote file paths, detected in the xterm display
+      // layer so the SSH output stream is never rewritten. The provider reads
+      // linkHandlersRef lazily on each click, so it stays valid across renders.
+      if (linkHandlersRef?.current) {
+        const provider = createLinkProvider(
+          term,
+          {
+            openUrl: (url) => linkHandlersRef.current?.openUrl(url),
+            openPath: (path) => linkHandlersRef.current?.openPath(activeTab, path),
+          },
+          // smartHighlight gates the clickable-link feature; read live so the
+          // settings toggle applies without reopening the terminal.
+          () => settingsRef.current?.smartHighlight !== false,
+        );
+        linkProviders.current[activeTab] = term.registerLinkProvider(provider);
+      }
+
       try {
         const gl = new WebglAddon();
         gl.onContextLoss(() => {
@@ -176,6 +195,15 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
 
       term.onData((data) => {
         WriteToTerminal(activeTab, data).catch((err) => notifyRef.current(String(err), "error"));
+        // Broadcast (synchronized input): when enabled, mirror the same keystrokes
+        // to every other connected SSH terminal. Only the active terminal drives
+        // the command buffer / history below.
+        const bc = broadcastRef?.current;
+        if (bc?.enabled) {
+          for (const id of bc.targets) {
+            if (id !== activeTab) WriteToTerminal(id, data).catch(() => {});
+          }
+        }
         const buf = cmdBuffer.current[activeTab] || "";
         if (data === "\r") {
           if (buf.trim()) {
@@ -333,6 +361,8 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     delete observers.current[id];
     cleanupFns.current[id]?.();
     delete cleanupFns.current[id];
+    linkProviders.current[id]?.dispose();
+    delete linkProviders.current[id];
     webgl.current[id]?.dispose();
     terminals.current[id]?.dispose();
     if (pendingFitFrames.current[id]) window.cancelAnimationFrame(pendingFitFrames.current[id]);

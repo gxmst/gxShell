@@ -14,14 +14,15 @@ export function useSftp(active?: Tab, drawer?: string, notify?: (text: string, t
   remotePathRef.current = remotePath;
   const fetchSeq = useRef(0);
 
-  const refreshSftp = useCallback(async (path = remotePathRef.current) => {
-    if (!active?.id || active.type === "markdown") return;
+  const refreshSftp = useCallback(async (path = remotePathRef.current, sessionId = active?.id) => {
+    if (!sessionId) return;
+    if (sessionId === active?.id && active.type === "markdown") return;
     const seq = ++fetchSeq.current;
     setSftpBusy(true);
     try {
-      const files = await ListRemoteDir(active.id, path);
+      const files = await ListRemoteDir(sessionId, path);
       if (seq !== fetchSeq.current) return;
-      const cacheKey = `${active.id}:${path}`;
+      const cacheKey = `${sessionId}:${path}`;
       fileCache.current[cacheKey] = files;
       setRemoteFiles(files);
       setRemotePath(path);
@@ -31,7 +32,7 @@ export function useSftp(active?: Tab, drawer?: string, notify?: (text: string, t
     } finally {
       if (seq === fetchSeq.current) setSftpBusy(false);
     }
-  }, [active?.id]);
+  }, [active?.id, active?.type]);
 
   useEffect(() => {
     if (drawer === "sftp" && active && active.type !== "markdown") {

@@ -3,7 +3,7 @@ import { appThemes, terminalThemes } from "../constants";
 
 export function stateClass(state: string) {
   if (state === "connected") return "bg-ok";
-  if (state === "connecting") return "bg-warn";
+  if (state === "connecting") return "bg-warn dot-pulse";
   if (state === "error") return "bg-bad";
   return "bg-muted";
 }

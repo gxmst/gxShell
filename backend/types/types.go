@@ -214,6 +214,12 @@ type LogFile struct {
 	ModTime time.Time `json:"modTime"`
 }
 
+type Recording struct {
+	Name    string    `json:"name"`
+	Size    int64     `json:"size"`
+	ModTime time.Time `json:"modTime"`
+}
+
 type AiConfig struct {
 	Provider string `json:"provider"`
 	APIKey   string `json:"apiKey"`

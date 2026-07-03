@@ -31,7 +31,7 @@ const (
 func (a *App) GetAppInfo() map[string]string {
 	return map[string]string{
 		"name":    "gxShell",
-		"version": "1.1.3",
+		"version": "1.2.0",
 		"dataDir": a.store.DataDir(),
 	}
 }

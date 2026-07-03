@@ -70,7 +70,17 @@ button, input, textarea, select {
   border-radius: 9px;
   padding: 7px 9px;
   font-size: 12px;
-  transition: 140ms ease;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease), filter var(--dur-fast) var(--ease);
+}
+
+/* Press feedback: a small settle on click reads as tactile and modern without
+   being distracting. Hover lifts primary/danger slightly via brightness. */
+.btn-primary:hover { filter: brightness(1.06); }
+.btn-danger:hover { background: color-mix(in srgb, var(--bad) 16%, transparent); }
+.btn-primary:active,
+.btn-secondary:active,
+.btn-danger:active {
+  transform: translateY(1px) scale(0.985);
 }
 
 .btn-primary {
@@ -116,6 +126,11 @@ button, input, textarea, select {
   color: var(--text);
 }
 
+.icon-btn:active,
+.mini-btn:active {
+  transform: scale(0.92);
+}
+
 .mini-btn {
   display: inline-flex;
   width: 20px;
@@ -125,6 +140,7 @@ button, input, textarea, select {
   border-radius: 6px;
   border: 1px solid transparent;
   color: var(--muted);
+  transition: 140ms ease;
 }
 
 .mini-btn.danger:hover {
@@ -161,3 +177,30 @@ button, input, textarea, select {
 .bg-warn { background: var(--warn); }
 .bg-bad { background: var(--bad); }
 .bg-muted { background: var(--muted-2); }
+
+/* Pulsing halo for the "connecting"/"reconnecting" status dot so in-progress
+   sessions read as active rather than static. Uses box-shadow so it does not
+   affect layout. */
+.dot-pulse {
+  animation: dot-pulse 1.4s var(--ease) infinite;
+}
+
+@keyframes dot-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warn) 55%, transparent); }
+  70%  { box-shadow: 0 0 0 5px color-mix(in srgb, var(--warn) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warn) 0%, transparent); }
+}
+
+/* Respect the OS "reduce motion" setting: near-instant transitions/animations
+   for users who opt out, without removing them entirely (which can break
+   visibility toggles that rely on transitionend). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

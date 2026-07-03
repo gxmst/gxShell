@@ -1,4 +1,4 @@
-import { Activity, ArrowRightLeft, Bot, Box, Command, FileText, Folder, Settings } from "lucide-react";
+import { Activity, ArrowRightLeft, Bot, Box, Command, FileText, Folder, Settings, Video } from "lucide-react";
 import { types } from "../wailsjs/go/models";
 import type { Drawer } from "./types";
 
@@ -150,6 +150,7 @@ export function drawerIcon(item: Drawer, size = 15) {
   if (item === "logs") return <FileText size={size} />;
   if (item === "containers") return <Box size={size} />;
   if (item === "ai") return <Bot size={size} />;
+  if (item === "recordings") return <Video size={size} />;
   return <Settings size={size} />;
 }
 
