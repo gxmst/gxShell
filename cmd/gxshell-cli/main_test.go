@@ -1,7 +1,10 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -75,5 +78,51 @@ func TestNormalizeExecResultMovesSyntheticOutputToSummary(t *testing.T) {
 	}
 	if got := timeout["summary"]; got != "error: remote command timeout" {
 		t.Fatalf("timeout summary = %#v", got)
+	}
+}
+
+func TestBlockedMessagePrefersStructuredReason(t *testing.T) {
+	result := map[string]any{
+		"error":  "BLOCKED: raw disk write (matched command fragment \"dd\")",
+		"reason": "raw disk write",
+		"detail": "matched command fragment \"dd\"",
+	}
+	if got := blockedMessage(result); got != "raw disk write" {
+		t.Fatalf("blockedMessage = %q", got)
+	}
+
+	fallback := map[string]any{"error": "BLOCKED: password hashes"}
+	if got := blockedMessage(fallback); got != "password hashes" {
+		t.Fatalf("fallback blockedMessage = %q", got)
+	}
+}
+
+func TestTimeoutHintMessage(t *testing.T) {
+	result := map[string]any{
+		"timeoutMs": float64(120000),
+	}
+	got := timeoutHintMessage(result)
+	if !strings.Contains(got, "2m0s remote timeout") || !strings.Contains(got, "--timeout 10m") {
+		t.Fatalf("timeoutHintMessage = %q", got)
+	}
+
+	custom := map[string]any{"timeoutHint": "custom timeout hint"}
+	if got := timeoutHintMessage(custom); got != "custom timeout hint" {
+		t.Fatalf("custom timeoutHintMessage = %q", got)
+	}
+}
+
+func TestPathContainsDir(t *testing.T) {
+	dir := t.TempDir()
+	child := filepath.Join(dir, "child")
+	if err := os.Mkdir(child, 0700); err != nil {
+		t.Fatal(err)
+	}
+	pathEnv := strings.Join([]string{filepath.Join(dir, "other"), child}, string(os.PathListSeparator))
+	if !pathContainsDir(pathEnv, child) {
+		t.Fatalf("expected PATH to contain %q", child)
+	}
+	if pathContainsDir(pathEnv, filepath.Join(dir, "missing")) {
+		t.Fatal("unexpected PATH match for missing directory")
 	}
 }

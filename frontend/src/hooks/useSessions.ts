@@ -13,6 +13,8 @@ type UseSessionsOptions = {
   confirmOnDisconnect?: boolean;
 };
 
+const isSessionNotFoundError = (err: unknown) => String(err).toLowerCase().includes("session not found");
+
 export function useSessions(options: UseSessionsOptions) {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTab, setActiveTab] = useState("");
@@ -52,7 +54,7 @@ export function useSessions(options: UseSessionsOptions) {
 
   useEffect(() => {
     const offConnected = EventsOn("terminal:connected", (info: types.SessionInfo) => {
-      setTabs((items) => items.map((tab) => tab.id === info.id ? { ...tab, state: "connected" } : tab));
+      setTabs((items) => items.map((tab) => tab.id === info.id ? { ...tab, state: "connected", error: undefined } : tab));
       notifyRef.current(`${info.name} connected`, "success");
       StartMonitor(info.id).catch(() => undefined);
     });
@@ -95,7 +97,7 @@ export function useSessions(options: UseSessionsOptions) {
   const replaceReconnectedTab = useCallback((oldID: string, info: types.SessionInfo) => {
     disposeTerminalRef.current(oldID);
     const profile = profilesRef.current.find((item) => item.id === info.profileId);
-    setTabs((items) => items.map((tab) => tab.id === oldID ? { ...tab, id: info.id, title: tabTitle(profile, info.name), state: info.state } : tab));
+    setTabs((items) => items.map((tab) => tab.id === oldID ? { ...tab, id: info.id, title: tabTitle(profile, info.name), state: info.state, error: undefined } : tab));
     setActiveTab(info.id);
   }, []);
 
@@ -119,8 +121,26 @@ export function useSessions(options: UseSessionsOptions) {
       return;
     }
     notifyRef.current(`Reconnecting to ${tab.title}...`, "info");
-    const info = await Reconnect(tab.id);
-    replaceReconnectedTab(tab.id, info);
+    setTabs((items) => items.map((item) => item.id === tab.id ? { ...item, state: "connecting", error: undefined } : item));
+    try {
+      let info: types.SessionInfo;
+      try {
+        userClosing.current.add(tab.id);
+        info = await Reconnect(tab.id);
+      } catch (err) {
+        userClosing.current.delete(tab.id);
+        if (!isSessionNotFoundError(err)) throw err;
+        info = await Connect(profile?.id || tab.profileId, 120, 36);
+      }
+      userClosing.current.delete(tab.id);
+      replaceReconnectedTab(tab.id, info);
+      await reloadRef.current();
+    } catch (err) {
+      userClosing.current.delete(tab.id);
+      const message = String(err);
+      setTabs((items) => items.map((item) => item.id === tab.id ? { ...item, state: "error", error: message } : item));
+      notifyRef.current(`${tab.title}: reconnect failed: ${message}`, "error");
+    }
   }, [connectLocal, replaceReconnectedTab, clearAutoReconnect]);
 
   const submitSecret = useCallback(async (request: SecretRequest, password: string, passphrase: string) => {
@@ -129,8 +149,23 @@ export function useSessions(options: UseSessionsOptions) {
       return;
     }
     if (!request.sessionId) return;
-    const info = await ReconnectWithSecrets(request.sessionId, password, passphrase);
-    replaceReconnectedTab(request.sessionId, info);
+    try {
+      let info: types.SessionInfo;
+      try {
+        userClosing.current.add(request.sessionId);
+        info = await ReconnectWithSecrets(request.sessionId, password, passphrase);
+      } catch (err) {
+        userClosing.current.delete(request.sessionId);
+        if (!isSessionNotFoundError(err)) throw err;
+        info = await ConnectWithSecrets(request.profile.id, password, passphrase, 120, 36);
+      }
+      userClosing.current.delete(request.sessionId);
+      replaceReconnectedTab(request.sessionId, info);
+      await reloadRef.current();
+    } catch (err) {
+      userClosing.current.delete(request.sessionId);
+      notifyRef.current(`${request.profile.name || request.profile.host}: reconnect failed: ${String(err)}`, "error");
+    }
   }, [openSession, replaceReconnectedTab]);
 
   // scheduleAutoReconnect fires when a session drops unexpectedly (disconnect or
@@ -183,7 +218,7 @@ export function useSessions(options: UseSessionsOptions) {
         const info = await Connect(profile.id, 120, 36);
         // Replace the old tab id in place so ordering and active state persist.
         setTabs((items) => items.map((item) => item.id === tabId
-          ? { ...item, id: info.id, title: tabTitle(profile, info.name), state: info.state }
+          ? { ...item, id: info.id, title: tabTitle(profile, info.name), state: info.state, error: undefined }
           : item));
         setActiveTab((current) => current === tabId ? info.id : current);
         clearAutoReconnect(tabId);

@@ -369,11 +369,8 @@ func (a *App) prepareAiToolExecution(toolCall authorizedAIToolCall) (aiToolExecu
 }
 
 func validateAiToolCommand(command string) (string, bool) {
-	if warn, blocked := checkDangerousCommand(command); blocked {
-		return warn, false
-	}
-	if warn, blocked := checkSensitivePath(command); blocked {
-		return warn, false
+	if block, blocked := checkCommandPreflightBlock(command); blocked {
+		return block.Message(), false
 	}
 	return "", true
 }

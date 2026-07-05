@@ -456,8 +456,29 @@ var dangerousCmdRegexps = sync.OnceValue(func() []struct {
 	return result
 })
 
+type commandBlock struct {
+	Kind   string
+	Reason string
+	Detail string
+}
+
+func (b commandBlock) Message() string {
+	if b.Detail == "" {
+		return b.Reason
+	}
+	return b.Reason + " (" + b.Detail + ")"
+}
+
 // checkDangerousCommand validates if a command is safe to execute.
 func checkDangerousCommand(cmd string) (string, bool) {
+	block, blocked := checkDangerousCommandBlock(cmd)
+	if !blocked {
+		return "", false
+	}
+	return block.Reason, true
+}
+
+func checkDangerousCommandBlock(cmd string) (commandBlock, bool) {
 	trimmed := strings.TrimSpace(cmd)
 	base := trimmed
 	if idx := strings.Index(trimmed, " "); idx > 0 {
@@ -468,14 +489,22 @@ func checkDangerousCommand(cmd string) (string, bool) {
 		"userdel": "deleting user", "fdisk": "disk partitioning",
 	}
 	if reason, ok := directDangerous[base]; ok {
-		return reason, true
+		return commandBlock{
+			Kind:   "dangerous-command",
+			Reason: reason,
+			Detail: fmt.Sprintf("command starts with %q", base),
+		}, true
 	}
 	for _, dr := range dangerousCmdRegexps() {
-		if dr.MatchString(cmd) {
-			return dr.reason, true
+		if match := dr.FindString(cmd); match != "" {
+			return commandBlock{
+				Kind:   "dangerous-command",
+				Reason: dr.reason,
+				Detail: fmt.Sprintf("matched command fragment %q", strings.TrimSpace(match)),
+			}, true
 		}
 	}
-	return "", false
+	return commandBlock{}, false
 }
 
 var sensitivePaths = []struct {
@@ -494,22 +523,38 @@ var sensitivePaths = []struct {
 // catch common shell/path obfuscation such as /etc//shadow, /etc/../etc/shadow,
 // quoted path fragments, and backslash-escaped characters.
 func checkSensitivePath(p string) (string, bool) {
+	block, blocked := checkSensitivePathBlock(p)
+	if !blocked {
+		return "", false
+	}
+	return block.Reason, true
+}
+
+func checkSensitivePathBlock(p string) (commandBlock, bool) {
 	for _, candidate := range sensitivePathCandidates(p) {
 		lower := strings.ToLower(normalizeSensitivePathText(candidate))
 		for _, sp := range sensitivePaths {
 			pattern := strings.ToLower(sp.pattern)
 			if pattern == "/home/" {
-				if containsPrivateSSHKeyReference(lower) {
-					return sp.reason, true
+				if matched := privateSSHKeyReference(lower); matched != "" {
+					return commandBlock{
+						Kind:   "sensitive-path",
+						Reason: sp.reason,
+						Detail: fmt.Sprintf("matched sensitive path %q", matched),
+					}, true
 				}
 				continue
 			}
 			if strings.Contains(lower, pattern) {
-				return sp.reason, true
+				return commandBlock{
+					Kind:   "sensitive-path",
+					Reason: sp.reason,
+					Detail: fmt.Sprintf("matched sensitive path pattern %q", sp.pattern),
+				}, true
 			}
 		}
 	}
-	return "", false
+	return commandBlock{}, false
 }
 
 func sensitivePathCandidates(input string) []string {
@@ -562,13 +607,17 @@ func cleanRemotePathToken(token string) string {
 }
 
 func containsPrivateSSHKeyReference(lower string) bool {
+	return privateSSHKeyReference(lower) != ""
+}
+
+func privateSSHKeyReference(lower string) string {
 	for _, field := range strings.Fields(lower) {
 		field = normalizeSensitivePathText(field)
 		if strings.Contains(field, "/.ssh/id_") && !strings.HasSuffix(field, ".pub") {
-			return true
+			return field
 		}
 	}
-	return false
+	return ""
 }
 
 // readOnlyCommands lists binaries that only inspect state. A command whose
@@ -646,17 +695,32 @@ func isReadOnlyCommand(cmd string) bool {
 // Ordering matters: the sensitive-path check runs before the read-only check so
 // that, e.g., `cat /etc/shadow` is blocked rather than waved through as a read.
 func guardCommand(command string, allowReadOnlyWithoutConfirm bool, confirm func() bool) (reason string, ok bool) {
-	if warn, blocked := checkDangerousCommand(command); blocked {
-		return warn, false
-	}
-	if warn, blocked := checkSensitivePath(command); blocked {
-		return warn, false
-	}
-	if allowReadOnlyWithoutConfirm && isReadOnlyCommand(command) {
-		return "", true
-	}
-	if !confirm() {
-		return "user declined execution", false
+	block, allowed := guardCommandReport(command, allowReadOnlyWithoutConfirm, confirm)
+	if !allowed {
+		return block.Message(), false
 	}
 	return "", true
+}
+
+func guardCommandReport(command string, allowReadOnlyWithoutConfirm bool, confirm func() bool) (commandBlock, bool) {
+	if block, blocked := checkCommandPreflightBlock(command); blocked {
+		return block, false
+	}
+	if allowReadOnlyWithoutConfirm && isReadOnlyCommand(command) {
+		return commandBlock{}, true
+	}
+	if !confirm() {
+		return commandBlock{Kind: "confirmation", Reason: "user declined execution"}, false
+	}
+	return commandBlock{}, true
+}
+
+func checkCommandPreflightBlock(command string) (commandBlock, bool) {
+	if block, blocked := checkDangerousCommandBlock(command); blocked {
+		return block, true
+	}
+	if block, blocked := checkSensitivePathBlock(command); blocked {
+		return block, true
+	}
+	return commandBlock{}, false
 }

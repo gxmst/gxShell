@@ -23,7 +23,7 @@ const (
 	cliAddress        = "127.0.0.1:56789"
 	cliTokenFilename  = "cli_token"
 	cliMaxRequestSize = 2 * 1024 * 1024
-	cliCommandTimeout = 30 * time.Second
+	cliCommandTimeout = 2 * time.Minute
 	cliMaxTimeout     = 30 * time.Minute
 	cliOutputLimit    = 1024 * 1024
 	cliApprovalDelay  = time.Second
@@ -113,20 +113,22 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	}
 	serverName := cliProfileName(profile)
 
-	if reason, ok := guardCommand(req.Command, true, func() bool {
+	if block, ok := guardCommandReport(req.Command, true, func() bool {
 		return a.confirmCliExecution(serverName, req.Command)
 	}); !ok {
 		a.log.ErrorFields("CLI command blocked", logger.LogFields{
 			"server":  serverName,
 			"command": req.Command,
-			"reason":  reason,
+			"reason":  block.Message(),
 		})
 		writeCliJSON(w, http.StatusForbidden, map[string]any{
 			"alias":     serverName,
-			"error":     "BLOCKED: " + reason,
+			"error":     "BLOCKED: " + block.Message(),
 			"errorKind": "blocked",
 			"blocked":   true,
-			"reason":    reason,
+			"blockedBy": block.Kind,
+			"reason":    block.Reason,
+			"detail":    block.Detail,
 		})
 		return
 	}
@@ -168,6 +170,7 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		"summary":          result.Summary,
 		"displayOutput":    result.DisplayOutput(),
 		"durationMs":       result.Duration.Milliseconds(),
+		"timeoutMs":        int(timeout / time.Millisecond),
 		"timedOut":         result.TimedOut,
 		"truncated":        result.Truncated,
 	}
@@ -175,12 +178,17 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	if result.TimedOut {
 		payload["error"] = "remote command timeout"
 		payload["errorKind"] = "remote"
+		payload["timeoutHint"] = cliTimeoutHint(timeout)
 		status = http.StatusGatewayTimeout
 	} else if result.Error != "" {
 		payload["error"] = result.Error
 		payload["errorKind"] = "remote"
 	}
 	writeCliJSON(w, status, payload)
+}
+
+func cliTimeoutHint(timeout time.Duration) string {
+	return fmt.Sprintf("Command exceeded the %s remote timeout. The SSH exec channel was closed, but the remote command may have made partial changes or may still be running in the background. Check the remote service/process status before retrying, or rerun with --timeout 10m for expected long operations.", timeout.Round(time.Second))
 }
 
 func (a *App) handleCliList(w http.ResponseWriter, r *http.Request) {

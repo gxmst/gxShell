@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -213,7 +214,7 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 			}
 		}()
 		err := shell.Wait()
-		if err != nil && !errors.Is(err, io.EOF) {
+		if err != nil && !isBenignShellWaitError(err) {
 			m.emit("terminal:error", map[string]any{"sessionId": id, "error": err.Error()})
 		}
 		m.Disconnect(id)
@@ -635,6 +636,17 @@ func (m *Manager) ExecuteCommandResult(sessionID string, command string, timeout
 	}
 	result.Output = output
 	return result, nil
+}
+
+func isBenignShellWaitError(err error) bool {
+	if err == nil || errors.Is(err, io.EOF) {
+		return true
+	}
+	var missing *ssh.ExitMissingError
+	if errors.As(err, &missing) {
+		return true
+	}
+	return strings.Contains(err.Error(), "remote command exited without exit status or exit signal")
 }
 
 func (m *Manager) remove(id string) {

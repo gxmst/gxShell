@@ -1,8 +1,12 @@
 package sshmanager
 
 import (
+	"errors"
+	"io"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/ssh"
 )
 
 func TestSSHAddress(t *testing.T) {
@@ -94,5 +98,17 @@ func TestLimitedBufferZeroLimitUsesLargeLimit(t *testing.T) {
 	}
 	if buf.Truncated() {
 		t.Fatal("zero limit should be treated as unlimited")
+	}
+}
+
+func TestBenignShellWaitError(t *testing.T) {
+	if !isBenignShellWaitError(&ssh.ExitMissingError{}) {
+		t.Fatal("missing SSH exit status should be treated as a benign shell close")
+	}
+	if !isBenignShellWaitError(io.EOF) {
+		t.Fatal("EOF should be treated as a benign shell close")
+	}
+	if isBenignShellWaitError(errors.New("permission denied")) {
+		t.Fatal("unrelated errors should not be treated as benign")
 	}
 }

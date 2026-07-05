@@ -13,7 +13,7 @@
 - The CLI lists aliases only. It does not return hostnames, IP addresses, usernames, ports, profile IDs, or jump-host details.
 - Simple read-only commands (`ls`, `cat`, `df`, `uptime`, and similar inspection tools) run without a prompt.
 - Any other command triggers a native confirmation dialog in gxShell before it runs. Requests for the same alias that arrive within a short window are batched into one approval prompt.
-- Dangerous commands and sensitive paths are blocked before confirmation.
+- Dangerous commands and sensitive paths are blocked before confirmation. Blocked responses include a reason, category, and diagnostic detail such as the matched command fragment or sensitive path pattern.
 
 Localhost is not treated as a complete security boundary. The token and confirmation dialog are the real guardrails.
 
@@ -25,7 +25,9 @@ For an external caller (including an AI agent), every `exec` ends in one of thre
 - **Asks for native confirmation** - everything else. This includes any command that writes or changes state, and any command containing shell operators or expansion syntax such as a pipe, redirect, chaining (`;`, `&&`), command substitution (`$(...)`, backticks), quotes, backslash escapes, variables, tilde expansion, or globs. Even `cat x | grep y` prompts because the allowlist only matches one simple command. If several matching CLI requests arrive for the same alias within about one second, gxShell shows one batched prompt.
 - **Blocked outright, before any prompt or connection** - dangerous commands (for example destructive `rm`, `mkfs`, `shutdown`) and sensitive paths (for example `/etc/shadow`, SSH private keys).
 
-`exec` defaults to a 30-second remote command timeout and about 1 MB of output. Use `--timeout` to raise the command timeout up to 30 minutes. A new SSH connection can also spend time in the profile's connection timeout before the command starts. Long-running or very chatty interactive work should still be run inside the GUI terminal.
+`exec` defaults to a 2-minute remote command timeout and about 1 MB of output. Use `--timeout` to raise the command timeout up to 30 minutes. A new SSH connection can also spend time in the profile's connection timeout before the command starts. Long-running or very chatty interactive work should still be run inside the GUI terminal.
+
+If a command times out, the CLI exits with code `124` and prints a timeout hint. The SSH exec channel is closed, but remote commands such as package installs or `docker compose` rebuilds may already have made partial changes or may still need status checks. Inspect the remote state before retrying.
 
 ## Session Behavior
 
@@ -82,9 +84,12 @@ go build -o gxshell-cli.exe .\cmd\gxshell-cli
 
 ```powershell
 .\gxshell-cli.exe ping
+.\gxshell-cli.exe doctor
 .\gxshell-cli.exe list
 .\gxshell-cli.exe exec prod-web "uptime"
 .\gxshell-cli.exe exec prod-web "journalctl -u nginx -n 200" --timeout 2m
+.\gxshell-cli.exe exec prod-web "docker compose up -d --build" --timeout 10m
+.\gxshell-cli.exe --timeout 10m exec prod-web "docker compose up -d --build"
 .\gxshell-cli.exe exec prod-web "uptime" --json
 .\gxshell-cli.exe exec-file prod-web .\script.sh
 Get-Content .\script.sh -Raw | .\gxshell-cli.exe exec-stdin prod-web
@@ -93,9 +98,11 @@ Get-Content .\script.sh -Raw | .\gxshell-cli.exe exec-stdin prod-web
 
 Simple read-only commands run immediately. Any other `exec` request asks for approval in gxShell before it runs.
 
+Put `--timeout` before `exec` or after the quoted remote command, not inside the remote command string. If it is inside the quoted command, the remote shell receives it as part of the command.
+
 `exec-file` and `exec-stdin` send the script text in the JSON request body instead of forcing the whole command through PowerShell argument quoting. Before sending, gxShell strips a leading UTF-8 BOM and normalizes CRLF/CR line endings to LF, which avoids common PowerShell pipeline and here-doc terminator surprises. They still use the same approval, timeout, output limit, and SSH exec-channel behavior as `exec`. The local CLI request body is capped at about 2 MB.
 
-`--json` is supported on `ping`, `list`, `status`, `exec`, `exec-file`, and `exec-stdin`. For `exec`, the result includes:
+`--json` is supported on `ping`, `doctor`, `list`, `status`, `exec`, `exec-file`, and `exec-stdin`. For `exec`, the result includes:
 
 ```json
 {
@@ -108,21 +115,37 @@ Simple read-only commands run immediately. Any other `exec` request asks for app
   "summary": "",
   "displayOutput": "...",
   "durationMs": 123,
+  "timeoutMs": 120000,
   "timedOut": false,
   "truncated": false
 }
 ```
 
-`stdout`, `stderr`, and `output` contain remote output only. Synthetic CLI notes such as `(exit code: 1)` or truncation notices are reported in `summary`; `displayOutput` is the human-readable combination used by the non-JSON CLI output.
+`stdout`, `stderr`, and `output` contain remote output only. Synthetic CLI notes such as `(exit code: 1)` or truncation notices are reported in `summary`; `displayOutput` is the human-readable combination used by the non-JSON CLI output. Timed-out responses also include `timeoutHint`.
+
+Blocked `exec` responses include additional fields that help callers adjust without guessing:
+
+```json
+{
+  "blocked": true,
+  "errorKind": "blocked",
+  "blockedBy": "dangerous-command",
+  "reason": "raw disk write",
+  "detail": "matched command fragment \"dd\""
+}
+```
+
+`gxshell-cli doctor` prints local diagnostics: the executable path, working directory, gxShell config/token location, whether the executable directory is on `PATH`, and whether the GUI daemon is reachable. Use it when the CLI works from one folder but not another, or when you need the directory to add to `PATH`.
 
 ## Troubleshooting
 
 - `gxShell daemon is not running`: start the gxShell GUI and try again.
+- CLI works only from one directory: run `.\gxshell-cli.exe doctor` from the directory containing the executable, then add the reported executable directory to `PATH`.
 - `No CLI-enabled servers configured`: enable `Allow CLI access` and set an alias on at least one profile. If the whole CLI is unreachable, also check that `Enable CLI server` is on in Settings and restart the app.
 - `server "<alias>" is not available to CLI`: check the alias spelling and whether the profile is opted in.
 - Slow first command but fast later commands: the first command likely paid the SSH connection cost, while later commands reused the connected session.
 - Direct connection is slow but ProxyJump is fast: the target profile can keep using ProxyJump; the CLI follows that profile setting automatically.
-- `remote command timeout`: the command exceeded the remote command timeout. Use `--timeout 2m` or the GUI terminal for longer work.
+- `remote command timeout`: the command exceeded the remote command timeout. Check the remote process/service/container state before retrying. Use `--timeout 10m` or the GUI terminal for longer work.
 
 ## API
 

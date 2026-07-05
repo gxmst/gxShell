@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -88,6 +89,12 @@ func main() {
 			fatalErrorKind(nextOpts, 1, "validation", err.Error())
 		}
 		checkDaemon(nextOpts)
+	case "doctor":
+		nextOpts, err := parseNoArgCommand(args[1:], opts, "doctor")
+		if err != nil {
+			fatalErrorKind(nextOpts, 1, "validation", err.Error())
+		}
+		showDoctor(nextOpts)
 	case "help", "--help", "-h":
 		showHelp()
 	case "version", "--version", "-v":
@@ -121,18 +128,32 @@ func execCommand(server, command string, opts cliOptions) {
 
 	if blocked, ok := result["blocked"].(bool); ok && blocked {
 		if !opts.json {
-			fmt.Println("BLOCKED:", stringField(result, "error"))
-			if reason := stringField(result, "reason"); reason != "" {
-				fmt.Println("Reason:", reason)
+			message := blockedMessage(result)
+			if message == "" {
+				message = "command blocked"
+			}
+			fmt.Println("BLOCKED:", message)
+			if detail := stringField(result, "detail"); detail != "" {
+				fmt.Println("Detail:", detail)
+			}
+			if blockedBy := stringField(result, "blockedBy"); blockedBy != "" {
+				fmt.Println("Blocked by:", blockedBy)
 			}
 		}
 		os.Exit(2)
 	}
 
-	if output := displayOutput(result); output != "" && !opts.json {
+	output := displayOutput(result)
+	if output != "" && !opts.json {
 		fmt.Print(output)
 	}
 	if timedOut, _ := boolField(result, "timedOut"); timedOut {
+		if !opts.json {
+			if output != "" && !strings.HasSuffix(output, "\n") {
+				fmt.Println()
+			}
+			fmt.Println("Timeout:", timeoutHintMessage(result))
+		}
 		os.Exit(124)
 	}
 	if exitCode, ok := intField(result, "exitCode"); ok && exitCode != 0 {
@@ -209,7 +230,7 @@ func showStatus(opts cliOptions) {
 func checkDaemon(opts cliOptions) {
 	resp, err := httpClient.Get(daemonURL + "/cli/ping")
 	if err != nil {
-		fatalError(opts, 1, "gxShell daemon is not running")
+		fatalError(opts, 1, "gxShell daemon is not running at "+daemonURL+". Start the gxShell GUI, then run `gxshell-cli doctor` if this keeps failing")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
@@ -224,6 +245,85 @@ func checkDaemon(opts cliOptions) {
 		return
 	}
 	fmt.Println("gxShell daemon is running")
+}
+
+func showDoctor(opts cliOptions) {
+	report := buildDoctorReport()
+	if opts.json {
+		printJSON(report)
+		return
+	}
+
+	fmt.Println("gxShell CLI doctor")
+	fmt.Println()
+	fmt.Println("Version:       " + stringField(report, "version"))
+	fmt.Println("Executable:    " + stringField(report, "executable"))
+	fmt.Println("Working dir:   " + stringField(report, "workingDir"))
+	fmt.Println("Config dir:    " + stringField(report, "configDir"))
+	fmt.Println("Token file:    " + stringField(report, "tokenPath") + " (" + stringField(report, "tokenStatus") + ")")
+	fmt.Println("Daemon:        " + stringField(report, "daemonStatus"))
+	if detail := stringField(report, "daemonDetail"); detail != "" {
+		fmt.Println("Daemon detail: " + detail)
+	}
+	if inPath, _ := boolField(report, "executableDirInPath"); inPath {
+		fmt.Println("PATH:          executable directory is on PATH")
+	} else {
+		exeDir := stringField(report, "executableDir")
+		fmt.Println("PATH:          executable directory is not on PATH")
+		if exeDir != "" {
+			fmt.Println("PATH hint:     add this directory to PATH to run gxshell-cli from any shell:")
+			fmt.Println("               " + exeDir)
+		}
+	}
+}
+
+func buildDoctorReport() map[string]any {
+	report := map[string]any{
+		"version":   version,
+		"daemonURL": daemonURL,
+		"os":        runtime.GOOS,
+	}
+
+	if cwd, err := os.Getwd(); err == nil {
+		report["workingDir"] = cwd
+	}
+	if exe, err := os.Executable(); err == nil {
+		if abs, absErr := filepath.Abs(exe); absErr == nil {
+			exe = abs
+		}
+		exeDir := filepath.Dir(exe)
+		report["executable"] = exe
+		report["executableDir"] = exeDir
+		report["executableDirInPath"] = pathContainsDir(os.Getenv("PATH"), exeDir)
+	} else {
+		report["executableError"] = err.Error()
+	}
+	if base, err := os.UserConfigDir(); err == nil {
+		report["configDir"] = filepath.Join(base, "gxShell")
+	} else {
+		report["configDirError"] = err.Error()
+	}
+	if tokenPath, err := cliTokenPath(); err == nil {
+		report["tokenPath"] = tokenPath
+		report["tokenStatus"] = tokenStatus(tokenPath)
+	} else {
+		report["tokenStatus"] = "unavailable"
+		report["tokenError"] = err.Error()
+	}
+
+	if resp, err := httpClient.Get(daemonURL + "/cli/ping"); err != nil {
+		report["daemonStatus"] = "not running"
+		report["daemonDetail"] = err.Error()
+	} else {
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			report["daemonStatus"] = "running"
+		} else {
+			report["daemonStatus"] = "unexpected status"
+			report["daemonDetail"] = resp.Status
+		}
+	}
+	return report
 }
 
 func requestJSON(method, path string, payload any, opts cliOptions) map[string]any {
@@ -463,12 +563,33 @@ func isSyntheticOutputLine(line string, result map[string]any) bool {
 	return false
 }
 
+func blockedMessage(result map[string]any) string {
+	if reason := stringField(result, "reason"); reason != "" {
+		return reason
+	}
+	errMsg := stringField(result, "error")
+	errMsg = strings.TrimSpace(errMsg)
+	errMsg = strings.TrimSpace(strings.TrimPrefix(errMsg, "BLOCKED:"))
+	return errMsg
+}
+
+func timeoutHintMessage(result map[string]any) string {
+	if hint := stringField(result, "timeoutHint"); hint != "" {
+		return hint
+	}
+	timeout := "the configured"
+	if timeoutMs, ok := intField(result, "timeoutMs"); ok && timeoutMs > 0 {
+		timeout = (time.Duration(timeoutMs) * time.Millisecond).Round(time.Second).String()
+	}
+	return fmt.Sprintf("Command exceeded the %s remote timeout. The SSH exec channel was closed, but the remote command may have made partial changes or may still be running in the background. Check the remote service/process status before retrying, or rerun with --timeout 10m for expected long operations.", timeout)
+}
+
 func loadToken() (string, error) {
-	base, err := os.UserConfigDir()
+	path, err := cliTokenPath()
 	if err != nil {
 		return "", err
 	}
-	raw, err := os.ReadFile(filepath.Join(base, "gxShell", cliTokenFilename))
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
@@ -477,6 +598,60 @@ func loadToken() (string, error) {
 		return "", fmt.Errorf("CLI token file is empty")
 	}
 	return token, nil
+}
+
+func cliTokenPath() (string, error) {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "gxShell", cliTokenFilename), nil
+}
+
+func tokenStatus(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "missing"
+		}
+		return "unreadable: " + err.Error()
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return "empty"
+	}
+	return "present"
+}
+
+func pathContainsDir(pathEnv, dir string) bool {
+	if strings.TrimSpace(dir) == "" {
+		return false
+	}
+	target, err := filepath.Abs(dir)
+	if err != nil {
+		target = dir
+	}
+	target = filepath.Clean(target)
+	for _, entry := range filepath.SplitList(pathEnv) {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		abs, err := filepath.Abs(entry)
+		if err != nil {
+			abs = entry
+		}
+		if samePath(filepath.Clean(abs), target) {
+			return true
+		}
+	}
+	return false
+}
+
+func samePath(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 func stringField(m map[string]any, key string) string {
@@ -538,7 +713,7 @@ func showHelp() {
 	help := `gxshell-cli - Command-line interface for gxShell
 
 USAGE:
-  gxshell-cli <command> [arguments]
+  gxshell-cli [options] <command> [arguments]
 
 COMMANDS:
   exec <server> "<command>"    Execute a command on a CLI-enabled server
@@ -547,6 +722,7 @@ COMMANDS:
   list                         List CLI-enabled server aliases
   status                       Show active CLI SSH connections
   ping                         Check if gxShell is running
+  doctor                       Show local CLI diagnostics
   help                         Show this help message
   version                      Show version information
 
@@ -556,10 +732,20 @@ SECURITY:
   - Server profiles are hidden unless CLI access is enabled.
   - The CLI lists aliases only, not IP addresses or usernames.
   - Simple read-only commands run without a prompt; other commands ask for native confirmation and may be batched.
+  - Run ` + "`gxshell-cli doctor`" + ` to check token, PATH, executable, and daemon state.
 
 OPTIONS:
   --json                       Print machine-readable JSON
   --timeout <duration>          Remote command timeout, e.g. 60, 90s, 5m
+
+EXAMPLES:
+  gxshell-cli exec prod-web "uptime"
+  gxshell-cli exec prod-web "docker compose up -d --build" --timeout 10m
+  gxshell-cli --timeout 10m exec prod-web "docker compose up -d --build"
+  gxshell-cli --json exec prod-web "df -h"
+
+TIP:
+  Put --timeout before exec or after the quoted remote command, not inside the remote command string.
 `
 	fmt.Print(help)
 }

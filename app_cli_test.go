@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"gxShell/backend/types"
 )
@@ -72,6 +74,16 @@ func TestHandleCliExecValidationErrorKind(t *testing.T) {
 	}
 	if payload["errorKind"] != "validation" {
 		t.Fatalf("errorKind = %#v, want validation", payload["errorKind"])
+	}
+}
+
+func TestCliDefaultTimeoutAndHint(t *testing.T) {
+	if cliCommandTimeout != 2*time.Minute {
+		t.Fatalf("cliCommandTimeout = %s, want 2m", cliCommandTimeout)
+	}
+	hint := cliTimeoutHint(cliCommandTimeout)
+	if !strings.Contains(hint, "2m0s remote timeout") || !strings.Contains(hint, "--timeout 10m") {
+		t.Fatalf("cliTimeoutHint = %q", hint)
 	}
 }
 

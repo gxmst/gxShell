@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -365,6 +366,30 @@ func TestGuardCommand(t *testing.T) {
 	// A declined confirmation blocks the command.
 	if reason, ok := guardCommand("touch /tmp/x", true, func() bool { return false }); ok || reason != "user declined execution" {
 		t.Fatalf("declined command should be blocked, got ok=%v reason=%q", ok, reason)
+	}
+}
+
+func TestGuardCommandReportIncludesDiagnosticDetail(t *testing.T) {
+	neverConfirm := func() bool {
+		t.Helper()
+		t.Fatal("confirm must not be called")
+		return false
+	}
+
+	block, ok := guardCommandReport("dd if=/dev/zero of=/tmp/test.img bs=1M count=1", true, neverConfirm)
+	if ok {
+		t.Fatal("dd command should be blocked")
+	}
+	if block.Kind != "dangerous-command" || block.Reason != "raw disk write" || !strings.Contains(block.Detail, "dd") {
+		t.Fatalf("unexpected dangerous block detail: %#v", block)
+	}
+
+	block, ok = guardCommandReport("cat /etc/../etc/shadow", true, neverConfirm)
+	if ok {
+		t.Fatal("sensitive path should be blocked")
+	}
+	if block.Kind != "sensitive-path" || block.Reason != "password hashes" || !strings.Contains(block.Detail, "/etc/shadow") {
+		t.Fatalf("unexpected sensitive path block detail: %#v", block)
 	}
 }
 

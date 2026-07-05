@@ -20,7 +20,7 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 - Session recording of terminal output to asciinema `.cast` files, with a built-in player (play, pause, restart, variable speed) and a recordings panel to play, delete, or reveal saved recordings. Recording taps terminal output only, not stdin; shell-echoed commands can appear in recordings, while password prompts with echo disabled are not captured.
 - Reusable command templates with `<name>` variable placeholders. Running a template with placeholders prompts for each value with a live preview before the command is sent, to the active terminal or broadcast to all sessions.
 - AI assistant for OpenAI-compatible APIs, with streaming responses, model listing, token usage, terminal context, and explicit native confirmation before remote tool execution.
-- External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands on opted-in profiles through the running app, without exposing saved SSH credentials. The CLI can be disabled globally, reuses active SSH sessions when possible, follows each profile's ProxyJump setting, runs simple read-only commands directly, batches approval prompts for nearby external requests, supports `--json`, `--timeout`, `exec-file`, and `exec-stdin`, and requires native confirmation for anything else. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
+- External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands on opted-in profiles through the running app, without exposing saved SSH credentials. The CLI can be disabled globally, reuses active SSH sessions when possible, follows each profile's ProxyJump setting, runs simple read-only commands directly, batches approval prompts for nearby external requests, supports `--json`, `--timeout`, `exec-file`, `exec-stdin`, and `doctor`, and requires native confirmation for anything else. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
 - Local and remote text/Markdown viewer/editor with sanitized Markdown rendering, plain-text viewing for logs and other text formats, file-open support, drag-and-drop opening, recent files, sibling and relative-link navigation, relative image previews for Markdown, table of contents, code highlighting, Mermaid diagrams, in-document search, zoom, edit, save, split preview, and refresh.
 - Windows tray menu for showing the app, creating a connection, opening a text file, settings, and quit.
 - Windows text-file integration, including installed file-association metadata and an optional per-user "Open with gxShell" right-click menu entry for supported text formats.
@@ -36,7 +36,7 @@ Supported text viewer/editor extensions: `.md`, `.markdown`, `.txt`, `.text`, `.
 - Older plaintext profile secrets are migrated on startup.
 - AI tool calls are registered by the backend, expire after a short TTL, are single-use, and require a native confirmation dialog before command execution or remote file reads. Multiple pending AI tools can be approved together and independent commands run in parallel after approval.
 - Dangerous commands and sensitive remote paths are blocked for AI tools.
-- The external `gxshell-cli` interface can be disabled globally, requires a local bearer token when enabled, exposes only opted-in profile aliases (never hosts, users, ports, profile IDs, or jump-host details), blocks dangerous commands and sensitive paths, and requires native confirmation for anything that is not a simple read-only command. Nearby requests for the same alias are batched into one native prompt.
+- The external `gxshell-cli` interface can be disabled globally, requires a local bearer token when enabled, exposes only opted-in profile aliases (never hosts, users, ports, profile IDs, or jump-host details), blocks dangerous commands and sensitive paths with diagnostic reason/detail fields, and requires native confirmation for anything that is not a simple read-only command. Nearby requests for the same alias are batched into one native prompt.
 - CLI commands run through gxShell-managed SSH sessions. Existing sessions may be reused, but each command uses a separate short-lived SSH exec channel rather than typing into the interactive terminal.
 - Logs redact common secret fields and avoid persisting AI message content previews.
 - Local text-file read/write is limited to files the user opened through the native dialog, OS file-open, drag-and-drop, or authorized text-file siblings.
@@ -122,6 +122,8 @@ The CLI client is a separate binary from the Wails desktop app. Build it explici
 go build -o gxshell-cli.exe .\cmd\gxshell-cli
 ```
 
+Run `.\gxshell-cli.exe doctor` to check the CLI executable path, token, PATH status, and GUI daemon reachability.
+
 ## Release
 
 1. Verify tests and frontend build:
@@ -190,7 +192,7 @@ gxShell 是一个基于 Wails v2、Go 和 React 构建的 Windows 桌面 SSH 工
 - 会话录制为 asciinema `.cast` 文件，内置播放器支持播放、暂停、重播和倍速；录制面板可播放、删除或打开录制文件夹。录制只捕获终端输出，不读取 stdin；Shell 回显的命令可能出现在录制中，关闭回显的密码输入不会被捕获。
 - 可复用命令模板，支持 `<name>` 变量占位符。执行带占位符的模板时，会先弹出填写窗口并显示实时预览，然后发送到当前终端或广播到所有会话。
 - AI 助手支持 OpenAI 兼容 API，包含流式响应、模型列表、token 用量、终端上下文，以及执行远程工具前的原生确认。
-- 外部 `gxshell-cli` 命令行客户端和本地 HTTP API，可让本地工具或 AI agent 通过正在运行的 gxShell 在已授权配置上执行命令，同时不暴露已保存的 SSH 凭据。CLI 可全局关闭，可复用活动 SSH 会话，遵循目标配置的 ProxyJump 设置，支持简单只读命令直通、邻近请求合并确认、`--json`、`--timeout`、`exec-file` 和 `exec-stdin`，其余操作需要原生确认。参见 [GXSHELL_CLI.md](GXSHELL_CLI.md)。
+- 外部 `gxshell-cli` 命令行客户端和本地 HTTP API，可让本地工具或 AI agent 通过正在运行的 gxShell 在已授权配置上执行命令，同时不暴露已保存的 SSH 凭据。CLI 可全局关闭，可复用活动 SSH 会话，遵循目标配置的 ProxyJump 设置，支持简单只读命令直通、邻近请求合并确认、`--json`、`--timeout`、`exec-file`、`exec-stdin` 和 `doctor`，其余操作需要原生确认。参见 [GXSHELL_CLI.md](GXSHELL_CLI.md)。
 - 本地和远程文本/Markdown 查看与编辑，支持安全 Markdown 渲染、日志等文本格式查看、文件打开、拖拽打开、最近文件、同目录文件导航、相对链接导航、相对图片预览、目录、代码高亮、Mermaid 图、文内搜索、缩放、编辑、保存、分屏预览和刷新。
 - Windows 托盘菜单，支持显示应用、新建连接、打开文本文件、设置和退出。
 - Windows 文本文件集成，包括安装时的文件关联元数据，以及可选的当前用户右键菜单 “Open with gxShell”，适用于支持的文本格式。
@@ -206,7 +208,7 @@ gxShell 是一个基于 Wails v2、Go 和 React 构建的 Windows 桌面 SSH 工
 - 旧版本明文 profile 密钥会在启动时迁移。
 - AI 工具调用由后端登记，短时间后过期，只能使用一次，并且在执行命令或读取远程文件前需要原生确认。多个待处理 AI 工具可以一起批准，批准后的独立命令可并行执行。
 - AI 工具会阻止危险命令和敏感远程路径。
-- 外部 `gxshell-cli` 接口可全局关闭；启用时需要本地 bearer token，只暴露已授权的 profile alias，不暴露主机、用户名、端口、profile ID 或跳板机细节；会阻止危险命令和敏感路径；除简单只读命令外都需要原生确认。针对同一 alias 的邻近请求会合并到一个原生确认窗口中。
+- 外部 `gxshell-cli` 接口可全局关闭；启用时需要本地 bearer token，只暴露已授权的 profile alias，不暴露主机、用户名、端口、profile ID 或跳板机细节；会阻止危险命令和敏感路径，并返回诊断用的原因/详情字段；除简单只读命令外都需要原生确认。针对同一 alias 的邻近请求会合并到一个原生确认窗口中。
 - CLI 命令通过 gxShell 管理的 SSH 会话执行。已有会话可能被复用，但每个命令会使用独立的短生命周期 SSH exec channel，而不是输入到交互式终端中。
 - 日志会脱敏常见密钥字段，并避免持久化 AI 消息内容预览。
 - 本地文本文件读写仅限用户通过原生文件选择器、系统文件打开、拖拽打开，或授权文本文件同目录关系打开过的文件。
@@ -291,6 +293,8 @@ CLI 客户端是独立于 Wails 桌面应用的二进制文件。需要使用或
 ```powershell
 go build -o gxshell-cli.exe .\cmd\gxshell-cli
 ```
+
+运行 `.\gxshell-cli.exe doctor` 可以检查 CLI 可执行文件位置、token、PATH 状态和 GUI daemon 连通性。
 
 ## 发布
 
