@@ -30,9 +30,31 @@
   --dur-fast: 120ms;
   --dur: 180ms;
   --dur-slow: 260ms;
+  /* Typography tokens. The mono stack is treated as a "data material": hosts,
+     metrics, versions and logs render in it so machine data reads distinctly
+     from UI labels. Cascadia ships with Windows 10+, the rest are fallbacks. */
+  --font-mono: "Cascadia Code", "JetBrains Mono", "Fira Code", Consolas, ui-monospace, "SF Mono", monospace;
+  --mono: var(--font-mono);
+  /* Elevation + signal tokens. --shadow-color is overridden per (light) theme
+     so shadows stay tinted to the palette instead of dead black. --shadow-lg
+     was referenced before but never defined, which voided those declarations —
+     defining the scale here restores depth on dropdowns and floating panes. */
+  --shadow-color: rgba(1, 6, 14, 0.6);
+  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--shadow-color) 60%, transparent), 0 2px 10px color-mix(in srgb, var(--shadow-color) 34%, transparent);
+  --shadow-md: 0 4px 14px color-mix(in srgb, var(--shadow-color) 52%, transparent), 0 10px 34px color-mix(in srgb, var(--shadow-color) 38%, transparent);
+  --shadow-lg: 0 6px 18px color-mix(in srgb, var(--shadow-color) 55%, transparent), 0 24px 70px color-mix(in srgb, var(--shadow-color) 46%, transparent);
+  /* Phosphor glow: one shared "signal" treatment for the active tab underline,
+     connected status dots and meter tips, so live state has a single voice. */
+  --glow-accent: 0 0 10px color-mix(in srgb, var(--accent) 40%, transparent);
+  --ring: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
+  /* Readable text on top of a solid --accent fill (dark accents override). */
+  --accent-contrast: #06111d;
+  --bg-hover: color-mix(in srgb, var(--panel-raised) 70%, transparent);
   height: 100vh;
   overflow: hidden;
-  background: var(--bg);
+  background:
+    radial-gradient(1100px 640px at 14% -12%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 62%),
+    var(--bg);
   color: var(--text);
 }
 
@@ -70,6 +92,9 @@
   --warn: #c2870c;
   --bad: #c0492f;
   --error: var(--bad);
+  /* Light palette: soften shadows and use warm ink instead of black. */
+  --shadow-color: rgba(74, 52, 28, 0.3);
+  --accent-contrast: #fffaf0;
 }
 
 .app-shell[data-theme="Ember Terminal"] {
@@ -132,4 +157,8 @@
   --ok: #15803d;
   --warn: #b45309;
   --bad: #dc2626;
+  /* Light palette: slate-tinted, lighter shadows; white text on the blue
+     accent (the dark default text was ~1.5:1 against #2563eb). */
+  --shadow-color: rgba(30, 41, 66, 0.26);
+  --accent-contrast: #ffffff;
 }

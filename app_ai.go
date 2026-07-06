@@ -110,7 +110,11 @@ func (a *App) AiChat(req types.AiChatRequest) error {
 	})
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), aiChatTimeout)
+		parent := a.ctx
+		if parent == nil {
+			parent = context.Background()
+		}
+		ctx, cancel := context.WithTimeout(parent, aiChatTimeout)
 		defer cancel()
 
 		aiReq := ai.ChatRequest{
@@ -176,7 +180,11 @@ func (a *App) AiContinueChat(req types.AiChatRequest) error {
 	})
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), aiChatTimeout)
+		parent := a.ctx
+		if parent == nil {
+			parent = context.Background()
+		}
+		ctx, cancel := context.WithTimeout(parent, aiChatTimeout)
 		defer cancel()
 
 		aiReq := ai.ChatRequest{

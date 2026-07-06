@@ -8,20 +8,44 @@
 }
 
 .toast {
+  position: relative;
   max-width: 360px;
   border: 1px solid var(--border);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--panel-raised) 92%, black);
-  padding: 9px 11px;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--panel-raised) 88%, black);
+  backdrop-filter: blur(8px);
+  padding: 9px 11px 9px 14px;
   color: var(--text);
   font-size: 12px;
-  box-shadow: 0 12px 36px rgba(0, 0, 0, .24);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  animation: toast-in var(--dur-slow) var(--ease-spring) both;
 }
 
+/* Type is signalled by a slim signal bar on the leading edge (accent for info,
+   ok/bad for success/error) instead of recoloring the whole border. */
+.toast::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--accent);
+}
+
+.toast-success::before { background: var(--ok); }
+.toast-error::before { background: var(--bad); }
+
 .toast-success {
-  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 30%, var(--border));
 }
 
 .toast-error {
-  border-color: color-mix(in srgb, var(--bad) 38%, transparent);
+  border-color: color-mix(in srgb, var(--bad) 30%, var(--border));
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }

@@ -38,7 +38,15 @@ func (a *App) onTrayReady() {
 	// Handle menu clicks
 	go func() {
 		for {
+			// The app context may not be set yet when the tray starts;
+			// re-check each iteration so we exit once it is cancelled.
+			var done <-chan struct{}
+			if a.ctx != nil {
+				done = a.ctx.Done()
+			}
 			select {
+			case <-done:
+				return
 			case <-mShow.ClickedCh:
 				if a.ctx != nil {
 					runtime.WindowShow(a.ctx)

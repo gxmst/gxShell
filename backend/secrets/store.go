@@ -22,6 +22,12 @@ type Store struct {
 	dataDir   string
 	legacyDir string
 	mu        sync.Mutex
+
+	// Cached state, guarded by mu. The store owns its files exclusively, so
+	// caching avoids re-reading and re-decrypting the fallback file (and the
+	// key file) on every secret operation.
+	encKey        []byte
+	fallbackCache map[string]map[string]string
 }
 
 func NewStore(dataDir string) *Store {
@@ -220,13 +226,36 @@ func deriveKey(encKey []byte) []byte {
 	return h.Sum(nil)
 }
 
+// cachedKey returns the file-encryption key, loading or creating it on first
+// use. Callers must hold s.mu.
+func (s *Store) cachedKey() ([]byte, error) {
+	if s.encKey != nil {
+		return s.encKey, nil
+	}
+	key, err := s.getOrCreateKey()
+	if err != nil {
+		return nil, err
+	}
+	s.encKey = key
+	return key, nil
+}
+
+// fallbackData returns the decrypted fallback secrets, reading the file only
+// on first use and caching the result. Callers must hold s.mu.
+func (s *Store) fallbackData() map[string]map[string]string {
+	if s.fallbackCache == nil {
+		s.fallbackCache = s.readFallback()
+	}
+	return s.fallbackCache
+}
+
 func (s *Store) readFallback() map[string]map[string]string {
 	data := map[string]map[string]string{}
 	raw, err := os.ReadFile(s.fallbackPath())
 	if err != nil {
 		return data
 	}
-	encKey, err := s.getOrCreateKey()
+	encKey, err := s.cachedKey()
 	if err != nil {
 		return data
 	}
@@ -244,7 +273,7 @@ func (s *Store) writeFallback(data map[string]map[string]string) error {
 	if err != nil {
 		return err
 	}
-	encKey, err := s.getOrCreateKey()
+	encKey, err := s.cachedKey()
 	if err != nil {
 		return err
 	}
@@ -271,7 +300,7 @@ func (s *Store) writeFallback(data map[string]map[string]string) error {
 func (s *Store) saveFallback(profileID, kind, value string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data := s.readFallback()
+	data := s.fallbackData()
 	if data[profileID] == nil {
 		data[profileID] = map[string]string{}
 	}
@@ -282,7 +311,7 @@ func (s *Store) saveFallback(profileID, kind, value string) error {
 func (s *Store) loadFallback(profileID, kind string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data := s.readFallback()
+	data := s.fallbackData()
 	if entry, ok := data[profileID]; ok {
 		return entry[kind]
 	}
@@ -292,7 +321,7 @@ func (s *Store) loadFallback(profileID, kind string) string {
 func (s *Store) deleteFallback(profileID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data := s.readFallback()
+	data := s.fallbackData()
 	delete(data, profileID)
 	if len(data) == 0 {
 		_ = os.Remove(s.fallbackPath())

@@ -62,9 +62,18 @@ func (s *Store) ensureJSON(name string, value any) error {
 	return s.writeJSON(name, value)
 }
 
+// maxConfigFileSize caps how much of a config file readJSON will load, so a
+// corrupted or maliciously bloated JSON file cannot exhaust memory.
+const maxConfigFileSize = 10 * 1024 * 1024 // 10 MB
+
 func (s *Store) readJSON(name string, value any) error {
+	path := filepath.Join(s.dir, name)
 	s.mu.RLock()
-	data, err := os.ReadFile(filepath.Join(s.dir, name))
+	if info, err := os.Stat(path); err == nil && info.Size() > maxConfigFileSize {
+		s.mu.RUnlock()
+		return fmt.Errorf("config file %s too large: %d bytes (max %d)", name, info.Size(), maxConfigFileSize)
+	}
+	data, err := os.ReadFile(path)
 	s.mu.RUnlock()
 	if err != nil {
 		return err

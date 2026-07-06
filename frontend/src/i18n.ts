@@ -37,6 +37,7 @@ export type LangKey =
   | "presetWeb" | "presetMySQL" | "presetRedis" | "presetSOCKS"
   | "transfer" | "transferTitle" | "noActiveTransfer" | "transferProgress" | "transferComplete" | "transferFailed"
   | "memoryDetail" | "topMemProcesses" | "close" | "closeEsc" | "settingsSaved" | "profileCopied"
+  | "profileSaved" | "logReadFailed" | "cliServerError"
   | "sshConnection" | "showSidebar" | "splitHorizontal" | "splitVertical" | "reconnect" | "run"
   | "cpuDetail" | "diskDetail" | "networkDetail" | "cpuUsage" | "diskUsage" | "used" | "total" | "latency" | "topCpuProcesses" | "linuxCommands" | "rootDiskHint" | "noData" | "minMax" | "outline" | "hideOutline" | "find" | "wrapCode" | "wrapText" | "openTextFile" | "fileSaved" | "discardChanges" | "downloadFolder" | "folderDownloadFinished" | "copyPath" | "newFolder" | "folderName" | "renameFile" | "newName" | "deleteRemoteFile" | "deleteRemoteFileBody" | "searchPlaceholder" | "typeToSearch" | "findInCurrentTerminal" | "findNext" | "ram" | "swap"
   | "textFiles" | "recentTextFiles" | "switchFilesView" | "noRecentTextFiles" | "connectServerFirstTextFile"
@@ -199,6 +200,9 @@ const en: Record<LangKey, string> = {
   closeEsc: "Close (Esc)",
   settingsSaved: "Settings saved",
   profileCopied: "Profile copied. Saved credentials are not copied.",
+  profileSaved: "Server profile saved",
+  logReadFailed: "Failed to read log file",
+  cliServerError: "CLI server failed to start",
   sshConnection: "SSH Connection",
   showSidebar: "Show sidebar",
   splitHorizontal: "Split horizontal",
@@ -471,6 +475,9 @@ const zhCN: Record<LangKey, string> = {
   closeEsc: "关闭 (Esc)",
   settingsSaved: "设置已保存",
   profileCopied: "服务器已复制，已保存的凭据不会复制。",
+  profileSaved: "服务器配置已保存",
+  logReadFailed: "读取日志文件失败",
+  cliServerError: "CLI 服务器启动失败",
   sshConnection: "SSH 连接",
   showSidebar: "显示侧栏",
   splitHorizontal: "左右分屏",

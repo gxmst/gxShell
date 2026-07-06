@@ -316,6 +316,11 @@ function App() {
     openMarkdownFile(path);
   }, [openMarkdownFile, openRemoteMarkdownFile, sessions.activeTab]);
 
+  // Language for toasts fired from long-lived event listeners; a ref avoids
+  // resubscribing those listeners whenever the language setting changes.
+  const langRef = useRef(profileState.settings?.language || "en");
+  langRef.current = profileState.settings?.language || "en";
+
   useEffect(() => {
     OnFileDrop((_x, _y, _paths) => {
       // The browser-side callback only installs Wails' drop listener. The
@@ -331,6 +336,12 @@ function App() {
 
     const unsubRecordingError = EventsOn("recording:error", (payload: { error?: string }) => {
       notify(payload?.error || "Failed to finalize recording", "error");
+    });
+
+    // Surface local CLI HTTP server startup failures (e.g. port already in
+    // use); otherwise the external gxshell-cli silently cannot connect.
+    const unsubCliServerError = EventsOn("cli:server-error", (payload: { address?: string; error?: string }) => {
+      notify(t(langRef.current, "cliServerError", { error: payload?.error || "unknown error" }), "error");
     });
 
     // Pull side of the file-open handshake. On first launch the Go side may emit
@@ -360,6 +371,7 @@ function App() {
     return () => {
       if (unsubFileOpen) unsubFileOpen();
       if (unsubRecordingError) unsubRecordingError();
+      if (unsubCliServerError) unsubCliServerError();
       if (unsubTrayNewConnection) unsubTrayNewConnection();
       if (unsubTrayOpenMarkdown) unsubTrayOpenMarkdown();
       if (unsubTraySettings) unsubTraySettings();
@@ -436,7 +448,7 @@ function App() {
     try {
       await profileState.saveProfile(profile);
       setProfileModal(null);
-      notify("Server profile saved", "success");
+      notify(t(profileState.settings?.language || "en", "profileSaved"), "success");
     } catch (err) {
       notify(String(err), "error");
     }
@@ -555,7 +567,7 @@ function App() {
             try {
               const content = await ReadLogFile(name);
               setLogViewer({ name, content });
-            } catch { notify("Failed to read log file", "error"); }
+            } catch { notify(t(profileState.settings?.language || "en", "logReadFailed"), "error"); }
           }}
           getTerminalLines={activeTerminal.getTerminalLines}
           activeTabId={sessions.activeTab}

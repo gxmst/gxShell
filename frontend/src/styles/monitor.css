@@ -51,9 +51,19 @@
   transition: width 200ms ease;
 }
 
-.meter-ok { background: var(--ok); }
-.meter-warn { background: var(--warn); }
-.meter-bad { background: var(--bad); }
+/* Meter fills glow faintly like signal bars; the tint follows the state color. */
+.meter-ok {
+  background: var(--ok);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--ok) 45%, transparent);
+}
+.meter-warn {
+  background: var(--warn);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--warn) 45%, transparent);
+}
+.meter-bad {
+  background: var(--bad);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--bad) 50%, transparent);
+}
 
 .chip-grid,
 .compact-chip-grid {

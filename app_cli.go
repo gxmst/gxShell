@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"time"
 
@@ -35,6 +36,7 @@ func (a *App) startCliServer() {
 	token, err := loadOrCreateCliToken(a.store.DataDir())
 	if err != nil {
 		a.log.ErrorFields("CLI server token setup failed", logger.LogFields{"error": err.Error()})
+		a.emitCliServerError("token setup failed: " + err.Error())
 		return
 	}
 
@@ -57,7 +59,21 @@ func (a *App) startCliServer() {
 	a.log.Info("CLI server listening on " + cliAddress)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		a.log.ErrorFields("CLI server failed", logger.LogFields{"error": err.Error()})
+		a.emitCliServerError(err.Error())
 	}
+}
+
+// emitCliServerError notifies the frontend that the local CLI HTTP server is
+// unavailable (e.g. the port is already in use), so the user is not left
+// assuming the external CLI works.
+func (a *App) emitCliServerError(message string) {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, "cli:server-error", map[string]any{
+		"address": cliAddress,
+		"error":   message,
+	})
 }
 
 func (a *App) requireCliAuth(token string, next http.HandlerFunc) http.HandlerFunc {
@@ -477,7 +493,11 @@ func isAuthorizedCliRequest(r *http.Request, token string) bool {
 func loadOrCreateCliToken(dataDir string) (string, error) {
 	path := filepath.Join(dataDir, cliTokenFilename)
 	if raw, err := os.ReadFile(path); err == nil {
-		if token := strings.TrimSpace(string(raw)); token != "" {
+		if !cliTokenFilePermsOK(path) {
+			// The token may have been readable by other local users;
+			// rotate it instead of trusting the existing value.
+			_ = os.Remove(path)
+		} else if token := strings.TrimSpace(string(raw)); token != "" {
 			return token, nil
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -495,6 +515,20 @@ func loadOrCreateCliToken(dataDir string) (string, error) {
 		return "", err
 	}
 	return token, nil
+}
+
+// cliTokenFilePermsOK reports whether the token file is only accessible by the
+// current user. On Windows, Unix permission bits are not meaningful (access is
+// controlled by NTFS ACLs), so the check is skipped there.
+func cliTokenFilePermsOK(path string) bool {
+	if goruntime.GOOS == "windows" {
+		return true
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.Mode().Perm()&0o077 == 0
 }
 
 func newCliToken() (string, error) {
