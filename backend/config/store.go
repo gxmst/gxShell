@@ -16,6 +16,29 @@ import (
 type Store struct {
 	dir string
 	mu  sync.RWMutex
+	// cache holds the last-known raw JSON bytes for each config file, keyed by
+	// filename. Reads unmarshal from here to avoid a disk hit on every
+	// ListProfiles/GetSettings (a single CLI exec triggers several), and writes
+	// refresh it. Correct because every mutation goes through writeJSON and the
+	// app holds a single-instance lock, so no other writer touches these files.
+	// Bytes (not typed values) are cached so each caller gets a private copy it
+	// can mutate safely.
+	cache map[string][]byte
+}
+
+func (s *Store) cachedBytesLocked(name string) ([]byte, bool) {
+	data, ok := s.cache[name]
+	return data, ok
+}
+
+func (s *Store) storeCacheLocked(name string, data []byte) {
+	if s.cache == nil {
+		s.cache = map[string][]byte{}
+	}
+	// Copy so a later mutation of the caller's slice cannot corrupt the cache.
+	buf := make([]byte, len(data))
+	copy(buf, data)
+	s.cache[name] = buf
 }
 
 func NewStore() (*Store, error) {
@@ -67,8 +90,16 @@ func (s *Store) ensureJSON(name string, value any) error {
 const maxConfigFileSize = 10 * 1024 * 1024 // 10 MB
 
 func (s *Store) readJSON(name string, value any) error {
-	path := filepath.Join(s.dir, name)
+	// Fast path: unmarshal from the cached bytes without touching disk. Each
+	// caller unmarshals into its own value, so the returned data is a private
+	// copy that is safe to mutate.
 	s.mu.RLock()
+	if data, ok := s.cachedBytesLocked(name); ok {
+		s.mu.RUnlock()
+		return json.Unmarshal(data, value)
+	}
+
+	path := filepath.Join(s.dir, name)
 	if info, err := os.Stat(path); err == nil && info.Size() > maxConfigFileSize {
 		s.mu.RUnlock()
 		return fmt.Errorf("config file %s too large: %d bytes (max %d)", name, info.Size(), maxConfigFileSize)
@@ -82,6 +113,11 @@ func (s *Store) readJSON(name string, value any) error {
 		return errors.New("empty config file: " + name)
 	}
 	if err := json.Unmarshal(data, value); err != nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if cached, ok := s.cachedBytesLocked(name); ok {
+			return json.Unmarshal(cached, value)
+		}
 		bakData, bakErr := os.ReadFile(filepath.Join(s.dir, name+".bak"))
 		if bakErr != nil {
 			return fmt.Errorf("failed to parse %s (backup also unavailable): %w", name, err)
@@ -89,10 +125,15 @@ func (s *Store) readJSON(name string, value any) error {
 		if bakErr := json.Unmarshal(bakData, value); bakErr != nil {
 			return fmt.Errorf("failed to parse %s and its backup: %w", name, err)
 		}
-		s.mu.Lock()
 		_ = os.WriteFile(filepath.Join(s.dir, name), bakData, 0600)
-		s.mu.Unlock()
+		s.storeCacheLocked(name, bakData)
+		return nil
 	}
+	s.mu.Lock()
+	if _, ok := s.cachedBytesLocked(name); !ok {
+		s.storeCacheLocked(name, data)
+	}
+	s.mu.Unlock()
 	return nil
 }
 
@@ -115,6 +156,7 @@ func (s *Store) writeJSON(name string, value any) error {
 	for i := 0; i < 3; i++ {
 		renameErr = os.Rename(tmp, path)
 		if renameErr == nil {
+			s.storeCacheLocked(name, data)
 			return nil
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -124,7 +166,11 @@ func (s *Store) writeJSON(name string, value any) error {
 		return renameErr
 	}
 	_ = os.Remove(tmp)
-	return os.WriteFile(path, dataCopy, 0600)
+	if err := os.WriteFile(path, dataCopy, 0600); err != nil {
+		return err
+	}
+	s.storeCacheLocked(name, data)
+	return nil
 }
 
 func (s *Store) CleanupBackups() {

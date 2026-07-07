@@ -64,7 +64,9 @@ func TestAIToolAuthorizationIgnoresUnknownTools(t *testing.T) {
 func TestAIToolAuthorizationExpires(t *testing.T) {
 	app := NewApp()
 	key := aiToolAuthorizationKey("sess-1", "call-1")
-	app.aiTools[key] = authorizedAIToolCall{
+	// Inject an already-expired authorization straight into the registry ledger
+	// (same package, so the unexported map is reachable) to exercise pruning.
+	app.aiTools.calls[key] = authorizedAIToolCall{
 		SessionID:  "sess-1",
 		ToolCallID: "call-1",
 		ToolName:   "read_file",
@@ -75,7 +77,7 @@ func TestAIToolAuthorizationExpires(t *testing.T) {
 	if _, err := app.claimAuthorizedAiToolCall("sess-1", "call-1"); err == nil {
 		t.Fatal("expired tool call should not be claimable")
 	}
-	if _, ok := app.aiTools[key]; ok {
+	if _, ok := app.aiTools.calls[key]; ok {
 		t.Fatal("expired tool call should be pruned")
 	}
 }

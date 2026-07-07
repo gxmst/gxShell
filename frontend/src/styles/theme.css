@@ -50,6 +50,18 @@
   /* Readable text on top of a solid --accent fill (dark accents override). */
   --accent-contrast: #06111d;
   --bg-hover: color-mix(in srgb, var(--panel-raised) 70%, transparent);
+  /* Code + syntax-highlight tokens. These were hardcoded dark-theme hex values
+     in markdown-viewer.css (bright yellow numbers, peach titles) that stayed put
+     under the light themes and turned near-illegible on a pale code background.
+     Defining them per theme keeps one set of names; light themes override with
+     darker, higher-contrast inks. --code-bg is the code block surface. */
+  --code-bg: color-mix(in srgb, var(--terminal) 82%, black);
+  --code-fg: var(--text);
+  --code-keyword: #8bd3ff;
+  --code-string: #a7e3a0;
+  --code-number: #f4c95d;
+  --code-title: #ffb86b;
+  --code-comment: var(--muted);
   height: 100vh;
   overflow: hidden;
   background:
@@ -95,6 +107,16 @@
   /* Light palette: soften shadows and use warm ink instead of black. */
   --shadow-color: rgba(74, 52, 28, 0.3);
   --accent-contrast: #fffaf0;
+  /* Syntax + code on a light cream background: the dark-theme defaults (bright
+     yellow numbers, pastel green strings) are near-invisible here, so override
+     with saturated, dark inks that read on cream. */
+  --code-bg: #f6edda;
+  --code-border: rgba(169, 116, 63, .28);
+  --code-keyword: #9a4a1e;
+  --code-string: #4d7c1f;
+  --code-number: #9a5c00;
+  --code-title: #a03a8f;
+  --code-comment: #93795c;
 }
 
 .app-shell[data-theme="Ember Terminal"] {
@@ -161,4 +183,15 @@
      accent (the dark default text was ~1.5:1 against #2563eb). */
   --shadow-color: rgba(30, 41, 66, 0.26);
   --accent-contrast: #ffffff;
+  /* Syntax + code surface for the light theme: a faintly tinted panel instead
+     of a near-black mix, and saturated inks that stay legible on it. The
+     previous hardcoded dark-theme colours (bright yellow numbers, pale-green
+     strings) washed out on a light code block. */
+  --code-bg: #eef2f8;
+  --code-border: rgba(76, 94, 118, .24);
+  --code-keyword: #7c3aed;
+  --code-string: #0f7d3d;
+  --code-number: #b45309;
+  --code-title: #b0378a;
+  --code-comment: #6b7a90;
 }

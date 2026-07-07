@@ -230,6 +230,13 @@ export default function MarkdownViewer({
   const [matchCount, setMatchCount] = useState(0);
   const [current, setCurrent] = useState(0);
 
+  // Idle-fade tier for the floating control bar. It starts fully visible on
+  // any interaction, dims to 'idle' after a short pause, then to 'faded' so it
+  // stops obscuring the top-right of the document while reading. Hover/focus
+  // reveal it via CSS regardless of tier (see .markdown-viewer-float).
+  const [floatActivity, setFloatActivity] = useState<'active' | 'idle' | 'faded'>('active');
+  const floatTimersRef = useRef<{ idle?: number; faded?: number }>({});
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const splitPreviewRef = useRef<HTMLDivElement>(null);
@@ -240,6 +247,27 @@ export default function MarkdownViewer({
   const pendingScrollRatioRef = useRef<number | null>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
+
+  // Register an interaction: reveal the float bar, then re-arm the dim/fade
+  // timers. Called on pointer moves, scrolls and key presses over the viewer.
+  const noteActivity = useCallback(() => {
+    setFloatActivity('active');
+    const timers = floatTimersRef.current;
+    if (timers.idle) window.clearTimeout(timers.idle);
+    if (timers.faded) window.clearTimeout(timers.faded);
+    timers.idle = window.setTimeout(() => setFloatActivity('idle'), 2500);
+    timers.faded = window.setTimeout(() => setFloatActivity('faded'), 6000);
+  }, []);
+
+  // Arm the initial fade and clean up timers on unmount.
+  useEffect(() => {
+    noteActivity();
+    return () => {
+      const timers = floatTimersRef.current;
+      if (timers.idle) window.clearTimeout(timers.idle);
+      if (timers.faded) window.clearTimeout(timers.faded);
+    };
+  }, [noteActivity]);
 
   const displayPath = source === 'remote' ? remotePath : filePath;
   const markdownMode = isMarkdownPath(displayPath || '');
@@ -657,8 +685,14 @@ export default function MarkdownViewer({
   if (error) return <div className="markdown-viewer-error">{error}</div>;
 
   return (
-    <div className="markdown-viewer">
-      <div className="markdown-viewer-float">
+    <div
+      className="markdown-viewer"
+      onPointerMove={noteActivity}
+      onPointerDown={noteActivity}
+      onKeyDown={noteActivity}
+      onWheelCapture={noteActivity}
+    >
+      <div className="markdown-viewer-float" data-activity={floatActivity}>
         <input
           type="range"
           className="markdown-viewer-zoom"

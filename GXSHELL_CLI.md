@@ -17,6 +17,34 @@
 
 Localhost is not treated as a complete security boundary. The token and confirmation dialog are the real guardrails.
 
+## AI Agent Usage
+
+AI agents should treat the CLI alias as the only gxShell-provided target identity. The CLI intentionally does not expose hostnames, IP addresses, usernames, ports, profile IDs, or jump-host details, so agents must not rely on those values being available through `list`, `status`, or `exec` metadata.
+
+Before making claims about a server or running state-changing commands, verify the exact alias with a small read-only identity check and keep that alias attached to the result:
+
+```powershell
+.\gxshell-cli.exe exec prod-web "uname -n" --json
+.\gxshell-cli.exe exec prod-web "cat /etc/os-release" --json
+.\gxshell-cli.exe exec prod-web "which dnf" --json
+.\gxshell-cli.exe exec prod-web "which apt" --json
+.\gxshell-cli.exe exec prod-web "uname -a" --json
+```
+
+Use `--json` for automation whenever possible. The JSON response includes the requested `alias`, exit status, stdout, stderr, timeout status, and truncation status. After any state-changing `exec`, read back the `alias` field in the JSON response and confirm it matches the intended target before trusting or reporting the result.
+
+Local terminal output, user-pasted output, GUI terminal output, and CLI JSON output are different evidence streams; do not merge them unless the source alias and command are explicit. Never build an explanation on top of an unverified server fact. If a conclusion about a server's identity or state is not backed by a specific alias, command, and JSON response from this session, verify it before reasoning further.
+
+If a command reports `command not found`, do not immediately conclude the tool is absent. First confirm which alias actually ran the command by checking the `alias` field in the `--json` response. Then check the remote exec environment for that same alias. A missing tool can be a command that landed on a different server than intended, not a tool that is truly absent.
+
+```powershell
+.\gxshell-cli.exe exec prod-web "printenv PATH" --json
+.\gxshell-cli.exe exec prod-web "which dnf" --json
+.\gxshell-cli.exe exec prod-web "ls /usr/bin/dnf" --json
+```
+
+For multi-server work, write notes and summaries with the alias on every remote fact or action, for example `prod-web: AlmaLinux, dnf present` rather than `the server has dnf`. If two outputs disagree, rerun a single read-only command against the exact alias before explaining or changing anything.
+
 ## Command Approval
 
 For an external caller (including an AI agent), every `exec` ends in one of three outcomes:

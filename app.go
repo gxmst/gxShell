@@ -40,23 +40,28 @@ type App struct {
 	docker          *docker.Manager
 	local           *localterm.Manager
 	nativeDialogMu  sync.Mutex
-	aiToolMu        sync.Mutex
-	aiTools         map[string]authorizedAIToolCall
+	// aiTools is the trust ledger of backend-authorized AI tool calls awaiting a
+	// native confirmation + execution. See aiToolRegistry.
+	aiTools         *aiToolRegistry
 	cliMu           sync.Mutex
 	cliConnecting   map[string]*cliConnectCall
 	cliApprovalMu   sync.Mutex
 	cliApprovals    map[string]*cliApprovalBatch
+	// cliApprovalDelay overrides the batch-coalescing window; zero means the
+	// cliApprovalDelay const is used. cliConfirmBatchFn overrides the native
+	// confirmation dialog; nil means the real MessageDialog is used. Both are
+	// seams for tests to exercise the batching logic without a GUI.
+	cliApprovalDelay  time.Duration
+	cliConfirmBatchFn func(serverName string, commands []string) bool
 	cliServer       *http.Server
 	rateLimiter     *connectionRateLimiter
 	startupFilePath string
 	startedAt       time.Time
-	// allowedFiles is the set of local file paths the user has genuinely chosen
-	// to open (via the native file dialog, the startup file-open, or as a
-	// markdown sibling of an already-allowed file). ReadLocalFile/WriteLocalFile
-	// only operate on paths in this set, so a compromised renderer cannot use
-	// them to read or overwrite arbitrary files on disk.
-	allowedFilesMu sync.Mutex
-	allowedFiles   map[string]bool
+	// allowedFiles tracks the local file paths the user has genuinely chosen to
+	// open. ReadLocalFile/WriteLocalFile only operate on paths in this set, so a
+	// compromised renderer cannot use them to read or overwrite arbitrary files
+	// on disk. See allowedFileSet.
+	allowedFiles *allowedFileSet
 	// pendingOpenFile holds a startup/second-instance text file that has been
 	// authorized but may have been emitted before the frontend registered its
 	// file:open listener. The frontend pulls it once on mount via GetStartupFile
@@ -85,13 +90,25 @@ type authorizedAIToolCall struct {
 
 // NewApp creates a new App instance.
 func NewApp() *App {
-	return &App{
-		aiTools:       map[string]authorizedAIToolCall{},
+	a := &App{
 		rateLimiter:   newConnectionRateLimiter(),
-		allowedFiles:  map[string]bool{},
+		allowedFiles:  newAllowedFileSet(),
 		cliConnecting: map[string]*cliConnectCall{},
 		cliApprovals:  map[string]*cliApprovalBatch{},
 	}
+	// The logger is not created until startup, so the collision callback reads
+	// a.log lazily and stays silent until it exists.
+	a.aiTools = newAiToolRegistry(aiToolAuthorizationTTL, func(sessionID, toolCallID, toolName string) {
+		if a.log == nil {
+			return
+		}
+		a.log.ErrorFields("AI tool ID collision detected", LogFields{
+			"session":    sessionID,
+			"toolCallID": toolCallID,
+			"toolName":   toolName,
+		})
+	})
+	return a
 }
 
 // startup initializes all managers and loads configuration.

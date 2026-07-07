@@ -109,6 +109,16 @@ var sensitivePaths = []struct {
 	{"/etc/ssh/ssh_host_", "SSH private host keys"},
 	{"/root/.ssh/id_", "SSH private keys"},
 	{"/home/", "user home SSH private keys"},
+	// Well-known credential stores. These are substring matches, so each catches
+	// the file under any user's home as well as under /root. They are the same
+	// class of secret as the SSH keys above: lexically a plain `cat` would be
+	// classified read-only and executed by the CLI path without a confirmation,
+	// so they must be blocked before the read-only shortcut runs.
+	{"/.aws/credentials", "AWS credentials"},
+	{"/.kube/config", "Kubernetes credentials"},
+	{"/.docker/config.json", "Docker registry credentials"},
+	{"/.netrc", "netrc credentials"},
+	{"/.git-credentials", "stored git credentials"},
 }
 
 // checkSensitivePath validates if a path contains sensitive files. The input may

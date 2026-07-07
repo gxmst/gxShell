@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,7 +16,12 @@ import (
 	"gxShell/backend/types"
 )
 
-const maxLogSize = 10 * 1024 * 1024
+const (
+	maxLogSize          = 10 * 1024 * 1024
+	maxRotatedLogFiles  = 3
+	commandPreviewLimit = 500
+	fullCommandLogEnv   = "GXSHELL_LOG_FULL_COMMANDS"
+)
 
 type Logger struct {
 	path        string
@@ -91,11 +97,13 @@ func (l *Logger) Write(level, message string, fields LogFields) {
 }
 
 func (l *Logger) writeToFile(content string) {
-	_ = os.MkdirAll(filepath.Dir(l.path), 0755)
-	if info, err := os.Stat(l.path); err == nil && info.Size() >= int64(maxLogSize) {
-		_ = os.Rename(l.path, l.path+".1")
-	}
-	f, err := os.OpenFile(l.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	writeToFile(l.path, content)
+}
+
+func writeToFile(path string, content string) {
+	_ = os.MkdirAll(filepath.Dir(path), 0755)
+	rotateLogIfNeeded(path, int64(len(content)))
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return
 	}
@@ -111,13 +119,7 @@ func (l *Logger) LogCommand(sessionID, host string, line string) {
 	// persisting the command to history.log.
 	safeLine := redact(strings.TrimSpace(line))
 	entry := fmt.Sprintf("[%s] [%s@%s] %s\n", ts, sessionID, host, safeLine)
-	_ = os.MkdirAll(filepath.Dir(l.historyPath), 0755)
-	f, err := os.OpenFile(l.historyPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	_, _ = f.WriteString(entry)
+	writeToFile(l.historyPath, entry)
 }
 
 func (l *Logger) OpenHistory() error {
@@ -217,4 +219,68 @@ func redact(s string) string {
 		s = p.re.ReplaceAllString(s, p.replace)
 	}
 	return s
+}
+
+// CommandAuditFields returns log fields that preserve enough command context
+// for troubleshooting without storing full scripts or generated secrets by
+// default. Set GXSHELL_LOG_FULL_COMMANDS=1 while launching gxShell to include
+// the redacted full command during a focused debug session.
+func CommandAuditFields(command string) LogFields {
+	trimmed := strings.TrimSpace(command)
+	sum := sha256.Sum256([]byte(trimmed))
+	fields := LogFields{
+		"commandHash":      fmt.Sprintf("%x", sum[:]),
+		"commandLength":    len(trimmed),
+		"commandPreview":   commandPreview(trimmed),
+		"commandTruncated": len(trimmed) > commandPreviewLimit,
+	}
+	if fullCommandLoggingEnabled() {
+		fields["command"] = trimmed
+	}
+	return fields
+}
+
+func commandPreview(command string) string {
+	command = normalizeCommandForPreview(redact(command))
+	if len(command) <= commandPreviewLimit {
+		return command
+	}
+	return command[:commandPreviewLimit]
+}
+
+func normalizeCommandForPreview(command string) string {
+	command = strings.ReplaceAll(command, "\r\n", "\n")
+	command = strings.ReplaceAll(command, "\r", "\n")
+	fields := strings.Fields(command)
+	return strings.Join(fields, " ")
+}
+
+func fullCommandLoggingEnabled() bool {
+	value := strings.TrimSpace(os.Getenv(fullCommandLogEnv))
+	return value == "1" || strings.EqualFold(value, "true") || strings.EqualFold(value, "yes")
+}
+
+func rotateLogIfNeeded(path string, incomingBytes int64) {
+	info, err := os.Stat(path)
+	if err != nil || info.Size()+incomingBytes < int64(maxLogSize) {
+		return
+	}
+	for i := maxRotatedLogFiles; i >= 1; i-- {
+		src := rotatedLogPath(path, i-1)
+		dst := rotatedLogPath(path, i)
+		if i == maxRotatedLogFiles {
+			_ = os.Remove(dst)
+		}
+		if _, err := os.Stat(src); err == nil {
+			_ = os.Remove(dst)
+			_ = os.Rename(src, dst)
+		}
+	}
+}
+
+func rotatedLogPath(path string, index int) string {
+	if index <= 0 {
+		return path
+	}
+	return fmt.Sprintf("%s.%d", path, index)
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -431,84 +430,20 @@ func (a *App) ListAiModels(provider, apiKey, endpoint string) ([]string, error) 
 	})
 }
 
+// registerAuthorizedAiToolCalls records the tool calls the model requested this
+// turn as backend-authorized, delegating to the trust ledger. See aiToolRegistry.
 func (a *App) registerAuthorizedAiToolCalls(sessionID string, toolCalls []ai.ToolCall) {
-	if sessionID == "" || len(toolCalls) == 0 {
-		return
-	}
-	now := time.Now()
-	a.aiToolMu.Lock()
-	defer a.aiToolMu.Unlock()
-	if a.aiTools == nil {
-		a.aiTools = map[string]authorizedAIToolCall{}
-	}
-	a.pruneExpiredAuthorizedAiToolCallsLocked(now)
-	for _, tc := range toolCalls {
-		if tc.ID == "" || !isAllowedAiTool(tc.Function.Name) {
-			continue
-		}
-		key := aiToolAuthorizationKey(sessionID, tc.ID)
-		if _, exists := a.aiTools[key]; exists {
-			a.log.ErrorFields("AI tool ID collision detected", LogFields{
-				"session":    sessionID,
-				"toolCallID": tc.ID,
-				"toolName":   tc.Function.Name,
-			})
-			continue
-		}
-		a.aiTools[key] = authorizedAIToolCall{
-			SessionID:  sessionID,
-			ToolCallID: tc.ID,
-			ToolName:   tc.Function.Name,
-			Arguments:  tc.Function.Arguments,
-			ExpiresAt:  now.Add(aiToolAuthorizationTTL),
-		}
-	}
+	a.aiTools.register(sessionID, toolCalls)
 }
 
+// claimAuthorizedAiToolCall consumes a one-time authorization for execution.
 func (a *App) claimAuthorizedAiToolCall(sessionID string, toolCallID string) (authorizedAIToolCall, error) {
-	if sessionID == "" || toolCallID == "" {
-		return authorizedAIToolCall{}, errors.New("missing AI tool authorization")
-	}
-	now := time.Now()
-	a.aiToolMu.Lock()
-	defer a.aiToolMu.Unlock()
-	if a.aiTools == nil {
-		a.aiTools = map[string]authorizedAIToolCall{}
-	}
-	a.pruneExpiredAuthorizedAiToolCallsLocked(now)
-	key := aiToolAuthorizationKey(sessionID, toolCallID)
-	toolCall, ok := a.aiTools[key]
-	if !ok {
-		return authorizedAIToolCall{}, errors.New("AI tool call was not authorized by the backend")
-	}
-	delete(a.aiTools, key)
-	if now.After(toolCall.ExpiresAt) {
-		return authorizedAIToolCall{}, errors.New("AI tool authorization expired")
-	}
-	return toolCall, nil
+	return a.aiTools.claim(sessionID, toolCallID)
 }
 
 // discardAuthorizedAiToolCalls removes all authorized tool calls for a session.
 func (a *App) discardAuthorizedAiToolCalls(sessionID string) {
-	if sessionID == "" {
-		return
-	}
-	a.aiToolMu.Lock()
-	defer a.aiToolMu.Unlock()
-	for key, toolCall := range a.aiTools {
-		if toolCall.SessionID == sessionID {
-			delete(a.aiTools, key)
-		}
-	}
-}
-
-// pruneExpiredAuthorizedAiToolCallsLocked removes expired authorizations (must hold lock).
-func (a *App) pruneExpiredAuthorizedAiToolCallsLocked(now time.Time) {
-	for key, toolCall := range a.aiTools {
-		if now.After(toolCall.ExpiresAt) {
-			delete(a.aiTools, key)
-		}
-	}
+	a.aiTools.discard(sessionID)
 }
 
 // aiToolAuthorizationKey creates a unique key for tool call authorization.

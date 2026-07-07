@@ -1,11 +1,12 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "build": "node scripts/check-i18n.mjs && tsc && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -132,11 +132,11 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	if block, ok := guardCommandReport(req.Command, true, func() bool {
 		return a.confirmCliExecution(serverName, req.Command)
 	}); !ok {
-		a.log.ErrorFields("CLI command blocked", logger.LogFields{
-			"server":  serverName,
-			"command": req.Command,
-			"reason":  block.Message(),
-		})
+		fields := logger.CommandAuditFields(req.Command)
+		fields["server"] = serverName
+		fields["profileID"] = profile.ID
+		fields["reason"] = block.Message()
+		a.log.ErrorFields("CLI command blocked", fields)
 		writeCliJSON(w, http.StatusForbidden, map[string]any{
 			"alias":     serverName,
 			"error":     "BLOCKED: " + block.Message(),
@@ -149,11 +149,10 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.log.InfoFields("CLI executing command", logger.LogFields{
-		"server":    serverName,
-		"profileID": profile.ID,
-		"command":   req.Command,
-	})
+	fields := logger.CommandAuditFields(req.Command)
+	fields["server"] = serverName
+	fields["profileID"] = profile.ID
+	a.log.InfoFields("CLI executing command", fields)
 
 	sessionID, reusedConnection, err := a.cliSessionForProfile(profile.ID)
 	if err != nil {
@@ -408,7 +407,11 @@ func (a *App) confirmCliExecution(serverName, command string) bool {
 	if batch == nil {
 		batch = &cliApprovalBatch{serverName: serverName}
 		a.cliApprovals[key] = batch
-		time.AfterFunc(cliApprovalDelay, func() {
+		delay := a.cliApprovalDelay
+		if delay <= 0 {
+			delay = cliApprovalDelay
+		}
+		time.AfterFunc(delay, func() {
 			a.flushCliApprovalBatch(key)
 		})
 	}
@@ -429,20 +432,27 @@ func (a *App) flushCliApprovalBatch(key string) {
 	requests := append([]*cliApprovalRequest(nil), batch.requests...)
 	a.cliApprovalMu.Unlock()
 
-	allowed := a.confirmCliExecutionBatch(batch.serverName, requests)
+	commands := make([]string, 0, len(requests))
+	for _, req := range requests {
+		commands = append(commands, req.command)
+	}
+	confirmBatch := a.cliConfirmBatchFn
+	if confirmBatch == nil {
+		confirmBatch = a.confirmCliExecutionBatchNative
+	}
+	allowed := confirmBatch(batch.serverName, commands)
 	for _, req := range requests {
 		req.result <- allowed
 		close(req.result)
 	}
 }
 
-func (a *App) confirmCliExecutionBatch(serverName string, requests []*cliApprovalRequest) bool {
-	if a.ctx == nil || len(requests) == 0 {
+// confirmCliExecutionBatchNative shows the real native approval dialog for a
+// batch of commands. It is the default confirmCliBatchFn; tests override that
+// seam to exercise the batching logic without a renderer.
+func (a *App) confirmCliExecutionBatchNative(serverName string, commands []string) bool {
+	if a.ctx == nil || len(commands) == 0 {
 		return false
-	}
-	commands := make([]string, 0, len(requests))
-	for _, req := range requests {
-		commands = append(commands, req.command)
 	}
 	title := "CLI wants to run commands"
 	buttons := []string{"Allow all", "Deny"}

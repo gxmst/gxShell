@@ -37,24 +37,16 @@ func (a *App) LocalHomeDir() string {
 }
 
 // allowFile records that the user has genuinely chosen to open this path, so
-// ReadLocalFile/WriteLocalFile may subsequently operate on it.
+// ReadLocalFile/WriteLocalFile may subsequently operate on it. The state and
+// path normalization live in allowedFileSet; this stays a method so callers
+// across the app read naturally.
 func (a *App) allowFile(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return ""
-	}
-	abs = filepath.Clean(abs)
-	a.allowedFilesMu.Lock()
-	a.allowedFiles[abs] = true
-	a.allowedFilesMu.Unlock()
-	return abs
+	return a.allowedFiles.allow(path)
 }
 
 // isFileAllowed reports whether path was previously authorized via allowFile.
 func (a *App) isFileAllowed(absPath string) bool {
-	a.allowedFilesMu.Lock()
-	defer a.allowedFilesMu.Unlock()
-	return a.allowedFiles[absPath]
+	return a.allowedFiles.contains(absPath)
 }
 
 // ReadLocalFile reads a local file and returns its content. Only files the user
