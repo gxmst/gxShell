@@ -6,6 +6,7 @@ import { appThemes, fontPresets, terminalThemes } from "../../constants";
 import { normalizeAppTheme } from "../../utils/format";
 import { t } from "../../i18n";
 import { Label } from "../modals/ModalShell";
+import { KnownHostsManager } from "./KnownHostsManager";
 
 export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir, onNotify }: { settings: types.AppSettings; language: string; onSave: (settings: types.AppSettings) => void; onOpenData: () => void; dataDir: string; onNotify?: (text: string, tone?: 'info' | 'error' | 'success') => void }) {
   const lang = language;
@@ -67,6 +68,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
       <button className="btn-secondary w-full text-[11px]" onClick={onOpenData}><HardDrive size={13} /> {t(lang, "openData")}</button>
       <button className="btn-secondary w-full text-[11px]" onClick={() => ExportHistory().catch(() => {})}><FileText size={13} /> {t(lang, "exportHistory")}</button>
       <div className="truncate text-[10px] text-muted">{dataDir}</div>
+      <KnownHostsManager language={lang} onNotify={onNotify} />
     </div>
   );
 }

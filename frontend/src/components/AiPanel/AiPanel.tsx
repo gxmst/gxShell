@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Check, ListChecks, MessageSquarePlus, Play, RefreshCw, Send, Settings2, Stethoscope, X } from "lucide-react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
@@ -44,11 +44,13 @@ let sessionCounter = 0;
 
 marked.setOptions({ breaks: true, gfm: true });
 
-function MarkdownContent({ content }: { content: string }) {
-  const rawHtml = marked.parse(content) as string;
-  const html = DOMPurify.sanitize(rawHtml);
+// Memoized so a streaming chunk only re-parses the one message whose content
+// changed, not every message in the transcript. Without this, each delta ran
+// marked.parse + DOMPurify.sanitize across the whole conversation.
+const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
+  const html = useMemo(() => DOMPurify.sanitize(marked.parse(content) as string), [content]);
   return <div className="ai-markdown" dangerouslySetInnerHTML={{ __html: html }} />;
-}
+});
 
 function ToolCallBlock({ tc, result, onApprove, lang }: { tc: ToolCallData; result?: ToolResultData; onApprove: () => void; lang: string }) {
   let args: any = {};
@@ -112,22 +114,28 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
   const MAX_STORED_SESSIONS = 20;
   const MAX_MSG_LENGTH = 8000;
 
+  // Persisting on every `sessions` change would run a full serialize +
+  // localStorage write for each streaming chunk. Debounce so a burst of
+  // token updates collapses into one write ~400ms after the stream settles.
   useEffect(() => {
-    try {
-      const trimmed = sessions.slice(0, MAX_STORED_SESSIONS).map(s => ({
-        ...s,
-        messages: s.messages.map(m => ({
-          ...m,
-          content: m.content.length > MAX_MSG_LENGTH ? m.content.slice(0, MAX_MSG_LENGTH) + "..." : m.content,
-          reasoningContent: m.reasoningContent && m.reasoningContent.length > MAX_MSG_LENGTH ? m.reasoningContent.slice(0, MAX_MSG_LENGTH) + "..." : m.reasoningContent,
-          toolResults: m.toolResults?.map(tr => ({
-            ...tr,
-            content: tr.content.length > MAX_MSG_LENGTH ? tr.content.slice(0, MAX_MSG_LENGTH) + "..." : tr.content,
+    const timer = window.setTimeout(() => {
+      try {
+        const trimmed = sessions.slice(0, MAX_STORED_SESSIONS).map(s => ({
+          ...s,
+          messages: s.messages.map(m => ({
+            ...m,
+            content: m.content.length > MAX_MSG_LENGTH ? m.content.slice(0, MAX_MSG_LENGTH) + "..." : m.content,
+            reasoningContent: m.reasoningContent && m.reasoningContent.length > MAX_MSG_LENGTH ? m.reasoningContent.slice(0, MAX_MSG_LENGTH) + "..." : m.reasoningContent,
+            toolResults: m.toolResults?.map(tr => ({
+              ...tr,
+              content: tr.content.length > MAX_MSG_LENGTH ? tr.content.slice(0, MAX_MSG_LENGTH) + "..." : tr.content,
+            })),
           })),
-        })),
-      }));
-      localStorage.setItem("gx:ai-sessions", JSON.stringify(trimmed));
-    } catch {}
+        }));
+        localStorage.setItem("gx:ai-sessions", JSON.stringify(trimmed));
+      } catch {}
+    }, 400);
+    return () => window.clearTimeout(timer);
   }, [sessions]);
   useEffect(() => { try { localStorage.setItem("gx:ai-active-session", activeSessionId); } catch {} }, [activeSessionId]);
   useEffect(() => { GetAiUsage().then(setUsage).catch(() => {}); }, []);

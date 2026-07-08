@@ -13,25 +13,39 @@ import (
 	"sync"
 )
 
+// dangerousCmdPatterns are anchored so a verb only matches as its own token —
+// `dd\s+` as a bare substring used to block `git add .`, `useradd bob`, and
+// `ldd /bin/ls`. Since a blocklist hit fires BEFORE the confirmation gate and
+// offers no override, a false positive here hard-blocks a legitimate command.
+// Two anchor shapes are used:
+//   - token anchor `(^|[^\w-])`: the verb may appear anywhere but not inside a
+//     longer word (still matches after `/`, quotes, backslashes, `;`).
+//   - command-position anchor: bare system verbs (shutdown, reboot, ...) only
+//     match at the start, after a chain operator, or after a wrapper like
+//     sudo. As an argument (`last reboot`, `cat shutdown.log`) they pass here
+//     and fall through to the normal confirmation gate, which is the real
+//     defense line for anything not read-only.
+const cmdPos = `(?:^|[;&|]\s*|\$\(\s*|` + "`" + `\s*|\b(?:sudo|doas|nohup|eval|exec)\s+)`
+
 var dangerousCmdPatterns = []struct {
 	pattern string
 	reason  string
 }{
-	{`rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|.*--force\b|/\s|$)`, "destructive rm command"},
-	{`mkfs`, "filesystem format"},
-	{`dd\s+`, "raw disk write"},
+	{`(?:^|[^\w-])rm\s+(-[a-zA-Z]*f[a-zA-Z]*\s+|.*--force\b|/\s|$)`, "destructive rm command"},
+	{`(?:^|[^\w-])mkfs`, "filesystem format"},
+	{`(?:^|[^\w-])dd\s+`, "raw disk write"},
 	{`:\(\)\{\s*:\|:\&\s*\}\s*;`, "fork bomb"},
 	{`>\s*/dev/sd`, "direct disk write"},
 	{`chmod\s+(-R\s+)?0?777\s+/`, "overly permissive chmod on root"},
-	{`shutdown`, "system shutdown"},
-	{`reboot`, "system reboot"},
-	{`init\s+[06]`, "init to runlevel 0/6"},
+	{cmdPos + `shutdown\b`, "system shutdown"},
+	{cmdPos + `reboot\b`, "system reboot"},
+	{cmdPos + `init\s+[06]\b`, "init to runlevel 0/6"},
 	{`systemctl\s+(stop|disable)\s+(ssh|sshd|network|systemd)`, "stopping critical services"},
 	{`iptables\s+-F`, "flushing firewall rules"},
-	{`crontab\s+-r`, "removing crontab"},
-	{`userdel`, "deleting user"},
-	{`passwd\s+root`, "changing root password"},
-	{`mv\s+.*\s*/dev/null`, "moving files to /dev/null"},
+	{`(?:^|[^\w-])crontab\s+-r\b`, "removing crontab"},
+	{cmdPos + `userdel\b`, "deleting user"},
+	{`(?:^|[^\w-])passwd\s+root\b`, "changing root password"},
+	{`(?:^|[^\w-])mv\s+.*\s*/dev/null`, "moving files to /dev/null"},
 }
 
 var dangerousCmdRegexps = sync.OnceValue(func() []struct {

@@ -12,6 +12,7 @@
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-search": "^0.16.0",
+    "@xterm/addon-unicode11": "^0.9.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
     "clsx": "^2.1.1",
@@ -25,7 +26,6 @@
   },
   "devDependencies": {
     "@types/d3-dispatch": "^3.0.6",
-    "@types/dompurify": "^3.0.5",
     "@types/react": "^18.0.17",
     "@types/react-dom": "^18.0.6",
     "@vitejs/plugin-react": "^2.0.1",

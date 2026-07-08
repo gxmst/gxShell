@@ -22,6 +22,10 @@ export function AiExecuteTools(arg1, arg2) {
   return window['go']['main']['App']['AiExecuteTools'](arg1, arg2);
 }
 
+export function AnswerKeyboardInteractive(arg1, arg2, arg3) {
+  return window['go']['main']['App']['AnswerKeyboardInteractive'](arg1, arg2, arg3);
+}
+
 export function Connect(arg1, arg2, arg3) {
   return window['go']['main']['App']['Connect'](arg1, arg2, arg3);
 }
@@ -140,6 +144,10 @@ export function ListCommands() {
 
 export function ListContainers(arg1, arg2) {
   return window['go']['main']['App']['ListContainers'](arg1, arg2);
+}
+
+export function ListKnownHosts() {
+  return window['go']['main']['App']['ListKnownHosts']();
 }
 
 export function ListLocalDir(arg1) {
@@ -264,6 +272,10 @@ export function RegisterTextContextMenu() {
 
 export function RemoveContainer(arg1, arg2, arg3) {
   return window['go']['main']['App']['RemoveContainer'](arg1, arg2, arg3);
+}
+
+export function RemoveKnownHost(arg1, arg2) {
+  return window['go']['main']['App']['RemoveKnownHost'](arg1, arg2);
 }
 
 export function RemoveTunnelRule(arg1, arg2) {

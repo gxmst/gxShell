@@ -1,11 +1,15 @@
 import clsx from "clsx";
-import { memo, useCallback, useRef } from "react";
+import { lazy, memo, Suspense, useCallback, useRef } from "react";
 import { Plus, Radio, TerminalSquare, X } from "lucide-react";
 import type { MarkdownOpenTarget, SplitPane, Tab } from "../../types";
 import { TabBar } from "../TabBar/TabBar";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
-import MarkdownViewer from "../MarkdownViewer/MarkdownViewer";
+
+// Lazy-loaded: MarkdownViewer pulls in marked, DOMPurify, highlight.js and
+// mermaid, which together dominate the bundle. Splitting them out keeps them
+// off the startup path so the app only fetches them when a text file is opened.
+const MarkdownViewer = lazy(() => import("../MarkdownViewer/MarkdownViewer"));
 
 export const TerminalArea = memo(function TerminalArea(props: {
   tabs: Tab[];
@@ -144,17 +148,19 @@ export const TerminalArea = memo(function TerminalArea(props: {
               onClick={isSplitTab ? () => props.onActive(tab.id) : undefined}
             >
               {tab.type === 'markdown' && (tab.filePath || tab.remotePath) && (
-                <MarkdownViewer
-                  source={tab.markdownSource || (tab.remotePath ? 'remote' : 'local')}
-                  filePath={tab.filePath}
-                  remotePath={tab.remotePath}
-                  sessionId={tab.remoteSessionId}
-                  active={isActive && !isFloating}
-                  locale={lang}
-                  onClose={() => props.onClose(tab.id)}
-                  onNotify={props.onNotify}
-                  onOpenMarkdownFile={props.onOpenMarkdownFile}
-                />
+                <Suspense fallback={<div className="empty compact">{t(lang, "loading")}</div>}>
+                  <MarkdownViewer
+                    source={tab.markdownSource || (tab.remotePath ? 'remote' : 'local')}
+                    filePath={tab.filePath}
+                    remotePath={tab.remotePath}
+                    sessionId={tab.remoteSessionId}
+                    active={isActive && !isFloating}
+                    locale={lang}
+                    onClose={() => props.onClose(tab.id)}
+                    onNotify={props.onNotify}
+                    onOpenMarkdownFile={props.onOpenMarkdownFile}
+                  />
+                </Suspense>
               )}
             </div>
           );

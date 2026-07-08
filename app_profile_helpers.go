@@ -129,12 +129,18 @@ func sanitizeProfile(profile types.Profile) types.Profile {
 	return profile
 }
 
-// truncate limits a string to maxLen characters.
+// truncate limits a string to maxLen characters. It counts runes, not bytes:
+// the truncated text lands in native dialogs, and cutting a multibyte
+// character in half would end a Chinese command preview with mojibake.
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	return string(runes[:maxLen]) + "..."
 }
 
 // shellescape escapes a string for safe shell usage.

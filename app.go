@@ -62,6 +62,9 @@ type App struct {
 	// compromised renderer cannot use them to read or overwrite arbitrary files
 	// on disk. See allowedFileSet.
 	allowedFiles *allowedFileSet
+	// kiRequests holds pending keyboard-interactive prompts awaiting the user's
+	// answers from the frontend dialog. See app_auth.go.
+	kiRequests *kiRegistry
 	// pendingOpenFile holds a startup/second-instance text file that has been
 	// authorized but may have been emitted before the frontend registered its
 	// file:open listener. The frontend pulls it once on mount via GetStartupFile
@@ -93,6 +96,7 @@ func NewApp() *App {
 	a := &App{
 		rateLimiter:   newConnectionRateLimiter(),
 		allowedFiles:  newAllowedFileSet(),
+		kiRequests:    newKiRegistry(),
 		cliConnecting: map[string]*cliConnectCall{},
 		cliApprovals:  map[string]*cliApprovalBatch{},
 	}
@@ -158,6 +162,21 @@ func (a *App) startup(ctx context.Context) {
 	a.docker = docker.NewManager(a.ssh)
 	a.docker.SetEmit(emit)
 	a.local = localterm.NewManager(emit)
+
+	// Cross-subsystem cleanup must follow EVERY disconnect path, not only the
+	// user-initiated App.Disconnect: a server-initiated drop (shell exit,
+	// keepalive failure) otherwise leaks the monitor poller and keeps tunnel
+	// listeners bound, so the auto-reconnected session cannot rebind its
+	// tunnels (address already in use) until the app restarts.
+	a.ssh.SetOnClosed(func(sessionID string) {
+		a.monitor.Stop(sessionID)
+		a.sftp.InvalidateClient(sessionID)
+		a.tunnels.StopTunnels(sessionID)
+		a.net.StopPing(sessionID)
+		a.discardAuthorizedAiToolCalls(sessionID)
+	})
+	a.ssh.SetKeyboardInteractivePrompt(a.handleKeyboardInteractive)
+	a.ssh.SetHostKeyChangeConfirm(a.confirmHostKeyChange)
 
 	if settings, err := a.store.GetSettings(); err == nil {
 		apiKey := settings.Ai.APIKey

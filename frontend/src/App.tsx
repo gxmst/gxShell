@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { types } from "../wailsjs/go/models";
-import { CreateCommand, DeleteCommand, GetStartupFile, ListCommands, OpenDataDir, ReadLogFile, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/main/App";
+import { AnswerKeyboardInteractive, CreateCommand, DeleteCommand, GetStartupFile, ListCommands, OpenDataDir, ReadLogFile, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/main/App";
 import { emptyProfile } from "./constants";
 import type { Drawer, SplitPane, Tab } from "./types";
 import { normalizeAppTheme } from "./utils/format";
@@ -23,6 +23,7 @@ import { CommandModal } from "./components/modals/CommandModal";
 import { CommandVarsDialog } from "./components/modals/CommandVarsDialog";
 import { extractPlaceholders } from "./utils/commandVars";
 import { SecretModal } from "./components/modals/SecretModal";
+import { KeyboardInteractiveDialog, type KiRequest } from "./components/modals/KeyboardInteractiveDialog";
 import { GlobalSearchModal, TerminalSearchModal } from "./components/modals/SearchModals";
 import { ProgressBar } from "./components/ProgressBar/ProgressBar";
 import { ErrorBoundary } from "./components/ErrorBoundary";
@@ -53,6 +54,7 @@ function App() {
   // Session ids currently recording. Backend owns the real state; this mirror
   // drives the TabBar toggle. Cleared for a session when it stops or closes.
   const [recordingIds, setRecordingIds] = useState<string[]>([]);
+  const [kiRequests, setKiRequests] = useState<KiRequest[]>([]);
 
   useEffect(() => {
     const hide = () => setCtxMenu(null);
@@ -146,7 +148,7 @@ function App() {
 
   const activeIsTerminal = !!sessions.active && sessions.active.type !== "markdown";
   const activeTerminal = useTerminal(sessions.activeTab, activeIsTerminal, profileState.settings, notify, sidebarCollapsed, splitPane, broadcastRef, linkHandlersRef);
-  const { writeOutput, disposeTerminal, findNext, focusTerminal, refitTerminal, reattachTerminal } = activeTerminal;
+  const { writeOutput, disposeTerminal, findNext, findPrev, focusTerminal, refitTerminal, reattachTerminal } = activeTerminal;
   terminalBridge.current.disposeTerminal = disposeTerminal;
 
   const {
@@ -198,6 +200,17 @@ function App() {
       notify(t(langRef.current, "cliServerError", { error: payload?.error || "unknown error" }), "error");
     });
 
+    // Keyboard-interactive (2FA/OTP/PAM) prompts raised mid-handshake. The Go
+    // side blocks the SSH handshake until AnswerKeyboardInteractive resolves the
+    // matching requestId; the :closed event fires if the handshake gives up
+    // (timeout) so we can dismiss a dialog the user never answered.
+    const unsubKi = EventsOn("terminal:keyboard-interactive", (payload: KiRequest) => {
+      setKiRequests((prev) => prev.some((item) => item.requestId === payload.requestId) ? prev : [...prev, payload]);
+    });
+    const unsubKiClosed = EventsOn("terminal:keyboard-interactive:closed", (payload: { requestId: string }) => {
+      setKiRequests((prev) => prev.filter((item) => item.requestId !== payload.requestId));
+    });
+
     // Pull side of the file-open handshake. On first launch the Go side may emit
     // "file:open" during OnDomReady, before this listener exists, so the pushed
     // event is lost and the app opens without the document. Pulling once here,
@@ -229,6 +242,8 @@ function App() {
       if (unsubTrayNewConnection) unsubTrayNewConnection();
       if (unsubTrayOpenMarkdown) unsubTrayOpenMarkdown();
       if (unsubTraySettings) unsubTraySettings();
+      if (unsubKi) unsubKi();
+      if (unsubKiClosed) unsubKiClosed();
       OnFileDropOff();
     };
   }, [openMarkdownFile, handleOpenMarkdown, setDrawer, notify]);
@@ -357,6 +372,16 @@ function App() {
 
   const handleNewConnection = useCallback(() => setProfileModal(emptyProfile()), []);
   const handleToggleSidebar = useCallback(() => setSidebarCollapsed(v => !v), []);
+  // Stable identities so a monitor:update tick (which updates metrics state and
+  // re-renders App) does not break the memo(TerminalArea) boundary and re-render
+  // the whole terminal/markdown subtree every few seconds.
+  const handleCloseLogViewer = useCallback(() => setLogViewer(null), []);
+  const handleToggleBroadcast = useCallback(() => setBroadcastInput((v) => !v), []);
+  const activeKiRequest = kiRequests[0] || null;
+  const answerKiRequest = useCallback((request: KiRequest, answers: string[], cancelled: boolean) => {
+    setKiRequests((prev) => prev.filter((item) => item.requestId !== request.requestId));
+    AnswerKeyboardInteractive(request.requestId, answers, cancelled).catch(() => {});
+  }, []);
 
   return (
     <ErrorBoundary>
@@ -426,7 +451,7 @@ function App() {
           onTearOff={handleTearOff}
           language={profileState.settings?.language || "en"}
           logViewer={logViewer}
-          onCloseLogViewer={() => setLogViewer(null)}
+          onCloseLogViewer={handleCloseLogViewer}
           floatingTabIds={floatingTabIds}
           splitPane={splitPane}
           onSplitChange={setSplitPane}
@@ -444,11 +469,12 @@ function App() {
         return <FloatingTerminal key={id} tab={tab} terminalHosts={activeTerminal.terminalHosts} onDock={handleDockFloating} onClose={handleCloseFloating} refitTerminal={refitTerminal} reattachTerminal={reattachTerminal} />;
       })}
       {globalSearchOpen && <GlobalSearchModal query={globalQuery} onQuery={setGlobalQuery} results={globalResults} onClose={() => setGlobalSearchOpen(false)} locale={profileState.settings?.language || "en"} />}
-      {terminalSearchOpen && <TerminalSearchModal query={terminalSearch} onQuery={setTerminalSearch} onNext={() => activeTerminal.findNext(sessions.activeTab, terminalSearch)} onClose={() => setTerminalSearchOpen(false)} locale={profileState.settings?.language || "en"} />}
+      {terminalSearchOpen && <TerminalSearchModal query={terminalSearch} onQuery={setTerminalSearch} onNext={() => findNext(sessions.activeTab, terminalSearch)} onPrev={() => findPrev(sessions.activeTab, terminalSearch)} onClose={() => setTerminalSearchOpen(false)} locale={profileState.settings?.language || "en"} />}
       {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={async (id) => { await profileState.deleteProfile(id); setProfileModal(null); }} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify(t(profileState.settings?.language || "en", "profileCopied"), "info"); }} />}
       {commandModal && <CommandModal command={commandModal} language={profileState.settings?.language || "en"} onClose={() => setCommandModal(null)} onSave={saveCommand} />}
       {commandVars && <CommandVarsDialog commandName={commandVars.commandName} template={commandVars.template} placeholders={commandVars.placeholders} locale={profileState.settings?.language || "en"} onClose={() => setCommandVars(null)} onSubmit={(resolved) => { const send = commandVars.send; setCommandVars(null); send(resolved); }} />}
       {sessions.secretRequest && <SecretModal request={sessions.secretRequest} language={profileState.settings?.language || "en"} onClose={() => sessions.setSecretRequest(null)} onSubmit={async (password, passphrase) => { const request = sessions.secretRequest; sessions.setSecretRequest(null); if (request) await sessions.submitSecret(request, password, passphrase); }} />}
+      {activeKiRequest && <KeyboardInteractiveDialog key={activeKiRequest.requestId} request={activeKiRequest} language={profileState.settings?.language || "en"} onSubmit={(answers) => answerKiRequest(activeKiRequest, answers, false)} onCancel={() => answerKiRequest(activeKiRequest, [], true)} />}
       <ProgressBar />
       <ToastStack toasts={toasts} />
       {ctxMenu && (

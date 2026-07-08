@@ -81,6 +81,11 @@ func (m *Manager) Stop(sessionID string) {
 		close(stop)
 		delete(m.running, sessionID)
 	}
+	// Session IDs are unique per connection, so per-session samples are dead
+	// weight once the poller stops; without this the maps grow forever.
+	delete(m.latest, sessionID)
+	delete(m.lastCPU, sessionID)
+	delete(m.lastNet, sessionID)
 }
 
 func (m *Manager) Latest(sessionID string) types.Metrics {
@@ -111,7 +116,9 @@ func (m *Manager) collectAndEmit(sessionID string) {
 
 	m.mu.Lock()
 	if cpu, ok := parseCPU(section(out, "CPU")); ok {
-		if prev, exists := m.lastCPU[sessionID]; exists {
+		// Skip the delta when counters went backwards (remote reboot resets
+		// /proc/stat); a uint64 underflow would produce one frame of garbage.
+		if prev, exists := m.lastCPU[sessionID]; exists && cpu.total >= prev.total && cpu.idle >= prev.idle {
 			totalDelta := cpu.total - prev.total
 			idleDelta := cpu.idle - prev.idle
 			if totalDelta > 0 {
@@ -121,7 +128,7 @@ func (m *Manager) collectAndEmit(sessionID string) {
 		m.lastCPU[sessionID] = cpu
 	}
 	if netNow, ok := parseNet(section(out, "NET"), strings.TrimSpace(section(out, "DEFAULT_IFACE"))); ok {
-		if prev, exists := m.lastNet[sessionID]; exists {
+		if prev, exists := m.lastNet[sessionID]; exists && netNow.rx >= prev.rx && netNow.tx >= prev.tx {
 			seconds := netNow.at.Sub(prev.at).Seconds()
 			if seconds > 0 {
 				metrics.NetworkRxPerSec = int64(float64(netNow.rx-prev.rx) / seconds)

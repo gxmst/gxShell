@@ -410,6 +410,16 @@ func (m *Manager) parseOllamaStream(body io.Reader, onChunk func(ChatResponse)) 
 			continue
 		}
 
+		// Usage arrives on the final chunk — the one that also carries
+		// done=true — so extract it before acting on done, or the counts are
+		// always lost.
+		if evalCount, ok := chunk["eval_count"].(float64); ok {
+			completeTk = int(evalCount)
+		}
+		if promptEvalCount, ok := chunk["prompt_eval_count"].(float64); ok {
+			promptTk = int(promptEvalCount)
+		}
+
 		if done, ok := chunk["done"].(bool); ok && done {
 			break
 		}
@@ -419,13 +429,13 @@ func (m *Manager) parseOllamaStream(body io.Reader, onChunk func(ChatResponse)) 
 				onChunk(ChatResponse{Content: content, Finish: false})
 			}
 		}
+	}
 
-		if evalCount, ok := chunk["eval_count"].(float64); ok {
-			completeTk = int(evalCount)
-		}
-		if promptEvalCount, ok := chunk["prompt_eval_count"].(float64); ok {
-			promptTk = int(promptEvalCount)
-		}
+	// A transport error mid-stream must not masquerade as a normal completion:
+	// without this check a dropped connection delivers a silently truncated
+	// answer with Finish=true.
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("stream interrupted: %w", err)
 	}
 
 	onChunk(ChatResponse{
@@ -546,6 +556,12 @@ func (m *Manager) parseSSE(body io.Reader, onChunk func(ChatResponse)) error {
 				})
 			}
 		}
+	}
+
+	// See parseOllamaStream: a mid-stream transport error must surface as an
+	// error, not as a normal-looking truncated completion.
+	if err := scanner.Err(); err != nil && !finishSent {
+		return fmt.Errorf("stream interrupted: %w", err)
 	}
 
 	if !finishSent {

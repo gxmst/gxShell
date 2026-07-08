@@ -1,3 +1,24 @@
+export namespace sshmanager {
+	
+	export class KnownHostEntry {
+	    hosts: string;
+	    keyType: string;
+	    fingerprint: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new KnownHostEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hosts = source["hosts"];
+	        this.keyType = source["keyType"];
+	        this.fingerprint = source["fingerprint"];
+	    }
+	}
+
+}
+
 export namespace types {
 	
 	export class AiFunctionCall {
@@ -689,18 +710,18 @@ export namespace types {
 	    size: number;
 	    // Go type: time
 	    modTime: any;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Recording(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.size = source["size"];
 	        this.modTime = this.convertValues(source["modTime"], null);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -845,3 +866,4 @@ export namespace types {
 	}
 
 }
+

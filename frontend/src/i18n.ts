@@ -19,7 +19,7 @@ export type LangKey =
   | "emptyServersTitle" | "emptyServersHint"
   | "exportHistory" | "savePassword"
   | "editServer" | "newServer" | "name" | "group" | "host" | "port"
-  | "username" | "auth" | "password" | "privateKey" | "passphrase"
+  | "username" | "auth" | "password" | "privateKey" | "passphrase" | "authAgent" | "authAgentHint"
   | "favorite" | "cliServerAccess" | "cliServerAlias" | "description" | "delete" | "duplicate"
   | "cliServerEnabled" | "cliServerEnabledHint"
   | "mdContextMenu" | "mdContextMenuHint" | "mdContextMenuFailed"
@@ -39,7 +39,7 @@ export type LangKey =
   | "memoryDetail" | "topMemProcesses" | "close" | "closeEsc" | "settingsSaved" | "profileCopied"
   | "profileSaved" | "logReadFailed" | "cliServerError"
   | "sshConnection" | "showSidebar" | "splitHorizontal" | "splitVertical" | "reconnect" | "run"
-  | "cpuDetail" | "diskDetail" | "networkDetail" | "cpuUsage" | "diskUsage" | "used" | "total" | "latency" | "topCpuProcesses" | "linuxCommands" | "rootDiskHint" | "noData" | "minMax" | "outline" | "hideOutline" | "find" | "wrapCode" | "wrapText" | "openTextFile" | "fileSaved" | "discardChanges" | "downloadFolder" | "folderDownloadFinished" | "copyPath" | "newFolder" | "folderName" | "renameFile" | "newName" | "deleteRemoteFile" | "deleteRemoteFileBody" | "searchPlaceholder" | "typeToSearch" | "findInCurrentTerminal" | "findNext" | "ram" | "swap"
+  | "cpuDetail" | "diskDetail" | "networkDetail" | "cpuUsage" | "diskUsage" | "used" | "total" | "latency" | "topCpuProcesses" | "linuxCommands" | "rootDiskHint" | "noData" | "minMax" | "outline" | "hideOutline" | "find" | "wrapCode" | "wrapText" | "openTextFile" | "fileSaved" | "discardChanges" | "downloadFolder" | "folderDownloadFinished" | "copyPath" | "newFolder" | "folderName" | "renameFile" | "newName" | "deleteRemoteFile" | "deleteRemoteFileBody" | "searchPlaceholder" | "typeToSearch" | "findInCurrentTerminal" | "findNext" | "findPrev" | "ram" | "swap"
   | "textFiles" | "recentTextFiles" | "switchFilesView" | "noRecentTextFiles" | "connectServerFirstTextFile"
   | "defaultGroup" | "allGroups"
   | "logs" | "logFiles" | "noLogFiles" | "selectLogFile" | "runAll"
@@ -48,7 +48,9 @@ export type LangKey =
   | "containers" | "noContainers" | "showAll" | "viewLogs" | "restart" | "stop" | "start" | "remove" | "noLogs" | "noActiveSession" | "localTerminal"
   | "recordings" | "recordingsHint" | "noRecordings" | "playRecording" | "deleteRecording" | "openRecordingsDir"
   | "startRecording" | "stopRecording" | "recordingStarted" | "recordingSaved" | "recordingActive" | "recordingEmpty" | "pause" | "play" | "playbackSpeed"
-  | "commandVarsHint" | "commandPreview";
+  | "commandVarsHint" | "commandPreview"
+  | "knownHosts" | "knownHostsHint" | "noKnownHosts" | "removeKnownHost" | "knownHostRemoved" | "knownHostRemoveFailed" | "forgetHost"
+  | "kiTitle" | "kiSubmit" | "kiCancel";
 
 const en: Record<LangKey, string> = {
   monitor: "Monitor",
@@ -128,6 +130,8 @@ const en: Record<LangKey, string> = {
   password: "Password",
   privateKey: "Private key",
   passphrase: "Passphrase",
+  authAgent: "SSH agent",
+  authAgentHint: "Authenticates with keys held by the running SSH agent. On Windows, start the 'OpenSSH Authentication Agent' service and add a key with ssh-add.",
   favorite: "Favorite",
   cliServerAccess: "Allow CLI access",
   cliServerAlias: "CLI alias",
@@ -243,6 +247,7 @@ const en: Record<LangKey, string> = {
   typeToSearch: "Type to search.",
   findInCurrentTerminal: "Find in current terminal",
   findNext: "Find next",
+  findPrev: "Find previous",
   ram: "RAM",
   swap: "Swap",
   textFiles: "Text files",
@@ -323,6 +328,16 @@ const en: Record<LangKey, string> = {
   play: "Play",
   commandVarsHint: "Fill in the values for this command's placeholders.",
   commandPreview: "Preview",
+  knownHosts: "Trusted host keys",
+  knownHostsHint: "Host keys trusted on first connection. Remove one to be prompted again the next time you connect.",
+  noKnownHosts: "No trusted host keys yet.",
+  removeKnownHost: "Forget this host key",
+  knownHostRemoved: "Host key forgotten",
+  knownHostRemoveFailed: "Failed to remove host key",
+  forgetHost: "Forget",
+  kiTitle: "Authentication required",
+  kiSubmit: "Submit",
+  kiCancel: "Cancel",
 };
 
 const zhCN: Record<LangKey, string> = {
@@ -403,6 +418,8 @@ const zhCN: Record<LangKey, string> = {
   password: "密码",
   privateKey: "私钥",
   passphrase: "密钥密码",
+  authAgent: "SSH 代理",
+  authAgentHint: "使用正在运行的 SSH agent 中持有的密钥认证。Windows 上需启动「OpenSSH Authentication Agent」服务并用 ssh-add 添加密钥。",
   favorite: "收藏",
   cliServerAccess: "允许 CLI 访问",
   cliServerAlias: "CLI 别名",
@@ -518,6 +535,7 @@ const zhCN: Record<LangKey, string> = {
   typeToSearch: "输入内容开始搜索。",
   findInCurrentTerminal: "在当前终端中查找",
   findNext: "查找下一个",
+  findPrev: "查找上一个",
   ram: "内存",
   swap: "交换分区",
   textFiles: "文本文件",
@@ -598,6 +616,16 @@ const zhCN: Record<LangKey, string> = {
   playbackSpeed: "播放速度",
   commandVarsHint: "填写该命令中占位符的值。",
   commandPreview: "预览",
+  knownHosts: "已信任的主机密钥",
+  knownHostsHint: "首次连接时信任的主机密钥。删除某项后，下次连接会重新提示确认。",
+  noKnownHosts: "暂无已信任的主机密钥。",
+  removeKnownHost: "忘记该主机密钥",
+  knownHostRemoved: "已忘记主机密钥",
+  knownHostRemoveFailed: "删除主机密钥失败",
+  forgetHost: "忘记",
+  kiTitle: "需要身份验证",
+  kiSubmit: "提交",
+  kiCancel: "取消",
 };
 
 const locales: Record<string, Record<LangKey, string>> = { en, "zh-CN": zhCN };

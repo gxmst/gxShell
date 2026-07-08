@@ -34,6 +34,10 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const throughputRef = useRef<Record<string, number>>({});
   const refitTimers = useRef<Record<string, number>>({});
   const linkProviders = useRef<Record<string, { dispose: () => void }>>({});
+  // searchResultsRef is set by the search UI (via registerSearchResults) so it
+  // receives live match counts from SearchAddon's onDidChangeResults for the
+  // terminal being searched: (sessionId, resultIndex, resultCount).
+  const searchResultsRef = useRef<((id: string, index: number, count: number) => void) | null>(null);
 
   const addTimer = useCallback((ms: number, fn: () => void) => {
     const id = window.setTimeout(() => {
@@ -133,6 +137,16 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       const searchAddon = new SearchAddon();
       term.loadAddon(fit);
       term.loadAddon(searchAddon);
+      // Report match count/position to the search bar. Fires after every
+      // findNext/findPrevious, so the bar can show "3 / 12" live. resultIndex is
+      // -1 when there is no match; the addon uses 0-based indices.
+      try {
+        searchAddon.onDidChangeResults((res) => {
+          if (searchResultsRef.current) {
+            searchResultsRef.current(activeTab, res.resultIndex, res.resultCount);
+          }
+        });
+      } catch {}
       term.open(host);
 
       // Clickable URLs and remote file paths, detected in the xterm display
@@ -390,6 +404,11 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     searches.current[id]?.findNext(query);
   }, []);
 
+  const findPrev = useCallback((id: string, query: string) => {
+    if (!id || !query) return;
+    searches.current[id]?.findPrevious(query);
+  }, []);
+
   const refitTerminal = useCallback((id: string, _depth = 0) => {
     const fit = fits.current[id];
     const term = terminals.current[id];
@@ -492,11 +511,12 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     writeOutput,
     disposeTerminal,
     findNext,
+    findPrev,
     focusTerminal,
     refitTerminal,
     reattachTerminal,
     getTerminalLines,
-  }), [writeOutput, disposeTerminal, findNext, focusTerminal, refitTerminal, reattachTerminal, getTerminalLines]);
+  }), [writeOutput, disposeTerminal, findNext, findPrev, focusTerminal, refitTerminal, reattachTerminal, getTerminalLines]);
 
   return stable;
 }

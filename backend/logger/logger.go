@@ -170,8 +170,7 @@ func (l *Logger) ReadLatest(limit int) []types.LogEntry {
 			}
 		} else {
 			// Fallback to old plain text format
-			lineRe := regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^ ]*)\s+\[(\w+)\]\s+(.*)`)
-			if matches := lineRe.FindStringSubmatch(line); len(matches) == 4 {
+			if matches := plainLogLineRe.FindStringSubmatch(line); len(matches) == 4 {
 				if t, err := time.Parse(time.RFC3339, matches[1]); err == nil {
 					entry.Time = t
 				}
@@ -183,6 +182,10 @@ func (l *Logger) ReadLatest(limit int) []types.LogEntry {
 	}
 	return entries
 }
+
+// plainLogLineRe parses the pre-JSON log line format. Package-level so
+// ReadLatest does not recompile it for every non-JSON line of a large file.
+var plainLogLineRe = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^ ]*)\s+\[(\w+)\]\s+(.*)`)
 
 var redactPatterns = []struct {
 	re      *regexp.Regexp

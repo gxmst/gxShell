@@ -7,6 +7,10 @@ type AuthType string
 const (
 	AuthPassword   AuthType = "password"
 	AuthPrivateKey AuthType = "privateKey"
+	// AuthAgent authenticates with keys held by the running SSH agent (the
+	// Windows OpenSSH Authentication Agent service, or SSH_AUTH_SOCK
+	// elsewhere). No secret is stored or prompted for.
+	AuthAgent AuthType = "agent"
 )
 
 type Profile struct {

@@ -50,7 +50,7 @@ func (s *Store) SavePassword(profileID string, password string) error {
 	if err != nil {
 		return s.saveFallback(profileID, "password", password)
 	}
-	s.deleteFallback(profileID)
+	s.deleteFallbackKind(profileID, "password")
 	return nil
 }
 
@@ -62,7 +62,7 @@ func (s *Store) SavePassphrase(profileID string, passphrase string) error {
 	if err != nil {
 		return s.saveFallback(profileID, "passphrase", passphrase)
 	}
-	s.deleteFallback(profileID)
+	s.deleteFallbackKind(profileID, "passphrase")
 	return nil
 }
 
@@ -323,6 +323,32 @@ func (s *Store) deleteFallback(profileID string) {
 	defer s.mu.Unlock()
 	data := s.fallbackData()
 	delete(data, profileID)
+	if len(data) == 0 {
+		_ = os.Remove(s.fallbackPath())
+		return
+	}
+	_ = s.writeFallback(data)
+}
+
+// deleteFallbackKind removes a single secret kind for the profile. When the
+// keyring accepts one kind, the OTHER kind may still exist only in the
+// fallback file (written during an earlier keyring outage); deleting the whole
+// profile entry there would silently destroy that remaining credential.
+func (s *Store) deleteFallbackKind(profileID, kind string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data := s.fallbackData()
+	entry, ok := data[profileID]
+	if !ok {
+		return
+	}
+	if _, exists := entry[kind]; !exists {
+		return
+	}
+	delete(entry, kind)
+	if len(entry) == 0 {
+		delete(data, profileID)
+	}
 	if len(data) == 0 {
 		_ = os.Remove(s.fallbackPath())
 		return

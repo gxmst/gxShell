@@ -18,7 +18,10 @@ export function getTerminalTheme(settings: types.AppSettings) {
 }
 
 export function needsSecret(profile: types.Profile) {
-  return !profile.rememberPassword && (profile.authType === "password" || profile.authType === "privateKey");   
+  // Agent auth never prompts: the running SSH agent holds the keys. Password
+  // and private-key auth need a secret unless it is already remembered.
+  if (profile.authType === "agent") return false;
+  return !profile.rememberPassword && (profile.authType === "password" || profile.authType === "privateKey");
 }
 
 export function tabTitle(profile?: types.Profile, fallback?: string) {

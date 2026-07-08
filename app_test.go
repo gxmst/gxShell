@@ -497,6 +497,44 @@ func TestCheckDangerousCommandRmForce(t *testing.T) {
 	}
 }
 
+// The blocklist fires before the confirmation gate with no override, so a
+// false positive hard-blocks a legitimate command. These once matched because
+// the patterns were unanchored substrings (`dd\s+` inside "git add .").
+func TestCheckDangerousCommandNoFalsePositives(t *testing.T) {
+	allowed := []string{
+		"git add .",
+		"git add -A",
+		"useradd bob",
+		"ldd /bin/ls",
+		"last reboot",
+		"cat shutdown.log",
+		"grep userdel /var/log/secure",
+		"journalctl -u shutdown.target",
+		"cat /var/log/dmesg",
+	}
+	for _, cmd := range allowed {
+		if reason, ok := checkDangerousCommand(cmd); ok {
+			t.Errorf("expected %q to NOT be blocked, got reason=%q", cmd, reason)
+		}
+	}
+	blocked := []string{
+		"shutdown -h now",
+		"sudo shutdown -h now",
+		"ls; reboot",
+		"echo hi && reboot",
+		"sudo userdel bob",
+		"dd if=/dev/zero of=/dev/sda",
+		"/bin/dd if=/dev/zero of=/dev/sda",
+		"sudo init 0",
+		"passwd root",
+	}
+	for _, cmd := range blocked {
+		if reason, ok := checkDangerousCommand(cmd); !ok || reason == "" {
+			t.Errorf("expected %q to be blocked, got ok=%v reason=%q", cmd, ok, reason)
+		}
+	}
+}
+
 func TestValidateProfileCliSettings(t *testing.T) {
 	existing := []types.Profile{
 		{ID: "p1", CliEnabled: true, CliAlias: "prod-web"},

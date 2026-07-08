@@ -1,7 +1,6 @@
 package localterm
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -13,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"gxShell/backend/termio"
 	"gxShell/backend/types"
 
 	"github.com/charmbracelet/x/xpty"
@@ -212,98 +212,23 @@ func (m *Manager) get(id string) (*Session, error) {
 	return session, nil
 }
 
+// forwardOutput streams pty output to the frontend through the shared
+// termio.Pump (16ms/32KB batching + UTF-8 boundary handling). The pump's
+// internal reader also selects on session.done, so closing the pty cannot
+// strand a reader goroutine blocked on its handoff channel.
 func (m *Manager) forwardOutput(id string, reader io.Reader) {
-	type readResult struct {
-		data []byte
-		err  error
+	m.mu.RLock()
+	session := m.sessions[id]
+	m.mu.RUnlock()
+	if session == nil {
+		return
 	}
-	ch := make(chan readResult, 1)
-	go func() {
-		buf := make([]byte, 32768)
-		for {
-			n, err := reader.Read(buf)
-			if n > 0 {
-				data := make([]byte, n)
-				copy(data, buf[:n])
-				ch <- readResult{data: data, err: err}
-			} else {
-				ch <- readResult{err: err}
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-
-	var batch bytes.Buffer
-	flushTimer := time.NewTimer(16 * time.Millisecond)
-	defer flushTimer.Stop()
-
-	const maxBatchSize = 32768
-
-	for {
-		m.mu.RLock()
-		session := m.sessions[id]
-		m.mu.RUnlock()
-		if session == nil {
-			if batch.Len() > 0 {
-				m.emit("terminal:data", map[string]string{
-					"sessionId": id,
-					"data":      batch.String(),
-				})
-			}
-			return
-		}
-
-		select {
-		case <-session.done:
-			if batch.Len() > 0 {
-				m.emit("terminal:data", map[string]string{
-					"sessionId": id,
-					"data":      batch.String(),
-				})
-			}
-			return
-
-		case res := <-ch:
-			if len(res.data) > 0 {
-				batch.Write(res.data)
-				if batch.Len() >= maxBatchSize {
-					m.emit("terminal:data", map[string]string{
-						"sessionId": id,
-						"data":      batch.String(),
-					})
-					batch.Reset()
-					if !flushTimer.Stop() {
-						select {
-						case <-flushTimer.C:
-						default:
-						}
-					}
-					flushTimer.Reset(16 * time.Millisecond)
-				}
-			}
-			if res.err != nil {
-				if batch.Len() > 0 {
-					m.emit("terminal:data", map[string]string{
-						"sessionId": id,
-						"data":      batch.String(),
-					})
-				}
-				return
-			}
-
-		case <-flushTimer.C:
-			if batch.Len() > 0 {
-				m.emit("terminal:data", map[string]string{
-					"sessionId": id,
-					"data":      batch.String(),
-				})
-				batch.Reset()
-			}
-			flushTimer.Reset(16 * time.Millisecond)
-		}
-	}
+	termio.Pump(reader, session.done, func(chunk string) {
+		m.emit("terminal:data", map[string]string{
+			"sessionId": id,
+			"data":      chunk,
+		})
+	})
 }
 
 func defaultShell() string {

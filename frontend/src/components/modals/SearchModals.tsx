@@ -1,4 +1,4 @@
-import { Search } from "lucide-react";
+import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import type { GlobalSearchResult } from "../../types";
 import { t } from "../../i18n";
 import { ModalShell } from "./ModalShell";
@@ -24,15 +24,32 @@ export function GlobalSearchModal({ query, onQuery, results, onClose, locale = "
   );
 }
 
-export function TerminalSearchModal({ query, onQuery, onNext, onClose, locale = "en" }: { query: string; onQuery: (value: string) => void; onNext: () => void; onClose: () => void; locale?: string }) {
+export function TerminalSearchModal({ query, onQuery, onNext, onPrev, onClose, matchIndex, matchCount, locale = "en" }: { query: string; onQuery: (value: string) => void; onNext: () => void; onPrev: () => void; onClose: () => void; matchIndex?: number; matchCount?: number; locale?: string }) {
+  // resultIndex from xterm is 0-based (-1 when no active match); show 1-based.
+  const hasCount = typeof matchCount === "number" && query.length > 0;
+  const countLabel = hasCount
+    ? (matchCount === 0 ? "0/0" : `${(matchIndex ?? -1) >= 0 ? (matchIndex as number) + 1 : "-"}/${matchCount}`)
+    : "";
   return (
     <ModalShell onClose={onClose} compact>
       <div className="search-box">
         <Search size={17} className="text-muted" />
-        <input autoFocus className="search-input" value={query} onChange={(e) => onQuery(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") onNext(); if (e.key === "Escape") onClose(); }} placeholder={t(locale, "findInCurrentTerminal")} />
-        <kbd>Ctrl F</kbd>
+        <input
+          autoFocus
+          className="search-input"
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") { e.preventDefault(); if (e.shiftKey) onPrev(); else onNext(); }
+            if (e.key === "Escape") onClose();
+          }}
+          placeholder={t(locale, "findInCurrentTerminal")}
+        />
+        {hasCount && <span className="text-[11px] text-muted tabular-nums min-w-[42px] text-right">{countLabel}</span>}
+        <button className="icon-btn compact-icon" title={t(locale, "findPrev")} onClick={onPrev} disabled={!query}><ChevronUp size={14} /></button>
+        <button className="icon-btn compact-icon" title={t(locale, "findNext")} onClick={onNext} disabled={!query}><ChevronDown size={14} /></button>
+        <button className="icon-btn compact-icon" title={t(locale, "close")} onClick={onClose}><X size={14} /></button>
       </div>
-      <button className="btn-primary mt-3 w-full" onClick={onNext}>{t(locale, "findNext")}</button>
     </ModalShell>
   );
 }
