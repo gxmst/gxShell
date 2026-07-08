@@ -93,6 +93,7 @@ export function Sidebar(props: {
     });
     return Array.from(set);
   }, [props.profiles]);
+  const hasGroupTabs = groups.length > 1;
 
   const filteredProfiles = useMemo(() => {
     if (activeGroup === "__all__") return props.profiles;
@@ -168,7 +169,7 @@ export function Sidebar(props: {
     <aside className="left-rail" ref={sidebarEl}>
       <section
         className={clsx("side-content", !isMonitor && "side-content-tool")}
-        style={isMonitor ? { gridTemplateRows: `auto auto auto auto ${splitPct}fr 6px ${100 - splitPct}fr` } : { gridTemplateRows: "auto auto auto 1fr" }}
+        style={isMonitor ? { gridTemplateRows: hasGroupTabs ? `auto auto auto auto ${splitPct}fr 6px ${100 - splitPct}fr` : `auto auto auto ${splitPct}fr 6px ${100 - splitPct}fr` } : { gridTemplateRows: "auto auto auto 1fr" }}
       >
         <div className="brand-row">
           <div className="brand-mark"><AppIcon /></div>
@@ -203,7 +204,7 @@ export function Sidebar(props: {
               <button className="text-button" onClick={props.onNewProfile}><Plus size={13} /> {t(lang, "new")}</button>
               <button className="text-button" onClick={props.onOpenSearch}><Search size={13} /> {t(lang, "search")}</button>
             </div>
-            {groups.length > 1 && (
+            {hasGroupTabs && (
               <div className="group-tabs">
                 <button className={clsx("group-tab", activeGroup === "__all__" && "group-tab-active")} onClick={() => setActiveGroup("__all__")}>{t(lang, "allGroups")}</button>
                 {groups.map((g) => (
