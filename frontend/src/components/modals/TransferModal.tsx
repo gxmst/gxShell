@@ -8,7 +8,7 @@ import { formatFileSize } from "../../utils/format";
 import { t } from "../../i18n";
 import { FloatingCard } from "../FloatingCard/FloatingCard";
 
-export function TransferModal({ active, locale, initialLeft, initialTop, onClose }: { active?: { id: string }; locale: string; initialLeft: number; initialTop: number; onClose: () => void }) {
+export function TransferModal({ active, locale, initialLeft, initialTop, onClose }: { active?: { id: string }; locale: string; initialLeft?: number; initialTop?: number; onClose: () => void }) {
   const lang = locale;
   const [localPath, setLocalPath] = useState("");
   const [remotePath, setRemotePath] = useState("/");
@@ -130,7 +130,7 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
   const activeTransfers = Object.entries(transfers);
 
   return (
-    <FloatingCard initialLeft={initialLeft} initialTop={initialTop} width={860} onClose={onClose}>
+    <FloatingCard center={initialLeft == null || initialTop == null} initialLeft={initialLeft} initialTop={initialTop} width={Math.min(860, typeof window !== "undefined" ? window.innerWidth - 32 : 860)} onClose={onClose}>
       <div className="transfer-modal-header">
         <span className="text-sm font-semibold">{t(lang, "transferTitle")}</span>
       </div>

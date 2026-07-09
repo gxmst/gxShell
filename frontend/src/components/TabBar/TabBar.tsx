@@ -96,7 +96,7 @@ export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSi
   return (
     <div className="tabbar" data-dragging={dragState ? "true" : "false"}>
       {sidebarCollapsed && (
-        <button className="tab-action" onClick={onToggleSidebar} title={t(lang, "showSidebar")}><PanelLeft size={14} /></button>
+        <button className="tab-action sidebar-reveal" onClick={onToggleSidebar} title={t(lang, "showSidebar")}><PanelLeft size={14} /></button>
       )}
       <div className="tabs-scroll">
         {tabs.map((tab) => {

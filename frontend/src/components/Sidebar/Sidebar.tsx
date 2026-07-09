@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { Bot, Edit3, FileText, Folder, MoreHorizontal, Play, Plus, Search, Server, Settings, Trash2, X, ArrowUpRight } from "lucide-react";
+import { Bot, Edit3, FileText, Folder, PanelLeftClose, Play, Plus, Search, Server, Settings, Trash2, X, ArrowUpRight } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { TraceRoute, PingHost, UpdateSettings } from "../../../wailsjs/go/main/App";
 import type { Drawer, RecentMarkdownItem, Tab, Toast } from "../../types";
@@ -62,6 +62,7 @@ export function Sidebar(props: {
   onOpenSearch: () => void;
   onStartMonitor: () => void;
   onRefreshSftp: (path?: string) => void;
+  onOpenTerminalInDir?: (sessionId: string, path: string) => void;
   onNotify: (text: string, tone?: Toast["tone"]) => void;
   onRunCommand: (command: types.CommandTemplate) => void;
   onRunCommandAll: (command: types.CommandTemplate) => void;
@@ -177,7 +178,7 @@ export function Sidebar(props: {
             <div className="brand-name">gxShell</div>
             <div className="brand-meta">v{appVersion} / Ctrl+K</div>
           </div>
-          <button className="icon-btn ml-auto" onClick={() => props.setCollapsed((value) => !value)} title={t(lang, "collapse")}><MoreHorizontal size={15} /></button>
+          <button className="icon-btn sidebar-collapse-btn ml-auto" onClick={() => props.setCollapsed((value) => !value)} title={t(lang, "collapse")}><PanelLeftClose size={15} /></button>
         </div>
 
         <div className="nav-strip">
@@ -282,7 +283,7 @@ export function Sidebar(props: {
           </div>
         )}
 
-        {activePrimary !== "connections" && <div className="tool-body-full">
+        {activePrimary !== "connections" && <div className="tool-body-full" key={`${activePrimary}-${props.drawer}-${fileMode}`}>
           {props.drawer === "sftp" && fileMode === "remote" && (
             <div className="space-y-2">
               {props.markdownSiblings && props.markdownSiblings.length > 0 && (
@@ -306,7 +307,7 @@ export function Sidebar(props: {
               {activeIsMarkdown ? (
                 <div className="empty compact">{t(lang, "connectFirstSftp")}</div>
               ) : (
-                <SftpPanel active={props.active} path={props.remotePath} files={props.remoteFiles} busy={props.sftpBusy} locale={lang} onRefresh={props.onRefreshSftp} onNotify={props.onNotify} setCtxMenu={props.setCtxMenu} onOpenMarkdownFile={props.onOpenRemoteMarkdownFile} />
+                <SftpPanel active={props.active} path={props.remotePath} files={props.remoteFiles} busy={props.sftpBusy} locale={lang} onRefresh={props.onRefreshSftp} onNotify={props.onNotify} setCtxMenu={props.setCtxMenu} onOpenMarkdownFile={props.onOpenRemoteMarkdownFile} onOpenTerminalInDir={props.onOpenTerminalInDir} />
               )}
             </div>
           )}
@@ -340,7 +341,7 @@ export function Sidebar(props: {
                   </button>
                 ))}
               </div>
-              <div className="tool-panel-body">
+              <div className="tool-panel-body" key={props.drawer}>
                 {props.drawer === "commands" && <CommandPanel commands={props.commands} active={props.active} locale={lang} onRun={props.onRunCommand} onRunAll={props.onRunCommandAll} onEdit={props.onEditCommand} onDelete={props.onDeleteCommand} onNew={props.onNewCommand} />}
                 {props.drawer === "tunnels" && <TunnelPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
                 {props.drawer === "logs" && <LogsPanel locale={lang} onOpenLog={props.onOpenLog} />}

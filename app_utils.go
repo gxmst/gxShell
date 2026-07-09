@@ -21,7 +21,7 @@ import (
 func (a *App) GetAppInfo() map[string]string {
 	return map[string]string{
 		"name":    "gxShell",
-		"version": "1.2.0",
+		"version": "1.2.2",
 		"dataDir": a.store.DataDir(),
 	}
 }

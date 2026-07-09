@@ -36,6 +36,10 @@ export type LangKey =
   | "proxyJump"
   | "presetWeb" | "presetMySQL" | "presetRedis" | "presetSOCKS"
   | "transfer" | "transferTitle" | "noActiveTransfer" | "transferProgress" | "transferComplete" | "transferFailed"
+  | "transferManager" | "transferActiveCount" | "noActiveTransferHint" | "dualPaneTransfer" | "dualPaneShort"
+  | "transferHistory" | "clearHistory" | "noTransferHistory" | "pathPlaceholder" | "pathSuggestions" | "noPathSuggestions"
+  | "parentDir" | "goHomeRoot" | "filterFiles" | "noMatchingFiles" | "emptyFolder" | "openTerminalInDir" | "openTerminalInDirDone"
+  | "open" | "fileSizeCol"
   | "memoryDetail" | "topMemProcesses" | "close" | "closeEsc" | "settingsSaved" | "profileCopied"
   | "profileSaved" | "logReadFailed" | "cliServerError"
   | "sshConnection" | "showSidebar" | "splitHorizontal" | "splitVertical" | "reconnect" | "run"
@@ -198,6 +202,26 @@ const en: Record<LangKey, string> = {
   transferProgress: "Transferring",
   transferComplete: "Transfer complete",
   transferFailed: "Transfer failed",
+  transferManager: "Transfer manager",
+  transferActiveCount: "{n} active",
+  noActiveTransferHint: "Downloads and uploads will appear here with progress.",
+  dualPaneTransfer: "Dual-pane browser",
+  dualPaneShort: "Dual pane",
+  transferHistory: "Recent",
+  clearHistory: "Clear",
+  noTransferHistory: "No recent transfers yet.",
+  pathPlaceholder: "Path — type or pick a folder",
+  pathSuggestions: "Folders in {path}",
+  noPathSuggestions: "No matching folders",
+  parentDir: "Parent folder",
+  goHomeRoot: "Go to /",
+  filterFiles: "Filter…",
+  noMatchingFiles: "No matching files",
+  emptyFolder: "This folder is empty",
+  openTerminalInDir: "Open terminal here",
+  openTerminalInDirDone: "Terminal: cd {path}",
+  open: "Open",
+  fileSizeCol: "Size",
   memoryDetail: "Memory Detail",
   topMemProcesses: "Top Memory Processes",
   close: "Close",
@@ -486,6 +510,26 @@ const zhCN: Record<LangKey, string> = {
   transferProgress: "传输中",
   transferComplete: "传输完成",
   transferFailed: "传输失败",
+  transferManager: "传输管理",
+  transferActiveCount: "{n} 个进行中",
+  noActiveTransferHint: "上传/下载时会在此显示进度。",
+  dualPaneTransfer: "双栏传输浏览器",
+  dualPaneShort: "双栏",
+  transferHistory: "最近记录",
+  clearHistory: "清空",
+  noTransferHistory: "还没有传输记录。",
+  pathPlaceholder: "路径 — 输入或选择目录",
+  pathSuggestions: "{path} 下的文件夹",
+  noPathSuggestions: "没有匹配的文件夹",
+  parentDir: "上级目录",
+  goHomeRoot: "回到 /",
+  filterFiles: "筛选…",
+  noMatchingFiles: "没有匹配的文件",
+  emptyFolder: "此文件夹为空",
+  openTerminalInDir: "在此打开终端",
+  openTerminalInDirDone: "终端已切换：cd {path}",
+  open: "打开",
+  fileSizeCol: "大小",
   memoryDetail: "内存详情",
   topMemProcesses: "内存占用排行",
   close: "关闭",

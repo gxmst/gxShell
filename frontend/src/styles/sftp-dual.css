@@ -1,7 +1,7 @@
 .sftp-dual {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
   min-height: 0;
   flex: 1;
 }
@@ -11,18 +11,25 @@
   display: flex;
   flex-direction: column;
   min-height: 60px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   overflow: hidden;
-  background: color-mix(in srgb, var(--panel-raised) 40%, transparent);
+  background: color-mix(in srgb, var(--panel-raised) 38%, transparent);
+  box-shadow: var(--hairline);
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.sftp-dual-panel:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
 }
 
 .sftp-dual-header {
-  padding: 4px 8px;
+  padding: 5px 8px;
   border-bottom: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
+  background: color-mix(in srgb, var(--terminal-top) 35%, transparent);
 }
 
 .sftp-dual-path-row {
@@ -34,29 +41,34 @@
 .sftp-dual-input {
   flex: 1;
   min-width: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   border: 1px solid var(--border);
   background: var(--panel);
-  padding: 2px 6px;
-  font-size: 10px;
+  padding: 3px 7px;
+  font-size: var(--text-xs);
   color: var(--text);
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 
 .sftp-dual-input:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: var(--ring-soft);
 }
 
 .sftp-dual-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 5px;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-xs);
   color: var(--muted);
   flex-shrink: 0;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
 }
 
 .sftp-dual-icon-btn:hover {
@@ -67,33 +79,36 @@
 .sftp-dual-list {
   flex: 1;
   overflow-y: auto;
-  padding: 2px;
+  padding: 3px;
 }
 
 .sftp-dual-loading {
-  padding: 8px;
+  padding: 10px;
   text-align: center;
-  font-size: 10px;
+  font-size: var(--text-xs);
   color: var(--muted);
 }
 
 .sftp-dual-item {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  border-radius: 5px;
+  gap: 5px;
+  padding: 3px 7px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
-  transition: 100ms ease;
+  border: 1px solid transparent;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
 }
 
 .sftp-dual-item:hover {
-  background: color-mix(in srgb, var(--panel-raised) 60%, transparent);
+  background: color-mix(in srgb, var(--panel-raised) 64%, transparent);
 }
 
 .sftp-dual-item-selected {
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
 .sftp-dual-actions {
@@ -102,23 +117,34 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 2px 0;
+  padding: 3px 0;
 }
 
 .sftp-dual-transfer-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 22px;
-  border-radius: 6px;
+  width: 26px;
+  height: 24px;
+  border-radius: var(--radius-sm);
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
-  transition: 120ms ease;
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .sftp-dual-transfer-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 36%, transparent);
+  box-shadow: var(--glow-accent);
+}
+
+.sftp-dual-transfer-btn:active:not(:disabled) {
+  transform: scale(0.95);
 }
 
 .sftp-dual-transfer-btn:disabled {

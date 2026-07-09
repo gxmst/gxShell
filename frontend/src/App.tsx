@@ -31,6 +31,7 @@ import { ToastStack } from "./components/ToastStack";
 import { TransfersProvider } from "./hooks/useTransfers";
 import { BrowserOpenURL, EventsOn, OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
 import { isSupportedTextPath } from "./utils/textFiles";
+import { shellQuote } from "./utils/shellQuote";
 import { t } from "./i18n";
 
 function App() {
@@ -372,6 +373,15 @@ function App() {
 
   const handleNewConnection = useCallback(() => setProfileModal(emptyProfile()), []);
   const handleToggleSidebar = useCallback(() => setSidebarCollapsed(v => !v), []);
+  // From SFTP: jump the session terminal into the browsed directory and focus it.
+  const handleOpenTerminalInDir = useCallback((sessionId: string, dirPath: string) => {
+    const cmd = dirPath && dirPath !== "."
+      ? `cd ${shellQuote(dirPath)}\n`
+      : "pwd\n";
+    SendCommandToTerminal(sessionId, cmd).catch((err) => notify(String(err), "error"));
+    sessions.setActiveTab(sessionId);
+    setTimeout(() => focusTerminal(sessionId), 30);
+  }, [focusTerminal, notify, sessions.setActiveTab]);
   // Stable identities so a monitor:update tick (which updates metrics state and
   // re-renders App) does not break the memo(TerminalArea) boundary and re-render
   // the whole terminal/markdown subtree every few seconds.
@@ -415,6 +425,7 @@ function App() {
           onOpenSearch={() => setGlobalSearchOpen(true)}
           onStartMonitor={() => sessions.active && StartMonitor(sessions.active.id)}
           onRefreshSftp={sftp.refreshSftp}
+          onOpenTerminalInDir={handleOpenTerminalInDir}
           onNotify={notify}
           onRunCommand={runOnActive}
           onRunCommandAll={runOnAll}
@@ -478,9 +489,9 @@ function App() {
       <ProgressBar />
       <ToastStack toasts={toasts} />
       {ctxMenu && (
-        <div className="fixed z-[9999] border border-border rounded-lg shadow-2xl py-1 w-40 overflow-hidden" style={{ left: ctxMenu.x, top: ctxMenu.y, backgroundColor: "var(--panel-raised)" }} onClick={(e) => e.stopPropagation()}>
+        <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} onClick={(e) => e.stopPropagation()}>
           {ctxMenu.items.map((item, i) => (
-            <button key={i} className={clsx("w-full text-left px-4 py-2 text-[12px] hover:bg-white/10 transition-colors", item.danger && "text-bad")} onClick={() => { item.action(); setCtxMenu(null); }}>
+            <button key={i} className={clsx(item.danger && "danger")} onClick={() => { item.action(); setCtxMenu(null); }}>
               {item.label}
             </button>
           ))}

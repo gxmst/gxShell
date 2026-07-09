@@ -1,6 +1,412 @@
+/* ── SFTP panel (sidebar files) ─────────────────────── */
+
+.sftp-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  height: 100%;
+}
+
+/* Path bar */
+
+.sftp-pathbar {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.sftp-path-input-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sftp-path-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.sftp-path-input {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: -0.01em;
+}
+
+.sftp-path-input:focus {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+}
+
+/* Path autocomplete dropdown */
+
+.sftp-suggest {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 40;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--panel-raised) 96%, black);
+  box-shadow: var(--shadow-lg);
+  animation: ui-enter var(--dur) var(--ease-out) both;
+  backdrop-filter: blur(10px);
+}
+
+.sftp-suggest-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  font-size: 10px;
+  font-weight: 650;
+  color: var(--muted);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sftp-suggest-empty {
+  padding: 14px 10px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sftp-suggest-item {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  text-align: left;
+  color: var(--text);
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.sftp-suggest-item:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.sftp-suggest-name {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sftp-suggest-path {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Breadcrumbs */
+
+.sftp-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1px;
+  padding: 0 2px;
+  min-height: 20px;
+}
+
+.sftp-crumb-wrap {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.sftp-crumb-sep {
+  color: var(--muted-2);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.sftp-crumb {
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.sftp-crumb:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel-raised) 70%, transparent);
+}
+
+.sftp-crumb-current {
+  color: var(--accent);
+  font-weight: 650;
+}
+
+/* Toolbar */
+
+.sftp-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.sftp-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel-raised) 50%, transparent);
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.sftp-tool-btn:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
+  background: color-mix(in srgb, var(--panel-raised) 78%, transparent);
+}
+
+.sftp-tool-btn:active {
+  transform: scale(0.97);
+}
+
+.sftp-tool-btn-accent {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.sftp-tool-btn span {
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sftp-badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 16px;
+  text-align: center;
+}
+
+.sftp-toolbar-spacer {
+  flex: 1;
+  min-width: 4px;
+}
+
+.sftp-filter {
+  width: 88px;
+  flex: 0 1 110px;
+}
+
+/* File table */
+
+.sftp-file-table {
+  flex: 1;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel-raised) 42%, transparent);
+  box-shadow: var(--hairline);
+  overflow: hidden;
+}
+
+.sftp-file-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px 88px;
+  gap: 4px;
+  padding: 5px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted-2);
+  background: color-mix(in srgb, var(--terminal-top) 40%, transparent);
+  flex-shrink: 0;
+}
+
+.sftp-col-size {
+  text-align: right;
+}
+
+.sftp-file-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.sftp-file-body:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.sftp-file-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) 52px 88px;
+  gap: 5px;
+  align-items: center;
+  min-height: 30px;
+  padding: 3px 8px;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease);
+}
+
+.sftp-file-row:last-child {
+  border-bottom: 0;
+}
+
+.sftp-file-row:hover {
+  background: color-mix(in srgb, var(--panel-raised) 72%, transparent);
+  color: var(--text);
+}
+
+.sftp-file-row:active {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.sftp-file-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sftp-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 550;
+  color: var(--text);
+}
+
+.sftp-file-size {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.sftp-file-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 1px;
+  opacity: 0.25;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.sftp-file-row:hover .sftp-file-actions,
+.sftp-file-row:focus-within .sftp-file-actions {
+  opacity: 1;
+}
+
+/* Footer terminal CTA */
+
+.sftp-footer {
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.sftp-terminal-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px dashed color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 650;
+  text-align: left;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.sftp-terminal-btn:hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  border-style: solid;
+  box-shadow: var(--glow-accent);
+}
+
+.sftp-terminal-btn:active {
+  transform: scale(0.99);
+}
+
+.sftp-terminal-path {
+  margin-left: auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+  background: none;
+}
+
+.sftp-spin {
+  animation: sftp-spin 0.8s linear infinite;
+}
+
+@keyframes sftp-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Legacy class names kept for TransferModal / other panels */
 .file-table {
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: var(--radius);
+  box-shadow: var(--hairline);
 }
 
 .file-row {
@@ -8,37 +414,194 @@
   grid-template-columns: 16px minmax(0, 1fr) 52px 98px;
   gap: 5px;
   align-items: center;
-  min-height: 28px;
-  padding: 3px 7px;
+  min-height: 30px;
+  padding: 4px 8px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--text-sm);
 }
 
 .file-row + .file-row {
-  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
 }
 
 .file-row:hover {
-  background: color-mix(in srgb, var(--panel-raised) 62%, transparent);
+  background: color-mix(in srgb, var(--panel-raised) 68%, transparent);
   color: var(--text);
-}
-
-.file-name {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 6px;
-}
-
-.file-size,
-.file-date {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  text-align: right;
 }
 
 .file-actions {
   display: flex;
   gap: 2px;
+  opacity: 0.35;
+}
+
+.file-row:hover .file-actions {
+  opacity: 1;
+}
+
+/* Transfer center — solid nested panels inside floating window */
+
+.xfer-center {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.xfer-center-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 28px 10px 2px;
+  margin: -2px -2px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.xfer-center-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.xfer-center-sub {
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.xfer-center-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.xfer-action {
+  width: 100%;
+  font-size: 11px !important;
+  padding: 8px 10px !important;
+  border: 1px solid var(--border-strong) !important;
+  background: var(--panel-raised) !important;
+}
+
+.xfer-action:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--border)) !important;
+}
+
+.xfer-center-section {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 0;
+  padding: 10px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+}
+
+.xfer-center-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-bottom: 2px;
+}
+
+.xfer-center-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 18px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.xfer-center-empty.compact {
+  padding: 12px;
+}
+
+.xfer-center-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.xfer-center-item {
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+}
+
+.xfer-center-item-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 7px;
+}
+
+.xfer-center-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 550;
+}
+
+.xfer-center-item-pct {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  width: 32px;
+  text-align: right;
+}
+
+.xfer-center-track {
+  height: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted-2) 30%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  overflow: hidden;
+}
+
+.xfer-center-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width var(--dur) var(--ease-out);
+}
+
+.xfer-center-fill.upload {
+  background: var(--warn);
+}
+
+.xfer-center-history {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  font-size: 11px;
+  background: var(--panel);
+}
+
+.xfer-center-history:hover {
+  border-color: var(--border);
+  background: var(--panel-raised);
 }

@@ -11,18 +11,17 @@ body {
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  /* Cockpit rule: numbers never jitter. Tabular figures keep ticking metrics,
-     transfer progress and latency readouts steady in place. */
   font-variant-numeric: tabular-nums;
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  color: var(--text);
 }
 
-/* Visible keyboard focus without flashing rings on mouse clicks. The xterm
-   helper textarea manages its own focus, so it is excluded. */
+/* Keyboard focus without mouse flash. xterm owns its helper textarea. */
 :where(button, a, input, select, textarea, [tabindex]):focus-visible:not(.xterm-helper-textarea) {
   outline: none;
   box-shadow: var(--ring);
@@ -32,14 +31,41 @@ button, input, textarea, select {
   font: inherit;
 }
 
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* ── Overlay scrollbars ────────────────────────────────
+   Goals: (1) never permanently steal list width, (2) stay quiet until the
+   user is scrolling/hovering, (3) match theme accent so long server lists
+   don't feel "boxed" by a heavy grey gutter. */
+:root, .app-shell {
+  --scrollbar-size: 6px;
+  --scrollbar-thumb: color-mix(in srgb, var(--muted) 42%, transparent);
+  --scrollbar-thumb-strong: color-mix(in srgb, var(--accent) 55%, var(--muted));
+}
+
 * {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--muted) 42%, transparent) transparent;
+  scrollbar-color: transparent transparent;
+}
+
+*:hover,
+*:focus-within {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 *::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 *::-webkit-scrollbar-track {
@@ -47,36 +73,75 @@ button, input, textarea, select {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--muted) 40%, transparent);
+  background: transparent;
   border-radius: 999px;
+  border: 1.5px solid transparent;
+  background-clip: padding-box;
 }
 
-*::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--muted) 62%, transparent);
+*:hover::-webkit-scrollbar-thumb,
+*:focus-within::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-thumb:active {
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
 }
+
+*:hover::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-strong);
+  background-clip: padding-box;
+}
+
+/* While actively scrolling (mouse over thumb or dragging), keep thumb visible
+   even if the pointer leaves the scrollport briefly. */
+*::-webkit-scrollbar-thumb:vertical:active,
+*::-webkit-scrollbar-thumb:horizontal:active {
+  background: var(--scrollbar-thumb-strong);
+  background-clip: padding-box;
+}
+
+/* ── Inputs ─────────────────────────────────────────── */
 
 .input {
   width: 100%;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--panel-raised) 82%, transparent);
-  padding: 8px 10px;
+  background: color-mix(in srgb, var(--panel-raised) 78%, transparent);
+  padding: 8px 11px;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--text-base);
   outline: none;
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
+}
+
+.input:hover:not(:disabled):not(:focus) {
+  border-color: color-mix(in srgb, var(--border-strong) 80%, var(--border));
 }
 
 .input:focus {
-  border-color: color-mix(in srgb, var(--accent) 64%, var(--border));
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
   background: color-mix(in srgb, var(--panel-raised) 96%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: var(--ring-soft);
+}
+
+.input:disabled {
+  opacity: 0.55;
+}
+
+.input::placeholder {
+  color: var(--muted-2);
 }
 
 .compact-input {
   height: 27px;
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: var(--text-sm);
 }
+
+/* ── Buttons ────────────────────────────────────────── */
 
 .btn-primary,
 .btn-secondary,
@@ -85,23 +150,35 @@ button, input, textarea, select {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border-radius: 9px;
-  padding: 7px 9px;
-  font-size: 12px;
-  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease), filter var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+  border-radius: var(--radius-sm);
+  padding: 7px 12px;
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease),
+    filter var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
-/* Press feedback: a small settle on click reads as tactile and modern without
-   being distracting. Hover lifts primary/danger slightly via brightness. */
 .btn-primary:hover {
-  filter: brightness(1.06);
+  filter: brightness(1.07);
   box-shadow: var(--glow-accent);
 }
-.btn-danger:hover { background: color-mix(in srgb, var(--bad) 16%, transparent); }
+
+.btn-danger:hover {
+  background: color-mix(in srgb, var(--bad) 18%, transparent);
+  border-color: color-mix(in srgb, var(--bad) 48%, transparent);
+}
+
 .btn-secondary:hover {
-  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
   background: color-mix(in srgb, var(--panel-raised) 92%, transparent);
 }
+
 .btn-primary:active,
 .btn-secondary:active,
 .btn-danger:active {
@@ -109,40 +186,43 @@ button, input, textarea, select {
 }
 
 .btn-primary {
-  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
-  /* A faint vertical gradient plus a hairline top highlight give the solid
-     accent button gentle depth without reading as glossy. */
+  border: 1px solid color-mix(in srgb, var(--accent) 52%, transparent);
   background: linear-gradient(180deg,
-    color-mix(in srgb, var(--accent) 94%, white),
-    color-mix(in srgb, var(--accent) 90%, black));
+    color-mix(in srgb, var(--accent) 96%, white),
+    color-mix(in srgb, var(--accent) 88%, black));
   color: var(--accent-contrast);
   font-weight: 700;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 22%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 20%, transparent);
 }
 
 .btn-secondary {
   border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--panel-raised) 70%, transparent);
+  background: color-mix(in srgb, var(--panel-raised) 68%, transparent);
   color: var(--text);
 }
 
 .btn-danger {
-  border: 1px solid color-mix(in srgb, var(--bad) 38%, transparent);
+  border: 1px solid color-mix(in srgb, var(--bad) 36%, transparent);
   background: color-mix(in srgb, var(--bad) 10%, transparent);
   color: var(--bad);
 }
 
 .icon-btn {
   display: inline-flex;
-  width: 28px;
-  height: 28px;
+  width: var(--control-height);
+  height: var(--control-height);
   align-items: center;
   justify-content: center;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--panel-raised) 62%, transparent);
+  background: color-mix(in srgb, var(--panel-raised) 58%, transparent);
   color: var(--muted);
-  transition: 140ms ease;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .compact-icon {
@@ -152,8 +232,9 @@ button, input, textarea, select {
 
 .icon-btn:hover,
 .mini-btn:hover {
-  border-color: color-mix(in srgb, var(--accent) 54%, var(--border));
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
   color: var(--text);
+  background: color-mix(in srgb, var(--panel-raised) 78%, transparent);
 }
 
 .icon-btn:active,
@@ -167,27 +248,35 @@ button, input, textarea, select {
   height: 20px;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   border: 1px solid transparent;
   color: var(--muted);
-  transition: 140ms ease;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 
 .mini-btn.danger:hover {
   color: var(--bad);
   border-color: color-mix(in srgb, var(--bad) 32%, transparent);
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
 }
 
+/* ── Empty / utility ────────────────────────────────── */
+
 .empty {
-  padding: 20px;
+  padding: var(--space-5);
   text-align: center;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-md);
+  line-height: 1.5;
 }
 
 .empty.compact {
-  padding: 12px;
-  font-size: 11px;
+  padding: var(--space-3);
+  font-size: var(--text-sm);
 }
 
 .check {
@@ -195,7 +284,7 @@ button, input, textarea, select {
   align-items: center;
   gap: 7px;
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--text-sm);
 }
 
 .text-muted { color: var(--muted); }
@@ -208,22 +297,46 @@ button, input, textarea, select {
 .bg-bad { background: var(--bad); }
 .bg-muted { background: var(--muted-2); }
 
-/* Pulsing halo for the "connecting"/"reconnecting" status dot so in-progress
-   sessions read as active rather than static. Uses box-shadow so it does not
-   affect layout. */
+/* Connecting / reconnecting status halo. */
 .dot-pulse {
   animation: dot-pulse 1.4s var(--ease) infinite;
 }
 
 @keyframes dot-pulse {
   0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warn) 55%, transparent); }
-  70%  { box-shadow: 0 0 0 5px color-mix(in srgb, var(--warn) 0%, transparent); }
+  70%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--warn) 0%, transparent); }
   100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warn) 0%, transparent); }
 }
 
-/* Respect the OS "reduce motion" setting: near-instant transitions/animations
-   for users who opt out, without removing them entirely (which can break
-   visibility toggles that rely on transitionend). */
+/* Shared enter animation for drawer / panel content swaps. */
+.ui-enter {
+  animation: ui-enter var(--dur-panel) var(--ease-out) both;
+}
+
+@keyframes ui-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Soft list-row hover used across tool panels when no local class exists. */
+.list-row-hover {
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.list-row-hover:hover {
+  background: color-mix(in srgb, var(--panel-raised) 64%, transparent);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

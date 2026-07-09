@@ -2,25 +2,33 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  margin-bottom: 11px;
 }
 
 .npc-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
   border: 1px solid transparent;
   color: var(--muted);
-  transition: 120ms ease;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 
 .npc-icon-btn:hover {
   background: color-mix(in srgb, var(--panel-raised) 80%, transparent);
   border-color: var(--border);
   color: var(--text);
+}
+
+.npc-icon-btn:active {
+  transform: scale(0.94);
 }
 
 .npc-icon-btn:disabled {
@@ -32,17 +40,24 @@
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 6px;
-  margin-bottom: 10px;
+  margin-bottom: 11px;
 }
 
 .npc-stat {
   display: flex;
   align-items: center;
   gap: 4px;
-  border-radius: 7px;
-  padding: 5px 8px;
-  background: color-mix(in srgb, var(--panel-raised) 50%, transparent);
-  font-size: 10px;
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  background: color-mix(in srgb, var(--panel-raised) 48%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  font-size: var(--text-xs);
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.npc-stat:hover {
+  border-color: color-mix(in srgb, var(--accent) 20%, var(--border));
+  background: color-mix(in srgb, var(--panel-raised) 62%, transparent);
 }
 
 .npc-stat-label {
@@ -52,29 +67,35 @@
 
 .npc-stat-value {
   margin-left: auto;
-  font-weight: 600;
+  font-weight: 650;
   font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
 }
 
 .npc-hops-section {
   border-top: 1px solid var(--border);
-  padding-top: 8px;
+  padding-top: 9px;
 }
 
 .npc-trace-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 10px;
+  border-radius: var(--radius-sm);
+  padding: 4px 9px;
+  font-size: var(--text-xs);
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
-  transition: 120ms ease;
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease);
 }
 
 .npc-trace-btn:hover {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .npc-trace-btn:disabled {
@@ -83,7 +104,7 @@
 }
 
 .npc-hops-list {
-  margin-top: 6px;
+  margin-top: 7px;
   max-height: 260px;
   overflow-y: auto;
 }
@@ -91,9 +112,10 @@
 .npc-hop {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 0;
+  gap: 7px;
+  padding: 5px 0;
   position: relative;
+  animation: ui-enter var(--dur) var(--ease-out) both;
 }
 
 .npc-hop-timeout {
@@ -107,19 +129,22 @@
   color: var(--muted-2);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+  font-family: var(--font-mono);
 }
 
 .npc-hop-line {
-  width: 6px;
-  height: 6px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   background: var(--accent);
   flex-shrink: 0;
   position: relative;
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .npc-hop-timeout .npc-hop-line {
   background: var(--muted-2);
+  box-shadow: none;
 }
 
 .npc-hop-info {
@@ -135,8 +160,8 @@
   align-items: center;
   gap: 4px;
   min-width: 0;
-  font-size: 10px;
-  font-family: var(--font-mono, monospace);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
 }
 
 .npc-hop-rtt {
@@ -147,6 +172,7 @@
   font-size: 9px;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+  font-family: var(--font-mono);
 }
 
 .npc-no-hops {
@@ -154,7 +180,7 @@
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  padding: 20px 0;
+  padding: 22px 0;
 }
 
 .npc-loading {

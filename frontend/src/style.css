@@ -16,31 +16,95 @@
 @import "./styles/ai.css";
 @import "./styles/container.css";
 
-/* Respect users who ask the OS to minimize motion: keep transitions near-instant
-   but not fully removed, so state changes are still perceptible. */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-
-/* Tactile press feedback on the shared button classes. Pairs with the
-   existing 140ms transitions so buttons feel responsive, not mushy. */
-.btn-primary:active,
-.btn-secondary:active,
-.btn-danger:active,
-.icon-btn:active,
-.mini-btn:active {
-  transform: scale(0.96);
-}
-
+/* Tactile press + hover motion on shared controls. */
 .btn-primary,
 .btn-secondary,
 .btn-danger,
 .icon-btn,
-.mini-btn {
-  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+.mini-btn,
+.nav-chip,
+.nav-icon-chip,
+.tab-action,
+.group-tab,
+.subnav-chip {
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease),
+    filter var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease);
+}
+
+.btn-primary:active,
+.btn-secondary:active,
+.btn-danger:active,
+.icon-btn:active,
+.mini-btn:active,
+.nav-chip:active,
+.nav-icon-chip:active,
+.tab-action:active:not(:disabled),
+.group-tab:active,
+.subnav-chip:active {
+  transform: scale(0.96);
+}
+
+/* Icon buttons get a soft lift on hover. */
+.icon-btn:hover {
+  transform: translateY(-1px);
+}
+
+.icon-btn:active {
+  transform: translateY(0) scale(0.96);
+}
+
+/* Primary actions gently bloom. */
+.btn-primary {
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease),
+    filter var(--dur-fast) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+
+/* Context menu (App.tsx) — shared modern dropdown chrome. */
+.ctx-menu {
+  position: fixed;
+  z-index: 100;
+  min-width: 168px;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--panel-raised) 96%, black);
+  box-shadow: var(--shadow-lg);
+  animation: dropdown-in var(--dur) var(--ease-out) both;
+  backdrop-filter: blur(12px);
+}
+
+.ctx-menu button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: var(--text-md);
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.ctx-menu button:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.ctx-menu button.danger {
+  color: var(--bad);
+}
+
+.ctx-menu button.danger:hover {
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
 }

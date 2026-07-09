@@ -17,7 +17,7 @@ import (
 const (
 	daemonURL        = "http://127.0.0.1:56789"
 	cliTokenFilename = "cli_token"
-	version          = "1.2.0"
+	version          = "1.2.2"
 	cliMinTimeout    = time.Second
 	cliMaxTimeout    = 30 * time.Minute
 )

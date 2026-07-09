@@ -1,90 +1,198 @@
 .app-shell {
-  --bg: #07111d;
-  --panel: #0b1624;
-  --panel-soft: #0e1a2a;
-  --panel-raised: #111f31;
+  /* Default dark — "Midnight Neon": deeper void, clearer surface steps, punchy cyan. */
+  --bg: #050b14;
+  --panel: #0a1422;
+  --panel-soft: #0f1c2e;
+  --panel-raised: #16283d;
   --bg-secondary: var(--panel-soft);
-  --terminal: #030b16;
-  --terminal-top: #06111f;
-  --border: rgba(116, 142, 174, .18);
-  --border-strong: rgba(116, 142, 174, .28);
-  --text: #d7e3f4;
-  --muted: #7f90a7;
-  --muted-2: #596b82;
-  --accent: #66c8ff;
-  --accent-soft: rgba(102, 200, 255, .11);
-  --ok: #53d18d;
-  --warn: #f4c95d;
-  --bad: #ff6b6b;
+  --terminal: #020810;
+  --terminal-top: #07101c;
+  --border: rgba(130, 168, 210, .22);
+  --border-strong: rgba(130, 168, 210, .38);
+  --text: #e8f1fc;
+  --muted: #93a8c0;
+  --muted-2: #6a7f99;
+  --accent: #4ec4ff;
+  --accent-soft: rgba(78, 196, 255, .14);
+  --ok: #3dd68c;
+  --warn: #f5c84c;
+  --bad: #ff6b7a;
   --error: var(--bad);
-  --radius: 11px;
-  /* Motion tokens. --ease was referenced across the app but never defined, so
-     every `transition: ... var(--ease)` silently fell back to no easing (and in
-     shorthand, an invalid var voids the whole declaration — killing the
-     transition). Defining it here restores those animations. The scale gives a
-     consistent, modern feel: a standard ease for most UI, a springy ease for
-     entrances/emphasis, plus named durations. */
+
+  /* Radius scale — components pick a step instead of inventing values. */
+  --radius-xs: 5px;
+  --radius-sm: 7px;
+  --radius: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  /* Spacing scale (4px base). */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* Type scale. */
+  --text-xs: 10px;
+  --text-sm: 11px;
+  --text-md: 12.5px;
+  --text-base: 13px;
+  --text-lg: 15px;
+
+  /* Layout proportions. */
+  --sidebar-width: 328px;
+  --tab-height: 34px;
+  --control-height: 28px;
+  --dur-sidebar: 320ms;
+
+  /* Motion tokens. */
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --dur-fast: 120ms;
   --dur: 180ms;
-  --dur-slow: 260ms;
-  /* Typography tokens. The mono stack is treated as a "data material": hosts,
-     metrics, versions and logs render in it so machine data reads distinctly
-     from UI labels. Cascadia ships with Windows 10+, the rest are fallbacks. */
+  --dur-slow: 280ms;
+  --dur-panel: 220ms;
+
+  /* Typography. */
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "Cascadia Code", "JetBrains Mono", "Fira Code", Consolas, ui-monospace, "SF Mono", monospace;
   --mono: var(--font-mono);
-  /* Elevation + signal tokens. --shadow-color is overridden per (light) theme
-     so shadows stay tinted to the palette instead of dead black. --shadow-lg
-     was referenced before but never defined, which voided those declarations —
-     defining the scale here restores depth on dropdowns and floating panes. */
-  --shadow-color: rgba(1, 6, 14, 0.6);
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--shadow-color) 60%, transparent), 0 2px 10px color-mix(in srgb, var(--shadow-color) 34%, transparent);
-  --shadow-md: 0 4px 14px color-mix(in srgb, var(--shadow-color) 52%, transparent), 0 10px 34px color-mix(in srgb, var(--shadow-color) 38%, transparent);
-  --shadow-lg: 0 6px 18px color-mix(in srgb, var(--shadow-color) 55%, transparent), 0 24px 70px color-mix(in srgb, var(--shadow-color) 46%, transparent);
-  /* Phosphor glow: one shared "signal" treatment for the active tab underline,
-     connected status dots and meter tips, so live state has a single voice. */
-  --glow-accent: 0 0 10px color-mix(in srgb, var(--accent) 40%, transparent);
-  --ring: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent);
-  /* Readable text on top of a solid --accent fill (dark accents override). */
-  --accent-contrast: #06111d;
-  --bg-hover: color-mix(in srgb, var(--panel-raised) 70%, transparent);
-  /* Code + syntax-highlight tokens. These were hardcoded dark-theme hex values
-     in markdown-viewer.css (bright yellow numbers, peach titles) that stayed put
-     under the light themes and turned near-illegible on a pale code background.
-     Defining them per theme keeps one set of names; light themes override with
-     darker, higher-contrast inks. --code-bg is the code block surface. */
-  --code-bg: color-mix(in srgb, var(--terminal) 82%, black);
+
+  /* Elevation. */
+  --shadow-color: rgba(0, 4, 12, 0.72);
+  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--shadow-color) 55%, transparent), 0 2px 8px color-mix(in srgb, var(--shadow-color) 28%, transparent);
+  --shadow-md: 0 4px 14px color-mix(in srgb, var(--shadow-color) 48%, transparent), 0 12px 36px color-mix(in srgb, var(--shadow-color) 36%, transparent);
+  --shadow-lg: 0 8px 24px color-mix(in srgb, var(--shadow-color) 52%, transparent), 0 28px 72px color-mix(in srgb, var(--shadow-color) 44%, transparent);
+  --shadow-glow: 0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent), var(--shadow-lg);
+
+  /* Signal / focus. */
+  --glow-accent: 0 0 14px color-mix(in srgb, var(--accent) 42%, transparent);
+  --glow-ok: 0 0 8px color-mix(in srgb, var(--ok) 50%, transparent);
+  --ring: 0 0 0 2px color-mix(in srgb, var(--accent) 48%, transparent);
+  --ring-soft: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+
+  --accent-contrast: #041018;
+  --bg-hover: color-mix(in srgb, var(--panel-raised) 72%, transparent);
+  --surface: color-mix(in srgb, var(--panel-raised) 56%, transparent);
+  --surface-strong: color-mix(in srgb, var(--panel-raised) 82%, transparent);
+  --hairline: inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
+
+  /* Scrollbar tokens (overridden lightly by light themes). */
+  --scrollbar-size: 6px;
+  --scrollbar-thumb: color-mix(in srgb, var(--muted) 48%, transparent);
+  --scrollbar-thumb-strong: color-mix(in srgb, var(--accent) 58%, var(--muted));
+
+  /* Code + syntax. */
+  --code-bg: color-mix(in srgb, var(--terminal) 78%, black);
   --code-fg: var(--text);
-  --code-keyword: #8bd3ff;
-  --code-string: #a7e3a0;
-  --code-number: #f4c95d;
-  --code-title: #ffb86b;
+  --code-border: var(--border);
+  --code-keyword: #7dd3fc;
+  --code-string: #86efac;
+  --code-number: #fcd34d;
+  --code-title: #fdba74;
   --code-comment: var(--muted);
+
   height: 100vh;
   overflow: hidden;
   background:
-    radial-gradient(1100px 640px at 14% -12%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 62%),
+    radial-gradient(1200px 700px at 12% -14%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 58%),
+    radial-gradient(900px 520px at 92% 108%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 55%),
     var(--bg);
   color: var(--text);
+  font-family: var(--font-ui);
 }
 
+/* Deep Blue — saturated ocean cockpit: blue panels clearly step up, ice accent. */
 .app-shell[data-theme="Deep Blue"] {
-  --bg: #07162a;
-  --panel: #091a32;
-  --panel-soft: #0b213e;
-  --panel-raised: #0e294d;
-  --terminal: #06111f;
-  --terminal-top: #071426;
-  --border: rgba(117, 162, 213, .20);
-  --border-strong: rgba(117, 162, 213, .32);
-  --text: #dce9ff;
-  --muted: #8aa8ca;
-  --muted-2: #6683a6;
-  --accent: #8bd3ff;
+  --bg: #04101f;
+  --panel: #071a32;
+  --panel-soft: #0b2648;
+  --panel-raised: #123862;
+  --terminal: #020c18;
+  --terminal-top: #061528;
+  --border: rgba(100, 180, 255, .26);
+  --border-strong: rgba(100, 180, 255, .42);
+  --text: #edf5ff;
+  --muted: #8eb6de;
+  --muted-2: #5f8ab8;
+  --accent: #5cbcff;
+  --accent-soft: rgba(92, 188, 255, .16);
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --bad: #fb7185;
+  --accent-contrast: #021018;
+  --scrollbar-thumb: color-mix(in srgb, var(--accent) 32%, transparent);
+  --scrollbar-thumb-strong: color-mix(in srgb, var(--accent) 70%, white 10%);
+  --code-keyword: #7dd3fc;
+  --code-string: #6ee7b7;
+  --code-number: #fcd34d;
+  --code-title: #fda4af;
 }
 
+/* Ember Terminal — phosphor green on near-black, high signal contrast. */
+.app-shell[data-theme="Ember Terminal"] {
+  --bg: #0a0b09;
+  --panel: #11140f;
+  --panel-soft: #1a1f17;
+  --panel-raised: #273022;
+  --bg-secondary: #1a1f17;
+  --terminal: #050604;
+  --terminal-top: #0e100c;
+  --border: rgba(165, 230, 95, .24);
+  --border-strong: rgba(165, 230, 95, .40);
+  --text: #f2fce6;
+  --muted: #a8c08e;
+  --muted-2: #738664;
+  --accent: #a3e635;
+  --accent-soft: rgba(163, 230, 53, .15);
+  --ok: #a3e635;
+  --warn: #facc15;
+  --bad: #fb7185;
+  --error: var(--bad);
+  --accent-contrast: #0a1204;
+  --scrollbar-thumb: color-mix(in srgb, var(--accent) 30%, transparent);
+  --scrollbar-thumb-strong: color-mix(in srgb, var(--accent) 65%, transparent);
+  --code-keyword: #bef264;
+  --code-string: #86efac;
+  --code-number: #fde047;
+  --code-title: #fdba74;
+}
+
+/* Twilight Amber — warm dusk cockpit, copper accent vs deep espresso. */
+.app-shell[data-theme="Twilight Amber"] {
+  --bg: #120d09;
+  --panel: #1a120d;
+  --panel-soft: #261a12;
+  --panel-raised: #3a281c;
+  --bg-secondary: #261a12;
+  --terminal: #0a0705;
+  --terminal-top: #16100c;
+  --border: rgba(255, 180, 110, .26);
+  --border-strong: rgba(255, 180, 110, .42);
+  --text: #fff6eb;
+  --muted: #d4b89a;
+  --muted-2: #a08468;
+  --accent: #ffb86b;
+  --accent-soft: rgba(255, 184, 107, .16);
+  --ok: #a3e635;
+  --warn: #fbbf24;
+  --bad: #fb7185;
+  --error: var(--bad);
+  --accent-contrast: #1a0e06;
+  --scrollbar-thumb: color-mix(in srgb, var(--accent) 32%, transparent);
+  --scrollbar-thumb-strong: color-mix(in srgb, var(--accent) 68%, transparent);
+  --code-keyword: #fdba74;
+  --code-string: #bef264;
+  --code-number: #fde68a;
+  --code-title: #f9a8d4;
+}
+
+/* Yuzu Study — warm cream light (already solid identity). */
 .app-shell[data-theme="Yuzu Study"] {
   --bg: #fcf7ed;
   --panel: #f3e8d6;
@@ -93,8 +201,8 @@
   --bg-secondary: #f3e8d6;
   --terminal: #fffaf0;
   --terminal-top: #f6ecda;
-  --border: rgba(169, 116, 63, .22);
-  --border-strong: rgba(169, 116, 63, .36);
+  --border: rgba(169, 116, 63, .20);
+  --border-strong: rgba(169, 116, 63, .34);
   --text: #342519;
   --muted: #6b5640;
   --muted-2: #93795c;
@@ -104,12 +212,10 @@
   --warn: #c2870c;
   --bad: #c0492f;
   --error: var(--bad);
-  /* Light palette: soften shadows and use warm ink instead of black. */
-  --shadow-color: rgba(74, 52, 28, 0.3);
+  --shadow-color: rgba(74, 52, 28, 0.28);
   --accent-contrast: #fffaf0;
-  /* Syntax + code on a light cream background: the dark-theme defaults (bright
-     yellow numbers, pastel green strings) are near-invisible here, so override
-     with saturated, dark inks that read on cream. */
+  --scrollbar-thumb: color-mix(in srgb, var(--accent) 28%, transparent);
+  --scrollbar-thumb-strong: color-mix(in srgb, var(--accent) 55%, transparent);
   --code-bg: #f6edda;
   --code-border: rgba(169, 116, 63, .28);
   --code-keyword: #9a4a1e;
@@ -119,48 +225,7 @@
   --code-comment: #93795c;
 }
 
-.app-shell[data-theme="Ember Terminal"] {
-  --bg: #111210;
-  --panel: #0c0d0b;
-  --panel-soft: #1b1d19;
-  --panel-raised: #22251e;
-  --bg-secondary: #1b1d19;
-  --terminal: #090a08;
-  --terminal-top: #111210;
-  --border: rgba(155, 207, 95, .20);
-  --border-strong: rgba(155, 207, 95, .34);
-  --text: #ecf6df;
-  --muted: #aab89a;
-  --muted-2: #7c886e;
-  --accent: #9bcf5f;
-  --accent-soft: rgba(155, 207, 95, .16);
-  --ok: #9bcf5f;
-  --warn: #e0b341;
-  --bad: #e57158;
-  --error: var(--bad);
-}
-
-.app-shell[data-theme="Twilight Amber"] {
-  --bg: #18120e;
-  --panel: #120d09;
-  --panel-soft: #221a14;
-  --panel-raised: #2a2018;
-  --bg-secondary: #221a14;
-  --terminal: #0e0a07;
-  --terminal-top: #18120e;
-  --border: rgba(240, 168, 104, .20);
-  --border-strong: rgba(240, 168, 104, .34);
-  --text: #fff4e6;
-  --muted: #d3bca5;
-  --muted-2: #9f8771;
-  --accent: #f0a868;
-  --accent-soft: rgba(240, 168, 104, .16);
-  --ok: #9ec96b;
-  --warn: #e6b455;
-  --bad: #e8745a;
-  --error: var(--bad);
-}
-
+/* Light — cool slate / blue product UI. */
 .app-shell[data-theme="Light"] {
   --bg: #e8edf4;
   --panel: #f0f3f8;
@@ -169,8 +234,8 @@
   --bg-secondary: var(--panel-soft);
   --terminal: #f4f7fb;
   --terminal-top: #eef1f7;
-  --border: rgba(76, 94, 118, .18);
-  --border-strong: rgba(76, 94, 118, .28);
+  --border: rgba(76, 94, 118, .16);
+  --border-strong: rgba(76, 94, 118, .26);
   --text: #192038;
   --muted: #5a6b82;
   --muted-2: #7d8ea3;
@@ -179,16 +244,12 @@
   --ok: #15803d;
   --warn: #b45309;
   --bad: #dc2626;
-  /* Light palette: slate-tinted, lighter shadows; white text on the blue
-     accent (the dark default text was ~1.5:1 against #2563eb). */
-  --shadow-color: rgba(30, 41, 66, 0.26);
+  --shadow-color: rgba(30, 41, 66, 0.24);
   --accent-contrast: #ffffff;
-  /* Syntax + code surface for the light theme: a faintly tinted panel instead
-     of a near-black mix, and saturated inks that stay legible on it. The
-     previous hardcoded dark-theme colours (bright yellow numbers, pale-green
-     strings) washed out on a light code block. */
+  --scrollbar-thumb: color-mix(in srgb, var(--muted) 36%, transparent);
+  --scrollbar-thumb-strong: color-mix(in srgb, var(--accent) 48%, transparent);
   --code-bg: #eef2f8;
-  --code-border: rgba(76, 94, 118, .24);
+  --code-border: rgba(76, 94, 118, .22);
   --code-keyword: #7c3aed;
   --code-string: #0f7d3d;
   --code-number: #b45309;
