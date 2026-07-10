@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, MoreHorizontal, Plus, Save, Trash2, X } from "lucide-react";
+import { Copy, MoreHorizontal, Plus, Save, Server, Trash2, X } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
 import { ModalShell, Label } from "./ModalShell";
@@ -48,7 +48,7 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
   return (
     <ModalShell onClose={props.onClose}>
       <div className="profile-modal-header">
-        <h2 className="profile-modal-title">{draft.id ? t(lang, "editServer") : t(lang, "newServer")}</h2>
+        <div className="profile-modal-heading"><span className="dialog-header-icon"><Server size={16} /></span><span><h2 className="profile-modal-title">{draft.id ? t(lang, "editServer") : t(lang, "newServer")}</h2><small>{lang === "zh-CN" ? "连接、认证和自动化选项" : "Connection, authentication and automation"}</small></span></div>
         <button className="icon-btn compact-icon" onClick={props.onClose}><X size={14} /></button>
       </div>
       <div className="profile-modal-grid">

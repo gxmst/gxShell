@@ -4,6 +4,14 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 
 [中文版本](#中文版本)
 
+## What's New in v1.3.0
+
+- Refreshed the complete desktop interface with a more consistent visual system, smoother transitions, modern surfaces, and unified dialogs across connections, tools, files, AI, settings, and terminal overlays.
+- Rebuilt the Files workspace around one continuous file browser with path navigation, search, sorting, selection, keyboard access, compact actions, transfer shortcuts, recent text files, and local/remote text workflows.
+- AI tools and external `gxshell-cli` commands now mirror their command, output, completion state, and duration into the connected terminal without writing into the remote PTY. AI/CLI activity is also visible on server and terminal tabs.
+- Reduced frontend startup cost through lazy-loaded tool panels, scoped Markdown styles, and a smaller highlight.js language set.
+- Improved reliability around early shutdown, SFTP availability checks, concurrent AI/CLI activity indicators, and confirmation handling for path-qualified commands.
+
 ## Features
 
 - SSH terminal sessions with xterm.js, WebGL rendering, reconnect, resize, search, split view, tear-off floating terminals, and drag-to-reorder tabs.
@@ -150,7 +158,7 @@ go build -o gxshell-cli.exe .\cmd\gxshell-cli
 4. Create a GitHub release with the built executables as assets:
 
 ```powershell
-gh release create v1.2.0 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.2.0" --notes-file .\release-notes.md
+gh release create v1.3.0 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.3.0" --notes-file .\release-notes.md
 ```
 
 Use release notes that describe behavior and fixes only. Do not include local paths, tokens, API keys, server addresses, private hostnames, or log output.
@@ -175,6 +183,14 @@ This project is licensed under the [Creative Commons Attribution-NonCommercial-S
 [Back to English](#gxshell)
 
 gxShell 是一个基于 Wails v2、Go 和 React 构建的 Windows 桌面 SSH 工作台。它把终端会话、SFTP、主机监控、Docker 工具、SSH 隧道、AI 助手、外部 CLI，以及本地文本/Markdown 查看器整合在一个应用里。
+
+## v1.3.0 更新内容
+
+- 统一重做桌面端视觉风格，为连接、工具、文件、AI、设置、终端浮层和弹窗补充更一致的布局、过渡效果、配色、阴影与交互反馈。
+- 文件模块重写为连续的文件工作台，支持路径导航、搜索、排序、选中态、键盘操作、精简操作菜单、传输入口、最近文本文件，以及本地/远程文本工作流。
+- AI 工具和外部 `gxshell-cli` 命令现在会把命令、输出、完成状态和耗时回显到对应终端，但不会写入远程 PTY；服务器列表和终端标签也会显示 AI/CLI 活动提示。
+- 通过工具面板懒加载、Markdown 样式按需加载和精简 highlight.js 语言集降低前端启动与打包成本。
+- 修复初始化失败时退出、SFTP 可用性判断、并发 AI/CLI 状态提示，以及带路径命令免确认等细节问题。
 
 ## 功能特性
 
@@ -322,7 +338,7 @@ go build -o gxshell-cli.exe .\cmd\gxshell-cli
 4. 创建 GitHub release，并把构建出的可执行文件作为资产上传：
 
 ```powershell
-gh release create v1.2.0 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.2.0" --notes-file .\release-notes.md
+gh release create v1.3.0 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.3.0" --notes-file .\release-notes.md
 ```
 
 Release notes 只应描述行为和修复。不要包含本地路径、token、API key、服务器地址、私有主机名或日志输出。

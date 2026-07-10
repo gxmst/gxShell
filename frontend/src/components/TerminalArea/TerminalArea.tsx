@@ -1,7 +1,7 @@
 import clsx from "clsx";
-import { lazy, memo, Suspense, useCallback, useRef } from "react";
+import { lazy, memo, Suspense, useCallback, useMemo, useRef } from "react";
 import { Plus, Radio, TerminalSquare, X } from "lucide-react";
-import type { MarkdownOpenTarget, SplitPane, Tab } from "../../types";
+import type { AutomationIndicator, MarkdownOpenTarget, SplitPane, Tab } from "../../types";
 import { TabBar } from "../TabBar/TabBar";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
@@ -40,10 +40,11 @@ export const TerminalArea = memo(function TerminalArea(props: {
   onToggleBroadcast?: () => void;
   activeRecording?: boolean;
   onToggleRecording?: (id: string) => void;
+  automationActivity?: Record<string, AutomationIndicator>;
 }) {
   const lang = props.language;
-  const floatingSet = new Set(props.floatingTabIds || []);
-  const visibleTabs = props.tabs.filter((tab) => !floatingSet.has(tab.id));
+  const floatingSet = useMemo(() => new Set(props.floatingTabIds || []), [props.floatingTabIds]);
+  const visibleTabs = useMemo(() => props.tabs.filter((tab) => !floatingSet.has(tab.id)), [props.tabs, floatingSet]);
   const split = props.splitPane;
   const splitRef = useRef<HTMLDivElement>(null);
 
@@ -79,7 +80,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
 
   return (
     <section className="terminal-pane">
-      <TabBar tabs={visibleTabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} onTearOff={props.onTearOff} onReorder={props.onReorder} onNewConnection={props.onNewConnection} onNewLocal={props.onNewLocal} onOpenMarkdown={props.onOpenMarkdown} language={lang} broadcastInput={props.broadcastInput} broadcastAvailable={(props.broadcastCount || 0) > 1} onToggleBroadcast={props.onToggleBroadcast} recording={props.activeRecording} onToggleRecording={props.onToggleRecording} onSplitToggle={(tabId, direction) => {
+      <TabBar tabs={visibleTabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} onTearOff={props.onTearOff} onReorder={props.onReorder} onNewConnection={props.onNewConnection} onNewLocal={props.onNewLocal} onOpenMarkdown={props.onOpenMarkdown} language={lang} broadcastInput={props.broadcastInput} broadcastAvailable={(props.broadcastCount || 0) > 1} onToggleBroadcast={props.onToggleBroadcast} recording={props.activeRecording} onToggleRecording={props.onToggleRecording} automationActivity={props.automationActivity} onSplitToggle={(tabId, direction) => {
         if (!props.onSplitChange) return;
         if (isSplitVisible) {
           const leftId = split!.left;

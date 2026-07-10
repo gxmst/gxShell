@@ -181,7 +181,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
 
   if (!props.active?.id) {
     return (
-      <div className="container-panel">
+      <div className="container-panel panel-page">
         <div className="container-empty">
           <Box size={28} className="text-muted mb-2" />
           <div className="text-[11px] text-muted">{t(lang, "noActiveSession")}</div>
@@ -191,19 +191,18 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   }
 
   return (
-    <div className="container-panel">
-      <div className="container-header">
-        <div className="flex items-center gap-1.5">
-          <Box size={14} className="text-accent" />
-          <span className="text-[11px] font-semibold">{t(lang, "containers")}</span>
-          <span className="text-[9px] text-muted">({containers.length})</span>
+    <div className="container-panel panel-page">
+      <div className="container-header panel-page-header">
+        <div className="panel-page-heading">
+          <span className="panel-page-icon"><Box size={14} /></span>
+          <span><strong>{t(lang, "containers")}</strong><small>{lang === "zh-CN" ? `${containers.length} 个容器` : `${containers.length} containers`}</small></span>
         </div>
-        <div className="flex items-center gap-1">
-          <label className="flex items-center gap-1 text-[9px] text-muted cursor-pointer">
+        <div className="panel-page-actions">
+          <label className="panel-page-check">
             <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} className="w-2.5 h-2.5" />
             {t(lang, "showAll")}
           </label>
-          <button className="mini-btn" onClick={refresh} disabled={loading}><RefreshCw size={11} className={loading ? "animate-spin" : ""} /></button>
+          <button className="panel-page-action" onClick={refresh} disabled={loading}><RefreshCw size={11} className={loading ? "animate-spin" : ""} /></button>
         </div>
       </div>
 
@@ -225,7 +224,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
         </div>
       )}
 
-      <div className="container-list">
+      <div className="container-list panel-list">
         {containers.length === 0 && !loading && (
           <div className="container-empty">
             <Box size={20} className="text-muted mb-1" />

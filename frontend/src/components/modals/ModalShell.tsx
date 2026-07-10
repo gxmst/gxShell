@@ -37,6 +37,8 @@ export function ModalShell({
           palette && "modal-palette",
           palette && compact && "modal-palette-compact",
         )}
+        role="dialog"
+        aria-modal="true"
         onMouseDown={(e) => e.stopPropagation()}
       >
         {children}
@@ -48,9 +50,18 @@ export function ModalShell({
 
 export function Label({ text, children }: { text: string; children: React.ReactNode }) {
   return (
-    <label className="block text-xs text-muted">
-      <span className="mb-1 block">{text}</span>
+    <label className="field-label">
+      <span className="field-label-text">{text}</span>
       {children}
     </label>
+  );
+}
+
+export function DialogHeader({ icon, title, description }: { icon?: React.ReactNode; title: string; description?: string }) {
+  return (
+    <div className="dialog-header">
+      {icon && <span className="dialog-header-icon">{icon}</span>}
+      <span className="dialog-header-copy"><strong>{title}</strong>{description && <small>{description}</small>}</span>
+    </div>
   );
 }

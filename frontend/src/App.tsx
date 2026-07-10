@@ -1,10 +1,9 @@
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import "@xterm/xterm/css/xterm.css";
 import { types } from "../wailsjs/go/models";
 import { AnswerKeyboardInteractive, CreateCommand, DeleteCommand, GetStartupFile, ListCommands, OpenDataDir, ReadLogFile, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/main/App";
 import { emptyProfile } from "./constants";
-import type { Drawer, SplitPane, Tab } from "./types";
+import type { AutomationActivityEvent, AutomationIndicator, Drawer, SplitPane, Tab } from "./types";
 import { normalizeAppTheme } from "./utils/format";
 import { useToasts } from "./hooks/useToasts";
 import { useProfiles } from "./hooks/useProfiles";
@@ -33,6 +32,7 @@ import { BrowserOpenURL, EventsOn, OnFileDrop, OnFileDropOff } from "../wailsjs/
 import { isSupportedTextPath } from "./utils/textFiles";
 import { shellQuote } from "./utils/shellQuote";
 import { t } from "./i18n";
+import { formatAutomationTerminalEvent } from "./utils/automation";
 
 function App() {
   const { toasts, notify } = useToasts();
@@ -56,6 +56,9 @@ function App() {
   // drives the TabBar toggle. Cleared for a session when it stops or closes.
   const [recordingIds, setRecordingIds] = useState<string[]>([]);
   const [kiRequests, setKiRequests] = useState<KiRequest[]>([]);
+  const [automationActivity, setAutomationActivity] = useState<Record<string, AutomationIndicator>>({});
+  const automationRunningRef = useRef<Record<string, Map<string, AutomationIndicator["source"]>>>({});
+  const automationClearTimers = useRef<Record<string, number>>({});
 
   useEffect(() => {
     const hide = () => setCtxMenu(null);
@@ -78,11 +81,15 @@ function App() {
   // onData closure always reads the current value without re-binding. Targets are
   // the connected, non-floating SSH terminals; local and markdown tabs are excluded.
   const broadcastRef = useRef<{ enabled: boolean; targets: string[] }>({ enabled: false, targets: [] });
-  const connectedSshCount = sessions.tabs.filter((tab) => tab.type !== "markdown" && !tab.local && tab.state === "connected").length;
+  const connectedSshTabs = useMemo(
+    () => sessions.tabs.filter((tab) => tab.type !== "markdown" && !tab.local && tab.state === "connected"),
+    [sessions.tabs]
+  );
+  const connectedSshCount = connectedSshTabs.length;
   broadcastRef.current = {
     enabled: broadcastInput,
-    targets: sessions.tabs
-      .filter((tab) => tab.type !== "markdown" && !tab.local && tab.state === "connected" && !floatingTabIds.includes(tab.id))
+    targets: connectedSshTabs
+      .filter((tab) => !floatingTabIds.includes(tab.id))
       .map((tab) => tab.id),
   };
   // Turn broadcast off automatically once fewer than two terminals remain.
@@ -275,6 +282,18 @@ function App() {
   useEffect(() => {
     const tabIds = new Set(sessions.tabs.map((t) => t.id));
     setFloatingTabIds((prev) => prev.filter((id) => tabIds.has(id)));
+    setAutomationActivity((prev) => {
+      const next = Object.fromEntries(Object.entries(prev).filter(([id]) => tabIds.has(id)));
+      return Object.keys(next).length === Object.keys(prev).length ? prev : next;
+    });
+    for (const id of Object.keys(automationRunningRef.current)) {
+      if (tabIds.has(id)) continue;
+      delete automationRunningRef.current[id];
+      if (automationClearTimers.current[id]) {
+        window.clearTimeout(automationClearTimers.current[id]);
+        delete automationClearTimers.current[id];
+      }
+    }
     if (splitPane && (!tabIds.has(splitPane.left) || !tabIds.has(splitPane.right))) {
       setSplitPane(null);
     }
@@ -287,6 +306,57 @@ function App() {
     return () => offData();
   }, [writeOutput]);
 
+  useEffect(() => {
+    const offAutomation = EventsOn("terminal:automation", (payload: AutomationActivityEvent) => {
+      if (!payload?.sessionId || !payload.activityId) return;
+      writeOutput(payload.sessionId, formatAutomationTerminalEvent(payload));
+
+      const running = automationRunningRef.current[payload.sessionId] || new Map<string, AutomationIndicator["source"]>();
+      automationRunningRef.current[payload.sessionId] = running;
+      if (payload.phase === "started") running.set(payload.activityId, payload.source);
+      else running.delete(payload.activityId);
+
+      const existingTimer = automationClearTimers.current[payload.sessionId];
+      if (existingTimer) {
+        window.clearTimeout(existingTimer);
+        delete automationClearTimers.current[payload.sessionId];
+      }
+
+      const updatedAt = Date.now();
+      const runningCount = running.size;
+      const runningSources = Array.from(running.values());
+      const runningSource = runningCount > 0
+        ? runningSources[runningSources.length - 1] || payload.source
+        : payload.source;
+      setAutomationActivity((prev) => ({
+        ...prev,
+        [payload.sessionId]: {
+          source: runningSource,
+          phase: runningCount > 0 ? "started" : payload.phase,
+          running: runningCount,
+          updatedAt,
+        },
+      }));
+
+      if (runningCount === 0) {
+        automationClearTimers.current[payload.sessionId] = window.setTimeout(() => {
+          setAutomationActivity((prev) => {
+            if (prev[payload.sessionId]?.updatedAt !== updatedAt) return prev;
+            const next = { ...prev };
+            delete next[payload.sessionId];
+            return next;
+          });
+          delete automationClearTimers.current[payload.sessionId];
+        }, 8000);
+      }
+    });
+    return () => offAutomation();
+  }, [writeOutput]);
+
+  useEffect(() => () => {
+    Object.values(automationClearTimers.current).forEach((timer) => window.clearTimeout(timer));
+  }, []);
+
   useHotkeys({
     activeTab: sessions.activeTab,
     activeIsMarkdown: sessions.active?.type === "markdown",
@@ -294,6 +364,21 @@ function App() {
     onTerminalSearch: () => setTerminalSearchOpen(true),
     onCloseTab: sessions.closeTab
   });
+
+  const automationByProfile = useMemo(() => {
+    const byProfile: Record<string, AutomationIndicator> = {};
+    for (const tab of sessions.tabs) {
+      const activity = automationActivity[tab.id];
+      if (!activity || !tab.profileId) continue;
+      const current = byProfile[tab.profileId];
+      const activityRunning = activity.phase === "started";
+      const currentRunning = current?.phase === "started";
+      if (!current || (activityRunning && !currentRunning) || (activityRunning === currentRunning && activity.updatedAt > current.updatedAt)) {
+        byProfile[tab.profileId] = activity;
+      }
+    }
+    return byProfile;
+  }, [automationActivity, sessions.tabs]);
 
   const saveProfile = async (profile: types.Profile) => {
     try {
@@ -416,6 +501,7 @@ function App() {
           recentMarkdown={recentMarkdown}
           onOpenMarkdownFile={handleOpenMarkdownSibling}
           onOpenRemoteMarkdownFile={openRemoteMarkdownFile}
+          onPickTextFile={handleOpenMarkdown}
           onOpenRecentMarkdown={handleOpenRecentMarkdown}
           onRemoveRecentMarkdown={handleRemoveRecentMarkdown}
           onNewProfile={() => setProfileModal(emptyProfile())}
@@ -442,6 +528,7 @@ function App() {
           }}
           getTerminalLines={activeTerminal.getTerminalLines}
           activeTabId={sessions.activeTab}
+          automationByProfile={automationByProfile}
         />
         <TerminalArea
           tabs={sessions.tabs}
@@ -472,6 +559,7 @@ function App() {
           onToggleBroadcast={() => setBroadcastInput((v) => !v)}
           activeRecording={activeRecording}
           onToggleRecording={toggleRecording}
+          automationActivity={automationActivity}
         />
       </main>
       {floatingTabIds.map((id) => {

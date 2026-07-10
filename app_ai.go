@@ -383,7 +383,9 @@ func validateAiToolCommand(command string) (string, bool) {
 }
 
 func (a *App) executeAiToolPlan(sessionID string, plan aiToolExecutionPlan) string {
-	result, err := a.ssh.ExecuteCommand(sessionID, plan.Command, aiToolTimeout, aiToolOutputLimit)
+	activityID := a.beginTerminalAutomation(sessionID, "ai", plan.ToolName, plan.Command)
+	result, err := a.ssh.ExecuteCommandResult(sessionID, plan.Command, aiToolTimeout, aiToolOutputLimit)
+	terminalOutput := result.DisplayOutput()
 	var output string
 	if err != nil {
 		if plan.ToolName == "read_file" {
@@ -391,11 +393,18 @@ func (a *App) executeAiToolPlan(sessionID string, plan aiToolExecutionPlan) stri
 		} else {
 			output = "Error executing command: " + err.Error()
 		}
-	} else if result == "" {
+	} else if result.DisplayOutput() == "" {
 		output = plan.EmptyMessage
 	} else {
-		output = result
+		output = result.DisplayOutput()
 	}
+	errorText := ""
+	if err != nil {
+		errorText = err.Error()
+	} else if result.Error != "" {
+		errorText = result.Error
+	}
+	a.finishTerminalAutomation(sessionID, activityID, "ai", plan.ToolName, terminalOutput, errorText, result.ExitCode, result.Duration, result.Truncated)
 	a.log.InfoFields("AI tool result", LogFields{
 		"tool":      plan.ToolName,
 		"outputLen": len(output),

@@ -53,30 +53,30 @@ export function RecordingsPanel(props: {
   };
 
   return (
-    <div className="recordings-panel">
-      <div className="recordings-toolbar">
-        <span className="recordings-toolbar-title">{t(lang, "recordings")}</span>
-        <div className="flex items-center gap-1">
-          <button className="mini-btn" onClick={() => OpenRecordingsDir().catch(() => {})} title={t(lang, "openRecordingsDir")}><FolderOpen size={11} /></button>
-          <button className="mini-btn" onClick={load} title={t(lang, "refresh")}><RefreshCw size={11} /></button>
+    <div className="recordings-panel panel-page">
+      <div className="recordings-toolbar panel-page-header">
+        <div className="panel-page-heading"><span className="panel-page-icon"><Video size={14} /></span><span><strong>{t(lang, "recordings")}</strong><small>{lang === "zh-CN" ? "回放和管理终端记录" : "Replay and manage terminal captures"}</small></span></div>
+        <div className="panel-page-actions">
+          <button className="panel-page-action" onClick={() => OpenRecordingsDir().catch(() => {})} title={t(lang, "openRecordingsDir")}><FolderOpen size={11} /></button>
+          <button className="panel-page-action" onClick={load} title={t(lang, "refresh")}><RefreshCw size={11} /></button>
         </div>
       </div>
       <div className="recordings-hint">{t(lang, "recordingsHint")}</div>
-      <div className="recordings-list">
+      <div className="recordings-list panel-list">
         {recordings.map((rec) => (
-          <div key={rec.name} className="recording-row">
-            <Video size={13} className="shrink-0 text-accent" />
-            <div className="min-w-0 flex-1" onClick={() => setPlaying(rec.name)} role="button">
-              <div className="truncate text-[11px] font-medium">{rec.name}</div>
-              <div className="flex items-center gap-1 text-[9px] text-muted">
+          <div key={rec.name} className="recording-row panel-item">
+            <span className="panel-item-icon"><Video size={13} /></span>
+            <div className="panel-item-copy" onClick={() => setPlaying(rec.name)} role="button">
+              <div className="panel-item-title">{rec.name}</div>
+              <div className="panel-item-meta flex items-center gap-1">
                 <Clock size={8} /> {formatTime(rec.modTime)} · {formatSize(rec.size)}
               </div>
             </div>
-            <button className="mini-btn" onClick={() => setPlaying(rec.name)} title={t(lang, "playRecording")}><Play size={11} /></button>
-            <button className="mini-btn danger" onClick={() => remove(rec.name)} title={t(lang, "deleteRecording")}><Trash2 size={11} /></button>
+            <div className="panel-item-actions"><button className="mini-btn" onClick={() => setPlaying(rec.name)} title={t(lang, "playRecording")}><Play size={11} /></button>
+            <button className="mini-btn danger" onClick={() => remove(rec.name)} title={t(lang, "deleteRecording")}><Trash2 size={11} /></button></div>
           </div>
         ))}
-        {!recordings.length && <div className="empty">{t(lang, "noRecordings")}</div>}
+        {!recordings.length && <div className="panel-empty"><Video size={20} /><span>{t(lang, "noRecordings")}</span></div>}
       </div>
       {playing && (
         <CastPlayer name={playing} settings={props.settings} locale={lang} onClose={() => setPlaying(null)} />

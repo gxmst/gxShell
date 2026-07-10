@@ -2,23 +2,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import {
   ArrowUp,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   Columns2,
-  Copy,
   Download,
-  Edit3,
   File,
   FileText,
   Folder,
-  FolderDown,
   FolderOpen,
   FolderPlus,
   Home,
+  MoreHorizontal,
   RefreshCw,
+  Search,
   Terminal,
-  Trash2,
   Upload,
   ArrowUpDown,
+  X,
 } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import {
@@ -50,6 +51,18 @@ type DialogState =
   | null;
 
 type PathSuggest = { path: string; name: string; source: "cwd" | "parent" | "segment" };
+type SortKey = "name" | "size" | "modified";
+
+function modifiedTime(value: unknown): number {
+  const time = new Date(value as string).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function formatModified(value: unknown, formatter: Intl.DateTimeFormat): string {
+  const time = modifiedTime(value);
+  if (!time) return "—";
+  return formatter.format(new Date(time));
+}
 
 function parsePathInput(input: string): { base: string; prefix: string; absolute: boolean } {
   const raw = input || "";
@@ -88,6 +101,10 @@ export function SftpPanel(props: {
   const [dialog, setDialog] = useState<DialogState>(null);
   const [panel, setPanel] = useState<"manager" | "explorer" | null>(null);
   const [filter, setFilter] = useState("");
+  const [selectedPath, setSelectedPath] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortAsc, setSortAsc] = useState(true);
+  const modifiedFormatter = useMemo(() => new Intl.DateTimeFormat(lang, { month: "short", day: "2-digit" }), [lang]);
   const pathWrapRef = useRef<HTMLDivElement>(null);
   const suggestSeq = useRef(0);
 
@@ -160,15 +177,25 @@ export function SftpPanel(props: {
     const q = filter.trim().toLowerCase();
     const list = [...files].sort((a, b) => {
       if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-      return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      let result = 0;
+      if (sortKey === "size") result = a.size - b.size;
+      else if (sortKey === "modified") result = modifiedTime(a.modTime) - modifiedTime(b.modTime);
+      else result = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      if (result === 0) result = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      return sortAsc ? result : -result;
     });
     if (!q) return list;
     return list.filter((f) => f.name.toLowerCase().includes(q));
-  }, [files, filter]);
+  }, [files, filter, sortKey, sortAsc]);
+
+  useEffect(() => {
+    if (selectedPath && !files.some((file) => file.path === selectedPath)) setSelectedPath("");
+  }, [files, selectedPath]);
 
   const goTo = useCallback(
     (next: string) => {
       setDraftPath(next);
+      setSelectedPath("");
       setPathFocus(false);
       onRefresh(next);
     },
@@ -227,17 +254,92 @@ export function SftpPanel(props: {
     onNotify(t(lang, "openTerminalInDirDone", { path }), "info");
   };
 
+  const openEntry = (file: types.RemoteFile) => {
+    if (file.isDir) goTo(file.path);
+    else if (isSupportedTextPath(file.name)) props.onOpenMarkdownFile?.(active?.id || "", file.path);
+    else download(file);
+  };
+
+  const fileMenuItems = (file: types.RemoteFile) => {
+    const isTextFile = !file.isDir && isSupportedTextPath(file.name);
+    return [
+      ...(file.isDir
+        ? [
+            { label: t(lang, "open"), action: () => goTo(file.path) },
+            { label: t(lang, "downloadFolder"), action: () => downloadFolder(file) },
+          ]
+        : [
+            ...(isTextFile
+              ? [{ label: t(lang, "openTextFile"), action: () => props.onOpenMarkdownFile?.(active?.id || "", file.path) }]
+              : []),
+            { label: t(lang, "download"), action: () => download(file) },
+          ]),
+      {
+        label: t(lang, "copyPath"),
+        action: () => {
+          navigator.clipboard?.writeText(file.path)
+            .then(() => onNotify(t(lang, "copyToClipboard"), "success"))
+            .catch(() => onNotify(t(lang, "copyFailed"), "error"));
+        },
+      },
+      { label: t(lang, "renameFile"), action: () => setDialog({ type: "rename", file }) },
+      { label: t(lang, "delete"), action: () => setDialog({ type: "delete", file }), danger: true },
+    ];
+  };
+
+  const showFileMenu = (file: types.RemoteFile, x: number, y: number) => {
+    const items = fileMenuItems(file);
+    const menuWidth = 168;
+    const menuHeight = items.length * 31 + 10;
+    setSelectedPath(file.path);
+    props.setCtxMenu?.({
+      x: Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(y, window.innerHeight - menuHeight - 8)),
+      items,
+    });
+  };
+
+  const changeSort = (next: SortKey) => {
+    if (sortKey === next) setSortAsc((value) => !value);
+    else {
+      setSortKey(next);
+      setSortAsc(true);
+    }
+  };
+
+  const sortIndicator = (key: SortKey) => sortKey === key
+    ? (sortAsc ? <ChevronUp size={9} /> : <ChevronDown size={9} />)
+    : null;
+
   if (!active) return <div className="empty compact">{t(lang, "connectFirstSftp")}</div>;
 
   return (
     <div className="sftp-panel">
-      {/* Path navigator */}
-      <div className="sftp-pathbar" ref={pathWrapRef}>
+      <header className="sftp-browser-header" ref={pathWrapRef}>
+        <div className="sftp-browser-topline">
+          <div className="sftp-browser-title">
+            <span className="sftp-browser-icon"><FolderOpen size={14} /></span>
+            <span>
+              <strong>{lang === "zh-CN" ? "远程文件" : "Remote files"}</strong>
+              <small>{active.title || (lang === "zh-CN" ? "当前连接" : "Current connection")}</small>
+            </span>
+          </div>
+          <div className="sftp-quick-actions">
+            <button onClick={upload} title={t(lang, "upload")}><Upload size={12} /></button>
+            <button onClick={() => setDialog({ type: "mkdir" })} title={t(lang, "newFolder")}><FolderPlus size={12} /></button>
+            <button className={clsx(activeCount > 0 && "active")} onClick={() => setPanel("manager")} title={t(lang, "transferManager")}>
+              <ArrowUpDown size={12} />
+              {activeCount > 0 && <span className="sftp-action-badge">{activeCount}</span>}
+            </button>
+            <button onClick={() => setPanel("explorer")} title={t(lang, "dualPaneTransfer")}><Columns2 size={12} /></button>
+          </div>
+        </div>
+
         <div className="sftp-path-input-row">
-          <button className="icon-btn compact-icon" onClick={goUp} title={t(lang, "parentDir")} disabled={path === "/" }>
+          <button className="sftp-location-btn" onClick={goUp} title={t(lang, "parentDir")} disabled={path === "/" }>
             <ArrowUp size={13} />
           </button>
-          <button className="icon-btn compact-icon" onClick={() => goTo("/")} title={t(lang, "goHomeRoot")}>
+          <button className="sftp-location-btn" onClick={() => goTo("/")} title={t(lang, "goHomeRoot")}>
             <Home size={13} />
           </button>
           <div className="sftp-path-field">
@@ -254,10 +356,6 @@ export function SftpPanel(props: {
                 if (e.key === "Escape") {
                   setDraftPath(path);
                   setPathFocus(false);
-                }
-                if (e.key === "ArrowDown" && suggestions[0]) {
-                  e.preventDefault();
-                  // focus first suggestion via selecting it on next enter — go to first
                 }
               }}
               placeholder={t(lang, "pathPlaceholder")}
@@ -293,7 +391,7 @@ export function SftpPanel(props: {
               </div>
             )}
           </div>
-          <button className="icon-btn compact-icon" onClick={() => goTo(draftPath.trim() || path)} title={t(lang, "refresh")} disabled={busy}>
+          <button className="sftp-location-btn" onClick={() => goTo(draftPath.trim() || path)} title={t(lang, "refresh")} disabled={busy}>
             <RefreshCw size={13} className={clsx(busy && "sftp-spin")} />
           </button>
         </div>
@@ -313,48 +411,27 @@ export function SftpPanel(props: {
             </span>
           ))}
         </div>
-      </div>
+        <div className="sftp-list-controls">
+          <label className="sftp-search">
+            <Search size={11} />
+            <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t(lang, "filterFiles")} />
+            {filter && <button type="button" onClick={() => setFilter("")} title={lang === "zh-CN" ? "清除筛选" : "Clear filter"}><X size={10} /></button>}
+          </label>
+          <span className="sftp-item-count">{visibleFiles.length}{filter ? ` / ${files.length}` : ""}</span>
+        </div>
+      </header>
 
-      {/* Toolbar */}
-      <div className="sftp-toolbar">
-        <button className="sftp-tool-btn" onClick={upload} title={t(lang, "upload")}>
-          <Upload size={13} /> <span>{t(lang, "upload")}</span>
-        </button>
-        <button className="sftp-tool-btn" onClick={() => setDialog({ type: "mkdir" })} title={t(lang, "newFolder")}>
-          <FolderPlus size={13} /> <span>{t(lang, "newFolder")}</span>
-        </button>
-        <button
-          className={clsx("sftp-tool-btn", activeCount > 0 && "sftp-tool-btn-accent")}
-          onClick={() => setPanel("manager")}
-          title={t(lang, "transferManager")}
-        >
-          <ArrowUpDown size={13} />
-          <span>{t(lang, "transfer")}</span>
-          {activeCount > 0 && <span className="sftp-badge">{activeCount}</span>}
-        </button>
-        <button className="sftp-tool-btn" onClick={() => setPanel("explorer")} title={t(lang, "dualPaneTransfer")}>
-          <Columns2 size={13} /> <span>{t(lang, "dualPaneShort")}</span>
-        </button>
-        <div className="sftp-toolbar-spacer" />
-        <input
-          className="input compact-input sftp-filter"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          placeholder={t(lang, "filterFiles")}
-        />
-      </div>
-
-      {/* File list */}
       <div className="sftp-file-table">
         <div className="sftp-file-head">
-          <span className="sftp-col-name">{t(lang, "name")}</span>
-          <span className="sftp-col-size">{t(lang, "fileSizeCol")}</span>
+          <button className="sftp-col-name" onClick={() => changeSort("name")}>{t(lang, "name")}{sortIndicator("name")}</button>
+          <button className="sftp-col-size" onClick={() => changeSort("size")}>{t(lang, "fileSizeCol")}{sortIndicator("size")}</button>
+          <button className="sftp-col-modified" onClick={() => changeSort("modified")}>{lang === "zh-CN" ? "修改" : "Modified"}{sortIndicator("modified")}</button>
           <span className="sftp-col-actions" />
         </div>
         <div className="sftp-file-body">
-          {busy && <div className="empty compact">{t(lang, "loading")}</div>}
+          {busy && <div className="sftp-list-state"><RefreshCw size={15} className="sftp-spin" />{t(lang, "loading")}</div>}
           {!busy && visibleFiles.length === 0 && (
-            <div className="empty compact">{filter ? t(lang, "noMatchingFiles") : t(lang, "emptyFolder")}</div>
+            <div className="sftp-list-state"><FolderOpen size={18} />{filter ? t(lang, "noMatchingFiles") : t(lang, "emptyFolder")}</div>
           )}
           {!busy &&
             visibleFiles.map((file) => {
@@ -362,84 +439,58 @@ export function SftpPanel(props: {
               return (
                 <div
                   key={file.path}
-                  className="sftp-file-row"
-                  onDoubleClick={() =>
-                    file.isDir
-                      ? goTo(file.path)
-                      : isTextFile
-                        ? props.onOpenMarkdownFile?.(active.id, file.path)
-                        : download(file)
-                  }
+                  className={clsx("sftp-file-row", selectedPath === file.path && "selected")}
+                  tabIndex={0}
+                  onClick={() => setSelectedPath(file.path)}
+                  onDoubleClick={(event) => {
+                    if ((event.target as HTMLElement).closest("button")) return;
+                    openEntry(file);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.target === event.currentTarget && event.key === "Enter") openEntry(file);
+                  }}
                   onContextMenu={(e) => {
                     e.preventDefault();
-                    props.setCtxMenu?.({
-                      x: e.clientX,
-                      y: e.clientY,
-                      items: [
-                        ...(file.isDir
-                          ? [
-                              { label: t(lang, "open"), action: () => goTo(file.path) },
-                              { label: t(lang, "downloadFolder"), action: () => downloadFolder(file) },
-                            ]
-                          : [
-                              ...(isTextFile
-                                ? [{ label: t(lang, "openTextFile"), action: () => props.onOpenMarkdownFile?.(active.id, file.path) }]
-                                : []),
-                              { label: t(lang, "download"), action: () => download(file) },
-                            ]),
-                        { label: t(lang, "copyPath"), action: () => {
-                          navigator.clipboard?.writeText(file.path)
-                            .then(() => onNotify(t(lang, "copyToClipboard"), "success"))
-                            .catch(() => onNotify(t(lang, "copyFailed"), "error"));
-                        }},
-                        { label: t(lang, "renameFile"), action: () => setDialog({ type: "rename", file }) },
-                        { label: t(lang, "delete"), action: () => setDialog({ type: "delete", file }), danger: true },
-                      ],
-                    });
+                    e.stopPropagation();
+                    showFileMenu(file, e.clientX, e.clientY);
                   }}
                 >
-                  <span className="sftp-file-icon">
-                    {file.isDir ? (
-                      <Folder size={14} className="text-accent" />
-                    ) : isTextFile ? (
-                      <FileText size={14} className="text-accent" />
-                    ) : (
-                      <File size={14} className="text-muted" />
-                    )}
+                  <span className="sftp-file-main">
+                    <span className="sftp-file-icon">
+                      {file.isDir ? (
+                        <Folder size={14} className="text-accent" />
+                      ) : isTextFile ? (
+                        <FileText size={14} className="text-accent" />
+                      ) : (
+                        <File size={14} className="text-muted" />
+                      )}
+                    </span>
+                    <span className="sftp-file-name" title={file.path}>{file.name}</span>
                   </span>
-                  <span className="sftp-file-name" title={file.path}>{file.name}</span>
                   <span className="sftp-file-size">{file.isDir ? "—" : formatFileSize(file.size)}</span>
+                  <span className="sftp-file-modified">{formatModified(file.modTime, modifiedFormatter)}</span>
                   <div className="sftp-file-actions">
-                    {isTextFile && (
-                      <button className="mini-btn" onClick={() => props.onOpenMarkdownFile?.(active.id, file.path)} title={t(lang, "openTextFile")}>
-                        <FileText size={12} />
-                      </button>
-                    )}
                     {file.isDir ? (
-                      <button className="mini-btn" onClick={() => downloadFolder(file)} title={t(lang, "downloadFolder")}>
-                        <FolderDown size={12} />
+                      <button className="mini-btn" onClick={(event) => { event.stopPropagation(); goTo(file.path); }} title={t(lang, "open")}>
+                        <ChevronRight size={12} />
                       </button>
+                    ) : isTextFile ? (
+                      <button className="mini-btn" onClick={(event) => { event.stopPropagation(); props.onOpenMarkdownFile?.(active.id, file.path); }} title={t(lang, "openTextFile")}><FileText size={12} /></button>
                     ) : (
-                      <button className="mini-btn" onClick={() => download(file)} title={t(lang, "download")}>
+                      <button className="mini-btn" onClick={(event) => { event.stopPropagation(); download(file); }} title={t(lang, "download")}>
                         <Download size={12} />
                       </button>
                     )}
                     <button
                       className="mini-btn"
-                      onClick={() => {
-                        navigator.clipboard?.writeText(file.path)
-                          .then(() => onNotify(t(lang, "copyToClipboard"), "success"))
-                          .catch(() => onNotify(t(lang, "copyFailed"), "error"));
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        showFileMenu(file, rect.right, rect.bottom + 3);
                       }}
-                      title={t(lang, "copyPath")}
+                      title={lang === "zh-CN" ? "更多操作" : "More actions"}
                     >
-                      <Copy size={11} />
-                    </button>
-                    <button className="mini-btn" onClick={() => setDialog({ type: "rename", file })} title={t(lang, "renameFile")}>
-                      <Edit3 size={11} />
-                    </button>
-                    <button className="mini-btn danger" onClick={() => setDialog({ type: "delete", file })} title={t(lang, "delete")}>
-                      <Trash2 size={11} />
+                      <MoreHorizontal size={12} />
                     </button>
                   </div>
                 </div>
@@ -448,12 +499,15 @@ export function SftpPanel(props: {
         </div>
       </div>
 
-      {/* Footer: open terminal in this directory */}
       <div className="sftp-footer">
+        <span className="sftp-footer-status">
+          {selectedPath
+            ? selectedPath.split("/").pop()
+            : (lang === "zh-CN" ? `${files.length} 个项目` : `${files.length} item${files.length === 1 ? "" : "s"}`)}
+        </span>
         <button className="sftp-terminal-btn" onClick={openTerminalHere} title={t(lang, "openTerminalInDir")}>
-          <Terminal size={14} />
+          <Terminal size={12} />
           <span>{t(lang, "openTerminalInDir")}</span>
-          <code className="sftp-terminal-path">{path}</code>
         </button>
       </div>
 
@@ -461,6 +515,7 @@ export function SftpPanel(props: {
         <TextInputDialog
           title={t(lang, "newFolder")}
           label={t(lang, "folderName")}
+          locale={lang}
           onClose={() => setDialog(null)}
           onSubmit={async (name) => {
             try {
@@ -478,6 +533,7 @@ export function SftpPanel(props: {
           title={t(lang, "renameFile")}
           label={t(lang, "newName")}
           initialValue={dialog.file.name}
+          locale={lang}
           onClose={() => setDialog(null)}
           onSubmit={async (name) => {
             try {

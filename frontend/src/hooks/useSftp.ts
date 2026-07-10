@@ -16,7 +16,7 @@ export function useSftp(active?: Tab, drawer?: string, notify?: (text: string, t
 
   const refreshSftp = useCallback(async (path = remotePathRef.current, sessionId = active?.id) => {
     if (!sessionId) return;
-    if (sessionId === active?.id && active.type === "markdown") return;
+    if (sessionId === active?.id && (active.type === "markdown" || active.local || active.state !== "connected")) return;
     const seq = ++fetchSeq.current;
     setSftpBusy(true);
     try {
@@ -32,10 +32,10 @@ export function useSftp(active?: Tab, drawer?: string, notify?: (text: string, t
     } finally {
       if (seq === fetchSeq.current) setSftpBusy(false);
     }
-  }, [active?.id, active?.type]);
+  }, [active?.id, active?.type, active?.local, active?.state]);
 
   useEffect(() => {
-    if (drawer === "sftp" && active && active.type !== "markdown") {
+    if (drawer === "sftp" && active && active.type !== "markdown" && !active.local && active.state === "connected") {
       const cacheKey = `${active.id}:${remotePathRef.current}`;
       const cached = fileCache.current[cacheKey];
       if (cached) {
@@ -44,7 +44,7 @@ export function useSftp(active?: Tab, drawer?: string, notify?: (text: string, t
         refreshSftp(remotePathRef.current);
       }
     }
-  }, [drawer, active?.id, refreshSftp]);
+  }, [drawer, active?.id, active?.local, active?.state, refreshSftp]);
 
   return { remotePath, remoteFiles, sftpBusy, refreshSftp };
 }

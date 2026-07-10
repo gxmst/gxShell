@@ -113,6 +113,16 @@
   box-shadow: var(--hairline);
 }
 
+.tab-automation {
+  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.tab-automation-badge {
+  height: 15px;
+  padding-inline: 4px;
+  font-size: 7.5px;
+}
+
 .tab-active::after {
   content: "";
   position: absolute;

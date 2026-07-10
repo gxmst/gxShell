@@ -33,22 +33,22 @@ export function LogsPanel(props: { locale: string; onOpenLog: (name: string) => 
   }, []);
 
   return (
-    <div className="logs-file-only">
-      <div className="logs-toolbar">
-        <span className="logs-toolbar-title">{t(props.locale, "logFiles")}</span>
-        <button className="mini-btn" onClick={loadFiles} title={t(props.locale, "refresh")}><RefreshCw size={11} /></button>
+    <div className="logs-file-only panel-page">
+      <div className="logs-toolbar panel-page-header">
+        <div className="panel-page-heading"><span className="panel-page-icon"><FileText size={14} /></span><span><strong>{t(props.locale, "logFiles")}</strong><small>{props.locale === "zh-CN" ? "应用运行记录与诊断" : "Application activity and diagnostics"}</small></span></div>
+        <button className="panel-page-action" onClick={loadFiles} title={t(props.locale, "refresh")}><RefreshCw size={12} /></button>
       </div>
-      <div className="logs-file-list">
+      <div className="logs-file-list panel-list">
         {files.map((f) => (
-          <div key={f.name} className="logs-file-item" onClick={() => props.onOpenLog(f.name)}>
-            <FileText size={12} className="shrink-0 text-muted" />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[11px] font-medium">{f.name}</div>
-              <div className="text-[9px] text-muted">{formatSize(f.size)} · {formatTime(f.modTime as unknown as string)}</div>
+          <div key={f.name} className="logs-file-item panel-item" onClick={() => props.onOpenLog(f.name)}>
+            <span className="panel-item-icon"><FileText size={12} /></span>
+            <div className="panel-item-copy">
+              <div className="panel-item-title">{f.name}</div>
+              <div className="panel-item-meta">{formatSize(f.size)} · {formatTime(f.modTime as unknown as string)}</div>
             </div>
           </div>
         ))}
-        {!files.length && <div className="empty">{t(props.locale, "noLogFiles")}</div>}
+        {!files.length && <div className="panel-empty"><FileText size={20} /><span>{t(props.locale, "noLogFiles")}</span></div>}
       </div>
     </div>
   );

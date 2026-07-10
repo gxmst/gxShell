@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ModalShell } from "./ModalShell";
+import { KeyRound } from "lucide-react";
+import { DialogHeader, ModalShell } from "./ModalShell";
 import { t } from "../../i18n";
 
 export type KiRequest = {
@@ -32,8 +33,7 @@ export function KeyboardInteractiveDialog({ request, language, onSubmit, onCance
   return (
     <ModalShell onClose={onCancel} compact>
       <div className="space-y-3">
-        <h3 className="text-sm font-semibold">{request.name || t(lang, "kiTitle")}</h3>
-        {request.instruction && <div className="text-[11px] text-muted leading-snug whitespace-pre-wrap">{request.instruction}</div>}
+        <DialogHeader icon={<KeyRound size={15} />} title={request.name || t(lang, "kiTitle")} description={request.instruction || undefined} />
         {request.prompts.map((prompt, idx) => (
           <div key={idx} className="space-y-1">
             <div className="text-[11px] text-muted whitespace-pre-wrap">{prompt}</div>
@@ -47,7 +47,7 @@ export function KeyboardInteractiveDialog({ request, language, onSubmit, onCance
             />
           </div>
         ))}
-        <div className="flex justify-end gap-2">
+        <div className="dialog-footer">
           <button className="btn-secondary" onClick={onCancel}>{t(lang, "kiCancel")}</button>
           <button className="btn-primary" onClick={submit}>{t(lang, "kiSubmit")}</button>
         </div>

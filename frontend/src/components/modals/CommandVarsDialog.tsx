@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Terminal } from "lucide-react";
-import { ModalShell, Label } from "./ModalShell";
+import { Braces, Terminal } from "lucide-react";
+import { DialogHeader, ModalShell, Label } from "./ModalShell";
 import { fillPlaceholders } from "../../utils/commandVars";
 import { t } from "../../i18n";
 
@@ -33,9 +33,8 @@ export function CommandVarsDialog({
 
   return (
     <ModalShell onClose={onClose} compact>
-      <div className="mb-1 text-sm font-semibold">{commandName || t(locale, "cmd")}</div>
-      <div className="mb-3 text-[11px] text-muted">{t(locale, "commandVarsHint")}</div>
-      <div className="space-y-2">
+      <DialogHeader icon={<Braces size={15} />} title={commandName || t(locale, "cmd")} description={t(locale, "commandVarsHint")} />
+      <div className="dialog-form compact">
         {placeholders.map((name, i) => (
           <Label key={name} text={name}>
             <input
@@ -49,11 +48,11 @@ export function CommandVarsDialog({
           </Label>
         ))}
       </div>
-      <div className="mt-3 rounded-lg border border-border bg-[color-mix(in_srgb,var(--terminal)_60%,transparent)] px-2.5 py-2">
+      <div className="dialog-code-preview">
         <div className="mb-1 flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted"><Terminal size={11} /> {t(locale, "commandPreview")}</div>
         <code className="block break-all font-mono text-[11.5px] text-text">{preview}</code>
       </div>
-      <div className="mt-4 flex justify-end gap-2">
+      <div className="dialog-footer">
         <button className="btn-secondary" onClick={onClose}>{t(locale, "cancel")}</button>
         <button className="btn-primary" disabled={!allFilled} onClick={submit}>{t(locale, "run")}</button>
       </div>

@@ -86,13 +86,13 @@ export function TunnelPanel({ active, locale, onNotify }: { active?: Tab; locale
   };
 
   return (
-    <div className="tunnel-panel space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] font-semibold text-muted">{t(lang, "tunnelRules")}</span>
-        <div className="flex gap-1">
-          <button className="tunnel-icon-btn" onClick={refresh} title={t(lang, "refresh")}><RefreshCw size={11} className={clsx(loading && "animate-spin")} /></button>
-          <button className="tunnel-icon-btn" onClick={restart} title={t(lang, "restartTunnels")}><ArrowRightLeft size={11} /></button>
-          <button className="tunnel-icon-btn" onClick={() => setAdding(!adding)} title={t(lang, "addTunnel")}><Plus size={11} /></button>
+    <div className="tunnel-panel panel-page">
+      <div className="panel-page-header">
+        <div className="panel-page-heading"><span className="panel-page-icon"><ArrowRightLeft size={14} /></span><span><strong>{t(lang, "tunnelRules")}</strong><small>{lang === "zh-CN" ? `${tunnels.length} 条转发规则` : `${tunnels.length} forwarding rules`}</small></span></div>
+        <div className="panel-page-actions">
+          <button className="panel-page-action" onClick={refresh} title={t(lang, "refresh")}><RefreshCw size={11} className={clsx(loading && "animate-spin")} /></button>
+          <button className="panel-page-action" onClick={restart} title={t(lang, "restartTunnels")}><ArrowRightLeft size={11} /></button>
+          <button className="panel-page-action panel-page-action-primary" onClick={() => setAdding(!adding)} title={t(lang, "addTunnel")}><Plus size={11} /></button>
         </div>
       </div>
 
@@ -123,13 +123,13 @@ export function TunnelPanel({ active, locale, onNotify }: { active?: Tab; locale
         </div>
       )}
 
+      <div className="panel-list">
       {tunnels.length === 0 && !adding && (
-        <div className="tunnel-empty">
-          <ArrowRightLeft size={20} className="text-muted" />
-          <span className="text-[10px] text-muted">{t(lang, "noTunnels")}</span>
+        <div className="panel-empty tunnel-empty">
+          <ArrowRightLeft size={20} />
+          <span>{t(lang, "noTunnels")}</span>
         </div>
       )}
-
       {tunnels.map((tunnel, i) => (
         <div key={tunnel.rule?.id || i} className={clsx("tunnel-row", !tunnel.active && "tunnel-row-inactive")}>
           <div className="tunnel-type-badge">{typeLabel(tunnel.rule?.type || "")}</div>
@@ -148,7 +148,7 @@ export function TunnelPanel({ active, locale, onNotify }: { active?: Tab; locale
           <Circle size={8} className={clsx("shrink-0", tunnel.active ? "fill-ok text-ok" : "fill-muted text-muted")} />
           <button className="tunnel-icon-btn ml-0.5" onClick={() => tunnel.rule?.id && removeTunnel(tunnel.rule.id)} title={t(lang, "removeTunnel")}><Trash2 size={9} /></button>
         </div>
-      ))}
+      ))}</div>
     </div>
   );
 }

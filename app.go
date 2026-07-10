@@ -27,36 +27,39 @@ import (
 
 // App is the main application struct that coordinates all managers.
 type App struct {
-	ctx             context.Context
-	store           *config.Store
-	log             *logger.Logger
-	ssh             *sshmanager.Manager
-	sftp            *sftpmanager.Manager
-	monitor         *monitor.Manager
-	secrets         *secrets.Store
-	net             *network.Manager
-	tunnels         *tunnel.Manager
-	ai              *ai.Manager
-	docker          *docker.Manager
-	local           *localterm.Manager
-	nativeDialogMu  sync.Mutex
+	ctx     context.Context
+	store   *config.Store
+	log     *logger.Logger
+	ssh     *sshmanager.Manager
+	sftp    *sftpmanager.Manager
+	monitor *monitor.Manager
+	secrets *secrets.Store
+	net     *network.Manager
+	tunnels *tunnel.Manager
+	ai      *ai.Manager
+	docker  *docker.Manager
+	local   *localterm.Manager
+	// automationEventFn is a test seam for terminal activity events. Production
+	// leaves it nil and emitTerminalAutomation forwards events through Wails.
+	automationEventFn func(terminalAutomationEvent)
+	nativeDialogMu    sync.Mutex
 	// aiTools is the trust ledger of backend-authorized AI tool calls awaiting a
 	// native confirmation + execution. See aiToolRegistry.
-	aiTools         *aiToolRegistry
-	cliMu           sync.Mutex
-	cliConnecting   map[string]*cliConnectCall
-	cliApprovalMu   sync.Mutex
-	cliApprovals    map[string]*cliApprovalBatch
+	aiTools       *aiToolRegistry
+	cliMu         sync.Mutex
+	cliConnecting map[string]*cliConnectCall
+	cliApprovalMu sync.Mutex
+	cliApprovals  map[string]*cliApprovalBatch
 	// cliApprovalDelay overrides the batch-coalescing window; zero means the
 	// cliApprovalDelay const is used. cliConfirmBatchFn overrides the native
 	// confirmation dialog; nil means the real MessageDialog is used. Both are
 	// seams for tests to exercise the batching logic without a GUI.
 	cliApprovalDelay  time.Duration
 	cliConfirmBatchFn func(serverName string, commands []string) bool
-	cliServer       *http.Server
-	rateLimiter     *connectionRateLimiter
-	startupFilePath string
-	startedAt       time.Time
+	cliServer         *http.Server
+	rateLimiter       *connectionRateLimiter
+	startupFilePath   string
+	startedAt         time.Time
 	// allowedFiles tracks the local file paths the user has genuinely chosen to
 	// open. ReadLocalFile/WriteLocalFile only operate on paths in this set, so a
 	// compromised renderer cannot use them to read or overwrite arbitrary files
@@ -297,16 +300,27 @@ func (a *App) shutdown(ctx context.Context) {
 		_ = a.cliServer.Shutdown(shutdownCtx)
 		cancel()
 	}
-	a.ssh.Shutdown()
-	a.local.Shutdown()
-	a.net.StopAll()
+	// startup may quit early when the config directory cannot be initialized.
+	// Wails still invokes shutdown in that case, so every subsystem must be
+	// treated as optional until startup has completed successfully.
+	if a.ssh != nil {
+		a.ssh.Shutdown()
+	}
+	if a.local != nil {
+		a.local.Shutdown()
+	}
+	if a.net != nil {
+		a.net.StopAll()
+	}
 	uptime := time.Duration(0)
 	if !a.startedAt.IsZero() {
 		uptime = time.Since(a.startedAt)
 	}
-	a.log.InfoFields("gxShell stopped", logger.LogFields{
-		"uptime": uptime.String(),
-	})
+	if a.log != nil {
+		a.log.InfoFields("gxShell stopped", logger.LogFields{
+			"uptime": uptime.String(),
+		})
+	}
 }
 
 // handleSecondInstanceLaunch runs when the user starts gxShell again while an

@@ -48,6 +48,30 @@ export type Toast = {
   text: string;
 };
 
+export type AutomationActivitySource = "ai" | "cli";
+export type AutomationActivityPhase = "started" | "completed" | "failed";
+
+export type AutomationActivityEvent = {
+  sessionId: string;
+  activityId: string;
+  source: AutomationActivitySource;
+  phase: AutomationActivityPhase;
+  tool?: string;
+  command?: string;
+  output?: string;
+  error?: string;
+  exitCode?: number;
+  durationMs?: number;
+  truncated?: boolean;
+};
+
+export type AutomationIndicator = {
+  source: AutomationActivitySource;
+  phase: AutomationActivityPhase;
+  running: number;
+  updatedAt: number;
+};
+
 export type SecretRequest = {
   profile: types.Profile;
   mode: "connect" | "reconnect";
@@ -60,4 +84,3 @@ export type GlobalSearchResult = {
   subtitle: string;
   action: () => void;
 };
-

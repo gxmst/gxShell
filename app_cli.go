@@ -164,8 +164,10 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	activityID := a.beginTerminalAutomation(sessionID, "cli", "execute_command", req.Command)
 	result, err := a.ssh.ExecuteCommandResult(sessionID, req.Command, timeout, cliOutputLimit)
 	if err != nil {
+		a.finishTerminalAutomation(sessionID, activityID, "cli", "execute_command", "", err.Error(), 1, 0, false)
 		writeCliJSON(w, http.StatusBadGateway, map[string]any{
 			"alias":            serverName,
 			"reusedConnection": reusedConnection,
@@ -174,6 +176,11 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	automationError := result.Error
+	if result.TimedOut && automationError == "" {
+		automationError = "remote command timeout"
+	}
+	a.finishTerminalAutomation(sessionID, activityID, "cli", "execute_command", result.DisplayOutput(), automationError, result.ExitCode, result.Duration, result.Truncated)
 
 	payload := map[string]any{
 		"alias":            serverName,

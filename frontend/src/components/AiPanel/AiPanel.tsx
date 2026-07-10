@@ -1,12 +1,12 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Check, ListChecks, MessageSquarePlus, Play, RefreshCw, Send, Settings2, Stethoscope, X } from "lucide-react";
+import { Bot, Check, History, ListChecks, MessageSquarePlus, Play, RefreshCw, Send, Settings2, Stethoscope, X } from "lucide-react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { types } from "../../../wailsjs/go/models";
 import { AiChat, AiContinueChat, AiExecuteTools, GetAiConfig, GetAiUsage, ListAiModels, ResetAiUsage, SaveAiConfig } from "../../../wailsjs/go/main/App";
 import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import { t } from "../../i18n";
-import type { Tab, Toast } from "../../types";
+import type { Toast } from "../../types";
 import { Label } from "../modals/ModalShell";
 
 type ToolCallData = {
@@ -80,7 +80,7 @@ function ToolCallBlock({ tc, result, onApprove, lang }: { tc: ToolCallData; resu
   );
 }
 
-export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: string, tone?: Toast["tone"]) => void; getTerminalLines: (id: string, lineCount: number) => string; activeTabId: string }) {
+export function AiPanel(props: { locale: string; onNotify: (text: string, tone?: Toast["tone"]) => void; getTerminalLines: (id: string, lineCount: number) => string; activeTabId: string }) {
   const lang = props.locale;
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     try {
@@ -431,19 +431,27 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
   }, [streaming, lang, sendChat, props.getTerminalLines, boundTerminalSessionId]);
 
   const onKeyDown = (e: React.KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
+  const terminalContextReady = !!props.getTerminalLines(boundTerminalSessionId, 1);
+  const assistantStatus = model
+    ? `${model} · ${apiKey ? (terminalContextReady ? t(lang, "aiContextReady") : t(lang, "aiNoContext")) : t(lang, "aiNoApiKey")}`
+    : t(lang, "aiNotConfigured");
+  const assistantReady = !!model && !!apiKey;
 
   return (
     <div className="ai-panel" style={{ position: "relative" }}>
       <div className="ai-header">
-        <div className="flex items-center gap-1.5">
-          <Bot size={14} className="text-accent" />
-          <span className="text-[11px] font-semibold">{activeSession?.title || t(lang, "aiAssistant")}</span>
+        <div className="ai-header-heading">
+          <span className={`ai-header-state ${assistantReady ? "ready" : ""}`} />
+          <span className="ai-header-copy">
+            <strong>{activeSession?.title || t(lang, "aiAssistant")}</strong>
+            <small>{assistantStatus}</small>
+          </span>
         </div>
-        <div className="flex items-center gap-1">
-          <button className="mini-btn" onClick={newSession} title={t(lang, "aiNewChat")}><MessageSquarePlus size={11} /></button>
-          <button className={`mini-btn ${showSessionList ? "text-accent" : ""}`} onClick={() => setShowSessionList((v) => !v)} title={t(lang, "aiChatHistory")}><Bot size={11} /></button>
-          <button className={`mini-btn ${showSettings ? "text-accent" : ""}`} onClick={() => { setShowSettings((v) => !v); if (!showSettings) loadSettings(); }} title={t(lang, "aiSettings")}><Settings2 size={11} /></button>
-          <button className="mini-btn" onClick={diagnose} title={t(lang, "aiDiagnose")}><Stethoscope size={11} /></button>
+        <div className="panel-page-actions">
+          <button className="panel-page-action" onClick={newSession} title={t(lang, "aiNewChat")}><MessageSquarePlus size={11} /></button>
+          <button className={`panel-page-action ${showSessionList ? "active" : ""}`} onClick={() => setShowSessionList((v) => !v)} title={t(lang, "aiChatHistory")}><History size={11} /></button>
+          <button className={`panel-page-action ${showSettings ? "active" : ""}`} onClick={() => { setShowSettings((v) => !v); if (!showSettings) loadSettings(); }} title={t(lang, "aiSettings")}><Settings2 size={11} /></button>
+          <button className="panel-page-action panel-page-action-primary" onClick={diagnose} title={t(lang, "aiDiagnose")}><Stethoscope size={11} /></button>
         </div>
       </div>
 
@@ -556,18 +564,6 @@ export function AiPanel(props: { active?: Tab; locale: string; onNotify: (text: 
           <button className="text-[9px] opacity-60 hover:opacity-100" onClick={() => { ResetAiUsage(); setUsage(new types.AiTokenUsage()); }}>{t(lang, "aiResetUsage")}</button>
         </div>
       )}
-
-      <div className="ai-config-hint">
-        {model ? (
-          <span className="text-[9px] text-muted truncate">
-            {model} {endpoint ? `@ ${endpoint.replace(/^https?:\/\//, "").split("/")[0]}` : ""}
-            {apiKey ? ` / ${t(lang, "aiApiKeySaved")}` : ` / ${t(lang, "aiNoApiKey")}`}
-            {(() => { const tc = props.getTerminalLines(boundTerminalSessionId, 1); return tc ? ` / ${t(lang, "aiContextReady")}` : ` / ${t(lang, "aiNoContext")}`; })()}
-          </span>
-        ) : (
-          <span className="text-[9px] text-muted">{t(lang, "aiNotConfigured")}</span>
-        )}
-      </div>
 
       <div className="ai-input-row">
         <textarea

@@ -11,7 +11,7 @@ export function MonitorPanel({ metrics, active, locale, onStart, onCpuClick, onP
   const lang = locale || "en";
   if (!active) return <div className="empty compact">{t(lang, "openTerminal")}</div>;
   return (
-    <div className="space-y-1">
+    <div className="monitor-panel">
       <div className="current-card">
         <Wifi size={13} className={clsx(active.state === "connected" ? "text-ok" : "text-muted")} />
         <span className="min-w-0 flex-1 truncate text-[12px] font-medium">{active.title}</span>

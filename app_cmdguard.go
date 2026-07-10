@@ -290,13 +290,14 @@ func isReadOnlyCommand(cmd string) bool {
 	if strings.Contains(first, "=") {
 		return false
 	}
-	// Strip any leading path (remote paths are always unix-style, so split on
-	// '/' rather than using filepath which would use the host separator).
-	base := first
-	if idx := strings.LastIndex(base, "/"); idx >= 0 {
-		base = base[idx+1:]
+	// Only bare command names qualify for the no-confirm shortcut. A path such
+	// as /tmp/ls may point at an arbitrary executable whose basename merely
+	// resembles a trusted read-only utility. Path-qualified commands still work,
+	// but they go through the normal native confirmation gate.
+	if strings.Contains(first, "/") {
+		return false
 	}
-	_, ok := readOnlyCommands[base]
+	_, ok := readOnlyCommands[first]
 	return ok
 }
 

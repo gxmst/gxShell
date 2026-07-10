@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -275,7 +276,6 @@ func TestIsReadOnlyCommand(t *testing.T) {
 		"df -h",
 		"cat /var/log/syslog",
 		"grep -r needle /etc/hosts",
-		"/usr/bin/ls", // path-qualified binary
 	}
 	for _, cmd := range readOnly {
 		if !isReadOnlyCommand(cmd) {
@@ -302,11 +302,51 @@ func TestIsReadOnlyCommand(t *testing.T) {
 		"cat /var/log/*.log",      // globbing can hide sensitive paths
 		"cat ~/.ssh/id_rsa",       // tilde expansion can hide sensitive paths
 		"cat $HOME/.ssh/id_rsa",   // variable expansion can hide sensitive paths
+		"/usr/bin/ls",             // path-qualified binaries require confirmation
+		"/tmp/ls -la",             // basename cannot make a custom binary trusted
 	}
 	for _, cmd := range notReadOnly {
 		if isReadOnlyCommand(cmd) {
 			t.Errorf("expected NOT read-only: %q", cmd)
 		}
+	}
+}
+
+func TestShutdownBeforeStartupIsSafe(t *testing.T) {
+	app := NewApp()
+	app.shutdown(context.Background())
+}
+
+func TestLimitTerminalAutomationOutput(t *testing.T) {
+	short := "hello"
+	if got, truncated := limitTerminalAutomationOutput(short); got != short || truncated {
+		t.Fatalf("short output = %q, truncated=%v", got, truncated)
+	}
+	long := strings.Repeat("x", terminalAutomationEchoLimit+20)
+	got, truncated := limitTerminalAutomationOutput(long)
+	if !truncated || !strings.Contains(got, "terminal echo truncated") {
+		t.Fatalf("long output was not marked as truncated")
+	}
+}
+
+func TestTerminalAutomationEmitsLifecycle(t *testing.T) {
+	app := NewApp()
+	events := make([]terminalAutomationEvent, 0, 2)
+	app.automationEventFn = func(event terminalAutomationEvent) {
+		events = append(events, event)
+	}
+
+	activityID := app.beginTerminalAutomation("session-1", "ai", "execute_command", "uptime")
+	app.finishTerminalAutomation("session-1", activityID, "ai", "execute_command", "ok", "", 0, 25*time.Millisecond, false)
+
+	if len(events) != 2 {
+		t.Fatalf("event count = %d, want 2", len(events))
+	}
+	if events[0].Phase != "started" || events[0].Command != "uptime" {
+		t.Fatalf("start event = %#v", events[0])
+	}
+	if events[1].Phase != "completed" || events[1].Output != "ok" || events[1].DurationMs != 25 {
+		t.Fatalf("finish event = %#v", events[1])
 	}
 }
 
