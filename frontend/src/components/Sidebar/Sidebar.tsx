@@ -1,9 +1,9 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { ArrowUpRight, Bot, Edit3, FileText, Folder, FolderOpen, PanelLeftClose, Play, Plus, Search, Server, Settings, Trash2, X } from "lucide-react";
+import { ArrowUpRight, Bot, Edit3, FileText, Folder, FolderOpen, MoreHorizontal, PanelLeftClose, Play, Plus, Search, Server, Settings, Star, Trash2, X, Zap } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { TraceRoute, PingHost, UpdateSettings } from "../../../wailsjs/go/main/App";
-import type { AutomationIndicator, Drawer, RecentMarkdownItem, Tab, Toast } from "../../types";
+import type { AutomationActivityRecord, AutomationIndicator, Drawer, RecentMarkdownItem, Tab, Toast } from "../../types";
 import { AppIcon, drawerIcon } from "../../constants";
 import { stateClass } from "../../utils/format";
 import { t, navLabel } from "../../i18n";
@@ -64,15 +64,21 @@ export function Sidebar(props: {
   onOpenRecentMarkdown?: (item: RecentMarkdownItem) => void;
   onRemoveRecentMarkdown?: (id: string) => void;
   onNewProfile: () => void;
+  onQuickConnect: () => void;
   onEditProfile: (profile: types.Profile) => void;
   onConnectProfile: (profile: types.Profile) => void;
+  onToggleFavorite: (profile: types.Profile) => void;
   onDeleteProfile: (id: string) => void;
+  onImportProfiles: () => void;
+  onImportOpenSSH: () => void;
+  onExportProfiles: () => void;
   onOpenSearch: () => void;
   onStartMonitor: () => void;
   onRefreshSftp: (path?: string) => void;
   onOpenTerminalInDir?: (sessionId: string, path: string) => void;
   onNotify: (text: string, tone?: Toast["tone"]) => void;
   onRunCommand: (command: types.CommandTemplate) => void;
+  onRunCommandInSession: (command: types.CommandTemplate, sessionId: string) => void;
   onRunCommandAll: (command: types.CommandTemplate) => void;
   onEditCommand: (command: types.CommandTemplate) => void;
   onDeleteCommand: (id: string) => void;
@@ -82,6 +88,9 @@ export function Sidebar(props: {
   onOpenLog: (name: string) => void;
   getTerminalLines: (id: string, lineCount: number) => string;
   activeTabId: string;
+  tabs: Tab[];
+  profileStates?: Record<string, { state: string; count: number; error?: string }>;
+  activityHistory?: AutomationActivityRecord[];
   automationByProfile?: Record<string, AutomationIndicator>;
 }) {
   const lang = props.settings?.language || "en";
@@ -95,6 +104,11 @@ export function Sidebar(props: {
 
   const [activeGroup, setActiveGroup] = useState<string>("__all__");
   const [fileMode, setFileMode] = useState<FileMode>("remote");
+  const [aiMounted, setAiMounted] = useState(props.drawer === "ai");
+
+  useEffect(() => {
+    if (props.drawer === "ai") setAiMounted(true);
+  }, [props.drawer]);
 
   useEffect(() => {
     if (props.drawer === "sftp") setFileMode(props.active?.type === "markdown" ? "text" : "remote");
@@ -107,12 +121,25 @@ export function Sidebar(props: {
     });
     return Array.from(set);
   }, [props.profiles]);
-  const hasGroupTabs = groups.length > 1;
+  const hasGroupTabs = props.profiles.length > 0;
+
+  const lastConnectedValue = useCallback((profile: types.Profile) => {
+    const value = Date.parse(String(profile.lastConnectedAt || ""));
+    return Number.isFinite(value) && value > Date.UTC(1970, 0, 1) ? value : 0;
+  }, []);
 
   const filteredProfiles = useMemo(() => {
-    if (activeGroup === "__all__") return props.profiles;
+    if (activeGroup === "__favorites__") return props.profiles.filter((profile) => profile.favorite);
+    if (activeGroup === "__recent__") {
+      return props.profiles
+        .filter((profile) => lastConnectedValue(profile) > 0)
+        .sort((left, right) => lastConnectedValue(right) - lastConnectedValue(left));
+    }
+    if (activeGroup === "__all__") {
+      return [...props.profiles].sort((left, right) => Number(right.favorite) - Number(left.favorite));
+    }
     return props.profiles.filter((p) => (p.group || "") === activeGroup);
-  }, [props.profiles, activeGroup]);
+  }, [props.profiles, activeGroup, lastConnectedValue]);
 
   const openFloat = useCallback((key: FloatKey) => setFloats((prev) => ({ ...prev, [key]: true })), []);
   const closeFloat = useCallback((key: FloatKey) => setFloats((prev) => ({ ...prev, [key]: false })), []);
@@ -183,6 +210,19 @@ export function Sidebar(props: {
     if (nav === "files") props.setDrawer("sftp");
     if (nav === "tools") props.setDrawer(toolDrawers.includes(props.drawer) ? props.drawer : "commands");
   };
+  const openProfileTools = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    props.setCtxMenu({
+      x: Math.min(rect.left, window.innerWidth - 210),
+      y: rect.bottom + 5,
+      items: [
+        { label: t(lang, "importProfiles"), action: props.onImportProfiles },
+        { label: t(lang, "importOpenSSH"), action: props.onImportOpenSSH },
+        { label: t(lang, "exportProfiles"), action: props.onExportProfiles },
+      ],
+    });
+  };
 
   return (
     <aside className="left-rail" ref={sidebarEl}>
@@ -227,13 +267,17 @@ export function Sidebar(props: {
                 <div className="drawer-hero-subtitle">{lang === "zh-CN" ? `${filteredProfiles.length} 个可用连接` : `${filteredProfiles.length} available connection${filteredProfiles.length === 1 ? "" : "s"}`}</div>
               </div>
               <div className="drawer-hero-actions">
+                <button className="drawer-hero-btn" onClick={props.onQuickConnect} title={t(lang, "quickConnect")}><Zap size={12} /></button>
                 <button className="drawer-hero-btn" onClick={props.onOpenSearch} title={t(lang, "search")}><Search size={12} /></button>
+                <button className="drawer-hero-btn" onClick={openProfileTools} title={t(lang, "profileTools")}><MoreHorizontal size={12} /></button>
                 <button className="drawer-hero-btn drawer-hero-btn-primary" onClick={props.onNewProfile} title={t(lang, "new")}><Plus size={12} /></button>
               </div>
             </div>
             {hasGroupTabs && (
               <div className="group-tabs">
                 <button className={clsx("group-tab", activeGroup === "__all__" && "group-tab-active")} onClick={() => setActiveGroup("__all__")}>{t(lang, "allGroups")}</button>
+                <button className={clsx("group-tab", activeGroup === "__favorites__" && "group-tab-active")} onClick={() => setActiveGroup("__favorites__")}><Star size={10} /> {t(lang, "favorites")}</button>
+                <button className={clsx("group-tab", activeGroup === "__recent__" && "group-tab-active")} onClick={() => setActiveGroup("__recent__")}>{t(lang, "recentConnections")}</button>
                 {groups.map((g) => (
                   <button key={g} className={clsx("group-tab", activeGroup === g && "group-tab-active")} onClick={() => setActiveGroup(g)}>{g || t(lang, "defaultGroup")}</button>
                 ))}
@@ -242,19 +286,29 @@ export function Sidebar(props: {
             <div className="server-list">
               {filteredProfiles.map((profile) => {
                 const automation = props.automationByProfile?.[profile.id];
+                const session = props.profileStates?.[profile.id];
+                const statusLabel = session?.state === "connected"
+                  ? (lang === "zh-CN" ? "已连接" : "Connected")
+                  : session?.state === "connecting"
+                    ? t(lang, "connecting")
+                    : session?.state === "error"
+                      ? (lang === "zh-CN" ? "连接错误" : "Connection error")
+                      : (lang === "zh-CN" ? "未连接" : "Not connected");
                 return (
                 <div key={profile.id} className={clsx("server-row group", automation && "server-row-automation")} onDoubleClick={() => props.onConnectProfile(profile)}>
                   <div className="server-row-main">
-                    <span className="server-avatar"><Server size={13} /><span className={clsx("status-dot", props.active?.profileId === profile.id ? stateClass(props.active.state) : "bg-muted")} /></span>
+                    <span className="server-avatar" title={session ? `${statusLabel} · ${session.count} ${lang === "zh-CN" ? "个会话" : (session.count === 1 ? "session" : "sessions")}${session.error ? ` · ${session.error}` : ""}` : statusLabel}><Server size={13} /><span className={clsx("status-dot", stateClass(session?.state || "disconnected"))} /></span>
                     <div className="server-row-text">
                       <div className="server-title-line">
                         <div className="server-title">{profile.name || profile.host}</div>
+                        {!!session?.count && <span className="server-session-count" title={statusLabel}>{session.count}</span>}
                         {automation && <span className={clsx("automation-badge", `automation-${automation.source}`, automation.phase === "started" && "automation-running", automation.phase === "failed" && "automation-failed")}>{automation.source.toUpperCase()}</span>}
                       </div>
                       <div className="server-subtitle">{profile.username}@{profile.host}:{profile.port}{profile.proxyJumpId && <ArrowUpRight size={10} className="inline ml-1 opacity-50" />}</div>
                     </div>
                   </div>
                   <div className="row-actions">
+                    <button className={clsx("mini-btn", profile.favorite && "favorite-active")} onClick={(event) => { event.stopPropagation(); props.onToggleFavorite(profile); }} title={profile.favorite ? t(lang, "removeFavorite") : t(lang, "addFavorite")}><Star size={12} fill={profile.favorite ? "currentColor" : "none"} /></button>
                     <button className="mini-btn" onClick={() => props.onConnectProfile(profile)} title={t(lang, "connect")}><Play size={13} /></button>
                     <button className="mini-btn" onClick={() => props.onEditProfile(profile)} title={t(lang, "editServer")}><Edit3 size={13} /></button>
                     <button className="mini-btn danger" onClick={(e) => { e.stopPropagation(); props.onDeleteProfile(profile.id); }} title={t(lang, "delete")}><Trash2 size={12} /></button>
@@ -271,7 +325,7 @@ export function Sidebar(props: {
                     <button className="btn-primary empty-state-action" onClick={props.onNewProfile}><Plus size={13} /> {t(lang, "newConnection")}</button>
                   </div>
                 ) : (
-                  <div className="empty">{t(lang, "noServers")}</div>
+                  <div className="empty">{activeGroup === "__favorites__" ? t(lang, "noFavorites") : activeGroup === "__recent__" ? t(lang, "noRecentConnections") : t(lang, "noServers")}</div>
                 )
               )}
             </div>
@@ -299,7 +353,7 @@ export function Sidebar(props: {
           </>
         )}
 
-        {activePrimary !== "connections" && <div className="tool-body-full" key={`${activePrimary}-${props.drawer}-${fileMode}`}><Suspense fallback={<DrawerFallback />}>
+        {activePrimary !== "connections" && props.drawer !== "ai" && <div className="tool-body-full" key={`${activePrimary}-${props.drawer}-${fileMode}`}><Suspense fallback={<DrawerFallback />}>
           {props.drawer === "sftp" && (
             <div className="file-workspace">
               <div className="file-workspace-bar">
@@ -388,17 +442,23 @@ export function Sidebar(props: {
                 ))}
               </div>
               <div className="tool-panel-body" key={props.drawer}>
-                {props.drawer === "commands" && <CommandPanel commands={props.commands} active={props.active} locale={lang} onRun={props.onRunCommand} onRunAll={props.onRunCommandAll} onEdit={props.onEditCommand} onDelete={props.onDeleteCommand} onNew={props.onNewCommand} />}
+                {props.drawer === "commands" && <CommandPanel commands={props.commands} tabs={props.tabs} active={props.active} locale={lang} onRun={props.onRunCommand} onRunInSession={props.onRunCommandInSession} onRunAll={props.onRunCommandAll} onEdit={props.onEditCommand} onDelete={props.onDeleteCommand} onNew={props.onNewCommand} />}
                 {props.drawer === "tunnels" && <TunnelPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
-                {props.drawer === "logs" && <LogsPanel locale={lang} onOpenLog={props.onOpenLog} />}
+                {props.drawer === "logs" && <LogsPanel locale={lang} onOpenLog={props.onOpenLog} activities={props.activityHistory || []} />}
                 {props.drawer === "containers" && <ContainerPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
                 {props.drawer === "recordings" && <RecordingsPanel active={props.active} locale={lang} onNotify={props.onNotify} settings={props.settings} />}
               </div>
             </>
           )}
-          {props.drawer === "ai" && <AiPanel locale={lang} onNotify={props.onNotify} getTerminalLines={props.getTerminalLines} activeTabId={props.activeTabId} />}
           {props.drawer === "settings" && props.settings && <SettingsPanel settings={props.settings} language={lang} onSave={props.onSaveSettings} onOpenData={props.onOpenData} dataDir={props.appInfo.dataDir || ""} onNotify={props.onNotify} />}
         </Suspense></div>}
+        {aiMounted && (
+          <div className="tool-body-full ai-persistent-host" style={{ display: props.drawer === "ai" ? undefined : "none" }}>
+            <Suspense fallback={<DrawerFallback />}>
+              <AiPanel locale={lang} onNotify={props.onNotify} getTerminalLines={props.getTerminalLines} activeTabId={props.activeTabId} tabs={props.tabs} />
+            </Suspense>
+          </div>
+        )}
       </section>
 
       {floats.path && props.active && (

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
-import { Connect, ConnectWithSecrets, ConnectLocal, Disconnect, Reconnect, ReconnectWithSecrets, StartMonitor, StopMonitor } from "../../wailsjs/go/main/App";
+import { Connect, ConnectQuick, ConnectWithSecrets, ConnectLocal, Disconnect, ListSessions, Reconnect, ReconnectWithSecrets, StopMonitor } from "../../wailsjs/go/main/App";
 import { types } from "../../wailsjs/go/models";
 import type { SecretRequest, Tab } from "../types";
 import { needsSecret, tabTitle } from "../utils/format";
@@ -11,14 +11,29 @@ type UseSessionsOptions = {
   reload: () => Promise<void>;
   disposeTerminal: (id: string) => void;
   confirmOnDisconnect?: boolean;
+  beforeCloseTab?: (tab: Tab) => boolean | Promise<boolean>;
 };
 
 const isSessionNotFoundError = (err: unknown) => String(err).toLowerCase().includes("session not found");
+
+const readWorkspaceProfiles = (): { ids: string[]; activeProfileId: string } => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem("gx:workspaceProfiles") || "[]");
+    const ids = Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+    return { ids: Array.from(new Set(ids)).slice(0, 20), activeProfileId: localStorage.getItem("gx:workspaceActiveProfile") || "" };
+  } catch {
+    return { ids: [], activeProfileId: "" };
+  }
+};
 
 export function useSessions(options: UseSessionsOptions) {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTab, setActiveTab] = useState("");
   const [secretRequest, setSecretRequest] = useState<SecretRequest | null>(null);
+  const workspaceProfiles = useRef(readWorkspaceProfiles());
+  const workspaceRestoreStarted = useRef(false);
+  const [workspaceRestoreReady, setWorkspaceRestoreReady] = useState(workspaceProfiles.current.ids.length === 0);
+  const [sessionsHydrated, setSessionsHydrated] = useState(false);
 
   const active = useMemo(() => tabs.find((tab) => tab.id === activeTab), [tabs, activeTab]);
 
@@ -37,6 +52,16 @@ export function useSessions(options: UseSessionsOptions) {
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
 
+  // One-off quick connections intentionally never reach profiles.json. Keep
+  // their connection material in renderer memory so a tab can still be
+  // manually reconnected during this app run.
+  const quickProfiles = useRef<Map<string, types.Profile>>(new Map());
+
+  // Only UI-initiated fresh connections create an optimistic "connecting"
+  // tab from the backend event. External gxshell-cli connections emit the same
+  // low-level event and must not steal focus from the user's current work.
+  const creatingProfiles = useRef<Set<string>>(new Set());
+
   // Auto-reconnect bookkeeping. Keyed by the tab id that owned the session that
   // dropped. userClosing marks ids the user is intentionally closing so their
   // disconnect does not trigger a reconnect.
@@ -53,10 +78,17 @@ export function useSessions(options: UseSessionsOptions) {
   }, []);
 
   useEffect(() => {
+    const offConnecting = EventsOn("terminal:connecting", (info: types.SessionInfo) => {
+      if (!info?.id || !creatingProfiles.current.has(info.profileId)) return;
+      const profile = profilesRef.current.find((item) => item.id === info.profileId) || quickProfiles.current.get(info.profileId);
+      setTabs((items) => items.some((tab) => tab.id === info.id)
+        ? items
+        : [...items, { id: info.id, profileId: info.profileId, title: tabTitle(profile, info.name), state: "connecting" }]);
+      setActiveTab(info.id);
+    });
     const offConnected = EventsOn("terminal:connected", (info: types.SessionInfo) => {
       setTabs((items) => items.map((tab) => tab.id === info.id ? { ...tab, state: "connected", error: undefined } : tab));
       notifyRef.current(`${info.name} connected`, "success");
-      StartMonitor(info.id).catch(() => undefined);
     });
     const offDisconnected = EventsOn("terminal:disconnected", (info: types.SessionInfo) => {
       setTabs((items) => items.map((tab) => tab.id === info.id ? { ...tab, state: "disconnected" } : tab));
@@ -67,32 +99,185 @@ export function useSessions(options: UseSessionsOptions) {
       notifyRef.current(payload.error, "error");
       scheduleAutoReconnectRef.current(payload.sessionId);
     });
+    const offCliSession = EventsOn("terminal:cli-session", (info: types.SessionInfo) => {
+      if (!info?.id) return;
+      const profile = profilesRef.current.find((item) => item.id === info.profileId) || quickProfiles.current.get(info.profileId);
+      const title = tabTitle(profile, info.name);
+      setTabs((items) => {
+        const existing = items.find((tab) => tab.id === info.id);
+        if (existing) {
+          if (existing.profileId === info.profileId && existing.title === title && existing.state === info.state && !existing.error) return items;
+          return items.map((tab) => tab.id === info.id
+            ? { ...tab, profileId: info.profileId, title, state: info.state, error: undefined }
+            : tab);
+        }
+        return [...items, { id: info.id, profileId: info.profileId, title, state: info.state }];
+      });
+      // Do not steal focus from the user's current terminal. If the CLI session
+      // is the first tab, make it active so its buffered output has a visible
+      // host immediately.
+      setActiveTab((current) => current || info.id);
+    });
     return () => {
-      offConnected(); offDisconnected(); offError();
+      offConnecting(); offConnected(); offDisconnected(); offError(); offCliSession();
     };
   }, []);
 
+  // A renderer reload should not make still-running backend sessions vanish.
+  // Hydrate the tab strip from the authoritative managers, while merging with
+  // any CLI/session events that arrived during startup.
+  useEffect(() => {
+    let cancelled = false;
+    ListSessions().then((items) => {
+      if (cancelled || !items?.length) return;
+      setTabs((current) => {
+        const byID = new Map(current.map((tab) => [tab.id, tab]));
+        for (const info of items) {
+          if (!info?.id) continue;
+          const profile = profilesRef.current.find((item) => item.id === info.profileId) || quickProfiles.current.get(info.profileId);
+          const prior = byID.get(info.id);
+          byID.set(info.id, {
+            ...(prior || {}),
+            id: info.id,
+            profileId: info.profileId || "",
+            title: prior?.title || tabTitle(profile, info.name),
+            state: info.state,
+            local: !info.profileId,
+            type: !info.profileId ? "local" : "ssh",
+            error: info.error || undefined,
+          });
+        }
+        return Array.from(byID.values());
+      });
+      setActiveTab((current) => current || items[0]?.id || "");
+    }).catch((err) => notifyRef.current(String(err), "error"))
+      .finally(() => { if (!cancelled) setSessionsHydrated(true); });
+    return () => { cancelled = true; };
+  }, []);
+
   const appendSession = useCallback(async (profile: types.Profile, info: types.SessionInfo) => {
-    setTabs((items) => [...items, { id: info.id, profileId: info.profileId, title: tabTitle(profile, info.name), state: info.state }]);
+    setTabs((items) => items.some((tab) => tab.id === info.id)
+      ? items.map((tab) => tab.id === info.id ? { ...tab, profileId: info.profileId, title: tabTitle(profile, info.name), state: info.state, error: undefined } : tab)
+      : [...items, { id: info.id, profileId: info.profileId, title: tabTitle(profile, info.name), state: info.state }]);
     setActiveTab(info.id);
     await reloadRef.current();
   }, []);
 
   const openSession = useCallback(async (profile: types.Profile, password: string, passphrase: string) => {
     notifyRef.current(`Connecting to ${profile.name || profile.host}...`, "info");
-    const info = profile.rememberPassword
-      ? await Connect(profile.id, 120, 36)
-      : await ConnectWithSecrets(profile.id, password, passphrase, 120, 36);
-    await appendSession(profile, info);
+    creatingProfiles.current.add(profile.id);
+    try {
+      const info = profile.rememberPassword
+        ? await Connect(profile.id, 120, 36)
+        : await ConnectWithSecrets(profile.id, password, passphrase, 120, 36);
+      await appendSession(profile, info);
+    } finally {
+      creatingProfiles.current.delete(profile.id);
+    }
   }, [appendSession]);
 
   const connectProfile = useCallback(async (profile: types.Profile) => {
+    const existing = tabsRef.current.find((tab) => tab.profileId === profile.id && (tab.state === "connecting" || tab.state === "connected"));
+    if (existing) {
+      setActiveTab(existing.id);
+      notifyRef.current(existing.state === "connecting"
+        ? `${existing.title}: connection already in progress`
+        : `${existing.title}: already connected`, "info");
+      return;
+    }
     if (needsSecret(profile)) {
       setSecretRequest({ profile, mode: "connect" });
       return;
     }
-    await openSession(profile, "", "");
+    try {
+      await openSession(profile, "", "");
+    } catch (err) {
+      // The backend also emits terminal:error after a low-level SSH failure,
+      // which updates the optimistic tab. This catch closes the Promise path
+      // for failures that happen before a session id exists (profile/secrets,
+      // rate limiting, etc.) instead of leaving an unhandled rejection.
+      if (!String(err).toLowerCase().includes("connection cancelled")) {
+        notifyRef.current(`${profile.name || profile.host}: ${String(err)}`, "error");
+      }
+    }
   }, [openSession]);
+
+  useEffect(() => {
+    if (!sessionsHydrated || workspaceRestoreStarted.current || workspaceProfiles.current.ids.length === 0) return;
+    // Wait for the async profile library load before deciding that a persisted
+    // profile disappeared. A genuinely empty library has nothing to restore.
+    if (options.profiles.length === 0) return;
+    workspaceRestoreStarted.current = true;
+    const wanted = new Set(workspaceProfiles.current.ids);
+    const matched = options.profiles.filter((profile) => wanted.has(profile.id));
+    const alreadyLive = new Set(tabsRef.current
+      .filter((tab) => tab.state === "connected" || tab.state === "connecting")
+      .map((tab) => tab.profileId));
+    const pending = matched.filter((profile) => !alreadyLive.has(profile.id));
+    const restorable = pending.filter((profile) => !needsSecret(profile));
+    const skipped = pending.length - restorable.length;
+    if (skipped > 0) {
+      notifyRef.current(`${skipped} workspace connection${skipped === 1 ? "" : "s"} need credentials and were not restored`, "info");
+    }
+    Promise.all(restorable.map((profile) => connectProfile(profile))).finally(() => {
+      setWorkspaceRestoreReady(true);
+      const activeProfileId = workspaceProfiles.current.activeProfileId;
+      if (activeProfileId) {
+        window.setTimeout(() => {
+          const restoredActive = tabsRef.current.find((tab) => tab.profileId === activeProfileId && tab.state === "connected");
+          if (restoredActive) setActiveTab(restoredActive.id);
+        }, 0);
+      }
+    });
+  }, [connectProfile, options.profiles, sessionsHydrated]);
+
+  useEffect(() => {
+    if (!workspaceRestoreReady) return;
+    const savedProfiles = new Set(options.profiles.map((profile) => profile.id));
+    const ids = Array.from(new Set(tabs
+      .filter((tab) => tab.type !== "markdown" && !tab.local && savedProfiles.has(tab.profileId) && (tab.state === "connected" || tab.state === "connecting"))
+      .map((tab) => tab.profileId)));
+    const activeProfileId = tabs.find((tab) => tab.id === activeTab)?.profileId || "";
+    try {
+      localStorage.setItem("gx:workspaceProfiles", JSON.stringify(ids));
+      localStorage.setItem("gx:workspaceActiveProfile", savedProfiles.has(activeProfileId) ? activeProfileId : "");
+    } catch {}
+  }, [activeTab, options.profiles, tabs, workspaceRestoreReady]);
+
+  const connectProfileWithSecrets = useCallback(async (profile: types.Profile, password: string, passphrase: string) => {
+    const existing = tabsRef.current.find((tab) => tab.profileId === profile.id && (tab.state === "connecting" || tab.state === "connected"));
+    if (existing) {
+      setActiveTab(existing.id);
+      return;
+    }
+    await openSession(profile, password, passphrase);
+  }, [openSession]);
+
+  const connectQuick = useCallback(async (input: types.Profile) => {
+    const profile = new types.Profile({
+      ...input,
+      id: input.id && input.id.startsWith("quick-") ? input.id : `quick-${crypto.randomUUID()}`,
+      rememberPassword: false,
+    });
+    quickProfiles.current.set(profile.id, profile);
+    const staleTab = tabsRef.current.find((tab) => tab.profileId === profile.id && (tab.state === "error" || tab.state === "disconnected"));
+    if (!staleTab) creatingProfiles.current.add(profile.id);
+    notifyRef.current(`Connecting to ${profile.name || profile.host}...`, "info");
+    try {
+      const info = await ConnectQuick(profile, 120, 36);
+      if (staleTab) {
+        disposeTerminalRef.current(staleTab.id);
+        setTabs((items) => items.map((tab) => tab.id === staleTab.id
+          ? { ...tab, id: info.id, title: tabTitle(profile, info.name), state: info.state, error: undefined }
+          : tab));
+        setActiveTab(info.id);
+      } else {
+        await appendSession(profile, info);
+      }
+    } finally {
+      creatingProfiles.current.delete(profile.id);
+    }
+  }, [appendSession]);
 
   const replaceReconnectedTab = useCallback((oldID: string, info: types.SessionInfo) => {
     disposeTerminalRef.current(oldID);
@@ -113,6 +298,20 @@ export function useSessions(options: UseSessionsOptions) {
     clearAutoReconnect(tab.id);
     if (tab.local) {
       await connectLocal();
+      return;
+    }
+    const quickProfile = quickProfiles.current.get(tab.profileId);
+    if (quickProfile) {
+      notifyRef.current(`Reconnecting to ${tab.title}...`, "info");
+      setTabs((items) => items.map((item) => item.id === tab.id ? { ...item, state: "connecting", error: undefined } : item));
+      try {
+        const info = await ConnectQuick(quickProfile, 120, 36);
+        replaceReconnectedTab(tab.id, info);
+      } catch (err) {
+        const message = String(err);
+        setTabs((items) => items.map((item) => item.id === tab.id ? { ...item, state: "error", error: message } : item));
+        notifyRef.current(`${tab.title}: reconnect failed: ${message}`, "error");
+      }
       return;
     }
     const profile = profilesRef.current.find((item) => item.id === tab.profileId);
@@ -165,6 +364,7 @@ export function useSessions(options: UseSessionsOptions) {
     } catch (err) {
       userClosing.current.delete(request.sessionId);
       notifyRef.current(`${request.profile.name || request.profile.host}: reconnect failed: ${String(err)}`, "error");
+	  throw err;
     }
   }, [openSession, replaceReconnectedTab]);
 
@@ -199,6 +399,9 @@ export function useSessions(options: UseSessionsOptions) {
     const prior = autoReconnect.current[tabId]?.attempts ?? 0;
     if (prior >= AUTO_RECONNECT_MAX) {
       clearAutoReconnect(tabId);
+      setTabs((items) => items.map((item) => item.id === tabId
+        ? { ...item, state: "error", error: `Auto-reconnect gave up after ${AUTO_RECONNECT_MAX} attempts` }
+        : item));
       notifyRef.current(`${tab.title}: auto-reconnect gave up after ${AUTO_RECONNECT_MAX} attempts`, "error");
       return;
     }
@@ -223,9 +426,12 @@ export function useSessions(options: UseSessionsOptions) {
         setActiveTab((current) => current === tabId ? info.id : current);
         clearAutoReconnect(tabId);
         await reloadRef.current();
-      } catch {
+      } catch (err) {
         // Record the failed attempt and let the resulting disconnect/error event
         // reschedule with the next backoff step.
+        setTabs((items) => items.map((item) => item.id === tabId
+          ? { ...item, state: "connecting", error: String(err) }
+          : item));
         autoReconnect.current[tabId] = { attempts: attempt + 1, timer: 0 };
         scheduleAutoReconnectRef.current(tabId);
       }
@@ -252,7 +458,10 @@ export function useSessions(options: UseSessionsOptions) {
   const closeTab = useCallback(async (id: string, skipConfirm = false) => {
     const tab = tabs.find((item) => item.id === id);
     const isMarkdown = tab?.type === "markdown";
-    if (!skipConfirm && options.confirmOnDisconnect && !tab?.local && !isMarkdown) {
+    if (!skipConfirm && tab && options.beforeCloseTab && !(await options.beforeCloseTab(tab))) {
+      return;
+    }
+    if (!skipConfirm && options.confirmOnDisconnect && tab?.state === "connected" && !tab?.local && !isMarkdown) {
       const shouldClose = window.confirm("Are you sure you want to disconnect?");
       if (!shouldClose) return;
     }
@@ -270,12 +479,20 @@ export function useSessions(options: UseSessionsOptions) {
       await Disconnect(id).catch(() => undefined);
       disposeTerminalRef.current(id);
     }
+    if (tab?.profileId && quickProfiles.current.has(tab.profileId)) {
+      const otherQuickTab = tabsRef.current.some((item) => item.id !== id && item.profileId === tab.profileId);
+      if (!otherQuickTab) quickProfiles.current.delete(tab.profileId);
+    }
     setTabs((items) => {
+      const closingIndex = items.findIndex((tab) => tab.id === id);
       const next = items.filter((tab) => tab.id !== id);
-      if (activeTabRef.current === id) setActiveTab(next[0]?.id || "");
+      if (activeTabRef.current === id) {
+        const neighborIndex = Math.max(0, Math.min(closingIndex, next.length - 1));
+        setActiveTab(next[neighborIndex]?.id || "");
+      }
       return next;
     });
-  }, [options.confirmOnDisconnect, tabs]);
+  }, [options.confirmOnDisconnect, options.beforeCloseTab, tabs]);
 
   return {
     tabs,
@@ -286,6 +503,8 @@ export function useSessions(options: UseSessionsOptions) {
     secretRequest,
     setSecretRequest,
     connectProfile,
+    connectProfileWithSecrets,
+    connectQuick,
     connectLocal,
     reconnectTab,
     reorderTabs,

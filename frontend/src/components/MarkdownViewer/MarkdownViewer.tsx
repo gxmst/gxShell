@@ -68,6 +68,7 @@ interface MarkdownViewerProps {
   onClose: () => void;
   onNotify?: (text: string, tone?: 'info' | 'error' | 'success') => void;
   onOpenMarkdownFile?: (target: MarkdownOpenTarget) => void;
+  onDirtyChange?: (dirty: boolean, save: () => Promise<boolean>) => void;
 }
 
 type TocItem = { id: string; text: string; depth: number };
@@ -250,10 +251,12 @@ export default function MarkdownViewer({
   onClose,
   onNotify,
   onOpenMarkdownFile,
+  onDirtyChange,
 }: MarkdownViewerProps) {
   const [content, setContent] = useState('');
   const lang = locale || 'en';
   const [draft, setDraft] = useState('');
+  const [previewDraft, setPreviewDraft] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
@@ -264,6 +267,9 @@ export default function MarkdownViewer({
   const [activeHeading, setActiveHeading] = useState('');
   const [wrapCode, setWrapCode] = useState(false);
   const [splitPreview, setSplitPreview] = useState(false);
+  const saveRef = useRef<() => Promise<boolean>>(async () => false);
+  const dirtyCallbackRef = useRef(onDirtyChange);
+  dirtyCallbackRef.current = onDirtyChange;
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -313,8 +319,8 @@ export default function MarkdownViewer({
   const markdownMode = isMarkdownPath(displayPath || '');
   const previewDoc = useMemo(() => (markdownMode ? buildMarkdown(content) : EMPTY_RENDERED_MARKDOWN), [content, markdownMode]);
   const draftDoc = useMemo(
-    () => (markdownMode && editing && splitPreview ? buildMarkdown(draft) : EMPTY_RENDERED_MARKDOWN),
-    [draft, editing, splitPreview, markdownMode],
+    () => (markdownMode && editing && splitPreview && active ? buildMarkdown(previewDraft) : EMPTY_RENDERED_MARKDOWN),
+    [previewDraft, editing, splitPreview, markdownMode, active],
   );
   const visibleDoc = editing && splitPreview ? draftDoc : previewDoc;
   const canShowToc = markdownMode && (!editing || splitPreview) && visibleDoc.toc.length > 0;
@@ -351,6 +357,19 @@ export default function MarkdownViewer({
   }, [loadFile]);
 
   const dirty = editing && draft !== content;
+
+  useEffect(() => {
+    if (!editing || !splitPreview || !active) return;
+    const timer = window.setTimeout(() => setPreviewDraft(draft), 220);
+    return () => window.clearTimeout(timer);
+  }, [active, draft, editing, splitPreview]);
+
+  useEffect(() => {
+    if (editing && splitPreview && active) setPreviewDraft(draft);
+    // Only refresh immediately when the preview is opened or becomes visible;
+    // keystrokes are handled by the debounced effect above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, editing, splitPreview]);
 
   const captureScrollRatio = () => {
     const el = editing ? textareaRef.current : previewRef.current;
@@ -399,12 +418,23 @@ export default function MarkdownViewer({
       setEditing(false);
       setSplitPreview(false);
       onNotify?.(t(lang, 'fileSaved'), 'success');
+      return true;
     } catch (err: any) {
       onNotify?.(err.toString(), 'error');
+      return false;
     } finally {
       setSaving(false);
     }
   };
+  saveRef.current = save;
+
+  useEffect(() => {
+    dirtyCallbackRef.current?.(dirty, () => saveRef.current());
+  }, [dirty]);
+
+  useEffect(() => () => {
+    dirtyCallbackRef.current?.(false, () => Promise.resolve(false));
+  }, []);
 
   const openSearch = useCallback(() => {
     setSearchOpen(true);
@@ -574,7 +604,7 @@ export default function MarkdownViewer({
   };
 
   const onContentClick = useCallback(async (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!markdownMode) return;
+    if (!active || !markdownMode) return;
     if (!(e.target instanceof HTMLElement)) return;
 
     const copyBtn = e.target.closest('[data-code-copy]');
@@ -662,10 +692,10 @@ export default function MarkdownViewer({
     return () => {
       cancelled = true;
     };
-  }, [markdownMode, visibleDoc.html, editing, splitPreview, source, filePath, remotePath, sessionId, displayPath]);
+  }, [active, markdownMode, visibleDoc.html, editing, splitPreview, source, filePath, remotePath, sessionId, displayPath]);
 
   useEffect(() => {
-    if (!markdownMode) return;
+    if (!active || !markdownMode) return;
     const root = contentRootRef.current;
     if (!root) return;
     let cancelled = false;
@@ -695,12 +725,12 @@ export default function MarkdownViewer({
     return () => {
       cancelled = true;
     };
-  }, [markdownMode, visibleDoc.html, editing, splitPreview]);
+  }, [active, markdownMode, visibleDoc.html, editing, splitPreview]);
 
   useEffect(() => {
     const scroller = editing && splitPreview ? splitPreviewRef.current : previewRef.current;
     const root = contentRootRef.current;
-    if (!scroller || !root || !canShowToc) {
+    if (!active || !scroller || !root || !canShowToc) {
       setActiveHeading('');
       return;
     }
@@ -719,7 +749,7 @@ export default function MarkdownViewer({
     updateActiveHeading();
     scroller.addEventListener('scroll', updateActiveHeading);
     return () => scroller.removeEventListener('scroll', updateActiveHeading);
-  }, [visibleDoc.html, editing, splitPreview, canShowToc]);
+  }, [active, visibleDoc.html, editing, splitPreview, canShowToc]);
 
   if (loading) return <div className="markdown-viewer-loading">{t(lang, "loading")}</div>;
   if (error) return <div className="markdown-viewer-error">{error}</div>;

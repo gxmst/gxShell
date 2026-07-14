@@ -5,6 +5,7 @@ import {
   ListRemoteTextFilesInDir,
   ListTextFilesInDir,
   OpenRecentTextFile,
+  RestoreTextFiles,
   SelectTextFile,
 } from "../../wailsjs/go/main/App";
 import type { Drawer, MarkdownOpenTarget, RecentMarkdownItem, Tab } from "../types";
@@ -16,6 +17,16 @@ const normalizeLocalPath = (filePath: string) => filePath.replace(/\\/g, "/");
 const newMarkdownTabId = () => `text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const fileNameFromPath = (filePath: string) => filePath.split(/[\\/]/).pop() || "Text file";
+
+const readWorkspaceFiles = (): { paths: string[]; activePath: string } => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem("gx:workspaceLocalFiles") || "[]");
+    const paths = Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string").slice(0, 30) : [];
+    return { paths, activePath: localStorage.getItem("gx:workspaceActiveLocalFile") || "" };
+  } catch {
+    return { paths: [], activePath: "" };
+  }
+};
 
 const recentMarkdownId = (item: Pick<RecentMarkdownItem, "source" | "path" | "profileId" | "sessionId">) => {
   if (item.source === "local") return `local:${normalizeLocalPath(item.path).toLowerCase()}`;
@@ -62,6 +73,9 @@ export function useMarkdownTabs({
 }: UseMarkdownTabsParams): MarkdownTabs {
   const [markdownSiblings, setMarkdownSiblings] = useState<string[]>([]);
   const [recentMarkdown, setRecentMarkdown] = usePersistedState<RecentMarkdownItem[]>("gx:recentMarkdown", []);
+  const workspaceFiles = useRef(readWorkspaceFiles());
+  const workspaceRestoreStarted = useRef(false);
+  const [workspaceRestoreReady, setWorkspaceRestoreReady] = useState(workspaceFiles.current.paths.length === 0);
 
   // Mirror the live tabs/activeTab in refs so callbacks can read the current
   // value without listing tabs as a dependency (which would rebuild every
@@ -72,6 +86,52 @@ export function useMarkdownTabs({
   activeTabRef.current = activeTab;
   const profilesRef = useRef(profiles);
   profilesRef.current = profiles;
+
+  useEffect(() => {
+    if (workspaceRestoreStarted.current || workspaceFiles.current.paths.length === 0) return;
+    workspaceRestoreStarted.current = true;
+    RestoreTextFiles(workspaceFiles.current.paths).then((restored) => {
+      if (!restored?.length) return;
+      const candidates: Tab[] = restored.map((filePath) => ({
+        id: newMarkdownTabId(),
+        profileId: "",
+        title: fileNameFromPath(filePath),
+        state: "connected",
+        type: "markdown",
+        markdownSource: "local",
+        filePath,
+      }));
+      setTabs((current) => {
+        const next = [...current];
+        for (const candidate of candidates) {
+          const normalized = normalizeLocalPath(candidate.filePath || "");
+          const existing = next.find((tab) => tab.type === "markdown" && tab.filePath && normalizeLocalPath(tab.filePath) === normalized);
+          if (!existing) next.push(candidate);
+        }
+        const activePath = normalizeLocalPath(workspaceFiles.current.activePath);
+        if (activePath) {
+          const restoredActive = next.find((tab) => tab.type === "markdown" && tab.filePath && normalizeLocalPath(tab.filePath) === activePath);
+          if (restoredActive) setActiveTab(restoredActive.id);
+        }
+        return next;
+      });
+    }).catch((err) => {
+      notify(String(err), "error");
+    }).finally(() => {
+      setWorkspaceRestoreReady(true);
+    });
+  }, [notify, setActiveTab, setTabs]);
+
+  useEffect(() => {
+    if (!workspaceRestoreReady) return;
+    const localTabs = tabs.filter((tab) => tab.type === "markdown" && tab.markdownSource !== "remote" && tab.filePath);
+    const paths = localTabs.map((tab) => tab.filePath as string);
+    const active = localTabs.find((tab) => tab.id === activeTab);
+    try {
+      localStorage.setItem("gx:workspaceLocalFiles", JSON.stringify(paths));
+      localStorage.setItem("gx:workspaceActiveLocalFile", active?.filePath || "");
+    } catch {}
+  }, [activeTab, tabs, workspaceRestoreReady]);
 
   const rememberMarkdown = useCallback((item: Omit<RecentMarkdownItem, "id" | "openedAt">) => {
     const nextItem: RecentMarkdownItem = {

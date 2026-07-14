@@ -223,6 +223,27 @@
   box-shadow: var(--hairline), 0 8px 22px color-mix(in srgb, var(--shadow-color) 16%, transparent);
 }
 
+.server-session-count {
+  display: inline-flex;
+  min-width: 17px;
+  height: 17px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 999px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.mini-btn.favorite-active {
+  color: #e3a928;
+  opacity: 1;
+}
+
 .server-avatar {
   position: relative;
   display: inline-flex;
@@ -679,6 +700,15 @@
   border-color: color-mix(in srgb, var(--border-strong) 88%, transparent);
   background: linear-gradient(145deg, color-mix(in srgb, var(--panel-raised) 96%, black), color-mix(in srgb, var(--panel) 96%, black));
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 5%, transparent), 0 28px 80px color-mix(in srgb, var(--shadow-color) 58%, transparent);
+}
+
+.cast-progress-input {
+  min-width: 100px;
+  flex: 1;
+  height: 4px;
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 /* Dialogs and forms ------------------------------------------------------ */

@@ -148,13 +148,13 @@ func TestSaveAndGetSettingsRoundTripCliFlag(t *testing.T) {
 	}
 }
 
-func TestMigrateCommandDefaultsAppendsMissingBuiltIns(t *testing.T) {
+func TestMigrateCommandDefaultsDoesNotReseedExistingLibrary(t *testing.T) {
 	s := newTestStore(t)
 	commands := []types.CommandTemplate{
 		{
-			ID:          "custom-1",
+			ID:          "edited-builtin",
 			Name:        "查看磁盘",
-			Command:     "df -h",
+			Command:     "df -hT",
 			Category:    "Custom",
 			Description: "user edited",
 		},
@@ -174,32 +174,14 @@ func TestMigrateCommandDefaultsAppendsMissingBuiltIns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	countDF := 0
-	foundNewBuiltin := false
-	foundCustom := false
-	for _, command := range got {
-		if command.Command == "df -h" {
-			countDF++
-			if command.Category != "Custom" {
-				t.Fatal("existing command was overwritten")
-			}
-		}
-		if command.Command == "systemctl --failed" {
-			foundNewBuiltin = true
-		}
-		if command.Command == "echo ok" {
-			foundCustom = true
-		}
+	if len(got) != len(commands) {
+		t.Fatalf("startup reseeded deleted commands: got %d commands, want %d", len(got), len(commands))
 	}
-	if countDF != 1 {
-		t.Fatalf("df -h command count = %d, want 1", countDF)
+	if got[0].ID != "edited-builtin" || got[0].Command != "df -hT" || got[0].Description != "user edited" {
+		t.Fatalf("edited command was changed during startup: %#v", got[0])
 	}
-	if !foundNewBuiltin {
-		t.Fatal("missing built-in command was not appended")
-	}
-	if !foundCustom {
-		t.Fatal("custom command was removed")
+	if got[1].ID != "custom-2" || got[1].Command != "echo ok" {
+		t.Fatalf("custom command was changed during startup: %#v", got[1])
 	}
 
 	s.MigrateCommandDefaults()
@@ -209,6 +191,32 @@ func TestMigrateCommandDefaultsAppendsMissingBuiltIns(t *testing.T) {
 	}
 	if len(again) != len(got) {
 		t.Fatal("migration should be idempotent")
+	}
+}
+
+func TestNewStoreSeedsCommandsOnlyWhenFileIsMissing(t *testing.T) {
+	s, err := NewStoreAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands, err := s.ListCommands()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) == 0 {
+		t.Fatal("new stores should receive the initial built-in command library")
+	}
+
+	if err := s.SaveCommands([]types.CommandTemplate{}); err != nil {
+		t.Fatal(err)
+	}
+	s.MigrateCommandDefaults()
+	commands, err = s.ListCommands()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 0 {
+		t.Fatal("an intentionally emptied command library must stay empty")
 	}
 }
 

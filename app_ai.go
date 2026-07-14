@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -25,6 +26,75 @@ const (
 	aiChatTimeout          = 5 * time.Minute
 	aiMaxParallelTools     = 4
 )
+
+type activeAiChat struct {
+	chatID    string
+	cancel    context.CancelFunc
+	cancelled bool
+}
+
+type activeAiChatKey struct {
+	app       *App
+	requestID string
+}
+
+// activeAiChats intentionally lives next to the AI entry points instead of on
+// App. Keeping this short-lived registry self-contained avoids coupling App's
+// lifecycle struct to renderer request bookkeeping; entries are always removed
+// when their request goroutine exits.
+var activeAiChats = struct {
+	sync.Mutex
+	items map[activeAiChatKey]*activeAiChat
+}{items: make(map[activeAiChatKey]*activeAiChat)}
+
+func registerActiveAiChat(app *App, chatID, requestID string, cancel context.CancelFunc) (*activeAiChat, bool) {
+	key := activeAiChatKey{app: app, requestID: requestID}
+	activeAiChats.Lock()
+	defer activeAiChats.Unlock()
+	if _, exists := activeAiChats.items[key]; exists {
+		return nil, false
+	}
+	entry := &activeAiChat{chatID: chatID, cancel: cancel}
+	activeAiChats.items[key] = entry
+	return entry, true
+}
+
+func unregisterActiveAiChat(app *App, requestID string, entry *activeAiChat) {
+	key := activeAiChatKey{app: app, requestID: requestID}
+	activeAiChats.Lock()
+	defer activeAiChats.Unlock()
+	if activeAiChats.items[key] == entry {
+		delete(activeAiChats.items, key)
+	}
+}
+
+func cancelActiveAiChat(app *App, chatID, requestID string) bool {
+	key := activeAiChatKey{app: app, requestID: requestID}
+	activeAiChats.Lock()
+	entry := activeAiChats.items[key]
+	if entry == nil || entry.chatID != chatID || entry.cancelled {
+		activeAiChats.Unlock()
+		return false
+	}
+	entry.cancelled = true
+	cancel := entry.cancel
+	activeAiChats.Unlock()
+	cancel()
+	return true
+}
+
+type aiChatEvent struct {
+	ChatID           string           `json:"chatId"`
+	RequestID        string           `json:"requestId"`
+	Content          string           `json:"content,omitempty"`
+	ReasoningContent string           `json:"reasoningContent,omitempty"`
+	Finish           bool             `json:"finish,omitempty"`
+	Cancelled        bool             `json:"cancelled,omitempty"`
+	Error            string           `json:"error,omitempty"`
+	PromptTokens     int              `json:"promptTokens,omitempty"`
+	CompletionTokens int              `json:"completionTokens,omitempty"`
+	ToolCalls        []map[string]any `json:"toolCalls,omitempty"`
+}
 
 // SaveAiConfig saves AI provider configuration and API key.
 func (a *App) SaveAiConfig(provider, apiKey, endpoint, model string) error {
@@ -98,159 +168,165 @@ func (a *App) GetAiConfig() types.AiConfig {
 
 // AiChat starts a new AI conversation with context timeout.
 func (a *App) AiChat(req types.AiChatRequest) error {
+	return a.startAiChat(req, false)
+}
+
+// AiContinueChat continues an existing AI conversation with tool results.
+func (a *App) AiContinueChat(req types.AiChatRequest) error {
+	return a.startAiChat(req, true)
+}
+
+// CancelAiChat cancels one exact renderer request. chatID is checked as well as
+// requestID so stale UI state cannot accidentally stop a different chat.
+func (a *App) CancelAiChat(chatID, requestID string) bool {
+	if strings.TrimSpace(chatID) == "" || strings.TrimSpace(requestID) == "" {
+		return false
+	}
+	return cancelActiveAiChat(a, chatID, requestID)
+}
+
+func validateAiChatRequest(req types.AiChatRequest) error {
+	if strings.TrimSpace(req.ChatID) == "" {
+		return fmt.Errorf("chatId is required")
+	}
+	if strings.TrimSpace(req.RequestID) == "" {
+		return fmt.Errorf("requestId is required")
+	}
+	if len(req.Messages) == 0 {
+		return fmt.Errorf("at least one message is required")
+	}
+	if req.EnableTools && strings.TrimSpace(req.SessionID) == "" {
+		return fmt.Errorf("sessionId is required when AI tools are enabled")
+	}
+	return nil
+}
+
+func (a *App) startAiChat(req types.AiChatRequest, continuing bool) error {
+	if err := validateAiChatRequest(req); err != nil {
+		return err
+	}
+
+	parent := a.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, aiChatTimeout)
+	entry, ok := registerActiveAiChat(a, req.ChatID, req.RequestID, cancel)
+	if !ok {
+		cancel()
+		return fmt.Errorf("AI request %q is already active", req.RequestID)
+	}
+
 	cfg := a.ai.GetConfig()
 	a.log.InfoFields("AI chat request", LogFields{
 		"provider":   cfg.Provider,
 		"model":      cfg.Model,
 		"endpoint":   cfg.Endpoint,
 		"session":    req.SessionID,
+		"chat":       req.ChatID,
+		"request":    req.RequestID,
+		"continue":   continuing,
+		"tools":      req.EnableTools,
 		"msgs":       len(req.Messages),
 		"contextLen": len(req.Context),
 	})
 
 	go func() {
-		parent := a.ctx
-		if parent == nil {
-			parent = context.Background()
-		}
-		ctx, cancel := context.WithTimeout(parent, aiChatTimeout)
 		defer cancel()
+		defer unregisterActiveAiChat(a, req.RequestID, entry)
 
-		aiReq := ai.ChatRequest{
-			Messages: make([]ai.Message, len(req.Messages)),
-			Context:  req.Context,
-		}
-		for i, m := range req.Messages {
-			aiReq.Messages[i] = ai.Message{Role: m.Role, Content: m.Content}
-		}
-
-		if len(aiReq.Messages) > 0 {
-			lastMsg := aiReq.Messages[len(aiReq.Messages)-1]
-			a.log.InfoFields("AI chat last msg", LogFields{
-				"role":       lastMsg.Role,
-				"contentLen": len(lastMsg.Content),
-			})
-		}
-
+		aiReq := toAiChatRequest(req)
 		err := a.ai.ChatWithContext(ctx, aiReq, func(resp ai.ChatResponse) {
-			if a.ctx != nil {
-				event := map[string]any{
-					"content":          resp.Content,
-					"finish":           resp.Finish,
-					"promptTokens":     resp.PromptTk,
-					"completionTokens": resp.CompleteTk,
-				}
-				if resp.ReasoningContent != "" {
-					event["reasoningContent"] = resp.ReasoningContent
-				}
-				if len(resp.ToolCalls) > 0 {
-					a.registerAuthorizedAiToolCalls(req.SessionID, resp.ToolCalls)
-					tcData := make([]map[string]any, len(resp.ToolCalls))
-					for i, tc := range resp.ToolCalls {
-						tcData[i] = map[string]any{
-							"id":   tc.ID,
-							"type": tc.Type,
-							"function": map[string]any{
-								"name":      tc.Function.Name,
-								"arguments": tc.Function.Arguments,
-							},
-						}
-					}
-					event["toolCalls"] = tcData
-				}
-				runtime.EventsEmit(a.ctx, "ai:chunk", event)
+			if a.ctx == nil {
+				return
 			}
+			event := aiChatEvent{
+				ChatID:           req.ChatID,
+				RequestID:        req.RequestID,
+				Content:          resp.Content,
+				ReasoningContent: resp.ReasoningContent,
+				Finish:           resp.Finish,
+				PromptTokens:     resp.PromptTk,
+				CompletionTokens: resp.CompleteTk,
+			}
+			if len(resp.ToolCalls) > 0 {
+				if req.EnableTools {
+					a.registerAuthorizedAiToolCalls(req.SessionID, resp.ToolCalls)
+				}
+				event.ToolCalls = serializeAiToolCalls(resp.ToolCalls)
+			}
+			runtime.EventsEmit(a.ctx, "ai:chunk", event)
 		})
 
-		if err != nil && a.ctx != nil {
-			a.log.ErrorFields("AI chat error", LogFields{"error": err.Error()})
-			runtime.EventsEmit(a.ctx, "ai:error", map[string]any{"error": err.Error()})
+		if err == nil || a.ctx == nil {
+			return
 		}
+		cancelled := errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled)
+		if !cancelled {
+			a.log.ErrorFields("AI chat error", LogFields{
+				"chat":    req.ChatID,
+				"request": req.RequestID,
+				"error":   err.Error(),
+			})
+		}
+		runtime.EventsEmit(a.ctx, "ai:error", aiChatEvent{
+			ChatID:    req.ChatID,
+			RequestID: req.RequestID,
+			Finish:    true,
+			Cancelled: cancelled,
+			Error:     err.Error(),
+		})
 	}()
 
 	return nil
 }
 
-// AiContinueChat continues an existing AI conversation with tool results.
-func (a *App) AiContinueChat(req types.AiChatRequest) error {
-	a.log.InfoFields("AI continue chat", LogFields{
-		"session": req.SessionID,
-		"msgs":    len(req.Messages),
-	})
-
-	go func() {
-		parent := a.ctx
-		if parent == nil {
-			parent = context.Background()
+func toAiChatRequest(req types.AiChatRequest) ai.ChatRequest {
+	aiReq := ai.ChatRequest{
+		Messages:    make([]ai.Message, len(req.Messages)),
+		Context:     req.Context,
+		EnableTools: req.EnableTools,
+	}
+	for i, message := range req.Messages {
+		aiReq.Messages[i] = ai.Message{
+			Role:             message.Role,
+			Content:          message.Content,
+			ReasoningContent: message.ReasoningContent,
+			ToolCallID:       message.ToolCallID,
 		}
-		ctx, cancel := context.WithTimeout(parent, aiChatTimeout)
-		defer cancel()
-
-		aiReq := ai.ChatRequest{
-			Messages: make([]ai.Message, len(req.Messages)),
-			Context:  req.Context,
+		for _, toolCall := range message.ToolCalls {
+			aiReq.Messages[i].ToolCalls = append(aiReq.Messages[i].ToolCalls, ai.ToolCall{
+				ID:   toolCall.ID,
+				Type: toolCall.Type,
+				Function: ai.FunctionCall{
+					Name:      toolCall.Function.Name,
+					Arguments: toolCall.Function.Arguments,
+				},
+			})
 		}
-		for i, m := range req.Messages {
-			aiReq.Messages[i] = ai.Message{
-				Role:             m.Role,
-				Content:          m.Content,
-				ReasoningContent: m.ReasoningContent,
-				ToolCallID:       m.ToolCallID,
-			}
-			for _, tc := range m.ToolCalls {
-				aiReq.Messages[i].ToolCalls = append(aiReq.Messages[i].ToolCalls, ai.ToolCall{
-					ID:   tc.ID,
-					Type: tc.Type,
-					Function: ai.FunctionCall{
-						Name:      tc.Function.Name,
-						Arguments: tc.Function.Arguments,
-					},
-				})
-			}
+	}
+	return aiReq
+}
+
+func serializeAiToolCalls(toolCalls []ai.ToolCall) []map[string]any {
+	result := make([]map[string]any, len(toolCalls))
+	for i, toolCall := range toolCalls {
+		result[i] = map[string]any{
+			"id":   toolCall.ID,
+			"type": toolCall.Type,
+			"function": map[string]any{
+				"name":      toolCall.Function.Name,
+				"arguments": toolCall.Function.Arguments,
+			},
 		}
-
-		err := a.ai.ChatWithContext(ctx, aiReq, func(resp ai.ChatResponse) {
-			if a.ctx != nil {
-				event := map[string]any{
-					"content":          resp.Content,
-					"finish":           resp.Finish,
-					"promptTokens":     resp.PromptTk,
-					"completionTokens": resp.CompleteTk,
-				}
-				if resp.ReasoningContent != "" {
-					event["reasoningContent"] = resp.ReasoningContent
-				}
-				if len(resp.ToolCalls) > 0 {
-					a.registerAuthorizedAiToolCalls(req.SessionID, resp.ToolCalls)
-					tcData := make([]map[string]any, len(resp.ToolCalls))
-					for i, tc := range resp.ToolCalls {
-						tcData[i] = map[string]any{
-							"id":   tc.ID,
-							"type": tc.Type,
-							"function": map[string]any{
-								"name":      tc.Function.Name,
-								"arguments": tc.Function.Arguments,
-							},
-						}
-					}
-					event["toolCalls"] = tcData
-				}
-				runtime.EventsEmit(a.ctx, "ai:chunk", event)
-			}
-		})
-
-		if err != nil && a.ctx != nil {
-			a.log.ErrorFields("AI continue chat error", LogFields{"error": err.Error()})
-			runtime.EventsEmit(a.ctx, "ai:error", map[string]any{"error": err.Error()})
-		}
-	}()
-
-	return nil
+	}
+	return result
 }
 
 type aiToolExecutionPlan struct {
 	ToolCallID   string
 	ToolName     string
+	Target       string
 	Command      string
 	Detail       string
 	EmptyMessage string
@@ -301,6 +377,15 @@ func (a *App) AiExecuteTools(sessionID string, toolCallIDs []string) map[string]
 
 	if len(plans) == 0 {
 		return results
+	}
+	targetLabel := sessionID
+	if a.ssh != nil {
+		if info, err := a.ssh.Get(sessionID); err == nil && strings.TrimSpace(info.Name) != "" {
+			targetLabel = info.Name
+		}
+	}
+	for i := range plans {
+		plans[i].Target = targetLabel
 	}
 	if !a.confirmAiToolExecutionBatch(plans) {
 		for _, plan := range plans {
@@ -486,6 +571,10 @@ func (a *App) confirmAiToolExecutionBatch(plans []aiToolExecutionPlan) bool {
 	}
 	title := "AI wants to run tools"
 	message := ""
+	targetText := "your remote server"
+	if strings.TrimSpace(plans[0].Target) != "" {
+		targetText = fmt.Sprintf("remote target %q", truncate(plans[0].Target, 120))
+	}
 	if len(plans) == 1 {
 		plan := plans[0]
 		var action string
@@ -499,7 +588,7 @@ func (a *App) confirmAiToolExecutionBatch(plans []aiToolExecutionPlan) bool {
 		default:
 			return false
 		}
-		message = fmt.Sprintf("The AI assistant requested the following on your remote server:\n\n%s: %s\n\nAllow this?", action, truncate(plan.Detail, 500))
+		message = fmt.Sprintf("The AI assistant requested the following on %s:\n\n%s: %s\n\nAllow this?", targetText, action, truncate(plan.Detail, 500))
 	} else {
 		items := make([]string, 0, len(plans))
 		for _, plan := range plans {
@@ -509,7 +598,7 @@ func (a *App) confirmAiToolExecutionBatch(plans []aiToolExecutionPlan) bool {
 			}
 			items = append(items, prefix+": "+plan.Detail)
 		}
-		message = fmt.Sprintf("The AI assistant requested %d actions on your remote server:\n\n%s\n\nAllow all of these?", len(plans), formatApprovalList(items))
+		message = fmt.Sprintf("The AI assistant requested %d actions on %s:\n\n%s\n\nAllow all of these?", len(plans), targetText, formatApprovalList(items))
 	}
 	a.nativeDialogMu.Lock()
 	defer a.nativeDialogMu.Unlock()

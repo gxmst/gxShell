@@ -42,14 +42,23 @@ type App struct {
 	// automationEventFn is a test seam for terminal activity events. Production
 	// leaves it nil and emitTerminalAutomation forwards events through Wails.
 	automationEventFn func(terminalAutomationEvent)
+	// cliSessionEventFn is the equivalent seam for announcing the SSH session
+	// selected by an external CLI request so the frontend can ensure it has a
+	// visible terminal tab before automation output is mirrored.
+	cliSessionEventFn func(types.SessionInfo)
 	nativeDialogMu    sync.Mutex
 	// aiTools is the trust ledger of backend-authorized AI tool calls awaiting a
 	// native confirmation + execution. See aiToolRegistry.
 	aiTools       *aiToolRegistry
 	cliMu         sync.Mutex
 	cliConnecting map[string]*cliConnectCall
-	cliApprovalMu sync.Mutex
-	cliApprovals  map[string]*cliApprovalBatch
+	cliSessionMu  sync.Mutex
+	// cliPreferredSessions pins each profile to one connected session. Without
+	// this, iterating the SSH manager's map can select a different session on
+	// every request when the same profile has multiple connections.
+	cliPreferredSessions map[string]string
+	cliApprovalMu        sync.Mutex
+	cliApprovals         map[string]*cliApprovalBatch
 	// cliApprovalDelay overrides the batch-coalescing window; zero means the
 	// cliApprovalDelay const is used. cliConfirmBatchFn overrides the native
 	// confirmation dialog; nil means the real MessageDialog is used. Both are
@@ -97,11 +106,12 @@ type authorizedAIToolCall struct {
 // NewApp creates a new App instance.
 func NewApp() *App {
 	a := &App{
-		rateLimiter:   newConnectionRateLimiter(),
-		allowedFiles:  newAllowedFileSet(),
-		kiRequests:    newKiRegistry(),
-		cliConnecting: map[string]*cliConnectCall{},
-		cliApprovals:  map[string]*cliApprovalBatch{},
+		rateLimiter:          newConnectionRateLimiter(),
+		allowedFiles:         newAllowedFileSet(),
+		kiRequests:           newKiRegistry(),
+		cliConnecting:        map[string]*cliConnectCall{},
+		cliPreferredSessions: map[string]string{},
+		cliApprovals:         map[string]*cliApprovalBatch{},
 	}
 	// The logger is not created until startup, so the collision callback reads
 	// a.log lazily and stays silent until it exists.

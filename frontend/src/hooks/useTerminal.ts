@@ -9,18 +9,27 @@ import { getTerminalTheme } from "../utils/format";
 import { highlight, type HighlightLevel } from "../utils/highlight";
 import { createLinkProvider, type TerminalLinkAppHandlers } from "../utils/terminalLinks";
 import type { SplitPane } from "../types";
+import { t } from "../i18n";
 
-const MAX_BUFFERED_CHUNKS = 100;
+const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 const MAX_COMMAND_BUFFER_CHARS = 8192;
 const RESIZE_SETTLE_MS = 80;
 
-export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null, broadcastRef?: MutableRefObject<{ enabled: boolean; targets: string[] }>, linkHandlersRef?: MutableRefObject<TerminalLinkAppHandlers>) {
+export type AppContextMenu = {
+  x: number;
+  y: number;
+  items: Array<{ label: string; action: () => void; danger?: boolean }>;
+};
+
+export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null, broadcastRef?: MutableRefObject<{ enabled: boolean; targets: string[] }>, linkHandlersRef?: MutableRefObject<TerminalLinkAppHandlers>, setContextMenu?: (menu: AppContextMenu | null) => void) {
   const terminals = useRef<Record<string, Terminal>>({});
   const fits = useRef<Record<string, FitAddon>>({});
   const searches = useRef<Record<string, SearchAddon>>({});
   const webgl = useRef<Record<string, WebglAddon>>({});
   const terminalHosts = useRef<Record<string, HTMLDivElement | null>>({});
   const bufferedOutput = useRef<Record<string, string[]>>({});
+  const bufferedOutputSizes = useRef<Record<string, number>>({});
+  const bufferedOutputDropped = useRef<Record<string, boolean>>({});
   const observers = useRef<Record<string, ResizeObserver>>({});
   const timers = useRef<Set<any>>(new Set());
   const cleanupFns = useRef<Record<string, () => void>>({});
@@ -30,6 +39,10 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const pendingResizeTimers = useRef<Record<string, number>>({});
   const pendingOutput = useRef<Record<string, string[]>>({});
   const pendingWriteFrames = useRef<Record<string, number>>({});
+  const pendingInput = useRef<Record<string, string[]>>({});
+  const pendingInputSizes = useRef<Record<string, number>>({});
+  const pendingInputTimers = useRef<Record<string, number>>({});
+  const lastInputErrorAt = useRef<Record<string, number>>({});
   const lastHostSize = useRef<Record<string, string>>({});
   const throughputRef = useRef<Record<string, number>>({});
   const refitTimers = useRef<Record<string, number>>({});
@@ -51,6 +64,45 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
 
+  const flushTerminalInput = useCallback((id: string) => {
+    window.clearTimeout(pendingInputTimers.current[id]);
+    delete pendingInputTimers.current[id];
+    const chunks = pendingInput.current[id];
+    delete pendingInput.current[id];
+    delete pendingInputSizes.current[id];
+    if (!chunks?.length) return;
+    const combined = chunks.join("");
+    // Keep each bridge message comfortably below the backend's bounded 1 MiB
+    // queue. Large pastes remain ordered while ordinary key presses collapse
+    // into one call every few milliseconds.
+    for (let offset = 0; offset < combined.length; offset += 64 * 1024) {
+      const part = combined.slice(offset, offset + 64 * 1024);
+      WriteToTerminal(id, part).catch((err) => {
+        const now = Date.now();
+        if (now - (lastInputErrorAt.current[id] || 0) > 2000) {
+          lastInputErrorAt.current[id] = now;
+          notifyRef.current(String(err), "error");
+        }
+      });
+    }
+  }, []);
+
+  const enqueueTerminalInput = useCallback((id: string, data: string) => {
+    if (!id || !data) return;
+    const queue = pendingInput.current[id] || [];
+    queue.push(data);
+    pendingInput.current[id] = queue;
+    const size = (pendingInputSizes.current[id] || 0) + data.length;
+    pendingInputSizes.current[id] = size;
+    if (size >= 8 * 1024) {
+      flushTerminalInput(id);
+      return;
+    }
+    if (!pendingInputTimers.current[id]) {
+      pendingInputTimers.current[id] = window.setTimeout(() => flushTerminalInput(id), 4);
+    }
+  }, [flushTerminalInput]);
+
   const highlightLevelRef = useRef<HighlightLevel>("off");
   {
     const raw = settings?.highlightLevel;
@@ -59,6 +111,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
 
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const settingsReady = !!settings;
 
   const applyHighlight = useCallback((sessionId: string, data: string) => {
     const level = highlightLevelRef.current;
@@ -181,24 +234,46 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         notifyRef.current("WebGL unavailable, using canvas renderer", "info");
       }
 
-      host.addEventListener("contextmenu", async (e) => {
+      // The listener lives on xterm's root element, which moves with the
+      // terminal when it is torn off/docked. Shift+right-click deliberately
+      // keeps the platform menu available for troubleshooting.
+      term.element?.addEventListener("contextmenu", (e) => {
+        if (e.shiftKey) return;
         e.preventDefault();
+        e.stopPropagation();
+        const lang = settingsRef.current?.language || "en";
         const selection = term.getSelection();
+        const items: AppContextMenu["items"] = [];
         if (selection) {
-          try {
-            await navigator.clipboard.writeText(selection);
-            notifyRef.current("Copied to clipboard", "success");
-          } catch {
-            notifyRef.current("Copy failed, use Ctrl+C instead", "error");
-          }
-          term.clearSelection();
-        } else {
-          try {
-            const text = await navigator.clipboard.readText();
-            WriteToTerminal(activeTab, text).catch(() => {});
-          } catch {
-            notifyRef.current("Paste failed, use Ctrl+V instead", "error");
-          }
+          items.push({
+            label: t(lang, "copy"),
+            action: () => {
+              navigator.clipboard.writeText(selection)
+                .then(() => notifyRef.current(t(lang, "copyToClipboard"), "success"))
+                .catch(() => notifyRef.current(t(lang, "copyFailed"), "error"));
+            },
+          });
+        }
+        items.push({
+          label: t(lang, "paste"),
+          action: () => {
+            navigator.clipboard.readText().then((text) => {
+              if (!text) return;
+              // xterm.paste honours bracketed-paste mode and routes through the
+              // same onData path, preserving broadcast and command history.
+              term.paste(text);
+            }).catch(() => notifyRef.current(t(lang, "pasteFailed"), "error"));
+          },
+        });
+        items.push({ label: t(lang, "selectAll"), action: () => term.selectAll() });
+        items.push({ label: t(lang, "clearTerminal"), action: () => { term.clear(); term.focus(); } });
+
+        if (setContextMenu) {
+          setContextMenu({ x: e.clientX, y: e.clientY, items });
+        } else if (selection) {
+          // Backward-compatible fallback while the host app is still wiring the
+          // visual menu: retain the former one-click copy behavior.
+          navigator.clipboard.writeText(selection).catch(() => undefined);
         }
       });
 
@@ -208,14 +283,14 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       searches.current[activeTab] = searchAddon;
 
       term.onData((data) => {
-        WriteToTerminal(activeTab, data).catch((err) => notifyRef.current(String(err), "error"));
+        enqueueTerminalInput(activeTab, data);
         // Broadcast (synchronized input): when enabled, mirror the same keystrokes
         // to every other connected SSH terminal. Only the active terminal drives
         // the command buffer / history below.
         const bc = broadcastRef?.current;
         if (bc?.enabled) {
           for (const id of bc.targets) {
-            if (id !== activeTab) WriteToTerminal(id, data).catch(() => {});
+            if (id !== activeTab) enqueueTerminalInput(id, data);
           }
         }
         const buf = cmdBuffer.current[activeTab] || "";
@@ -232,8 +307,13 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       });
 
       const buffered = bufferedOutput.current[activeTab] || [];
+      if (bufferedOutputDropped.current[activeTab]) {
+        term.write("\r\n\x1b[33m[gxShell: earlier buffered output was truncated]\x1b[39m\r\n");
+      }
       buffered.forEach((chunk) => term.write(chunk));
       delete bufferedOutput.current[activeTab];
+      delete bufferedOutputSizes.current[activeTab];
+      delete bufferedOutputDropped.current[activeTab];
 
       fitAndResize();
     }
@@ -264,7 +344,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       delete cmdBuffer.current[activeTab];
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, activeIsTerminal]);
+  }, [activeTab, activeIsTerminal, enqueueTerminalInput, settingsReady]);
 
   useEffect(() => {
     if (!splitPane) return;
@@ -364,9 +444,15 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       });
     } else {
       const buffer = bufferedOutput.current[sessionId] || [];
-      if (buffer.length < MAX_BUFFERED_CHUNKS) {
-        bufferedOutput.current[sessionId] = [...buffer, data];
+      buffer.push(data);
+      let size = (bufferedOutputSizes.current[sessionId] || 0) + data.length;
+      while (size > MAX_BUFFERED_BYTES && buffer.length > 1) {
+        const removed = buffer.shift();
+        size -= removed?.length || 0;
+        bufferedOutputDropped.current[sessionId] = true;
       }
+      bufferedOutput.current[sessionId] = buffer;
+      bufferedOutputSizes.current[sessionId] = size;
     }
   }, [applyHighlight]);
 
@@ -382,16 +468,23 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     if (pendingFitFrames.current[id]) window.cancelAnimationFrame(pendingFitFrames.current[id]);
     if (pendingWriteFrames.current[id]) window.cancelAnimationFrame(pendingWriteFrames.current[id]);
     window.clearTimeout(pendingResizeTimers.current[id]);
+    window.clearTimeout(pendingInputTimers.current[id]);
     delete webgl.current[id];
     delete terminals.current[id];
     delete fits.current[id];
     delete searches.current[id];
     delete bufferedOutput.current[id];
+    delete bufferedOutputSizes.current[id];
+    delete bufferedOutputDropped.current[id];
     delete pendingOutput.current[id];
     delete pendingResizeTimers.current[id];
     delete refitTimers.current[id];
     delete pendingFitFrames.current[id];
     delete pendingWriteFrames.current[id];
+    delete pendingInput.current[id];
+    delete pendingInputSizes.current[id];
+    delete pendingInputTimers.current[id];
+    delete lastInputErrorAt.current[id];
     delete cmdBuffer.current[id];
     delete lastDimensions.current[id];
     delete lastHostSize.current[id];
@@ -482,6 +575,8 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     return () => {
       timers.current.forEach((id) => window.clearTimeout(id));
       timers.current.clear();
+      Object.values(pendingInputTimers.current).forEach((id) => window.clearTimeout(id));
+      pendingInputTimers.current = {};
     };
   }, []);
 

@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { ArrowDown, ArrowUp, File, Folder, RefreshCw } from "lucide-react";
+import { ArrowDown, ArrowUp, File, Folder, RefreshCw, X } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { ListLocalDir, LocalHomeDir, ListRemoteDir, UploadFile, DownloadFile } from "../../../wailsjs/go/main/App";
 import { useTransfers } from "../../hooks/useTransfers";
@@ -10,18 +10,26 @@ import { FloatingCard } from "../FloatingCard/FloatingCard";
 
 export function TransferModal({ active, locale, initialLeft, initialTop, onClose }: { active?: { id: string }; locale: string; initialLeft?: number; initialTop?: number; onClose: () => void }) {
   const lang = locale;
+  const activeSessionId = active?.id || "";
   const [localPath, setLocalPath] = useState("");
-  const [remotePath, setRemotePath] = useState("/");
   const [localFiles, setLocalFiles] = useState<types.LocalFile[]>([]);
-  const [remoteFiles, setRemoteFiles] = useState<types.RemoteFile[]>([]);
   const [localBusy, setLocalBusy] = useState(false);
-  const [remoteBusy, setRemoteBusy] = useState(false);
+  const [remoteView, setRemoteView] = useState<{ sessionId: string; path: string; files: types.RemoteFile[]; busy: boolean }>({ sessionId: "", path: "/", files: [], busy: false });
   const [selectedLocal, setSelectedLocal] = useState<Set<string>>(new Set());
   const [selectedRemote, setSelectedRemote] = useState<Set<string>>(new Set());
   const [lastLocalIdx, setLastLocalIdx] = useState(-1);
   const [lastRemoteIdx, setLastRemoteIdx] = useState(-1);
-  const [history, setHistory] = useState<TransferRecord[]>([]);
-  const { transfers } = useTransfers();
+  const { transfers, history, cancelTransfer } = useTransfers();
+  const remoteSeq = useRef(0);
+  const remoteSessionRef = useRef(activeSessionId);
+  if (remoteSessionRef.current !== activeSessionId) {
+    remoteSessionRef.current = activeSessionId;
+    remoteSeq.current += 1;
+  }
+  const remoteMatches = remoteView.sessionId === activeSessionId;
+  const remotePath = remoteMatches ? remoteView.path : "/";
+  const remoteFiles = remoteMatches ? remoteView.files : [];
+  const remoteBusy = remoteMatches && remoteView.busy;
 
   useEffect(() => {
     LocalHomeDir().then((dir) => {
@@ -31,8 +39,12 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
   }, []);
 
   useEffect(() => {
-    if (active) loadRemoteDir(remotePath);
-  }, [active]);
+    remoteSeq.current += 1;
+    setSelectedRemote(new Set());
+    setLastRemoteIdx(-1);
+    setRemoteView({ sessionId: activeSessionId, path: "/", files: [], busy: false });
+    if (activeSessionId) void loadRemoteDir("/");
+  }, [activeSessionId]);
 
   const loadLocalDir = async (dir: string) => {
     setLocalBusy(true);
@@ -48,15 +60,25 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
 
   const loadRemoteDir = async (dir: string) => {
     if (!active) return;
-    setRemoteBusy(true);
+    const sessionId = active.id;
+    if (sessionId !== remoteSessionRef.current) return;
+    const seq = ++remoteSeq.current;
+    setRemoteView((current) => ({
+      sessionId,
+      path: dir,
+      files: current.sessionId === sessionId ? current.files : [],
+      busy: true,
+    }));
     try {
-      const files = await ListRemoteDir(active.id, dir);
-      setRemoteFiles(files || []);
-      setRemotePath(dir);
+      const files = await ListRemoteDir(sessionId, dir);
+      if (seq !== remoteSeq.current || remoteSessionRef.current !== sessionId) return;
+      setRemoteView({ sessionId, path: dir, files: files || [], busy: false });
       setSelectedRemote(new Set());
       setLastRemoteIdx(-1);
-    } catch {}
-    setRemoteBusy(false);
+    } catch {
+      if (seq !== remoteSeq.current || remoteSessionRef.current !== sessionId) return;
+      setRemoteView((current) => current.sessionId === sessionId ? { ...current, busy: false } : current);
+    }
   };
 
   const onLocalClick = (idx: number, e: React.MouseEvent) => {
@@ -99,35 +121,34 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
 
   const uploadSelected = async () => {
     if (!active || selectedLocal.size === 0) return;
+    const sessionId = active.id;
     const files = localFiles.filter((f) => selectedLocal.has(f.path) && !f.isDir);
     for (const file of files) {
+      if (remoteSessionRef.current !== sessionId) return;
       const remoteTarget = remotePath.replace(/\/$/, "") + "/" + file.name;
       try {
-        await UploadFile(active.id, file.path, remoteTarget);
-        setHistory((prev) => [{ name: file.name, direction: "upload" as const, time: new Date() }, ...prev].slice(0, 50));
-      } catch (err) {
-        setHistory((prev) => [{ name: file.name, direction: "upload" as const, time: new Date(), failed: true }, ...prev].slice(0, 50));
-      }
+        await UploadFile(sessionId, file.path, remoteTarget);
+      } catch {}
     }
     loadRemoteDir(remotePath);
   };
 
   const downloadSelected = async () => {
     if (!active || selectedRemote.size === 0) return;
+    const sessionId = active.id;
     const files = remoteFiles.filter((f) => selectedRemote.has(f.path) && !f.isDir);
     for (const file of files) {
+      if (remoteSessionRef.current !== sessionId) return;
       const localTarget = localPath.replace(/\/$/, "") + "/" + file.name;
       try {
-        await DownloadFile(active.id, file.path, localTarget);
-        setHistory((prev) => [{ name: file.name, direction: "download" as const, time: new Date() }, ...prev].slice(0, 50));
-      } catch (err) {
-        setHistory((prev) => [{ name: file.name, direction: "download" as const, time: new Date(), failed: true }, ...prev].slice(0, 50));
-      }
+        await DownloadFile(sessionId, file.path, localTarget);
+      } catch {}
     }
     loadLocalDir(localPath);
   };
 
-  const activeTransfers = Object.entries(transfers);
+  const activeTransfers = Object.entries(transfers).filter(([, transfer]) => transfer.sessionId === activeSessionId);
+  const recentHistory = history.filter((item) => item.sessionId === activeSessionId).slice(0, 20);
 
   return (
     <FloatingCard center={initialLeft == null || initialTop == null} initialLeft={initialLeft} initialTop={initialTop} width={Math.min(860, typeof window !== "undefined" ? window.innerWidth - 32 : 860)} onClose={onClose}>
@@ -174,7 +195,12 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
           <div className="transfer-panel-header">
             <span className="text-xs font-semibold" style={{ color: "var(--accent)" }}>{t(lang, "remote")}</span>
             <div className="transfer-path-row">
-              <input className="transfer-input" value={remotePath} onChange={(e) => setRemotePath(e.target.value)} onKeyDown={(e) => e.key === "Enter" && loadRemoteDir(remotePath)} />
+              <input
+                className="transfer-input"
+                value={remotePath}
+                onChange={(e) => setRemoteView((current) => ({ ...current, sessionId: activeSessionId, path: e.target.value }))}
+                onKeyDown={(e) => e.key === "Enter" && loadRemoteDir(remotePath)}
+              />
               <button className="transfer-icon-btn" onClick={() => loadRemoteDir(remotePath)}><RefreshCw size={12} /></button>
             </div>
           </div>
@@ -196,7 +222,7 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
         </div>
       </div>
 
-      {(activeTransfers.length > 0 || history.length > 0) && (
+      {(activeTransfers.length > 0 || recentHistory.length > 0) && (
         <div className="transfer-progress-section">
           <div className="transfer-progress-header">
             <span className="text-[10px] font-semibold" style={{ color: "var(--muted)" }}>{t(lang, "transferProgress")}</span>
@@ -213,14 +239,17 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
                   <div className="transfer-progress-bar" style={{ width: `${pct}%` }} />
                 </div>
                 <span className="text-[9px] text-muted shrink-0 w-8 text-right tabular-nums">{pct}%</span>
+                <button className="mini-btn" onClick={() => void cancelTransfer(tr.jobId)} title={t(lang, "cancel")}><X size={10} /></button>
               </div>
             );
           })}
-          {history.map((h, i) => (
-            <div key={i} className="transfer-progress-item" style={{ opacity: 0.5 }}>
-              {h.direction === "upload" ? <ArrowUp size={11} className={h.failed ? "text-bad shrink-0" : "text-ok shrink-0"} /> : <ArrowDown size={11} className={h.failed ? "text-bad shrink-0" : "text-ok shrink-0"} />}
+          {recentHistory.map((h) => (
+            <div key={h.key} className="transfer-progress-item" style={{ opacity: 0.5 }}>
+              {h.direction === "upload" ? <ArrowUp size={11} className={h.ok ? "text-ok shrink-0" : "text-bad shrink-0"} /> : <ArrowDown size={11} className={h.ok ? "text-ok shrink-0" : "text-bad shrink-0"} />}
               <span className="min-w-0 flex-1 truncate text-[10px]">{h.name}</span>
-              <span className={h.failed ? "text-[9px] text-bad shrink-0" : "text-[9px] text-ok shrink-0"}>{h.failed ? t(lang, "transferFailed") : t(lang, "transferComplete")}</span>
+              <span className={h.ok ? "text-[9px] text-ok shrink-0" : "text-[9px] text-bad shrink-0"} title={h.error}>
+                {h.ok ? t(lang, "transferComplete") : h.status === "cancelled" ? t(lang, "transferCancelled") : t(lang, "transferFailed")}
+              </span>
             </div>
           ))}
         </div>
@@ -228,10 +257,3 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
     </FloatingCard>
   );
 }
-
-type TransferRecord = {
-  name: string;
-  direction: "upload" | "download";
-  time: Date;
-  failed?: boolean;
-};

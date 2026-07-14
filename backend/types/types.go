@@ -77,6 +77,12 @@ type TerminalSettings struct {
 	ThemeName         string  `json:"themeName"`
 	BackgroundOpacity float64 `json:"backgroundOpacity"`
 	ScrollbackLines   int     `json:"scrollbackLines"`
+	// LocalShell is an optional executable name or absolute path used for new
+	// local terminals. Empty and "auto" keep the platform default.
+	LocalShell string `json:"localShell,omitempty"`
+	// LocalStartDirectory is expanded when a local terminal is opened. Empty
+	// means the current user's home directory.
+	LocalStartDirectory string `json:"localStartDirectory,omitempty"`
 }
 
 type CommandTemplate struct {
@@ -256,9 +262,12 @@ type AiToolResult struct {
 }
 
 type AiChatRequest struct {
-	Messages  []AiMessage `json:"messages"`
-	Context   string      `json:"context"`
-	SessionID string      `json:"sessionId"`
+	Messages    []AiMessage `json:"messages"`
+	Context     string      `json:"context"`
+	SessionID   string      `json:"sessionId"`
+	ChatID      string      `json:"chatId"`
+	RequestID   string      `json:"requestId"`
+	EnableTools bool        `json:"enableTools"`
 }
 
 type AiTokenUsage struct {

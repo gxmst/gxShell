@@ -13,10 +13,11 @@ export function TransferCenter(props: {
   onUpload: () => void;
 }) {
   const lang = props.locale;
-  const { transfers, history, activeCount, removeTransfer, clearHistory } = useTransfers();
+  const { transfers, history, activeCount, cancelTransfer, clearHistory } = useTransfers();
 
   const active = Object.entries(transfers).filter(([, tr]) => !props.sessionId || tr.sessionId === props.sessionId);
   const recent = history.filter((h) => !props.sessionId || h.sessionId === props.sessionId).slice(0, 20);
+  const visibleActiveCount = props.sessionId ? active.length : activeCount;
 
   return (
     <FloatingCard
@@ -31,8 +32,8 @@ export function TransferCenter(props: {
           <div>
             <div className="xfer-center-title">{t(lang, "transferManager")}</div>
             <div className="xfer-center-sub">
-              {activeCount > 0
-                ? t(lang, "transferActiveCount", { n: String(activeCount) })
+              {visibleActiveCount > 0
+                ? t(lang, "transferActiveCount", { n: String(visibleActiveCount) })
                 : t(lang, "noActiveTransfer")}
             </div>
           </div>
@@ -68,7 +69,7 @@ export function TransferCenter(props: {
                         : <ArrowDownToLine size={13} className="text-accent shrink-0" />}
                       <span className="xfer-center-item-name" title={tr.path}>{name}</span>
                       <span className="xfer-center-item-pct">{pct}%</span>
-                      <button className="mini-btn" onClick={() => removeTransfer(key)} title={t(lang, "close")}>
+                      <button className="mini-btn" onClick={() => void cancelTransfer(tr.jobId)} title={t(lang, "cancel")}>
                         <X size={11} />
                       </button>
                     </div>
@@ -107,8 +108,8 @@ export function TransferCenter(props: {
                     ? <ArrowUpFromLine size={12} className="text-muted shrink-0" />
                     : <ArrowDownToLine size={12} className="text-muted shrink-0" />}
                   <span className="xfer-center-item-name" title={h.path}>{h.name}</span>
-                  <span className={h.ok ? "text-ok text-[10px]" : "text-bad text-[10px]"}>
-                    {h.ok ? t(lang, "transferComplete") : t(lang, "transferFailed")}
+                  <span className={h.ok ? "text-ok text-[10px]" : "text-bad text-[10px]"} title={h.error}>
+                    {h.ok ? t(lang, "transferComplete") : h.status === "cancelled" ? t(lang, "transferCancelled") : t(lang, "transferFailed")}
                   </span>
                 </div>
               ))}

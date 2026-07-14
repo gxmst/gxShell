@@ -57,6 +57,7 @@ type ChatRequest struct {
 	Context     string       `json:"context,omitempty"`
 	Stream      bool         `json:"stream"`
 	ToolResults []ToolResult `json:"tool_results,omitempty"`
+	EnableTools bool         `json:"enable_tools,omitempty"`
 }
 
 type ChatResponse struct {
@@ -262,7 +263,7 @@ func (m *Manager) ChatWithContext(ctx context.Context, req ChatRequest, onChunk 
 		return fmt.Errorf("AI endpoint not configured")
 	}
 
-	systemMsg := Message{Role: "system", Content: m.buildSystemPrompt(req.Context)}
+	systemMsg := Message{Role: "system", Content: m.buildSystemPrompt(req.Context, req.EnableTools)}
 	messages := append([]Message{systemMsg}, req.Messages...)
 
 	apiMessages := make([]map[string]any, len(messages))
@@ -304,7 +305,9 @@ func (m *Manager) ChatWithContext(ctx context.Context, req ChatRequest, onChunk 
 		"model":    cfg.Model,
 		"messages": apiMessages,
 		"stream":   true,
-		"tools":    getToolsDefinition(),
+	}
+	if req.EnableTools {
+		body["tools"] = getToolsDefinition()
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
@@ -363,7 +366,7 @@ func (m *Manager) resolveEndpoint(cfg Config) string {
 	return "https://api.openai.com/v1/chat/completions"
 }
 
-func (m *Manager) buildSystemPrompt(context string) string {
+func (m *Manager) buildSystemPrompt(context string, enableTools bool) string {
 	base := `You are an AI assistant integrated into gxShell, a terminal/SSH client application. You help users diagnose and solve problems in their terminal sessions. Be concise, practical, and provide actionable advice. Format your responses in markdown.
 
 You have access to tools that let you execute commands and read files on the user's remote server. You MUST use them proactively and CONTINUOUSLY until the problem is fully resolved. Do NOT stop after a single step; chain multiple tool calls together to complete the entire workflow.
@@ -388,6 +391,11 @@ IMPORTANT notes about command execution:
 - Always analyze the OUTPUT content, not just the exit code. If the output has useful info, proceed with the next step.
 - When you find a problem, fix it directly (sed, rm, mv, etc.). Don't just report it and wait.
 - Use sed -i for in-place file edits. Use full paths for reliability.`
+	if !enableTools {
+		base = `You are an AI assistant integrated into gxShell, a terminal/SSH client application. You help users diagnose and solve problems in their terminal sessions. Be concise, practical, and provide actionable advice. Format your responses in markdown.
+
+No connected remote target is available for tool execution. Do not claim that you ran commands or read files; provide instructions the user can run after connecting a target.`
+	}
 	if context != "" {
 		base += "\n\nCurrent terminal output context:\n```\n" + context + "\n```"
 	}

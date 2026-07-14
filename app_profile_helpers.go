@@ -36,10 +36,19 @@ func (a *App) saveProfileSecrets(profile *types.Profile) error {
 		a.secrets.Delete(profile.ID)
 		return nil
 	}
-	if err := a.secrets.SavePassword(profile.ID, password); err != nil {
-		return err
+	// Sanitized profiles intentionally round-trip with empty credential fields.
+	// Treat those empty values as "keep the stored value", not "replace it with
+	// empty". Clearing both credentials remains an explicit operation: turn off
+	// RememberPassword. Non-empty fields replace only the supplied secret kind.
+	if password != "" {
+		if err := a.secrets.SavePassword(profile.ID, password); err != nil {
+			return err
+		}
 	}
-	return a.secrets.SavePassphrase(profile.ID, passphrase)
+	if passphrase != "" {
+		return a.secrets.SavePassphrase(profile.ID, passphrase)
+	}
+	return nil
 }
 
 // loadProfileSecrets retrieves profile credentials from secure storage.

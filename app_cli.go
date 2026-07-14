@@ -164,6 +164,11 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A CLI-created or otherwise backend-only session has no React tab yet.
+	// Announce the selected session on every request; the frontend handles this
+	// idempotently, so existing visible tabs are reused and hidden sessions are
+	// surfaced before their automation output arrives.
+	a.announceCliSession(sessionID)
 	activityID := a.beginTerminalAutomation(sessionID, "cli", "execute_command", req.Command)
 	result, err := a.ssh.ExecuteCommandResult(sessionID, req.Command, timeout, cliOutputLimit)
 	if err != nil {
@@ -381,19 +386,90 @@ func (a *App) cliSessionForProfile(profileID string) (string, bool, error) {
 		call.res = cliConnectResult{err: err}
 		return "", false, err
 	}
+	a.rememberCliSession(profileID, info.ID)
 	call.res = cliConnectResult{sessionID: info.ID, reused: false}
 	return info.ID, false, nil
 }
 
 // findCliSession returns the session ID of a connected SSH session for the
-// given profile, or "" if none exists.
+// given profile, or "" if none exists. Once a session is selected for a
+// profile, keep using it while it remains connected instead of depending on
+// Go map iteration order.
 func (a *App) findCliSession(profileID string) string {
-	for _, session := range a.ssh.List() {
+	a.cliSessionMu.Lock()
+	defer a.cliSessionMu.Unlock()
+	if a.cliPreferredSessions == nil {
+		a.cliPreferredSessions = map[string]string{}
+	}
+	sessionID := chooseConnectedCliSession(profileID, a.cliPreferredSessions[profileID], a.ssh.List())
+	if sessionID == "" {
+		delete(a.cliPreferredSessions, profileID)
+		return ""
+	}
+	a.cliPreferredSessions[profileID] = sessionID
+	return sessionID
+}
+
+func chooseConnectedCliSession(profileID, preferredID string, sessions []types.SessionInfo) string {
+	if preferredID != "" {
+		for _, session := range sessions {
+			if session.ID == preferredID && session.ProfileID == profileID && session.State == types.SessionConnected {
+				return preferredID
+			}
+		}
+	}
+	for _, session := range sessions {
 		if session.ProfileID == profileID && session.State == types.SessionConnected {
 			return session.ID
 		}
 	}
 	return ""
+}
+
+func (a *App) rememberCliSession(profileID, sessionID string) {
+	if profileID == "" || sessionID == "" {
+		return
+	}
+	a.cliSessionMu.Lock()
+	if a.cliPreferredSessions == nil {
+		a.cliPreferredSessions = map[string]string{}
+	}
+	a.cliPreferredSessions[profileID] = sessionID
+	a.cliSessionMu.Unlock()
+}
+
+func (a *App) forgetCliSession(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	a.cliSessionMu.Lock()
+	for profileID, preferredID := range a.cliPreferredSessions {
+		if preferredID == sessionID {
+			delete(a.cliPreferredSessions, profileID)
+		}
+	}
+	a.cliSessionMu.Unlock()
+}
+
+func (a *App) announceCliSession(sessionID string) {
+	info, err := a.ssh.Get(sessionID)
+	if err != nil {
+		return
+	}
+	a.emitCliSessionAvailable(info)
+}
+
+func (a *App) emitCliSessionAvailable(info types.SessionInfo) {
+	if info.ID == "" {
+		return
+	}
+	if a.cliSessionEventFn != nil {
+		a.cliSessionEventFn(info)
+		return
+	}
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "terminal:cli-session", info)
+	}
 }
 
 func (a *App) confirmCliExecution(serverName, command string) bool {

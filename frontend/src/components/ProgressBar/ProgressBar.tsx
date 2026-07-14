@@ -3,7 +3,7 @@ import { useTransfers } from "../../hooks/useTransfers";
 
 /** Compact bottom chips for in-flight SFTP jobs. Full history lives in Transfer manager. */
 export function ProgressBar() {
-  const { transfers, removeTransfer } = useTransfers();
+  const { transfers, cancelTransfer } = useTransfers();
 
   const items = Object.entries(transfers);
   if (!items.length) return null;
@@ -30,7 +30,7 @@ export function ProgressBar() {
                 />
               </div>
               <span className="transfer-progress-chip-pct">{pct}%</span>
-              <button className="transfer-progress-chip-close" onClick={() => removeTransfer(key)} title="Dismiss">
+              <button className="transfer-progress-chip-close" onClick={() => void cancelTransfer(tr.jobId)} title="Cancel">
                 <X size={10} />
               </button>
             </div>

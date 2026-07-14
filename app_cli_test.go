@@ -100,3 +100,34 @@ func TestCliProfileNameDoesNotExposeProfileName(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestChooseConnectedCliSessionKeepsPreferredSession(t *testing.T) {
+	sessions := []types.SessionInfo{
+		{ID: "session-b", ProfileID: "profile-1", State: types.SessionConnected},
+		{ID: "session-a", ProfileID: "profile-1", State: types.SessionConnected},
+		{ID: "session-other", ProfileID: "profile-2", State: types.SessionConnected},
+	}
+	if got := chooseConnectedCliSession("profile-1", "session-a", sessions); got != "session-a" {
+		t.Fatalf("preferred session = %q, want session-a", got)
+	}
+	if got := chooseConnectedCliSession("profile-1", "missing", sessions); got != "session-b" {
+		t.Fatalf("fallback session = %q, want session-b", got)
+	}
+	sessions[1].State = types.SessionDisconnected
+	if got := chooseConnectedCliSession("profile-1", "session-a", sessions); got != "session-b" {
+		t.Fatalf("stale preferred fallback = %q, want session-b", got)
+	}
+}
+
+func TestCliSessionAvailableUsesEventSeam(t *testing.T) {
+	app := NewApp()
+	var got types.SessionInfo
+	app.cliSessionEventFn = func(info types.SessionInfo) {
+		got = info
+	}
+	want := types.SessionInfo{ID: "session-1", ProfileID: "profile-1", State: types.SessionConnected}
+	app.emitCliSessionAvailable(want)
+	if got.ID != want.ID || got.ProfileID != want.ProfileID || got.State != want.State {
+		t.Fatalf("event = %#v, want %#v", got, want)
+	}
+}

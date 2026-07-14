@@ -153,6 +153,14 @@ func (a *App) ReadRecording(name string) (string, error) {
 		return "", fmt.Errorf("invalid recording name")
 	}
 	path := filepath.Join(a.recordingsDir(), name)
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	const maxPlaybackSize = 64 * 1024 * 1024
+	if info.Size() > maxPlaybackSize {
+		return "", fmt.Errorf("recording is too large for the built-in player (%d MB, max 64 MB); open it with asciinema instead", info.Size()/(1024*1024))
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err

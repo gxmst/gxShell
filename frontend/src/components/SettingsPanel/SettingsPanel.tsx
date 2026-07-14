@@ -135,6 +135,20 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
             <SettingsField label={t(lang, "size")}><input className="input compact-input" type="number" min={9} max={30} value={draft.terminal.fontSize} onChange={(event) => updateTerm({ fontSize: Number(event.target.value) })} /></SettingsField>
             <SettingsField label={t(lang, "font")} wide><select className="input compact-input" value={draft.terminal.fontFamily} onChange={(event) => updateTerm({ fontFamily: event.target.value })}>{fontPresets.map((font) => <option key={font} value={font}>{font.split(",")[0].trim()}</option>)}</select></SettingsField>
             <SettingsField label={t(lang, "highlighting")} wide><select className="input compact-input" value={draft.highlightLevel || "off"} onChange={(event) => update({ highlightLevel: event.target.value })}><option value="off">{t(lang, "highlightOff")}</option><option value="basic">{t(lang, "highlightBasic")}</option><option value="full">{t(lang, "highlightFull")}</option></select></SettingsField>
+            <SettingsField
+              label={zh ? "本地 Shell" : "Local shell"}
+              hint={zh ? "留空或填写 auto 自动选择；也可填写 pwsh.exe、cmd.exe、wsl.exe 或完整路径。下次新建本地终端生效。" : "Leave blank or use auto, or enter pwsh.exe, cmd.exe, wsl.exe, or a full executable path. Applies to new local terminals."}
+              wide
+            >
+              <input className="input compact-input" value={draft.terminal.localShell || ""} placeholder="auto" onChange={(event) => updateTerm({ localShell: event.target.value })} />
+            </SettingsField>
+            <SettingsField
+              label={zh ? "本地终端起始目录" : "Local start directory"}
+              hint={zh ? "留空时使用用户主目录；支持 ~ 和环境变量。" : "Uses your home directory when blank; supports ~ and environment variables."}
+              wide
+            >
+              <input className="input compact-input" value={draft.terminal.localStartDirectory || ""} placeholder="~" onChange={(event) => updateTerm({ localStartDirectory: event.target.value })} />
+            </SettingsField>
           </div>
           <SettingsToggle checked={draft.smartHighlight !== false} onChange={(checked) => update({ smartHighlight: checked })} label={t(lang, "clickableLinks")} hint={t(lang, "clickableLinksHint")} />
         </SettingsSection>

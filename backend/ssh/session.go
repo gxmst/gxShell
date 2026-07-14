@@ -52,15 +52,17 @@ type Manager struct {
 type KeyboardInteractivePrompt func(sessionID, name, instruction string, questions []string, echos []bool) ([]string, error)
 
 type Session struct {
-	info       types.SessionInfo
-	client     *ssh.Client
-	jumpClient *ssh.Client
-	shell      *ssh.Session
-	stdin      io.WriteCloser
-	done       chan struct{}
-	closeOnce  sync.Once
-	mu         sync.RWMutex
-	recorder   *castRecorder
+	info        types.SessionInfo
+	client      *ssh.Client
+	jumpClient  *ssh.Client
+	shell       *ssh.Session
+	stdin       io.WriteCloser
+	writer      *termio.WriteQueue
+	pendingConn net.Conn
+	done        chan struct{}
+	closeOnce   sync.Once
+	mu          sync.RWMutex
+	recorder    *castRecorder
 }
 
 func NewManager(knownHostsPath string, emit func(event string, data any), confirm func(host, fingerprint string) bool) *Manager {
@@ -152,13 +154,34 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 			m.failConnect(id, fmt.Errorf("jump host connection failed: %w", err), nil, nil, nil)
 			return info, err
 		}
+		if !session.trackPendingConn(jumpConn) {
+			_ = jumpConn.Close()
+			return info, errors.New("connection cancelled")
+		}
+		// ssh.ClientConfig.Timeout is only honoured by ssh.Dial. We establish the
+		// socket ourselves, so protect the SSH banner/key-exchange phase with an
+		// explicit deadline as well; a peer that accepts TCP and then stays silent
+		// must not leave Connect blocked forever.
+		_ = jumpConn.SetDeadline(time.Now().Add(time.Duration(timeoutSec) * time.Second))
 		jumpClientConn, chans, reqs, err := ssh.NewClientConn(jumpConn, jumpAddr, jumpConfig)
 		if err != nil {
 			_ = jumpConn.Close()
 			m.failConnect(id, fmt.Errorf("jump host SSH handshake failed: %w", err), nil, nil, nil)
 			return info, err
 		}
+		session.clearPendingConn(jumpConn)
+		_ = jumpConn.SetDeadline(time.Time{})
 		jumpClient = ssh.NewClient(jumpClientConn, chans, reqs)
+		session.mu.Lock()
+		select {
+		case <-session.done:
+			session.mu.Unlock()
+			_ = jumpClient.Close()
+			return info, errors.New("connection cancelled")
+		default:
+			session.jumpClient = jumpClient
+		}
+		session.mu.Unlock()
 
 		targetAddr := sshAddress(profile.Host, profile.Port)
 		dialCtx, dialCancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
@@ -168,6 +191,13 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 			m.failConnect(id, fmt.Errorf("jump host cannot reach target %s: %w", targetAddr, err), nil, jumpClient, nil)
 			return info, err
 		}
+		if !session.trackPendingConn(targetConn) {
+			dialCancel()
+			_ = targetConn.Close()
+			_ = jumpClient.Close()
+			return info, errors.New("connection cancelled")
+		}
+		_ = targetConn.SetDeadline(time.Now().Add(time.Duration(timeoutSec) * time.Second))
 		targetClientConn, chans, reqs, err := ssh.NewClientConn(targetConn, targetAddr, config)
 		dialCancel()
 		if err != nil {
@@ -175,6 +205,8 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 			m.failConnect(id, fmt.Errorf("target SSH handshake via jump failed: %w", err), nil, jumpClient, nil)
 			return info, err
 		}
+		session.clearPendingConn(targetConn)
+		_ = targetConn.SetDeadline(time.Time{})
 		client = ssh.NewClient(targetClientConn, chans, reqs)
 	} else {
 		addr := sshAddress(profile.Host, profile.Port)
@@ -183,13 +215,33 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 			m.failConnect(id, err, nil, nil, nil)
 			return info, err
 		}
+		if !session.trackPendingConn(conn) {
+			_ = conn.Close()
+			return info, errors.New("connection cancelled")
+		}
+		_ = conn.SetDeadline(time.Now().Add(time.Duration(timeoutSec) * time.Second))
 		clientConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
 		if err != nil {
 			m.failConnect(id, err, nil, nil, conn)
 			return info, err
 		}
+		session.clearPendingConn(conn)
+		_ = conn.SetDeadline(time.Time{})
 		client = ssh.NewClient(clientConn, chans, reqs)
 	}
+	session.mu.Lock()
+	select {
+	case <-session.done:
+		session.mu.Unlock()
+		_ = client.Close()
+		if jumpClient != nil {
+			_ = jumpClient.Close()
+		}
+		return info, errors.New("connection cancelled")
+	default:
+		session.client = client
+	}
+	session.mu.Unlock()
 	shell, err := client.NewSession()
 	if err != nil {
 		m.failConnect(id, err, client, jumpClient, nil)
@@ -251,6 +303,22 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 	session.jumpClient = jumpClient
 	session.shell = shell
 	session.stdin = stdin
+	session.writer = termio.NewWriteQueue(session.done, 1024*1024, func(data []byte) error {
+		session.mu.RLock()
+		input := session.stdin
+		session.mu.RUnlock()
+		if input == nil {
+			return errors.New("terminal is not writable")
+		}
+		_, writeErr := input.Write(data)
+		return writeErr
+	}, func(writeErr error) {
+		m.emit("terminal:error", map[string]any{
+			"sessionId": id,
+			"error":     "terminal input failed: " + writeErr.Error(),
+		})
+		go func() { _ = m.Disconnect(id) }()
+	})
 	session.info.State = types.SessionConnected
 	info = session.info
 	session.mu.Unlock()
@@ -364,18 +432,13 @@ func (m *Manager) Write(id string, data string) error {
 	if err != nil {
 		return err
 	}
-	// Copy the pipe under the lock but write outside it: an SSH channel write
-	// blocks indefinitely when the remote stops draining its window, and if that
-	// happened while holding the lock, Disconnect could never acquire it to run
-	// client.Close() — the only call that unblocks the stuck writer.
 	session.mu.RLock()
-	stdin := session.stdin
+	writer := session.writer
 	session.mu.RUnlock()
-	if stdin == nil {
+	if writer == nil {
 		return errors.New("terminal is not writable")
 	}
-	_, err = stdin.Write([]byte(data))
-	return err
+	return writer.Enqueue([]byte(data))
 }
 
 func (m *Manager) Resize(id string, cols int, rows int) error {
@@ -476,6 +539,8 @@ func (m *Manager) Disconnect(id string) error {
 		shell := session.shell
 		client := session.client
 		jumpClient := session.jumpClient
+		pendingConn := session.pendingConn
+		session.pendingConn = nil
 		// Take the recorder under the lock but flush/close it after unlocking:
 		// most disconnects (shell.Wait returning, keepalive failure, user close)
 		// go through here rather than StopRecording, so without this an in-progress
@@ -495,6 +560,9 @@ func (m *Manager) Disconnect(id string) error {
 		// messages over that same dead link and could block forever.
 		if client != nil {
 			_ = client.Close()
+		}
+		if pendingConn != nil {
+			_ = pendingConn.Close()
 		}
 		if jumpClient != nil {
 			_ = jumpClient.Close()
@@ -617,6 +685,29 @@ func (m *Manager) get(id string) (*Session, error) {
 		return nil, errors.New("session not found")
 	}
 	return session, nil
+}
+
+// trackPendingConn makes an in-flight TCP/forwarded connection reachable from
+// Disconnect. This lets the user cancel during the SSH banner/key-exchange
+// phase instead of merely hiding the tab and waiting for the handshake deadline.
+func (s *Session) trackPendingConn(conn net.Conn) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.done:
+		return false
+	default:
+		s.pendingConn = conn
+		return true
+	}
+}
+
+func (s *Session) clearPendingConn(conn net.Conn) {
+	s.mu.Lock()
+	if s.pendingConn == conn {
+		s.pendingConn = nil
+	}
+	s.mu.Unlock()
 }
 
 type CommandExecutionResult struct {

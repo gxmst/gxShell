@@ -92,23 +92,32 @@ export function SftpPanel(props: {
 }) {
   const { active, path, files, busy, locale, onRefresh, onNotify } = props;
   const lang = locale || "en";
+  const activeSessionId = active?.id || "";
   const { activeCount } = useTransfers();
 
-  const [draftPath, setDraftPath] = useState(path);
+  const [draftPathState, setDraftPathState] = useState({ sessionId: activeSessionId, value: path });
   const [pathFocus, setPathFocus] = useState(false);
   const [suggestDirs, setSuggestDirs] = useState<types.RemoteFile[]>([]);
+  const [suggestSessionId, setSuggestSessionId] = useState(activeSessionId);
   const [suggestBusy, setSuggestBusy] = useState(false);
+  const [suggestBusySessionId, setSuggestBusySessionId] = useState(activeSessionId);
   const [dialog, setDialog] = useState<DialogState>(null);
   const [panel, setPanel] = useState<"manager" | "explorer" | null>(null);
   const [filter, setFilter] = useState("");
-  const [selectedPath, setSelectedPath] = useState("");
+  const [selectedPathState, setSelectedPathState] = useState({ sessionId: activeSessionId, value: "" });
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortAsc, setSortAsc] = useState(true);
   const modifiedFormatter = useMemo(() => new Intl.DateTimeFormat(lang, { month: "short", day: "2-digit" }), [lang]);
   const pathWrapRef = useRef<HTMLDivElement>(null);
   const suggestSeq = useRef(0);
+  const draftPath = draftPathState.sessionId === activeSessionId ? draftPathState.value : path;
+  const selectedPath = selectedPathState.sessionId === activeSessionId ? selectedPathState.value : "";
+  const visibleSuggestDirs = suggestSessionId === activeSessionId ? suggestDirs : [];
+  const visibleSuggestBusy = suggestBusySessionId === activeSessionId && suggestBusy;
+  const setDraftPath = (value: string) => setDraftPathState({ sessionId: activeSessionId, value });
+  const setSelectedPath = (value: string) => setSelectedPathState({ sessionId: activeSessionId, value });
 
-  useEffect(() => setDraftPath(path), [path]);
+  useEffect(() => setDraftPath(path), [activeSessionId, path]);
 
   // Close suggestions when clicking outside.
   useEffect(() => {
@@ -127,22 +136,28 @@ export function SftpPanel(props: {
 
   // Load directory listing for autocomplete base path.
   useEffect(() => {
+    const seq = ++suggestSeq.current;
     if (!pathFocus || !active || active.type === "markdown") return;
     const base = suggestBase || ".";
     // Current listing is enough when suggesting under the open folder.
     if (base === path || base === path.replace(/\/$/, "") || (base === "." && (path === "." || path === ""))) {
+      setSuggestSessionId(active.id);
       setSuggestDirs(files.filter((f) => f.isDir));
+      setSuggestBusySessionId(active.id);
+      setSuggestBusy(false);
       return;
     }
-    const seq = ++suggestSeq.current;
+    setSuggestBusySessionId(active.id);
     setSuggestBusy(true);
     ListRemoteDir(active.id, base)
       .then((list) => {
         if (seq !== suggestSeq.current) return;
+        setSuggestSessionId(active.id);
         setSuggestDirs((list || []).filter((f) => f.isDir));
       })
       .catch(() => {
         if (seq !== suggestSeq.current) return;
+        setSuggestSessionId(active.id);
         setSuggestDirs([]);
       })
       .finally(() => {
@@ -153,7 +168,7 @@ export function SftpPanel(props: {
   const suggestions = useMemo(() => {
     const out: PathSuggest[] = [];
     const q = suggestPrefix.toLowerCase();
-    const dirs = suggestDirs
+    const dirs = visibleSuggestDirs
       .filter((d) => !q || d.name.toLowerCase().includes(q) || d.name.toLowerCase().startsWith(q))
       .slice(0, 24);
     for (const d of dirs) {
@@ -169,7 +184,7 @@ export function SftpPanel(props: {
       }
     }
     return out;
-  }, [suggestDirs, suggestPrefix, draftPath, path]);
+  }, [visibleSuggestDirs, suggestPrefix, draftPath, path]);
 
   const breadcrumbs = useMemo(() => pathSegments(path), [path]);
 
@@ -367,12 +382,12 @@ export function SftpPanel(props: {
                 <div className="sftp-suggest-head">
                   <FolderOpen size={12} />
                   <span>
-                    {suggestBusy
+                    {visibleSuggestBusy
                       ? t(lang, "loading")
                       : t(lang, "pathSuggestions", { path: suggestBase || path })}
                   </span>
                 </div>
-                {suggestions.length === 0 && !suggestBusy && (
+                {suggestions.length === 0 && !visibleSuggestBusy && (
                   <div className="sftp-suggest-empty">{t(lang, "noPathSuggestions")}</div>
                 )}
                 {suggestions.map((s) => (

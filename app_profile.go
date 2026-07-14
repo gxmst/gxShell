@@ -121,6 +121,11 @@ func (a *App) DuplicateProfile(id string) (types.Profile, error) {
 	}
 	profile.ID = ""
 	profile.Name = profile.Name + " Copy"
+	// GetProfile never exposes credentials. Keeping RememberPassword=true on a
+	// copy would therefore create a misleading profile that claims to have a
+	// saved secret but cannot connect without prompting. Copies deliberately
+	// start with credential saving disabled and can be opted in after re-entry.
+	profile.RememberPassword = false
 	return a.CreateProfile(profile)
 }
 

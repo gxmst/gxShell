@@ -109,6 +109,7 @@ func (a *App) ConnectWithSecrets(profileID string, password string, privateKeyPa
 
 // Disconnect closes an SSH session and cleans up resources.
 func (a *App) Disconnect(sessionID string) error {
+	a.forgetCliSession(sessionID)
 	a.monitor.Stop(sessionID)
 	a.sftp.InvalidateClient(sessionID)
 	a.tunnels.StopTunnels(sessionID)
@@ -123,7 +124,11 @@ func (a *App) Disconnect(sessionID string) error {
 
 // ConnectLocal establishes a local terminal session.
 func (a *App) ConnectLocal(cols int, rows int) (types.SessionInfo, error) {
-	return a.local.Connect(cols, rows)
+	settings, err := a.store.GetSettings()
+	if err != nil {
+		settings = config.DefaultSettings()
+	}
+	return a.local.ConnectWithOptions(settings.Terminal.LocalShell, settings.Terminal.LocalStartDirectory, cols, rows)
 }
 
 // Reconnect re-establishes a disconnected SSH session.

@@ -6,6 +6,19 @@ import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import { t } from "../../i18n";
 import type { Tab, Toast } from "../../types";
 
+const MAX_LOG_CHARS = 512 * 1024;
+const LOG_FLUSH_MS = 75;
+
+function nextLogStreamId() {
+  return `docker-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function appendBoundedLog(previous: string, chunk: string) {
+  const combined = previous + chunk;
+  if (combined.length <= MAX_LOG_CHARS) return combined;
+  return `[gxShell: older Docker log output was truncated]\n${combined.slice(combined.length - MAX_LOG_CHARS)}`;
+}
+
 export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: (text: string, tone?: Toast["tone"]) => void }) {
   const lang = props.locale;
   const [containers, setContainers] = useState<types.ContainerInfo[]>([]);
@@ -17,6 +30,30 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval>>();
   const logEndRef = useRef<HTMLDivElement>(null);
+  const logStreamIdRef = useRef<string | null>(null);
+  const pendingLogRef = useRef("");
+  const pendingLogTimerRef = useRef<number | null>(null);
+
+  const flushPendingLogs = useCallback(() => {
+    if (pendingLogTimerRef.current !== null) {
+      window.clearTimeout(pendingLogTimerRef.current);
+      pendingLogTimerRef.current = null;
+    }
+    const chunk = pendingLogRef.current;
+    pendingLogRef.current = "";
+    if (chunk) setLogs((previous) => appendBoundedLog(previous, chunk));
+  }, []);
+
+  const queueLogChunk = useCallback((chunk: string) => {
+    pendingLogRef.current += chunk;
+    if (pendingLogRef.current.length >= 32 * 1024) {
+      flushPendingLogs();
+      return;
+    }
+    if (pendingLogTimerRef.current === null) {
+      pendingLogTimerRef.current = window.setTimeout(flushPendingLogs, LOG_FLUSH_MS);
+    }
+  }, [flushPendingLogs]);
 
   const refresh = useCallback(async () => {
     if (!props.active?.id) return;
@@ -48,58 +85,77 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   const onNotifyRef = useRef(props.onNotify);
   onNotifyRef.current = props.onNotify;
 
-  const activeIdRef = useRef(props.active?.id);
-  activeIdRef.current = props.active?.id;
-
-  const logContainerIdRef = useRef<string | null>(null);
-
   useEffect(() => {
     const off = EventsOn("docker:log", (data: any) => {
-      if (data.containerID && data.containerID !== logContainerIdRef.current) return;
+      if (!data?.streamID || data.streamID !== logStreamIdRef.current) return;
       if (data.done === "true") {
+        flushPendingLogs();
+        logStreamIdRef.current = null;
         setLogStreaming(false);
         return;
       }
       if (data.data) {
-        setLogs((prev) => prev + data.data);
+        queueLogChunk(String(data.data));
       }
     });
     return () => off();
-  }, []);
+  }, [flushPendingLogs, queueLogChunk]);
+
+  useEffect(() => {
+    const streamID = logStreamIdRef.current;
+    if (streamID) StopContainerLogs(streamID).catch(() => {});
+    logStreamIdRef.current = null;
+    pendingLogRef.current = "";
+    if (pendingLogTimerRef.current !== null) {
+      window.clearTimeout(pendingLogTimerRef.current);
+      pendingLogTimerRef.current = null;
+    }
+    setLogContainer(null);
+    setLogs("");
+    setLogStreaming(false);
+  }, [props.active?.id]);
 
   const viewLogs = useCallback(async (c: types.ContainerInfo) => {
     if (!props.active?.id) return;
-    const previous = logContainerIdRef.current;
-    if (previous && previous !== c.id) {
-      await StopContainerLogs(props.active.id, previous).catch(() => {});
+    const previousStream = logStreamIdRef.current;
+    if (previousStream) {
+      await StopContainerLogs(previousStream).catch(() => {});
     }
+    flushPendingLogs();
+    const streamID = nextLogStreamId();
     setLogContainer(c);
-    logContainerIdRef.current = c.id;
+    logStreamIdRef.current = streamID;
     setLogs("");
     setLogStreaming(true);
     try {
-      await StreamContainerLogs(props.active.id, c.id, 200);
+      await StreamContainerLogs(props.active.id, c.id, streamID, 200);
     } catch (err) {
-      setLogStreaming(false);
+      if (logStreamIdRef.current === streamID) {
+        logStreamIdRef.current = null;
+        setLogStreaming(false);
+      }
       onNotifyRef.current(String(err), "error");
     }
-  }, [props.active?.id]);
+  }, [props.active?.id, flushPendingLogs]);
 
   const closeLogs = useCallback(() => {
-    if (logContainer && activeIdRef.current) {
-      StopContainerLogs(activeIdRef.current, logContainer.id).catch(() => {});
+    const streamID = logStreamIdRef.current;
+    if (streamID) {
+      StopContainerLogs(streamID).catch(() => {});
     }
+    flushPendingLogs();
     setLogContainer(null);
-    logContainerIdRef.current = null;
+    logStreamIdRef.current = null;
     setLogs("");
     setLogStreaming(false);
-  }, [logContainer]);
+  }, [flushPendingLogs]);
 
   useEffect(() => {
     return () => {
-      if (logContainerIdRef.current && activeIdRef.current) {
-        StopContainerLogs(activeIdRef.current, logContainerIdRef.current).catch(() => {});
+      if (logStreamIdRef.current) {
+        StopContainerLogs(logStreamIdRef.current).catch(() => {});
       }
+      if (pendingLogTimerRef.current !== null) window.clearTimeout(pendingLogTimerRef.current);
     };
   }, []);
 

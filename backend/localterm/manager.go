@@ -8,7 +8,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +31,7 @@ type Session struct {
 	info      types.SessionInfo
 	pty       xpty.Pty
 	cmd       *exec.Cmd
+	writer    *termio.WriteQueue
 	done      chan struct{}
 	closeOnce sync.Once
 	mu        sync.RWMutex
@@ -43,6 +47,14 @@ func NewManager(emit func(event string, data any)) *Manager {
 const maxLocalSessions = 10
 
 func (m *Manager) Connect(cols int, rows int) (types.SessionInfo, error) {
+	return m.ConnectWithOptions("", "", cols, rows)
+}
+
+// ConnectWithOptions opens a local shell with user-selected defaults. The
+// executable is intentionally kept separate from arguments: this avoids
+// ambiguous command-line parsing and still supports pwsh, cmd, wsl, or a
+// custom shell executable.
+func (m *Manager) ConnectWithOptions(shellSetting string, startDirectory string, cols int, rows int) (types.SessionInfo, error) {
 	m.mu.RLock()
 	count := len(m.sessions)
 	m.mu.RUnlock()
@@ -56,12 +68,19 @@ func (m *Manager) Connect(cols int, rows int) (types.SessionInfo, error) {
 		rows = 34
 	}
 
-	shell := defaultShell()
+	shell, err := resolveShell(shellSetting)
+	if err != nil {
+		return types.SessionInfo{}, err
+	}
+	workingDirectory, err := resolveStartDirectory(startDirectory)
+	if err != nil {
+		return types.SessionInfo{}, err
+	}
 	id := newSessionID()
 	info := types.SessionInfo{
 		ID:        id,
 		ProfileID: "",
-		Name:      shellLabel(),
+		Name:      shellLabel(shell),
 		State:     types.SessionConnecting,
 		Cols:      cols,
 		Rows:      rows,
@@ -77,6 +96,7 @@ func (m *Manager) Connect(cols int, rows int) (types.SessionInfo, error) {
 
 	cmd := exec.Command(shell)
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Dir = workingDirectory
 
 	if err := pty.Start(cmd); err != nil {
 		pty.Close()
@@ -89,6 +109,22 @@ func (m *Manager) Connect(cols int, rows int) (types.SessionInfo, error) {
 		cmd:  cmd,
 		done: make(chan struct{}),
 	}
+	session.writer = termio.NewWriteQueue(session.done, 1024*1024, func(data []byte) error {
+		session.mu.RLock()
+		pty := session.pty
+		session.mu.RUnlock()
+		if pty == nil {
+			return errors.New("local terminal is not writable")
+		}
+		_, writeErr := pty.Write(data)
+		return writeErr
+	}, func(writeErr error) {
+		m.emit("terminal:error", map[string]any{
+			"sessionId": id,
+			"error":     "local terminal input failed: " + writeErr.Error(),
+		})
+		go func() { _ = m.Disconnect(id) }()
+	})
 
 	m.mu.Lock()
 	m.sessions[id] = session
@@ -132,11 +168,13 @@ func (m *Manager) Disconnect(id string) error {
 
 	session.closeOnce.Do(func() {
 		session.mu.Lock()
+		close(session.done)
 		if session.cmd != nil && session.cmd.Process != nil {
 			_ = session.cmd.Process.Kill()
 		}
-		session.pty.Close()
-		close(session.done)
+		if session.pty != nil {
+			session.pty.Close()
+		}
 		if session.info.State != types.SessionError {
 			session.info.State = types.SessionDisconnected
 		}
@@ -153,9 +191,12 @@ func (m *Manager) Write(id string, data string) error {
 		return err
 	}
 	session.mu.RLock()
-	defer session.mu.RUnlock()
-	_, err = session.pty.Write([]byte(data))
-	return err
+	writer := session.writer
+	session.mu.RUnlock()
+	if writer == nil {
+		return errors.New("local terminal is not writable")
+	}
+	return writer.Enqueue([]byte(data))
 }
 
 func (m *Manager) Resize(id string, cols int, rows int) error {
@@ -254,23 +295,80 @@ func defaultShell() string {
 	}
 }
 
-func shellLabel() string {
-	switch runtime.GOOS {
-	case "windows":
-		if _, err := exec.LookPath("pwsh.exe"); err == nil {
-			return "PowerShell"
+func resolveShell(setting string) (string, error) {
+	setting = strings.TrimSpace(setting)
+	if setting == "" || strings.EqualFold(setting, "auto") {
+		return defaultShell(), nil
+	}
+	resolved, err := exec.LookPath(setting)
+	if err != nil {
+		return "", fmt.Errorf("local shell %q was not found: %w", setting, err)
+	}
+	return resolved, nil
+}
+
+func resolveStartDirectory(setting string) (string, error) {
+	home, homeErr := os.UserHomeDir()
+	setting = strings.TrimSpace(setting)
+	if setting == "" || setting == "~" {
+		if homeErr != nil || home == "" {
+			if homeErr != nil {
+				return "", fmt.Errorf("resolve home directory: %w", homeErr)
+			}
+			return "", errors.New("resolve home directory: empty path")
 		}
-		if _, err := exec.LookPath("powershell.exe"); err == nil {
-			return "PowerShell"
+		setting = home
+	} else {
+		setting = expandEnvironment(setting)
+		if strings.HasPrefix(setting, "~/") || strings.HasPrefix(setting, "~\\") {
+			if homeErr != nil || home == "" {
+				if homeErr != nil {
+					return "", fmt.Errorf("resolve home directory: %w", homeErr)
+				}
+				return "", errors.New("resolve home directory: empty path")
+			}
+			setting = filepath.Join(home, setting[2:])
 		}
+	}
+	setting = filepath.Clean(setting)
+	info, err := os.Stat(setting)
+	if err != nil {
+		return "", fmt.Errorf("local terminal start directory %q is unavailable: %w", setting, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("local terminal start path %q is not a directory", setting)
+	}
+	return setting, nil
+}
+
+var windowsEnvironmentPattern = regexp.MustCompile(`%[^%]+%`)
+
+func expandEnvironment(value string) string {
+	value = os.ExpandEnv(value)
+	if runtime.GOOS != "windows" {
+		return value
+	}
+	return windowsEnvironmentPattern.ReplaceAllStringFunc(value, func(match string) string {
+		if expanded, ok := os.LookupEnv(match[1 : len(match)-1]); ok {
+			return expanded
+		}
+		return match
+	})
+}
+
+func shellLabel(shell string) string {
+	name := strings.TrimSuffix(strings.ToLower(filepath.Base(shell)), filepath.Ext(shell))
+	switch name {
+	case "pwsh", "powershell":
+		return "PowerShell"
+	case "cmd":
 		return "CMD"
-	case "darwin":
-		return "zsh"
+	case "wsl":
+		return "WSL"
+	case "":
+		return "Local Terminal"
 	default:
-		if sh := os.Getenv("SHELL"); sh != "" {
-			return sh
-		}
-		return "bash"
+		return filepath.Base(shell)
 	}
 }
 

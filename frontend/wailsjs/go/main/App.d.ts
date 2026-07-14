@@ -15,9 +15,15 @@ export function AiExecuteTools(arg1:string,arg2:Array<string>):Promise<Record<st
 
 export function AnswerKeyboardInteractive(arg1:string,arg2:Array<string>,arg3:boolean):Promise<void>;
 
+export function CancelAiChat(arg1:string,arg2:string):Promise<boolean>;
+
+export function CancelTransfer(arg1:string):Promise<boolean>;
+
 export function Connect(arg1:string,arg2:number,arg3:number):Promise<types.SessionInfo>;
 
 export function ConnectLocal(arg1:number,arg2:number):Promise<types.SessionInfo>;
+
+export function ConnectQuick(arg1:types.Profile,arg2:number,arg3:number):Promise<types.SessionInfo>;
 
 export function ConnectWithSecrets(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number):Promise<types.SessionInfo>;
 
@@ -47,6 +53,8 @@ export function DuplicateProfile(arg1:string):Promise<types.Profile>;
 
 export function ExportHistory():Promise<void>;
 
+export function ExportProfiles(arg1:boolean):Promise<string>;
+
 export function GetAiConfig():Promise<types.AiConfig>;
 
 export function GetAiUsage():Promise<types.AiTokenUsage>;
@@ -62,6 +70,10 @@ export function GetProfile(arg1:string):Promise<types.Profile>;
 export function GetSettings():Promise<types.AppSettings>;
 
 export function GetStartupFile():Promise<string>;
+
+export function ImportOpenSSHConfig():Promise<Record<string, number>>;
+
+export function ImportProfiles():Promise<Record<string, number>>;
 
 export function IsMarkdownContextMenuRegistered():Promise<boolean>;
 
@@ -157,6 +169,8 @@ export function RestartContainer(arg1:string,arg2:string):Promise<void>;
 
 export function RestartTunnels(arg1:string):Promise<Array<types.TunnelStatus>>;
 
+export function RestoreTextFiles(arg1:Array<string>):Promise<Array<string>>;
+
 export function SaveAiConfig(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function SelectDownloadPath(arg1:string):Promise<string>;
@@ -183,7 +197,7 @@ export function StartRecording(arg1:string,arg2:string):Promise<string>;
 
 export function StopContainer(arg1:string,arg2:string):Promise<void>;
 
-export function StopContainerLogs(arg1:string,arg2:string):Promise<void>;
+export function StopContainerLogs(arg1:string):Promise<void>;
 
 export function StopMonitor(arg1:string):Promise<void>;
 
@@ -191,7 +205,7 @@ export function StopNetworkPing(arg1:string):Promise<void>;
 
 export function StopRecording(arg1:string):Promise<string>;
 
-export function StreamContainerLogs(arg1:string,arg2:string,arg3:number):Promise<void>;
+export function StreamContainerLogs(arg1:string,arg2:string,arg3:string,arg4:number):Promise<void>;
 
 export function TraceRoute(arg1:string):Promise<types.NetworkPath>;
 

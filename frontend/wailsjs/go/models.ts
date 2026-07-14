@@ -111,6 +111,9 @@ export namespace types {
 	    messages: AiMessage[];
 	    context: string;
 	    sessionId: string;
+	    chatId: string;
+	    requestId: string;
+	    enableTools: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new AiChatRequest(source);
@@ -121,6 +124,9 @@ export namespace types {
 	        this.messages = this.convertValues(source["messages"], AiMessage);
 	        this.context = source["context"];
 	        this.sessionId = source["sessionId"];
+	        this.chatId = source["chatId"];
+	        this.requestId = source["requestId"];
+	        this.enableTools = source["enableTools"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -187,6 +193,8 @@ export namespace types {
 	    themeName: string;
 	    backgroundOpacity: number;
 	    scrollbackLines: number;
+	    localShell?: string;
+	    localStartDirectory?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new TerminalSettings(source);
@@ -202,6 +210,8 @@ export namespace types {
 	        this.themeName = source["themeName"];
 	        this.backgroundOpacity = source["backgroundOpacity"];
 	        this.scrollbackLines = source["scrollbackLines"];
+	        this.localShell = source["localShell"];
+	        this.localStartDirectory = source["localStartDirectory"];
 	    }
 	}
 	export class AppSettings {

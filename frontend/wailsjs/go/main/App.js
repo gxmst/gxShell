@@ -26,12 +26,24 @@ export function AnswerKeyboardInteractive(arg1, arg2, arg3) {
   return window['go']['main']['App']['AnswerKeyboardInteractive'](arg1, arg2, arg3);
 }
 
+export function CancelAiChat(arg1, arg2) {
+  return window['go']['main']['App']['CancelAiChat'](arg1, arg2);
+}
+
+export function CancelTransfer(arg1) {
+  return window['go']['main']['App']['CancelTransfer'](arg1);
+}
+
 export function Connect(arg1, arg2, arg3) {
   return window['go']['main']['App']['Connect'](arg1, arg2, arg3);
 }
 
 export function ConnectLocal(arg1, arg2) {
   return window['go']['main']['App']['ConnectLocal'](arg1, arg2);
+}
+
+export function ConnectQuick(arg1, arg2, arg3) {
+  return window['go']['main']['App']['ConnectQuick'](arg1, arg2, arg3);
 }
 
 export function ConnectWithSecrets(arg1, arg2, arg3, arg4, arg5) {
@@ -90,6 +102,10 @@ export function ExportHistory() {
   return window['go']['main']['App']['ExportHistory']();
 }
 
+export function ExportProfiles(arg1) {
+  return window['go']['main']['App']['ExportProfiles'](arg1);
+}
+
 export function GetAiConfig() {
   return window['go']['main']['App']['GetAiConfig']();
 }
@@ -120,6 +136,14 @@ export function GetSettings() {
 
 export function GetStartupFile() {
   return window['go']['main']['App']['GetStartupFile']();
+}
+
+export function ImportOpenSSHConfig() {
+  return window['go']['main']['App']['ImportOpenSSHConfig']();
+}
+
+export function ImportProfiles() {
+  return window['go']['main']['App']['ImportProfiles']();
 }
 
 export function IsMarkdownContextMenuRegistered() {
@@ -310,6 +334,10 @@ export function RestartTunnels(arg1) {
   return window['go']['main']['App']['RestartTunnels'](arg1);
 }
 
+export function RestoreTextFiles(arg1) {
+  return window['go']['main']['App']['RestoreTextFiles'](arg1);
+}
+
 export function SaveAiConfig(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SaveAiConfig'](arg1, arg2, arg3, arg4);
 }
@@ -362,8 +390,8 @@ export function StopContainer(arg1, arg2) {
   return window['go']['main']['App']['StopContainer'](arg1, arg2);
 }
 
-export function StopContainerLogs(arg1, arg2) {
-  return window['go']['main']['App']['StopContainerLogs'](arg1, arg2);
+export function StopContainerLogs(arg1) {
+  return window['go']['main']['App']['StopContainerLogs'](arg1);
 }
 
 export function StopMonitor(arg1) {
@@ -378,8 +406,8 @@ export function StopRecording(arg1) {
   return window['go']['main']['App']['StopRecording'](arg1);
 }
 
-export function StreamContainerLogs(arg1, arg2, arg3) {
-  return window['go']['main']['App']['StreamContainerLogs'](arg1, arg2, arg3);
+export function StreamContainerLogs(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['StreamContainerLogs'](arg1, arg2, arg3, arg4);
 }
 
 export function TraceRoute(arg1) {

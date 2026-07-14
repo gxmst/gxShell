@@ -13,7 +13,7 @@ export function MonitorPanel({ metrics, active, locale, onStart, onCpuClick, onP
   return (
     <div className="monitor-panel">
       <div className="current-card">
-        <Wifi size={13} className={clsx(active.state === "connected" ? "text-ok" : "text-muted")} />
+        <button className="mini-btn" onClick={onPingClick} disabled={!onPingClick} title={t(lang, "networkPath")}><Wifi size={13} className={clsx(active.state === "connected" ? "text-ok" : "text-muted")} /></button>
         <span className="min-w-0 flex-1 truncate text-[12px] font-medium">{active.title}</span>
         <span className={clsx("status-dot", stateClass(active.state))} />
       </div>
@@ -31,7 +31,7 @@ export function MonitorPanel({ metrics, active, locale, onStart, onCpuClick, onP
           <MetricRow icon={<HardDrive size={12} />} label={t(lang, "disk")} value={metrics.diskPercent} detail={`${metrics.diskUsed || "-"} / ${metrics.diskTotal || "-"}`} clickable onClick={onDiskClick} />
           <div className="chip-grid compact-chip-grid">
             <MiniMetric icon={<Zap size={11} />} label={t(lang, "load")} value={metrics.loadAverage || "-"} tone={loadTone(metrics.loadAverage)} clickable onClick={onCpuClick} />
-            <MiniMetric icon={<Wifi size={11} />} label={t(lang, "ping")} value={`${metrics.latencyMs || 0}ms`} tone={pingTone(metrics.latencyMs)} clickable onClick={onPingClick} />
+            <MiniMetric icon={<Activity size={11} />} label={t(lang, "collectionTime")} value={`${metrics.latencyMs || 0}ms`} />
             <MiniMetric icon={<Download size={11} />} label={t(lang, "down")} value={formatBytes(metrics.networkRxPerSec)} tone={speedTone(metrics.networkRxPerSec)} clickable onClick={onNetworkClick} />
             <MiniMetric icon={<Upload size={11} />} label={t(lang, "up")} value={formatBytes(metrics.networkTxPerSec)} tone={speedTone(metrics.networkTxPerSec)} clickable onClick={onNetworkClick} />
           </div>
@@ -56,13 +56,6 @@ function loadTone(loadAvg: string): "ok" | "warn" | "bad" | undefined {
   if (isNaN(v)) return undefined;
   if (v >= 4) return "bad";
   if (v >= 2) return "warn";
-  return "ok";
-}
-
-function pingTone(ms: number): "ok" | "warn" | "bad" | undefined {
-  if (!ms || ms <= 0) return undefined;
-  if (ms >= 300) return "bad";
-  if (ms >= 100) return "warn";
   return "ok";
 }
 

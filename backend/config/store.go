@@ -260,33 +260,13 @@ func (s *Store) MigrateSettingsDefaults() {
 	_ = s.SaveSettings(settings)
 }
 
-// MigrateCommandDefaults appends built-in command templates that older installs
-// are missing, while preserving any user-created or edited commands.
+// MigrateCommandDefaults remains as a startup compatibility hook. Built-in
+// commands are seeded only when commands.json is first created (ensureDefaults).
+// Re-seeding an existing file cannot distinguish a newly introduced default
+// from a command the user deliberately deleted or edited, and used to resurrect
+// those commands on every launch. Existing command libraries are therefore
+// authoritative and are never mutated during startup.
 func (s *Store) MigrateCommandDefaults() {
-	commands, err := s.ListCommands()
-	if err != nil {
-		return
-	}
-	seen := map[string]bool{}
-	for _, command := range commands {
-		key := strings.TrimSpace(command.Command)
-		if key != "" {
-			seen[key] = true
-		}
-	}
-	changed := false
-	for _, command := range defaultCommands() {
-		key := strings.TrimSpace(command.Command)
-		if key == "" || seen[key] {
-			continue
-		}
-		commands = append(commands, command)
-		seen[key] = true
-		changed = true
-	}
-	if changed {
-		_ = s.SaveCommands(commands)
-	}
 }
 
 func (s *Store) ListCommands() ([]types.CommandTemplate, error) {

@@ -139,6 +139,13 @@ func (a *App) DownloadFolder(sessionID, remotePath, localDir string) error {
 	return a.sftp.DownloadFolder(sessionID, remotePath, localDir)
 }
 
+// CancelTransfer requests cancellation of an active upload or download. The
+// transfer's terminal event remains authoritative; false means the job already
+// completed or the id was unknown.
+func (a *App) CancelTransfer(jobID string) bool {
+	return a.sftp.CancelTransfer(jobID)
+}
+
 // DeleteRemoteFile deletes a file or directory on the remote server via SFTP.
 func (a *App) DeleteRemoteFile(sessionID, remotePath string) error {
 	return a.sftp.DeleteRemoteFile(sessionID, remotePath)

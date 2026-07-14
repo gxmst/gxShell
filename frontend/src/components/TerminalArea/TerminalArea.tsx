@@ -41,10 +41,13 @@ export const TerminalArea = memo(function TerminalArea(props: {
   activeRecording?: boolean;
   onToggleRecording?: (id: string) => void;
   automationActivity?: Record<string, AutomationIndicator>;
+  dirtyTabIds?: string[];
+  onMarkdownDirtyChange?: (id: string, dirty: boolean, save: () => Promise<boolean>) => void;
 }) {
   const lang = props.language;
   const floatingSet = useMemo(() => new Set(props.floatingTabIds || []), [props.floatingTabIds]);
   const visibleTabs = useMemo(() => props.tabs.filter((tab) => !floatingSet.has(tab.id)), [props.tabs, floatingSet]);
+  const active = props.tabs.find((tab) => tab.id === props.activeTab);
   const split = props.splitPane;
   const splitRef = useRef<HTMLDivElement>(null);
 
@@ -80,7 +83,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
 
   return (
     <section className="terminal-pane">
-      <TabBar tabs={visibleTabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} onTearOff={props.onTearOff} onReorder={props.onReorder} onNewConnection={props.onNewConnection} onNewLocal={props.onNewLocal} onOpenMarkdown={props.onOpenMarkdown} language={lang} broadcastInput={props.broadcastInput} broadcastAvailable={(props.broadcastCount || 0) > 1} onToggleBroadcast={props.onToggleBroadcast} recording={props.activeRecording} onToggleRecording={props.onToggleRecording} automationActivity={props.automationActivity} onSplitToggle={(tabId, direction) => {
+      <TabBar tabs={visibleTabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} onTearOff={props.onTearOff} onReorder={props.onReorder} onNewConnection={props.onNewConnection} onNewLocal={props.onNewLocal} onOpenMarkdown={props.onOpenMarkdown} language={lang} broadcastInput={props.broadcastInput} broadcastAvailable={(props.broadcastCount || 0) > 1} onToggleBroadcast={props.onToggleBroadcast} recording={props.activeRecording} onToggleRecording={props.onToggleRecording} automationActivity={props.automationActivity} dirtyTabIds={props.dirtyTabIds} onSplitToggle={(tabId, direction) => {
         if (!props.onSplitChange) return;
         if (isSplitVisible) {
           const leftId = split!.left;
@@ -102,6 +105,18 @@ export const TerminalArea = memo(function TerminalArea(props: {
           }
         }
       }} />
+      {active && active.type !== "markdown" && active.state === "connecting" && (
+        <div className="terminal-state-banner terminal-state-connecting">
+          <span>{lang === "zh-CN" ? `正在连接 ${active.title}…` : `Connecting to ${active.title}…`}</span>
+          <button onClick={() => props.onClose(active.id)}>{lang === "zh-CN" ? "取消" : "Cancel"}</button>
+        </div>
+      )}
+      {active && active.type !== "markdown" && (active.state === "error" || active.state === "disconnected") && (
+        <div className={clsx("terminal-state-banner", active.state === "error" && "terminal-state-error")}>
+          <span title={active.error}>{active.error || (lang === "zh-CN" ? "连接已断开" : "Connection closed")}</span>
+          {!active.local && <button onClick={() => props.onReconnect(active)}>{lang === "zh-CN" ? "重新连接" : "Reconnect"}</button>}
+        </div>
+      )}
       {props.broadcastInput && (props.broadcastCount || 0) > 1 && (
         <div className="broadcast-banner">
           <Radio size={13} className="shrink-0" />
@@ -160,6 +175,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
                     onClose={() => props.onClose(tab.id)}
                     onNotify={props.onNotify}
                     onOpenMarkdownFile={props.onOpenMarkdownFile}
+                    onDirtyChange={(dirty, save) => props.onMarkdownDirtyChange?.(tab.id, dirty, save)}
                   />
                 </Suspense>
               )}

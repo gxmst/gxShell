@@ -6,12 +6,13 @@ export type LangKey =
   | "collapse" | "lang" | "theme" | "termTheme" | "font" | "size"
   | "monitorInterval" | "timeout" | "enableMonitor" | "highlightOutput"
   | "confirmClose" | "save" | "openData"
-  | "cpu" | "mem" | "disk" | "load" | "ping" | "down" | "up"
+  | "cpu" | "mem" | "disk" | "load" | "ping" | "collectionTime" | "down" | "up"
   | "topProcesses" | "startMonitor" | "newCommand"
   | "loading" | "cancel" | "connect" | "enterPassword" | "enterPassphrase"
   | "showSecret" | "downloadFinished" | "uploading" | "downloading"
   | "progressDownload" | "progressUpload"
   | "hostKeyTitle" | "hostKeyMessage"
+  | "copy" | "paste" | "pasteFailed" | "selectAll" | "clearTerminal"
   | "copyToClipboard" | "all" | "none"
   | "confirmDisconnectBody" | "connecting"
   | "highlighting" | "highlightOff" | "highlightBasic" | "highlightFull"
@@ -35,7 +36,7 @@ export type LangKey =
   | "tunnelRules" | "addTunnel" | "tunnelType" | "tunnelLocal" | "tunnelRemote" | "tunnelDynamic" | "tunnelBindHost" | "removeTunnel" | "tunnelAdded"
   | "proxyJump"
   | "presetWeb" | "presetMySQL" | "presetRedis" | "presetSOCKS"
-  | "transfer" | "transferTitle" | "noActiveTransfer" | "transferProgress" | "transferComplete" | "transferFailed"
+  | "transfer" | "transferTitle" | "noActiveTransfer" | "transferProgress" | "transferComplete" | "transferFailed" | "transferCancelled"
   | "transferManager" | "transferActiveCount" | "noActiveTransferHint" | "dualPaneTransfer" | "dualPaneShort"
   | "transferHistory" | "clearHistory" | "noTransferHistory" | "pathPlaceholder" | "pathSuggestions" | "noPathSuggestions"
   | "parentDir" | "goHomeRoot" | "filterFiles" | "noMatchingFiles" | "emptyFolder" | "openTerminalInDir" | "openTerminalInDirDone"
@@ -45,10 +46,14 @@ export type LangKey =
   | "sshConnection" | "showSidebar" | "splitHorizontal" | "splitVertical" | "reconnect" | "run"
   | "cpuDetail" | "diskDetail" | "networkDetail" | "cpuUsage" | "diskUsage" | "used" | "total" | "latency" | "topCpuProcesses" | "linuxCommands" | "rootDiskHint" | "noData" | "minMax" | "outline" | "hideOutline" | "find" | "wrapCode" | "wrapText" | "openTextFile" | "fileSaved" | "discardChanges" | "downloadFolder" | "folderDownloadFinished" | "copyPath" | "newFolder" | "folderName" | "renameFile" | "newName" | "deleteRemoteFile" | "deleteRemoteFileBody" | "searchPlaceholder" | "typeToSearch" | "findInCurrentTerminal" | "findNext" | "findPrev" | "ram" | "swap"
   | "textFiles" | "recentTextFiles" | "switchFilesView" | "noRecentTextFiles" | "connectServerFirstTextFile"
-  | "defaultGroup" | "allGroups"
+  | "defaultGroup" | "allGroups" | "favorites" | "recentConnections" | "noFavorites" | "noRecentConnections"
+  | "quickConnect" | "quickConnectHint" | "saveConnection" | "saveAndConnect" | "connectOnce" | "privateKeyRequired"
+  | "profileTools" | "importProfiles" | "importOpenSSH" | "exportProfiles" | "addFavorite" | "removeFavorite"
+  | "profilesImported" | "profilesExported"
   | "logs" | "logFiles" | "noLogFiles" | "selectLogFile" | "runAll"
   | "ai" | "aiAssistant" | "aiSettings" | "aiProvider" | "aiModel" | "aiApiKey" | "aiEndpoint" | "aiCustom" | "aiSend" | "aiThinking" | "aiNoConfig" | "aiNoConfigHint" | "aiContext" | "aiTokenUsage" | "aiClear" | "aiDiagnose" | "aiInputPlaceholder" | "aiFetchModels" | "aiSelectModel" | "aiNewChat" | "aiChatHistory" | "aiNoChats"
   | "aiToolExecute" | "aiToolReadFile" | "aiToolRunning" | "aiRunTool" | "aiRunAllTools" | "aiPreset" | "aiOpenAICompatible" | "aiResetUsage" | "aiApiKeySaved" | "aiNoApiKey" | "aiContextReady" | "aiNoContext" | "aiNotConfigured" | "aiSettingsSaved" | "aiNoModels" | "aiNoTerminalOutput"
+  | "aiTarget" | "aiNoTarget" | "aiTargetConnected" | "aiTargetDisconnected" | "aiBindActiveTarget" | "aiTargetLocked" | "aiNoConnectedTarget" | "aiResolveToolsFirst" | "aiStop"
   | "containers" | "noContainers" | "showAll" | "viewLogs" | "restart" | "stop" | "start" | "remove" | "noLogs" | "noActiveSession" | "localTerminal"
   | "recordings" | "recordingsHint" | "noRecordings" | "playRecording" | "deleteRecording" | "openRecordingsDir"
   | "startRecording" | "stopRecording" | "recordingStarted" | "recordingSaved" | "recordingActive" | "recordingEmpty" | "pause" | "play" | "playbackSpeed"
@@ -90,6 +95,7 @@ const en: Record<LangKey, string> = {
   disk: "Disk",
   load: "Load",
   ping: "Ping",
+  collectionTime: "Collection",
   down: "Down",
   up: "Up",
   topProcesses: "Top processes",
@@ -108,6 +114,11 @@ const en: Record<LangKey, string> = {
   progressUpload: "Uploading {name}",
   hostKeyTitle: "Unknown Host Key",
   hostKeyMessage: "The host key for {host} is unknown.\nFingerprint: {fp}\n\nDo you want to trust this host and continue connecting?",
+  copy: "Copy",
+  paste: "Paste",
+  pasteFailed: "Failed to read the clipboard",
+  selectAll: "Select all",
+  clearTerminal: "Clear terminal",
   copyToClipboard: "Copied to clipboard",
   all: "All",
   none: "None",
@@ -202,6 +213,7 @@ const en: Record<LangKey, string> = {
   transferProgress: "Transferring",
   transferComplete: "Transfer complete",
   transferFailed: "Transfer failed",
+  transferCancelled: "Transfer cancelled",
   transferManager: "Transfer manager",
   transferActiveCount: "{n} active",
   noActiveTransferHint: "Downloads and uploads will appear here with progress.",
@@ -281,6 +293,24 @@ const en: Record<LangKey, string> = {
   connectServerFirstTextFile: "Connect the server first, then reopen this text file.",
   defaultGroup: "Default",
   allGroups: "All",
+  favorites: "Favorites",
+  recentConnections: "Recent",
+  noFavorites: "No favorite servers yet.",
+  noRecentConnections: "No recent connections yet.",
+  quickConnect: "Quick connect",
+  quickConnectHint: "Connect once, or save it as a reusable server profile.",
+  saveConnection: "Save this connection to the server list",
+  saveAndConnect: "Save & connect",
+  connectOnce: "Connect once",
+  privateKeyRequired: "Select a private key file",
+  profileTools: "Import or export profiles",
+  importProfiles: "Import gxShell profiles…",
+  importOpenSSH: "Import OpenSSH config…",
+  exportProfiles: "Export profiles (without credentials)…",
+  addFavorite: "Add to favorites",
+  removeFavorite: "Remove from favorites",
+  profilesImported: "Profiles imported: {added} added, {updated} updated, {skipped} skipped",
+  profilesExported: "Profiles exported without credentials: {path}",
   logs: "Logs",
   logFiles: "Log Files",
   noLogFiles: "No log files found.",
@@ -324,6 +354,15 @@ const en: Record<LangKey, string> = {
   aiSettingsSaved: "AI settings saved",
   aiNoModels: "No models found",
   aiNoTerminalOutput: "No terminal output available",
+  aiTarget: "Target",
+  aiNoTarget: "No remote target",
+  aiTargetConnected: "connected",
+  aiTargetDisconnected: "Target is disconnected",
+  aiBindActiveTarget: "Bind to the active remote terminal",
+  aiTargetLocked: "Finish or stop the current request before rebinding",
+  aiNoConnectedTarget: "Open a connected remote terminal before rebinding",
+  aiResolveToolsFirst: "Run the pending tools before continuing...",
+  aiStop: "Stop generating",
   containers: "Containers",
   noContainers: "No containers found",
   showAll: "All",
@@ -398,6 +437,7 @@ const zhCN: Record<LangKey, string> = {
   disk: "磁盘",
   load: "负载",
   ping: "延迟",
+  collectionTime: "采集耗时",
   down: "下行",
   up: "上行",
   topProcesses: "进程排行",
@@ -416,6 +456,11 @@ const zhCN: Record<LangKey, string> = {
   progressUpload: "正在上传 {name}",
   hostKeyTitle: "未知主机密钥",
   hostKeyMessage: "主机 {host} 的密钥未知。\n指纹: {fp}\n\n是否信任该主机并继续连接？",
+  copy: "复制",
+  paste: "粘贴",
+  pasteFailed: "读取剪贴板失败",
+  selectAll: "全选",
+  clearTerminal: "清空终端",
   copyToClipboard: "已复制到剪贴板",
   all: "全部",
   none: "无",
@@ -510,6 +555,7 @@ const zhCN: Record<LangKey, string> = {
   transferProgress: "传输中",
   transferComplete: "传输完成",
   transferFailed: "传输失败",
+  transferCancelled: "传输已取消",
   transferManager: "传输管理",
   transferActiveCount: "{n} 个进行中",
   noActiveTransferHint: "上传/下载时会在此显示进度。",
@@ -589,6 +635,24 @@ const zhCN: Record<LangKey, string> = {
   connectServerFirstTextFile: "请先连接服务器，然后重新打开这个文本文件。",
   defaultGroup: "默认",
   allGroups: "全部",
+  favorites: "收藏",
+  recentConnections: "最近",
+  noFavorites: "还没有收藏的服务器。",
+  noRecentConnections: "还没有最近连接。",
+  quickConnect: "快速连接",
+  quickConnectHint: "临时连接一次，也可以顺手保存为服务器配置。",
+  saveConnection: "保存到服务器列表",
+  saveAndConnect: "保存并连接",
+  connectOnce: "仅连接本次",
+  privateKeyRequired: "请选择私钥文件",
+  profileTools: "导入或导出服务器配置",
+  importProfiles: "导入 gxShell 配置…",
+  importOpenSSH: "导入 OpenSSH config…",
+  exportProfiles: "导出配置（不含凭据）…",
+  addFavorite: "添加收藏",
+  removeFavorite: "取消收藏",
+  profilesImported: "导入完成：新增 {added}，更新 {updated}，跳过 {skipped}",
+  profilesExported: "已导出配置（不含凭据）：{path}",
   logs: "日志",
   logFiles: "日志文件",
   noLogFiles: "未找到日志文件。",
@@ -632,6 +696,15 @@ const zhCN: Record<LangKey, string> = {
   aiSettingsSaved: "AI 设置已保存",
   aiNoModels: "未找到模型",
   aiNoTerminalOutput: "无可用终端输出",
+  aiTarget: "目标",
+  aiNoTarget: "未绑定远程终端",
+  aiTargetConnected: "已连接",
+  aiTargetDisconnected: "目标终端已断开",
+  aiBindActiveTarget: "绑定到当前远程终端",
+  aiTargetLocked: "请先完成或停止当前请求，再重新绑定",
+  aiNoConnectedTarget: "请先打开一个已连接的远程终端",
+  aiResolveToolsFirst: "请先处理待运行的工具...",
+  aiStop: "停止生成",
   containers: "容器",
   noContainers: "未找到容器",
   showAll: "全部",

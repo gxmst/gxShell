@@ -30,8 +30,20 @@ func (a *App) GetAppInfo() map[string]string {
 func (a *App) StartMonitor(sessionID string) error {
 	settings, err := a.store.GetSettings()
 	if err != nil {
-		a.log.Error("failed to read settings: " + err.Error())
+		if a.log != nil {
+			a.log.Error("failed to read settings: " + err.Error())
+		}
 		settings = config.DefaultSettings()
+	}
+	if a.monitor == nil {
+		return errors.New("monitor unavailable")
+	}
+	if !settings.MonitorEnabled {
+		// StartMonitor is also called from connection events. Respect the saved
+		// switch here, at the backend boundary, so a stale frontend callback
+		// cannot silently turn monitoring back on.
+		a.monitor.Stop(sessionID)
+		return nil
 	}
 	a.monitor.Start(sessionID, settings.MonitorIntervalSec)
 	return nil
@@ -39,6 +51,9 @@ func (a *App) StartMonitor(sessionID string) error {
 
 // StopMonitor stops system monitoring for a session.
 func (a *App) StopMonitor(sessionID string) error {
+	if a.monitor == nil {
+		return errors.New("monitor unavailable")
+	}
 	a.monitor.Stop(sessionID)
 	return nil
 }
@@ -106,6 +121,7 @@ func (a *App) GetSettings() (types.AppSettings, error) {
 
 // UpdateSettings updates application settings.
 func (a *App) UpdateSettings(settings types.AppSettings) (types.AppSettings, error) {
+	previous, previousErr := a.store.GetSettings()
 	if settings.ConnectionTimeout <= 0 {
 		settings.ConnectionTimeout = 15
 	}
@@ -121,7 +137,30 @@ func (a *App) UpdateSettings(settings types.AppSettings) (types.AppSettings, err
 		}
 	}
 	settings.Ai.APIKey = ""
-	return settings, a.store.SaveSettings(settings)
+	if err := a.store.SaveSettings(settings); err != nil {
+		return settings, err
+	}
+
+	// Apply monitor settings only after persistence succeeds, keeping runtime
+	// behaviour and the value shown after a restart in lockstep.
+	if a.monitor != nil {
+		if !settings.MonitorEnabled {
+			a.monitor.StopAll()
+		} else {
+			a.monitor.RestartAll(settings.MonitorIntervalSec)
+			// Re-enabling monitoring should also cover SSH sessions that stayed
+			// connected while the feature was disabled. RestartAll only knows
+			// about currently running pollers, so seed those sessions explicitly.
+			if (previousErr != nil || !previous.MonitorEnabled) && a.ssh != nil {
+				for _, session := range a.ssh.List() {
+					if session.State == types.SessionConnected {
+						a.monitor.Start(session.ID, settings.MonitorIntervalSec)
+					}
+				}
+			}
+		}
+	}
+	return settings, nil
 }
 
 // ReadLogs returns recent log entries.

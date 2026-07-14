@@ -6,7 +6,7 @@ import { stateClass } from "../../utils/format";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
 
-export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSidebar, onActive, onClose, onReconnect, onTearOff, onReorder, onSplitToggle, onNewConnection, onNewLocal, onOpenMarkdown, broadcastInput, broadcastAvailable, onToggleBroadcast, recording, onToggleRecording, automationActivity, language }: { tabs: Tab[]; activeTab: string; profiles: types.Profile[]; sidebarCollapsed: boolean; onToggleSidebar: () => void; onActive: (id: string) => void; onClose: (id: string) => void; onReconnect: (tab: Tab) => void; onTearOff?: (tab: Tab) => void; onReorder?: (draggedId: string, targetId: string) => void; onSplitToggle?: (tabId: string, direction: SplitDirection) => void; onNewConnection?: () => void; onNewLocal?: () => void; onOpenMarkdown?: () => void; broadcastInput?: boolean; broadcastAvailable?: boolean; onToggleBroadcast?: () => void; recording?: boolean; onToggleRecording?: (id: string) => void; automationActivity?: Record<string, AutomationIndicator>; language?: string }) {
+export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSidebar, onActive, onClose, onReconnect, onTearOff, onReorder, onSplitToggle, onNewConnection, onNewLocal, onOpenMarkdown, broadcastInput, broadcastAvailable, onToggleBroadcast, recording, onToggleRecording, automationActivity, dirtyTabIds, language }: { tabs: Tab[]; activeTab: string; profiles: types.Profile[]; sidebarCollapsed: boolean; onToggleSidebar: () => void; onActive: (id: string) => void; onClose: (id: string) => void; onReconnect: (tab: Tab) => void; onTearOff?: (tab: Tab) => void; onReorder?: (draggedId: string, targetId: string) => void; onSplitToggle?: (tabId: string, direction: SplitDirection) => void; onNewConnection?: () => void; onNewLocal?: () => void; onOpenMarkdown?: () => void; broadcastInput?: boolean; broadcastAvailable?: boolean; onToggleBroadcast?: () => void; recording?: boolean; onToggleRecording?: (id: string) => void; automationActivity?: Record<string, AutomationIndicator>; dirtyTabIds?: string[]; language?: string }) {
   const active = tabs.find((tab) => tab.id === activeTab);
   const lang = language || "en";
   const dragRef = useRef<{ tabId: string; startX: number; startY: number; active: boolean } | null>(null);
@@ -23,6 +23,7 @@ export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSi
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const profileByID = useMemo(() => new Map(profiles.map((profile) => [profile.id, profile])), [profiles]);
+  const dirtySet = useMemo(() => new Set(dirtyTabIds || []), [dirtyTabIds]);
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -104,12 +105,14 @@ export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSi
           const profile = profileByID.get(tab.profileId);
           const automation = automationActivity?.[tab.id];
           const full = profile ? `${profile.username}@${profile.host}:${profile.port}` : tab.title;
+          const tooltip = tab.error ? `${full}\n${tab.error}` : full;
           const isDragging = dragState?.draggedId === tab.id;
           const isDragOver = dragState?.overId === tab.id;
           return (
-            <button key={tab.id} data-tab-id={tab.id} title={full} className={clsx("tab", activeTab === tab.id && "tab-active", automation && "tab-automation", isDragging && "tab-dragging", isDragOver && "tab-drag-over")} onClick={() => onActive(tab.id)} onMouseDown={(e) => onTabMouseDown(e, tab)}>
+            <button key={tab.id} data-tab-id={tab.id} title={tooltip} className={clsx("tab", activeTab === tab.id && "tab-active", automation && "tab-automation", isDragging && "tab-dragging", isDragOver && "tab-drag-over")} onClick={() => onActive(tab.id)} onMouseDown={(e) => onTabMouseDown(e, tab)}>
               {tab.type === "markdown" ? <FileText size={12} className="text-accent opacity-70 shrink-0" /> : tab.local ? <Terminal size={12} className="text-accent opacity-70 shrink-0" /> : <span className={clsx("status-dot", stateClass(tab.state))} />}
               <span className="max-w-[180px] truncate">{tab.title}</span>
+              {dirtySet.has(tab.id) && <span className="tab-dirty-dot" title={lang === "zh-CN" ? "未保存" : "Unsaved"} />}
               {automation && <span className={clsx("automation-badge tab-automation-badge", `automation-${automation.source}`, automation.phase === "started" && "automation-running", automation.phase === "failed" && "automation-failed")}>{automation.source.toUpperCase()}</span>}
               <X size={14} onClick={(e) => { e.stopPropagation(); onClose(tab.id); }} />
             </button>

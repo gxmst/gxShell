@@ -65,6 +65,11 @@ export type AutomationActivityEvent = {
   truncated?: boolean;
 };
 
+export type AutomationActivityRecord = AutomationActivityEvent & {
+  timestamp: number;
+  title?: string;
+};
+
 export type AutomationIndicator = {
   source: AutomationActivitySource;
   phase: AutomationActivityPhase;

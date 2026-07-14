@@ -38,7 +38,10 @@ type castRecorder struct {
 	// writeErr records the first write/flush failure so it is not silently
 	// swallowed; once set, further writes are skipped and close() reports it.
 	writeErr error
+	written  int64
 }
+
+const maxCastRecordingBytes int64 = 512 * 1024 * 1024
 
 // newCastRecorder creates the file and writes the .cast header. title is stored
 // in the header for display in the player list.
@@ -74,6 +77,7 @@ func newCastRecorder(path, title string, cols, rows int) (*castRecorder, error) 
 		_ = f.Close()
 		return nil, err
 	}
+	r.written = int64(len(line) + 1)
 	return r, nil
 }
 
@@ -135,10 +139,17 @@ func (r *castRecorder) writeEvent(code, data string) {
 	if err != nil {
 		return
 	}
-	if _, err := r.writer.Write(append(line, '\n')); err != nil {
+	line = append(line, '\n')
+	if r.written+int64(len(line)) > maxCastRecordingBytes {
+		r.writeErr = recordingError("recording reached the 512 MB limit")
+		return
+	}
+	if _, err := r.writer.Write(line); err != nil {
 		// Record the first write error and stop emitting so a full/read-only disk
 		// produces a clean truncation rather than a stream of ignored failures.
 		r.writeErr = err
+	} else {
+		r.written += int64(len(line))
 	}
 }
 

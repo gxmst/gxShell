@@ -154,6 +154,35 @@ func (a *App) OpenRecentTextFile(filePath string) (string, error) {
 	return a.allowFile(absPath), nil
 }
 
+// RestoreTextFiles re-authorizes the small set of local documents that were
+// open when this personal workspace last closed. Invalid or stale entries are
+// ignored so startup remains silent and resilient.
+func (a *App) RestoreTextFiles(paths []string) []string {
+	if len(paths) > 30 {
+		paths = paths[:30]
+	}
+	restored := make([]string, 0, len(paths))
+	seen := make(map[string]bool, len(paths))
+	for _, filePath := range paths {
+		absPath, err := filepath.Abs(filePath)
+		if err != nil {
+			continue
+		}
+		absPath = filepath.Clean(absPath)
+		key := strings.ToLower(absPath)
+		if seen[key] || !isSupportedTextPath(absPath) {
+			continue
+		}
+		info, err := os.Stat(absPath)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		seen[key] = true
+		restored = append(restored, a.allowFile(absPath))
+	}
+	return restored
+}
+
 // OpenRecentMarkdownFile is kept for older frontend builds and preserves the
 // original Markdown-only contract.
 func (a *App) OpenRecentMarkdownFile(filePath string) (string, error) {

@@ -18,7 +18,8 @@ type Manager struct {
 	ssh        *sshmanager.Manager
 	emit       func(event string, data any)
 	mu         sync.Mutex
-	logCancels map[string]*logStream
+	logStreams map[string]*logStream
+	logByKey   map[string]string
 }
 
 // logStream identifies a single log-follow goroutine. The pointer doubles as the
@@ -26,15 +27,20 @@ type Manager struct {
 // itself, so a superseded stream can't delete the entry of the one that replaced
 // it.
 type logStream struct {
-	cancel func()
-	once   sync.Once
+	id          string
+	key         string
+	sessionID   string
+	containerID string
+	cancel      func()
+	once        sync.Once
 }
 
 func NewManager(sshMgr *sshmanager.Manager) *Manager {
 	return &Manager{
 		ssh:        sshMgr,
 		emit:       func(event string, data any) {},
-		logCancels: make(map[string]*logStream),
+		logStreams: make(map[string]*logStream),
+		logByKey:   make(map[string]string),
 	}
 }
 
@@ -56,6 +62,13 @@ func sanitizeDockerArg(arg string) error {
 func sanitizeTailArg(tail int) error {
 	if tail < 0 || tail > 100000 {
 		return fmt.Errorf("invalid tail value: %d", tail)
+	}
+	return nil
+}
+
+func sanitizeLogStreamID(streamID string) error {
+	if len(streamID) > 128 || !safeIDRe.MatchString(streamID) {
+		return fmt.Errorf("invalid log stream id")
 	}
 	return nil
 }
@@ -120,21 +133,17 @@ func (m *Manager) ContainerLogs(sessionID, containerID string, tail int) (string
 	return out, nil
 }
 
-func (m *Manager) StreamContainerLogs(sessionID, containerID string, tail int) error {
+func (m *Manager) StreamContainerLogs(sessionID, containerID, streamID string, tail int) error {
 	if err := sanitizeDockerArg(containerID); err != nil {
+		return err
+	}
+	if err := sanitizeLogStreamID(streamID); err != nil {
 		return err
 	}
 	if err := sanitizeTailArg(tail); err != nil {
 		return err
 	}
 	key := sessionID + ":" + containerID
-
-	m.mu.Lock()
-	if existing, ok := m.logCancels[key]; ok {
-		existing.cancel()
-		delete(m.logCancels, key)
-	}
-	m.mu.Unlock()
 
 	client, err := m.ssh.Client(sessionID)
 	if err != nil {
@@ -159,23 +168,16 @@ func (m *Manager) StreamContainerLogs(sessionID, containerID string, tail int) e
 	}
 
 	ctx := make(chan struct{})
-	self := &logStream{}
+	self := &logStream{id: streamID, key: key, sessionID: sessionID, containerID: containerID}
 	self.cancel = func() { self.once.Do(func() { close(ctx); _ = session.Close() }) }
-	m.mu.Lock()
-	m.logCancels[key] = self
-	m.mu.Unlock()
+	if err := m.activateLogStream(self); err != nil {
+		self.cancel()
+		return err
+	}
 
 	go func() {
 		defer func() {
 			_ = session.Close()
-			m.mu.Lock()
-			// Only remove the map entry if it still points at this stream. A newer
-			// StreamContainerLogs for the same key may have replaced it; deleting
-			// blindly would orphan that newer stream (it could no longer be stopped).
-			if cur, ok := m.logCancels[key]; ok && cur == self {
-				delete(m.logCancels, key)
-			}
-			m.mu.Unlock()
 		}()
 
 		reader := bufio.NewReader(stdout)
@@ -195,9 +197,9 @@ func (m *Manager) StreamContainerLogs(sessionID, containerID string, tail int) e
 					default:
 					}
 					if line != "" {
-						m.emit("docker:log", map[string]string{"containerID": containerID, "data": line})
+						m.emitLogData(self, line)
 					}
-					m.emit("docker:log", map[string]string{"containerID": containerID, "done": "true"})
+					m.finishLogStream(self, true)
 					return
 				}
 				// Non-EOF read error (e.g. session closed): still notify the
@@ -205,24 +207,92 @@ func (m *Manager) StreamContainerLogs(sessionID, containerID string, tail int) e
 				select {
 				case <-ctx:
 				default:
-					m.emit("docker:log", map[string]string{"containerID": containerID, "done": "true"})
+					m.finishLogStream(self, true)
 				}
 				return
 			}
-			m.emit("docker:log", map[string]string{"containerID": containerID, "data": line})
+			m.emitLogData(self, line)
 		}
 	}()
 
 	return nil
 }
 
-func (m *Manager) StopContainerLogs(sessionID, containerID string) {
-	key := sessionID + ":" + containerID
+// activateLogStream installs one concrete follow operation. A newer stream for
+// the same container replaces and cancels the old one, while a stream ID may
+// never be reused. Keeping both indexes lets StopContainerLogs target exactly
+// the operation the UI started instead of accidentally stopping its successor.
+func (m *Manager) activateLogStream(stream *logStream) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if existing, ok := m.logCancels[key]; ok {
-		existing.cancel()
-		delete(m.logCancels, key)
+	if _, exists := m.logStreams[stream.id]; exists {
+		m.mu.Unlock()
+		return fmt.Errorf("log stream id already active")
+	}
+	var previous *logStream
+	if previousID := m.logByKey[stream.key]; previousID != "" {
+		previous = m.logStreams[previousID]
+		delete(m.logStreams, previousID)
+	}
+	m.logStreams[stream.id] = stream
+	m.logByKey[stream.key] = stream.id
+	m.mu.Unlock()
+	if previous != nil {
+		previous.cancel()
+	}
+	return nil
+}
+
+func (m *Manager) emitLogData(stream *logStream, data string) {
+	m.mu.Lock()
+	active := m.logStreams[stream.id] == stream
+	m.mu.Unlock()
+	if !active {
+		return
+	}
+	m.emit("docker:log", map[string]string{
+		"streamID":    stream.id,
+		"sessionID":   stream.sessionID,
+		"containerID": stream.containerID,
+		"data":        data,
+	})
+}
+
+// finishLogStream removes a stream only if it is still the active instance.
+// Superseded/stopped goroutines therefore cannot publish a late done event.
+func (m *Manager) finishLogStream(stream *logStream, emitDone bool) bool {
+	m.mu.Lock()
+	if m.logStreams[stream.id] != stream {
+		m.mu.Unlock()
+		return false
+	}
+	delete(m.logStreams, stream.id)
+	if m.logByKey[stream.key] == stream.id {
+		delete(m.logByKey, stream.key)
+	}
+	m.mu.Unlock()
+	if emitDone {
+		m.emit("docker:log", map[string]string{
+			"streamID":    stream.id,
+			"sessionID":   stream.sessionID,
+			"containerID": stream.containerID,
+			"done":        "true",
+		})
+	}
+	return true
+}
+
+func (m *Manager) StopContainerLogs(streamID string) {
+	m.mu.Lock()
+	stream := m.logStreams[streamID]
+	if stream != nil {
+		delete(m.logStreams, streamID)
+		if m.logByKey[stream.key] == streamID {
+			delete(m.logByKey, stream.key)
+		}
+	}
+	m.mu.Unlock()
+	if stream != nil {
+		stream.cancel()
 	}
 }
 
