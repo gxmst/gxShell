@@ -601,6 +601,12 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     }
   }, []);
 
+  // Current grid size for a terminal, read from the cached dimensions the
+  // resize logic already tracks. Feeds the status bar's cols×rows readout.
+  const getDimensions = useCallback((id: string): { cols: number; rows: number } | null => {
+    return lastDimensions.current[id] || null;
+  }, []);
+
   const stable = useMemo(() => ({
     terminalHosts,
     writeOutput,
@@ -611,7 +617,8 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     refitTerminal,
     reattachTerminal,
     getTerminalLines,
-  }), [writeOutput, disposeTerminal, findNext, findPrev, focusTerminal, refitTerminal, reattachTerminal, getTerminalLines]);
+    getDimensions,
+  }), [writeOutput, disposeTerminal, findNext, findPrev, focusTerminal, refitTerminal, reattachTerminal, getTerminalLines, getDimensions]);
 
   return stable;
 }

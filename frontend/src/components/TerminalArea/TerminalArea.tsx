@@ -3,6 +3,7 @@ import { lazy, memo, Suspense, useCallback, useMemo, useRef } from "react";
 import { Plus, Radio, TerminalSquare, X } from "lucide-react";
 import type { AutomationIndicator, MarkdownOpenTarget, SplitPane, Tab } from "../../types";
 import { TabBar } from "../TabBar/TabBar";
+import { TerminalStatusBar } from "./TerminalStatusBar";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
 
@@ -43,6 +44,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
   automationActivity?: Record<string, AutomationIndicator>;
   dirtyTabIds?: string[];
   onMarkdownDirtyChange?: (id: string, dirty: boolean, save: () => Promise<boolean>) => void;
+  getDimensions?: (id: string) => { cols: number; rows: number } | null;
 }) {
   const lang = props.language;
   const floatingSet = useMemo(() => new Set(props.floatingTabIds || []), [props.floatingTabIds]);
@@ -210,6 +212,18 @@ export const TerminalArea = memo(function TerminalArea(props: {
           </div>
         )}
       </div>
+      {active && active.type !== "markdown" && (
+        <TerminalStatusBar
+          tabId={active.id}
+          tab={active}
+          profile={props.profiles.find((p) => p.id === active.profileId)}
+          broadcastInput={props.broadcastInput}
+          broadcastCount={props.broadcastCount}
+          sessionCount={visibleTabs.filter((tab) => tab.type !== "markdown" && (tab.state === "connected" || tab.state === "connecting")).length}
+          getDimensions={props.getDimensions}
+          language={lang}
+        />
+      )}
     </section>
   );
 });

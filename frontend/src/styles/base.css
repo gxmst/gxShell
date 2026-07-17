@@ -141,6 +141,13 @@ button:disabled {
   font-size: var(--text-sm);
 }
 
+/* Search field with a leading icon: reserve room so the placeholder/text
+   doesn't sit under the icon. Longhand + later source order beats the
+   .compact-input `padding` shorthand. */
+.command-search-input {
+  padding-left: 26px;
+}
+
 /* ── Buttons ────────────────────────────────────────── */
 
 .btn-primary,
@@ -165,8 +172,7 @@ button:disabled {
 }
 
 .btn-primary:hover {
-  filter: brightness(1.07);
-  box-shadow: var(--glow-accent);
+  background: color-mix(in srgb, var(--accent) 88%, white);
 }
 
 .btn-danger:hover {
@@ -182,17 +188,14 @@ button:disabled {
 .btn-primary:active,
 .btn-secondary:active,
 .btn-danger:active {
-  transform: translateY(1px) scale(0.985);
+  transform: translateY(1px);
 }
 
 .btn-primary {
-  border: 1px solid color-mix(in srgb, var(--accent) 52%, transparent);
-  background: linear-gradient(180deg,
-    color-mix(in srgb, var(--accent) 96%, white),
-    color-mix(in srgb, var(--accent) 88%, black));
+  border: 1px solid transparent;
+  background: var(--accent);
   color: var(--accent-contrast);
-  font-weight: 700;
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 20%, transparent);
+  font-weight: 600;
 }
 
 .btn-secondary {
@@ -316,7 +319,7 @@ button:disabled {
 @keyframes ui-enter {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(3px);
   }
   to {
     opacity: 1;

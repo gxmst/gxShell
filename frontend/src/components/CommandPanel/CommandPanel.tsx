@@ -51,7 +51,7 @@ export function CommandPanel(props: CommandPanelProps) {
       <div className="flex gap-2 px-3 pb-2">
         <label className="relative flex-1 min-w-0">
           <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
-          <input className="input compact-input w-full pl-7" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t(props.locale, "search")} />
+          <input className="input compact-input w-full command-search-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t(props.locale, "search")} />
         </label>
         <select className="input compact-input min-w-0 max-w-[45%]" value={target} onChange={(event) => setTarget(event.target.value)} title={props.locale === "zh-CN" ? "执行目标" : "Run target"}>
           <option value="active">{props.locale === "zh-CN" ? "当前会话" : "Active session"}</option>

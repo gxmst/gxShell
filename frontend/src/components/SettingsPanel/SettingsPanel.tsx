@@ -9,7 +9,7 @@ import { KnownHostsManager } from "./KnownHostsManager";
 
 const themePreview: Record<string, { bg: string; surface: string; accent: string }> = {
   Light: { bg: "#e8edf4", surface: "#f8fafd", accent: "#2563eb" },
-  Dark: { bg: "#050b14", surface: "#16283d", accent: "#4ec4ff" },
+  Dark: { bg: "#0e1217", surface: "#212a35", accent: "#4d90d6" },
   "Deep Blue": { bg: "#04101f", surface: "#123862", accent: "#5cbcff" },
   "Yuzu Study": { bg: "#fcf7ed", surface: "#f3e8d6", accent: "#a9743f" },
   "Ember Terminal": { bg: "#0a0b09", surface: "#273022", accent: "#a3e635" },

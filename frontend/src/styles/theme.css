@@ -1,22 +1,24 @@
 .app-shell {
-  /* Default dark — "Midnight Neon": deeper void, clearer surface steps, punchy cyan. */
-  --bg: #050b14;
-  --panel: #0a1422;
-  --panel-soft: #0f1c2e;
-  --panel-raised: #16283d;
+  /* Default dark — neutral slate workbench: flat surfaces that step up clearly,
+     one restrained azure accent, no neon. Tuned to read like a mature desktop
+     tool (VS Code Dark Modern / Zed / Linear) rather than an AI demo. */
+  --bg: #0e1217;
+  --panel: #151a21;
+  --panel-soft: #1a212a;
+  --panel-raised: #212a35;
   --bg-secondary: var(--panel-soft);
-  --terminal: #020810;
-  --terminal-top: #07101c;
-  --border: rgba(130, 168, 210, .22);
-  --border-strong: rgba(130, 168, 210, .38);
-  --text: #e8f1fc;
-  --muted: #93a8c0;
-  --muted-2: #6a7f99;
-  --accent: #4ec4ff;
-  --accent-soft: rgba(78, 196, 255, .14);
-  --ok: #3dd68c;
-  --warn: #f5c84c;
-  --bad: #ff6b7a;
+  --terminal: #0b0e13;
+  --terminal-top: #12161d;
+  --border: rgba(146, 164, 188, .14);
+  --border-strong: rgba(146, 164, 188, .26);
+  --text: #e6e9ef;
+  --muted: #9aa4b2;
+  --muted-2: #6b7480;
+  --accent: #4d90d6;
+  --accent-soft: rgba(77, 144, 214, .12);
+  --ok: #3fb984;
+  --warn: #d9a441;
+  --bad: #e5687a;
   --error: var(--bad);
 
   /* Radius scale — components pick a step instead of inventing values. */
@@ -52,29 +54,39 @@
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in: cubic-bezier(0.4, 0, 1, 1);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --dur-fast: 120ms;
-  --dur: 180ms;
-  --dur-slow: 280ms;
-  --dur-panel: 220ms;
+  /* Kept as an alias so existing references stay valid, but the overshoot is
+     removed — production tools don't bounce. Now a plain ease-out. */
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 100ms;
+  --dur: 150ms;
+  --dur-slow: 220ms;
+  --dur-panel: 180ms;
 
   /* Typography. */
   --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-mono: "Cascadia Code", "JetBrains Mono", "Fira Code", Consolas, ui-monospace, "SF Mono", monospace;
   --mono: var(--font-mono);
 
-  /* Elevation. */
-  --shadow-color: rgba(0, 4, 12, 0.72);
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--shadow-color) 55%, transparent), 0 2px 8px color-mix(in srgb, var(--shadow-color) 28%, transparent);
-  --shadow-md: 0 4px 14px color-mix(in srgb, var(--shadow-color) 48%, transparent), 0 12px 36px color-mix(in srgb, var(--shadow-color) 36%, transparent);
-  --shadow-lg: 0 8px 24px color-mix(in srgb, var(--shadow-color) 52%, transparent), 0 28px 72px color-mix(in srgb, var(--shadow-color) 44%, transparent);
-  --shadow-glow: 0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent), var(--shadow-lg);
+  /* Elevation — single-layer, contained shadows. Mature desktop UIs cast one
+     soft shadow for depth, not a stacked halo. */
+  --shadow-color: rgba(0, 3, 8, 0.55);
+  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--shadow-color) 60%, transparent);
+  --shadow-md: 0 4px 12px color-mix(in srgb, var(--shadow-color) 55%, transparent);
+  --shadow-lg: 0 10px 30px color-mix(in srgb, var(--shadow-color) 60%, transparent);
+  /* Formerly a glow; now just a hairline border + normal elevation so raised
+     surfaces read as edges, not light sources. */
+  --shadow-glow: 0 0 0 1px var(--border-strong), var(--shadow-lg);
 
-  /* Signal / focus. */
-  --glow-accent: 0 0 14px color-mix(in srgb, var(--accent) 42%, transparent);
-  --glow-ok: 0 0 8px color-mix(in srgb, var(--ok) 50%, transparent);
-  --ring: 0 0 0 2px color-mix(in srgb, var(--accent) 48%, transparent);
-  --ring-soft: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent);
+  /* Signal / focus. The old accent "glow ring" was the biggest GPT tell —
+     every active tab, selected row, hovered button and card wore the same blue
+     halo. It's retired to `none`: each element now signals state with its own
+     real indicator (underline bar, left bar, background fill, border) instead
+     of a shared ring. Kept as aliases so the 7 call sites stay valid.
+     The keyboard focus ring (--ring) is a separate a11y affordance and stays. */
+  --glow-accent: none;
+  --glow-ok: none;
+  --ring: 0 0 0 2px color-mix(in srgb, var(--accent) 42%, transparent);
+  --ring-soft: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
 
   --accent-contrast: #041018;
   --bg-hover: color-mix(in srgb, var(--panel-raised) 72%, transparent);
@@ -99,10 +111,8 @@
 
   height: 100vh;
   overflow: hidden;
-  background:
-    radial-gradient(1200px 700px at 12% -14%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 58%),
-    radial-gradient(900px 520px at 92% 108%, color-mix(in srgb, var(--accent) 5%, transparent), transparent 55%),
-    var(--bg);
+  /* Flat background. No accent light-bleed — a tool window is a flat surface. */
+  background: var(--bg);
   color: var(--text);
   font-family: var(--font-ui);
 }

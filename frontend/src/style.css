@@ -49,27 +49,14 @@
 .tab-action:active:not(:disabled),
 .group-tab:active,
 .subnav-chip:active {
-  transform: scale(0.96);
+  /* A tiny press feedback, no exaggerated shrink. */
+  transform: scale(0.985);
 }
 
-/* Icon buttons get a soft lift on hover. */
-.icon-btn:hover {
-  transform: translateY(-1px);
-}
-
+/* Icon buttons do not lift on hover — mature tools change color/background on
+   hover, not position. Only a subtle press-in on active. */
 .icon-btn:active {
-  transform: translateY(0) scale(0.96);
-}
-
-/* Primary actions gently bloom. */
-.btn-primary {
-  transition:
-    background var(--dur-fast) var(--ease),
-    border-color var(--dur-fast) var(--ease),
-    color var(--dur-fast) var(--ease),
-    transform var(--dur-fast) var(--ease),
-    filter var(--dur-fast) var(--ease),
-    box-shadow var(--dur) var(--ease);
+  transform: scale(0.985);
 }
 
 /* Theme changes and primary surface swaps should feel continuous without
@@ -97,10 +84,9 @@
   padding: 4px;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-strong);
-  background: color-mix(in srgb, var(--panel-raised) 96%, black);
-  box-shadow: var(--shadow-lg);
-  animation: dropdown-in var(--dur) var(--ease-out) both;
-  backdrop-filter: blur(12px);
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-md);
+  animation: dropdown-in var(--dur-fast) var(--ease-out) both;
 }
 
 .ctx-menu button {

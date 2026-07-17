@@ -91,9 +91,11 @@
   height: 30px;
   flex: 0 0 30px;
   border-radius: var(--radius-sm);
+  /* Neutral surface + accent only on the glyph. The mark reads as a raised
+     tile, not a blue chip. */
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
+  background: var(--surface);
+  border: 1px solid var(--border);
   box-shadow: var(--hairline);
 }
 
@@ -181,16 +183,14 @@
   transform: scale(0.97);
 }
 
+/* Active segment: a flat neutral surface that steps up from the track (like a
+   macOS segmented control), with the accent carried only by the text/icon —
+   not a blue fill. */
 .nav-chip-active {
-  color: var(--text);
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
-  background:
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--accent) 18%, var(--panel-raised)),
-      color-mix(in srgb, var(--accent) 9%, var(--panel)));
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent),
-    0 6px 16px color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+  border-color: var(--border);
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-sm);
 }
 
 .section-title {
@@ -248,10 +248,10 @@
 }
 
 .group-tab-active {
-  color: var(--text);
-  background: var(--accent-soft);
+  color: var(--accent);
+  background: var(--panel-raised);
   font-weight: 600;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: var(--shadow-sm);
 }
 
 .server-list,
@@ -356,8 +356,8 @@
 
 .file-workspace-tabs button.active {
   color: var(--section-accent);
-  background: color-mix(in srgb, var(--section-accent) 12%, var(--panel-raised));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--section-accent) 17%, transparent);
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-sm);
 }
 
 .file-workspace-body {
@@ -514,8 +514,8 @@
 
 .text-file-row.active {
   color: var(--section-accent);
-  border-color: color-mix(in srgb, var(--section-accent) 28%, var(--border));
-  background: color-mix(in srgb, var(--section-accent) 9%, var(--panel-raised));
+  border-color: var(--border-strong);
+  background: var(--panel-raised);
 }
 
 .text-file-row > span:nth-child(2) {
@@ -660,15 +660,15 @@
 }
 
 .server-row {
-  margin-bottom: 3px;
+  margin-bottom: 2px;
   display: flex;
-  min-height: 44px;
+  min-height: 36px;
   cursor: default;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   border-radius: var(--radius-sm);
-  padding: 8px 9px;
+  padding: 5px 8px;
   border: 1px solid transparent;
   background: color-mix(in srgb, var(--panel-raised) 22%, transparent);
   transition:
@@ -679,10 +679,8 @@
 }
 
 .server-row:hover {
-  border-color: color-mix(in srgb, var(--accent) 24%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 70%, var(--border));
   background: color-mix(in srgb, var(--panel-raised) 70%, transparent);
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-sm);
 }
 
 .server-row-automation {
@@ -856,8 +854,8 @@
 
 .subnav-chip-active {
   color: var(--accent);
-  background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-sm);
 }
 
 .tool-panel-body {
@@ -979,9 +977,8 @@
   height: 48px;
   border-radius: 14px;
   color: var(--accent);
-  background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
-  box-shadow: var(--glow-accent);
+  background: color-mix(in srgb, var(--panel-raised) 80%, transparent);
+  border: 1px solid var(--border);
 }
 
 .empty-state-title {

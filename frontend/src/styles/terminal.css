@@ -177,11 +177,7 @@
   bottom: -1px;
   height: 2px;
   border-radius: 2px 2px 0 0;
-  background: linear-gradient(90deg,
-    color-mix(in srgb, var(--accent) 20%, transparent),
-    var(--accent),
-    color-mix(in srgb, var(--accent) 20%, transparent));
-  box-shadow: var(--glow-accent);
+  background: var(--accent);
 }
 
 .tab svg[data-lucide="x"] {
@@ -205,8 +201,8 @@
 }
 
 .tab svg[data-lucide="x"]:hover {
-  color: var(--text);
-  background: color-mix(in srgb, var(--muted) 22%, transparent);
+  color: var(--bad, #f16d6d);
+  background: color-mix(in srgb, var(--bad, #f16d6d) 16%, transparent);
 }
 
 /* ── Tab Drag Reorder ────────────────────────────────── */
@@ -344,7 +340,7 @@
 .terminal-host > div {
   width: 100%;
   height: 100%;
-  padding: 6px 8px;
+  padding: 10px 12px;
 }
 
 .terminal-hidden {
@@ -365,13 +361,12 @@
 .split-divider {
   background: color-mix(in srgb, var(--border) 85%, transparent);
   cursor: col-resize;
-  transition: background var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  transition: background var(--dur) var(--ease);
 }
 
 .split-divider:hover,
 .split-divider:active {
-  background: var(--accent);
-  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 35%, transparent);
+  background: color-mix(in srgb, var(--accent) 60%, var(--border));
 }
 
 .split-divider-vertical {
@@ -577,4 +572,101 @@
 .floating-terminal-resize:hover::before {
   opacity: 0.75;
   border-color: var(--accent);
+}
+
+/* ── Terminal status bar ──────────────────────────────── */
+
+.terminal-statusbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  height: 23px;
+  padding: 0 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--terminal-top) 82%, var(--panel));
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.tsb-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.tsb-target {
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  color: var(--muted-2);
+}
+
+.tsb-spacer {
+  flex: 1 1 0;
+  min-width: 8px;
+}
+
+.tsb-sep {
+  width: 1px;
+  height: 11px;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.tsb-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted-2);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--muted-2) 22%, transparent);
+}
+
+.terminal-statusbar[data-state="connected"] .tsb-dot {
+  background: var(--ok, #5ee0a3);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok, #5ee0a3) 24%, transparent);
+}
+
+.terminal-statusbar[data-state="connecting"] .tsb-dot {
+  background: var(--warn, #f5c451);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn, #f5c451) 24%, transparent);
+}
+
+.terminal-statusbar[data-state="error"] .tsb-dot {
+  background: var(--bad, #f16d6d);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bad, #f16d6d) 24%, transparent);
+}
+
+.tsb-state {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tsb-latency-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.tsb-latency.tsb-ok { color: var(--ok, #5ee0a3); }
+.tsb-latency.tsb-warn { color: var(--warn, #f5c451); }
+.tsb-latency.tsb-bad { color: var(--bad, #f16d6d); }
+
+.tsb-broadcast {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tsb-dims,
+.tsb-enc {
+  font-family: var(--font-mono);
 }

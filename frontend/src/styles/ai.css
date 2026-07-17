@@ -245,13 +245,10 @@
   width: 34px;
   height: 34px;
   border-radius: var(--radius-sm);
-  background: linear-gradient(180deg,
-    color-mix(in srgb, var(--accent) 96%, white),
-    color-mix(in srgb, var(--accent) 88%, black));
+  background: var(--accent);
   color: var(--accent-contrast);
   flex-shrink: 0;
   border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 18%, transparent);
   transition:
     opacity var(--dur-fast) var(--ease),
     transform var(--dur-fast) var(--ease),
@@ -260,8 +257,7 @@
 }
 
 .ai-send-btn:hover:not(:disabled) {
-  filter: brightness(1.06);
-  box-shadow: var(--glow-accent);
+  background: color-mix(in srgb, var(--accent) 88%, white);
 }
 
 .ai-send-btn:active:not(:disabled) {

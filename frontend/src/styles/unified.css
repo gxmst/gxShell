@@ -115,11 +115,11 @@
   flex: 0 0 34px;
   align-items: center;
   justify-content: center;
-  border: 1px solid color-mix(in srgb, var(--section-accent) 30%, transparent);
+  border: 1px solid var(--border);
   border-radius: 11px;
-  color: var(--section-accent);
-  background: color-mix(in srgb, var(--section-accent) 13%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 8%, transparent), 0 6px 16px color-mix(in srgb, var(--section-accent) 12%, transparent);
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel-raised) 80%, transparent);
+  box-shadow: var(--hairline);
 }
 
 .drawer-hero-copy {
@@ -230,10 +230,10 @@
   align-items: center;
   justify-content: center;
   padding: 0 5px;
-  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border: 1px solid var(--border);
   border-radius: 999px;
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel-raised) 70%, transparent);
   font-size: 9px;
   font-weight: 700;
   line-height: 1;
@@ -247,15 +247,15 @@
 .server-avatar {
   position: relative;
   display: inline-flex;
-  width: 31px;
-  height: 31px;
-  flex: 0 0 31px;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
   align-items: center;
   justify-content: center;
-  border: 1px solid color-mix(in srgb, var(--section-accent) 20%, var(--border));
-  border-radius: 10px;
-  color: var(--section-accent);
-  background: color-mix(in srgb, var(--section-accent) 9%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel-raised) 70%, transparent);
 }
 
 .server-avatar .status-dot {
@@ -657,9 +657,7 @@
 
 .main-stage,
 .terminal-pane {
-  background:
-    radial-gradient(760px 320px at 50% -120px, color-mix(in srgb, var(--accent) 5%, transparent), transparent 70%),
-    var(--terminal);
+  background: var(--terminal);
 }
 
 .tabbar {

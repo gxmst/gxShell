@@ -675,6 +675,7 @@ function App() {
           activeTab={sessions.activeTab}
           profiles={profileState.profiles}
           terminalHosts={activeTerminal.terminalHosts}
+          getDimensions={activeTerminal.getDimensions}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={handleToggleSidebar}
           onActive={sessions.setActiveTab}
