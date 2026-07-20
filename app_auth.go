@@ -68,14 +68,15 @@ func (r *kiRegistry) resolve(id string, answer kiAnswer) bool {
 // pushes the server's questions to the frontend and blocks the handshake until
 // the user answers, cancels, or the timeout expires.
 func (a *App) handleKeyboardInteractive(sessionID, name, instruction string, questions []string, echos []bool) ([]string, error) {
-	if a.ctx == nil {
+	ctx := a.ctx.Get()
+	if ctx == nil {
 		return nil, errors.New("interactive authentication unavailable")
 	}
 	requestID := newKiRequestID()
 	ch := a.kiRequests.register(requestID)
 	defer a.kiRequests.remove(requestID)
 
-	runtime.EventsEmit(a.ctx, "terminal:keyboard-interactive", map[string]any{
+	runtime.EventsEmit(ctx, "terminal:keyboard-interactive", map[string]any{
 		"sessionId":   sessionID,
 		"requestId":   requestID,
 		"name":        name,
@@ -97,7 +98,7 @@ func (a *App) handleKeyboardInteractive(sessionID, name, instruction string, que
 		}
 		return answer.answers, nil
 	case <-time.After(kiPromptTimeout):
-		runtime.EventsEmit(a.ctx, "terminal:keyboard-interactive:closed", map[string]any{
+		runtime.EventsEmit(ctx, "terminal:keyboard-interactive:closed", map[string]any{
 			"requestId": requestID,
 		})
 		return nil, errors.New("interactive authentication prompt timed out")
@@ -120,7 +121,8 @@ func (a *App) AnswerKeyboardInteractive(requestID string, answers []string, canc
 // most security-sensitive prompt in the app, so the wording is explicit about
 // the interception possibility and defaults to rejecting.
 func (a *App) confirmHostKeyChange(host, oldFingerprint, newFingerprint string) bool {
-	if a.ctx == nil {
+	ctx := a.ctx.Get()
+	if ctx == nil {
 		return false
 	}
 	a.nativeDialogMu.Lock()
@@ -132,7 +134,7 @@ func (a *App) confirmHostKeyChange(host, oldFingerprint, newFingerprint string) 
 			"This happens after a server reinstall or key rotation, but it can also mean the connection is being intercepted.\n\n"+
 			"Trust the new key and update known_hosts?",
 		host, oldFingerprint, newFingerprint)
-	res, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+	res, err := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
 		Type:          runtime.QuestionDialog,
 		Title:         "Host Key Changed",
 		Message:       truncate(message, 1200),

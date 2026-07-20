@@ -276,6 +276,33 @@ type AiTokenUsage struct {
 	TotalTokens      int64 `json:"totalTokens"`
 }
 
+type ServiceInfo struct {
+	Name        string `json:"name"` // full unit name, e.g. "nginx.service"
+	Description string `json:"description"`
+	LoadState   string `json:"loadState"`   // loaded|not-found|masked
+	ActiveState string `json:"activeState"` // active|inactive|failed|activating|deactivating
+	SubState    string `json:"subState"`    // running|exited|dead|...
+	Enabled     string `json:"enabled"`     // enabled|disabled|static|masked|"" when unknown
+}
+
+type FirewallRule struct {
+	Index    int    `json:"index"`    // ufw numbered index (1-based); -1 for firewalld
+	Raw      string `json:"raw"`      // raw rule text (ufw numbered line body / firewalld port or rich-rule string)
+	Action   string `json:"action"`   // allow|deny|reject|limit
+	Port     string `json:"port"`     // "8080" or "8000:8100" (normalized with ':' for ranges); may be "" for non-port rules
+	Protocol string `json:"protocol"` // tcp|udp|""
+	Source   string `json:"source"`   // CIDR/IP or "" meaning anywhere
+	V6       bool   `json:"v6"`
+}
+
+type FirewallStatus struct {
+	Backend       string         `json:"backend"` // "ufw" | "firewalld" | "none"
+	Enabled       bool           `json:"enabled"`
+	DefaultPolicy string         `json:"defaultPolicy"` // ufw: e.g. "deny (incoming), allow (outgoing)"; firewalld: default zone name
+	SSHPort       int            `json:"sshPort"`       // the port of THIS session's SSH connection (for lockout warnings in the UI)
+	Rules         []FirewallRule `json:"rules"`
+}
+
 type ContainerInfo struct {
 	ID      string   `json:"id"`
 	Names   []string `json:"names"`

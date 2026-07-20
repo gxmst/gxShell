@@ -1,13 +1,16 @@
 import { useState } from "react";
 import clsx from "clsx";
 import { Activity, AlertTriangle, ChevronDown, ChevronRight, Download, Gauge, HardDrive, MemoryStick, Upload, Wifi, Zap } from "lucide-react";
-import { types } from "../../../wailsjs/go/models";
 import type { Tab } from "../../types";
 import { formatBytes, stateClass } from "../../utils/format";
+import { useSessionMetrics } from "../../hooks/useSessionMetrics";
 import { t } from "../../i18n";
 
-export function MonitorPanel({ metrics, active, locale, onStart, onCpuClick, onPingClick, onDiskClick, onMemClick, onNetworkClick }: { metrics?: types.Metrics; active?: Tab; locale?: string; onStart: () => void; onCpuClick?: () => void; onPingClick?: () => void; onDiskClick?: () => void; onMemClick?: () => void; onNetworkClick?: () => void }) {
+export function MonitorPanel({ active, locale, onStart, onCpuClick, onPingClick, onDiskClick, onMemClick, onNetworkClick }: { active?: Tab; locale?: string; onStart: () => void; onCpuClick?: () => void; onPingClick?: () => void; onDiskClick?: () => void; onMemClick?: () => void; onNetworkClick?: () => void }) {
   const [expanded, setExpanded] = useState(false);
+  // Subscribes to monitor:update itself so each collection tick re-renders
+  // only this panel, not the whole Sidebar tree it lives in.
+  const metrics = useSessionMetrics(active?.id);
   const lang = locale || "en";
   if (!active) return <div className="empty compact">{t(lang, "openTerminal")}</div>;
   return (

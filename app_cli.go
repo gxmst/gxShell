@@ -42,6 +42,9 @@ func (a *App) startCliServer() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/cli/exec", a.requireCliAuth(token, a.handleCliExec))
+	mux.HandleFunc("/cli/jobs", a.requireCliAuth(token, a.handleCliJobs))
+	mux.HandleFunc("/cli/copy", a.requireCliAuth(token, a.handleCliCopy))
+	mux.HandleFunc("/cli/tunnels", a.requireCliAuth(token, a.handleCliTunnels))
 	mux.HandleFunc("/cli/list", a.requireCliAuth(token, a.handleCliList))
 	mux.HandleFunc("/cli/status", a.requireCliAuth(token, a.handleCliStatus))
 	mux.HandleFunc("/cli/ping", a.handleCliPing)
@@ -54,7 +57,7 @@ func (a *App) startCliServer() {
 		WriteTimeout:      cliMaxTimeout + time.Minute,
 		IdleTimeout:       60 * time.Second,
 	}
-	a.cliServer = server
+	a.cliServer.Store(server)
 
 	a.log.Info("CLI server listening on " + cliAddress)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -67,10 +70,11 @@ func (a *App) startCliServer() {
 // unavailable (e.g. the port is already in use), so the user is not left
 // assuming the external CLI works.
 func (a *App) emitCliServerError(message string) {
-	if a.ctx == nil {
+	ctx := a.ctx.Get()
+	if ctx == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "cli:server-error", map[string]any{
+	runtime.EventsEmit(ctx, "cli:server-error", map[string]any{
 		"address": cliAddress,
 		"error":   message,
 	})
@@ -95,6 +99,9 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Server    string `json:"server"`
 		Command   string `json:"command"`
+		Script    string `json:"script,omitempty"`
+		Shell     string `json:"shell,omitempty"`
+		Async     bool   `json:"async,omitempty"`
 		TimeoutMs int    `json:"timeoutMs,omitempty"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, cliMaxRequestSize))
@@ -105,8 +112,22 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Server = strings.TrimSpace(req.Server)
 	req.Command = strings.TrimSpace(req.Command)
-	if req.Server == "" || req.Command == "" {
-		writeCliError(w, http.StatusBadRequest, "validation", "server and command are required")
+	req.Shell = strings.TrimSpace(req.Shell)
+	if req.Server == "" {
+		writeCliError(w, http.StatusBadRequest, "validation", "server is required")
+		return
+	}
+	if (req.Command == "") == (strings.TrimSpace(req.Script) == "") {
+		writeCliError(w, http.StatusBadRequest, "validation", "provide exactly one of command or script")
+		return
+	}
+	if req.Script != "" {
+		if !isAllowedCliShell(req.Shell) {
+			writeCliError(w, http.StatusBadRequest, "validation", "script shell must be one of: sh, bash, dash, zsh, ksh")
+			return
+		}
+	} else if req.Shell != "" {
+		writeCliError(w, http.StatusBadRequest, "validation", "shell is only valid with script input")
 		return
 	}
 	timeout := cliCommandTimeout
@@ -128,11 +149,24 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serverName := cliProfileName(profile)
+	guardText := req.Command
+	execCommand := req.Command
+	var stdin *string
+	if req.Script != "" {
+		guardText = req.Script
+		execCommand = req.Shell + " -s"
+		script := req.Script
+		stdin = &script
+	}
 
-	if block, ok := guardCommandReport(req.Command, true, func() bool {
-		return a.confirmCliExecution(serverName, req.Command)
+	if block, ok := guardCommandReport(guardText, req.Script == "", func() bool {
+		display := execCommand
+		if req.Script != "" {
+			display += " via SSH stdin:\n" + req.Script
+		}
+		return a.confirmCliExecution(serverName, display)
 	}); !ok {
-		fields := logger.CommandAuditFields(req.Command)
+		fields := logger.CommandAuditFields(guardText)
 		fields["server"] = serverName
 		fields["profileID"] = profile.ID
 		fields["reason"] = block.Message()
@@ -149,7 +183,7 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fields := logger.CommandAuditFields(req.Command)
+	fields := logger.CommandAuditFields(guardText)
 	fields["server"] = serverName
 	fields["profileID"] = profile.ID
 	a.log.InfoFields("CLI executing command", fields)
@@ -169,8 +203,19 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	// idempotently, so existing visible tabs are reused and hidden sessions are
 	// surfaced before their automation output arrives.
 	a.announceCliSession(sessionID)
-	activityID := a.beginTerminalAutomation(sessionID, "cli", "execute_command", req.Command)
-	result, err := a.ssh.ExecuteCommandResult(sessionID, req.Command, timeout, cliOutputLimit)
+	if req.Async {
+		job := a.startCliJob(serverName, sessionID, execCommand, stdin, timeout)
+		writeCliJSON(w, http.StatusAccepted, map[string]any{
+			"alias": serverName, "reusedConnection": reusedConnection,
+			"jobId": job.ID, "state": "queued", "timeoutMs": int(timeout / time.Millisecond),
+		})
+		return
+	}
+
+	activityID := a.beginTerminalAutomation(sessionID, "cli", "execute_command", execCommand)
+	// r.Context() ends when the CLI client disconnects, so an abandoned request
+	// does not keep the remote command's exec channel open for up to 30 minutes.
+	result, err := a.ssh.ExecuteCommandResultStream(r.Context(), sessionID, execCommand, stdin, timeout, cliOutputLimit, nil)
 	if err != nil {
 		a.finishTerminalAutomation(sessionID, activityID, "cli", "execute_command", "", err.Error(), 1, 0, false)
 		writeCliJSON(w, http.StatusBadGateway, map[string]any{
@@ -467,13 +512,13 @@ func (a *App) emitCliSessionAvailable(info types.SessionInfo) {
 		a.cliSessionEventFn(info)
 		return
 	}
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "terminal:cli-session", info)
+	if ctx := a.ctx.Get(); ctx != nil {
+		runtime.EventsEmit(ctx, "terminal:cli-session", info)
 	}
 }
 
 func (a *App) confirmCliExecution(serverName, command string) bool {
-	if a.ctx == nil {
+	if a.ctx.Get() == nil {
 		return false
 	}
 	req := &cliApprovalRequest{
@@ -534,7 +579,8 @@ func (a *App) flushCliApprovalBatch(key string) {
 // batch of commands. It is the default confirmCliBatchFn; tests override that
 // seam to exercise the batching logic without a renderer.
 func (a *App) confirmCliExecutionBatchNative(serverName string, commands []string) bool {
-	if a.ctx == nil || len(commands) == 0 {
+	ctx := a.ctx.Get()
+	if ctx == nil || len(commands) == 0 {
 		return false
 	}
 	title := "CLI wants to run commands"
@@ -547,7 +593,7 @@ func (a *App) confirmCliExecutionBatchNative(serverName string, commands []strin
 	}
 	a.nativeDialogMu.Lock()
 	defer a.nativeDialogMu.Unlock()
-	res, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+	res, err := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
 		Type:          runtime.QuestionDialog,
 		Title:         title,
 		Message:       message,

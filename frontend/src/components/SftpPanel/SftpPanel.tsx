@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import {
   ArrowUp,
@@ -34,6 +34,7 @@ import {
   UploadFile,
 } from "../../../wailsjs/go/main/App";
 import type { Tab, Toast } from "../../types";
+import type { AppContextMenu } from "../../hooks/useTerminal";
 import { formatFileSize } from "../../utils/format";
 import { joinRemotePath, parentRemotePath, pathSegments } from "../../utils/shellQuote";
 import { isSupportedTextPath } from "../../utils/textFiles";
@@ -77,6 +78,98 @@ function parsePathInput(input: string): { base: string; prefix: string; absolute
   return { base: raw.slice(0, idx), prefix: raw.slice(idx + 1), absolute };
 }
 
+// Windowed rendering constants: rows are fixed-height (see .sftp-file-row
+// min-height in sftp.css); the fallback is used until the first row has been
+// measured. Overscan keeps scrolling smooth between rAF-throttled updates.
+const ROW_HEIGHT_FALLBACK = 35;
+const OVERSCAN_ROWS = 10;
+
+type FileRowActions = {
+  select: (file: types.RemoteFile) => void;
+  open: (file: types.RemoteFile) => void;
+  menu: (file: types.RemoteFile, x: number, y: number) => void;
+  openDir: (file: types.RemoteFile) => void;
+  openText: (file: types.RemoteFile) => void;
+  download: (file: types.RemoteFile) => void;
+};
+
+// One file-list row. Memoized so the rAF-throttled scrollTop updates that
+// re-render SftpPanel while scrolling do not re-render every mounted row;
+// the action callbacks passed in are identity-stable trampolines.
+const FileRow = memo(function FileRow(props: {
+  file: types.RemoteFile;
+  selected: boolean;
+  lang: string;
+  formatter: Intl.DateTimeFormat;
+  onSelect: (file: types.RemoteFile) => void;
+  onOpen: (file: types.RemoteFile) => void;
+  onMenu: (file: types.RemoteFile, x: number, y: number) => void;
+  onOpenDir: (file: types.RemoteFile) => void;
+  onOpenText: (file: types.RemoteFile) => void;
+  onDownload: (file: types.RemoteFile) => void;
+}) {
+  const { file, lang } = props;
+  const isTextFile = !file.isDir && isSupportedTextPath(file.name);
+  return (
+    <div
+      className={clsx("sftp-file-row", props.selected && "selected")}
+      tabIndex={0}
+      onClick={() => props.onSelect(file)}
+      onDoubleClick={(event) => {
+        if ((event.target as HTMLElement).closest("button")) return;
+        props.onOpen(file);
+      }}
+      onKeyDown={(event) => {
+        if (event.target === event.currentTarget && event.key === "Enter") props.onOpen(file);
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        props.onMenu(file, e.clientX, e.clientY);
+      }}
+    >
+      <span className="sftp-file-main">
+        <span className="sftp-file-icon">
+          {file.isDir ? (
+            <Folder size={14} className="text-accent" />
+          ) : isTextFile ? (
+            <FileText size={14} className="text-accent" />
+          ) : (
+            <File size={14} className="text-muted" />
+          )}
+        </span>
+        <span className="sftp-file-name" title={file.path}>{file.name}</span>
+      </span>
+      <span className="sftp-file-size">{file.isDir ? "—" : formatFileSize(file.size)}</span>
+      <span className="sftp-file-modified">{formatModified(file.modTime, props.formatter)}</span>
+      <div className="sftp-file-actions">
+        {file.isDir ? (
+          <button className="mini-btn" onClick={(event) => { event.stopPropagation(); props.onOpenDir(file); }} title={t(lang, "open")}>
+            <ChevronRight size={12} />
+          </button>
+        ) : isTextFile ? (
+          <button className="mini-btn" onClick={(event) => { event.stopPropagation(); props.onOpenText(file); }} title={t(lang, "openTextFile")}><FileText size={12} /></button>
+        ) : (
+          <button className="mini-btn" onClick={(event) => { event.stopPropagation(); props.onDownload(file); }} title={t(lang, "download")}>
+            <Download size={12} />
+          </button>
+        )}
+        <button
+          className="mini-btn"
+          onClick={(event) => {
+            event.stopPropagation();
+            const rect = event.currentTarget.getBoundingClientRect();
+            props.onMenu(file, rect.right, rect.bottom + 3);
+          }}
+          title={lang === "zh-CN" ? "更多操作" : "More actions"}
+        >
+          <MoreHorizontal size={12} />
+        </button>
+      </div>
+    </div>
+  );
+});
+
 export function SftpPanel(props: {
   active?: Tab;
   path: string;
@@ -85,7 +178,7 @@ export function SftpPanel(props: {
   locale?: string;
   onRefresh: (path?: string) => void;
   onNotify: (text: string, tone?: Toast["tone"]) => void;
-  setCtxMenu: any;
+  setCtxMenu?: (menu: AppContextMenu | null) => void;
   onOpenMarkdownFile?: (sessionId: string, path: string) => void;
   /** Send `cd` into the active terminal and focus it. */
   onOpenTerminalInDir?: (sessionId: string, path: string) => void;
@@ -110,6 +203,47 @@ export function SftpPanel(props: {
   const modifiedFormatter = useMemo(() => new Intl.DateTimeFormat(lang, { month: "short", day: "2-digit" }), [lang]);
   const pathWrapRef = useRef<HTMLDivElement>(null);
   const suggestSeq = useRef(0);
+
+  // Windowed rendering state for the file list. Only the rows intersecting the
+  // viewport (plus OVERSCAN_ROWS on each side) are mounted; spacer divs above
+  // and below preserve the natural scroll height.
+  const [listEl, setListEl] = useState<HTMLDivElement | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const [viewportH, setViewportH] = useState(480);
+  const [rowHeight, setRowHeight] = useState(ROW_HEIGHT_FALLBACK);
+  const scrollFrame = useRef(0);
+
+  const onListScroll = useCallback(() => {
+    if (scrollFrame.current) return;
+    scrollFrame.current = window.requestAnimationFrame(() => {
+      scrollFrame.current = 0;
+      if (listEl) setScrollTop(listEl.scrollTop);
+    });
+  }, [listEl]);
+
+  useEffect(() => () => {
+    if (scrollFrame.current) window.cancelAnimationFrame(scrollFrame.current);
+  }, []);
+
+  useEffect(() => {
+    if (!listEl) return;
+    const measure = () => setViewportH(listEl.clientHeight || 480);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(listEl);
+    return () => observer.disconnect();
+  }, [listEl]);
+
+  // Rows are fixed-height by CSS; measure the first mounted one so the spacer
+  // math tracks the real value instead of hardcoding it.
+  useEffect(() => {
+    if (!listEl) return;
+    const row = listEl.querySelector<HTMLElement>(".sftp-file-row");
+    if (!row) return;
+    const height = row.getBoundingClientRect().height;
+    if (height > 0) setRowHeight((prev) => (Math.abs(prev - height) < 0.5 ? prev : height));
+  }, [listEl, files]);
+
   const draftPath = draftPathState.sessionId === activeSessionId ? draftPathState.value : path;
   const selectedPath = selectedPathState.sessionId === activeSessionId ? selectedPathState.value : "";
   const visibleSuggestDirs = suggestSessionId === activeSessionId ? suggestDirs : [];
@@ -314,6 +448,25 @@ export function SftpPanel(props: {
     });
   };
 
+  // Row actions routed through a ref so the callbacks handed to memo(FileRow)
+  // are identity-stable across renders (scrolling updates state every frame);
+  // the ref always points at the latest closures.
+  const rowActionsRef = useRef<FileRowActions>();
+  rowActionsRef.current = {
+    select: (file) => setSelectedPath(file.path),
+    open: openEntry,
+    menu: showFileMenu,
+    openDir: (file) => goTo(file.path),
+    openText: (file) => props.onOpenMarkdownFile?.(activeSessionId, file.path),
+    download,
+  };
+  const onRowSelect = useCallback((file: types.RemoteFile) => rowActionsRef.current?.select(file), []);
+  const onRowOpen = useCallback((file: types.RemoteFile) => rowActionsRef.current?.open(file), []);
+  const onRowMenu = useCallback((file: types.RemoteFile, x: number, y: number) => rowActionsRef.current?.menu(file, x, y), []);
+  const onRowOpenDir = useCallback((file: types.RemoteFile) => rowActionsRef.current?.openDir(file), []);
+  const onRowOpenText = useCallback((file: types.RemoteFile) => rowActionsRef.current?.openText(file), []);
+  const onRowDownload = useCallback((file: types.RemoteFile) => rowActionsRef.current?.download(file), []);
+
   const changeSort = (next: SortKey) => {
     if (sortKey === next) setSortAsc((value) => !value);
     else {
@@ -327,6 +480,17 @@ export function SftpPanel(props: {
     : null;
 
   if (!active) return <div className="empty compact">{t(lang, "connectFirstSftp")}</div>;
+
+  // Visible slice of the (sorted, filtered) listing. scrollTop is clamped so a
+  // stale value from a longer previous listing cannot push the window past the
+  // end after navigation or filtering.
+  const totalRows = visibleFiles.length;
+  const effScrollTop = Math.min(scrollTop, Math.max(0, totalRows * rowHeight - viewportH));
+  const startRow = Math.max(0, Math.floor(effScrollTop / rowHeight) - OVERSCAN_ROWS);
+  const endRow = Math.min(totalRows, Math.ceil((effScrollTop + viewportH) / rowHeight) + OVERSCAN_ROWS);
+  const windowedFiles = visibleFiles.slice(startRow, endRow);
+  const topPad = startRow * rowHeight;
+  const bottomPad = Math.max(0, (totalRows - endRow) * rowHeight);
 
   return (
     <div className="sftp-panel">
@@ -443,74 +607,29 @@ export function SftpPanel(props: {
           <button className="sftp-col-modified" onClick={() => changeSort("modified")}>{lang === "zh-CN" ? "修改" : "Modified"}{sortIndicator("modified")}</button>
           <span className="sftp-col-actions" />
         </div>
-        <div className="sftp-file-body">
+        <div className="sftp-file-body" ref={setListEl} onScroll={onListScroll}>
           {busy && <div className="sftp-list-state"><RefreshCw size={15} className="sftp-spin" />{t(lang, "loading")}</div>}
           {!busy && visibleFiles.length === 0 && (
             <div className="sftp-list-state"><FolderOpen size={18} />{filter ? t(lang, "noMatchingFiles") : t(lang, "emptyFolder")}</div>
           )}
+          {!busy && topPad > 0 && <div style={{ height: topPad }} aria-hidden="true" />}
           {!busy &&
-            visibleFiles.map((file) => {
-              const isTextFile = !file.isDir && isSupportedTextPath(file.name);
-              return (
-                <div
-                  key={file.path}
-                  className={clsx("sftp-file-row", selectedPath === file.path && "selected")}
-                  tabIndex={0}
-                  onClick={() => setSelectedPath(file.path)}
-                  onDoubleClick={(event) => {
-                    if ((event.target as HTMLElement).closest("button")) return;
-                    openEntry(file);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.target === event.currentTarget && event.key === "Enter") openEntry(file);
-                  }}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    showFileMenu(file, e.clientX, e.clientY);
-                  }}
-                >
-                  <span className="sftp-file-main">
-                    <span className="sftp-file-icon">
-                      {file.isDir ? (
-                        <Folder size={14} className="text-accent" />
-                      ) : isTextFile ? (
-                        <FileText size={14} className="text-accent" />
-                      ) : (
-                        <File size={14} className="text-muted" />
-                      )}
-                    </span>
-                    <span className="sftp-file-name" title={file.path}>{file.name}</span>
-                  </span>
-                  <span className="sftp-file-size">{file.isDir ? "—" : formatFileSize(file.size)}</span>
-                  <span className="sftp-file-modified">{formatModified(file.modTime, modifiedFormatter)}</span>
-                  <div className="sftp-file-actions">
-                    {file.isDir ? (
-                      <button className="mini-btn" onClick={(event) => { event.stopPropagation(); goTo(file.path); }} title={t(lang, "open")}>
-                        <ChevronRight size={12} />
-                      </button>
-                    ) : isTextFile ? (
-                      <button className="mini-btn" onClick={(event) => { event.stopPropagation(); props.onOpenMarkdownFile?.(active.id, file.path); }} title={t(lang, "openTextFile")}><FileText size={12} /></button>
-                    ) : (
-                      <button className="mini-btn" onClick={(event) => { event.stopPropagation(); download(file); }} title={t(lang, "download")}>
-                        <Download size={12} />
-                      </button>
-                    )}
-                    <button
-                      className="mini-btn"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        const rect = event.currentTarget.getBoundingClientRect();
-                        showFileMenu(file, rect.right, rect.bottom + 3);
-                      }}
-                      title={lang === "zh-CN" ? "更多操作" : "More actions"}
-                    >
-                      <MoreHorizontal size={12} />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+            windowedFiles.map((file) => (
+              <FileRow
+                key={file.path}
+                file={file}
+                selected={selectedPath === file.path}
+                lang={lang}
+                formatter={modifiedFormatter}
+                onSelect={onRowSelect}
+                onOpen={onRowOpen}
+                onMenu={onRowMenu}
+                onOpenDir={onRowOpenDir}
+                onOpenText={onRowOpenText}
+                onDownload={onRowDownload}
+              />
+            ))}
+          {!busy && bottomPad > 0 && <div style={{ height: bottomPad }} aria-hidden="true" />}
         </div>
       </div>
 

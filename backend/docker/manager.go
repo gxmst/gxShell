@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
-	"io"
 	"regexp"
 	"strings"
 	"sync"
@@ -175,47 +174,122 @@ func (m *Manager) StreamContainerLogs(sessionID, containerID, streamID string, t
 		return err
 	}
 
+	// A dedicated reader goroutine feeds lines to the batching loop below. The
+	// handoff select on ctx means an abandoned read cannot strand the reader,
+	// and the deferred session.Close unblocks a read still in flight.
+	type readResult struct {
+		line string
+		err  error
+	}
+	results := make(chan readResult, 16)
+	go func() {
+		reader := bufio.NewReader(stdout)
+		for {
+			line, err := readBoundedLine(reader)
+			select {
+			case results <- readResult{line: line, err: err}:
+			case <-ctx:
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
 	go func() {
 		defer func() {
 			_ = session.Close()
 		}()
 
-		reader := bufio.NewReader(stdout)
+		// Aggregate lines and flush on a timer or size threshold, mirroring the
+		// spirit of termio.Pump: emitting one Wails event per log line floods
+		// the IPC bridge on chatty containers. The frontend appends event data
+		// verbatim, so a batch with embedded newlines keeps the payload contract.
+		var batch strings.Builder
+		timer := time.NewTimer(logFlushInterval)
+		defer timer.Stop()
+		flush := func() {
+			if batch.Len() == 0 {
+				return
+			}
+			m.emitLogData(self, batch.String())
+			batch.Reset()
+		}
+		resetTimer := func() {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(logFlushInterval)
+		}
 		for {
 			select {
 			case <-ctx:
 				return
-			default:
-			}
-
-			line, err := reader.ReadString('\n')
-			if err != nil {
-				if err == io.EOF {
+			case res := <-results:
+				batch.WriteString(res.line)
+				if res.err != nil {
+					// EOF or read error (e.g. session closed): deliver what is
+					// left, then notify the frontend the stream ended so it
+					// doesn't wait forever.
+					flush()
 					select {
 					case <-ctx:
-						return
 					default:
+						m.finishLogStream(self, true)
 					}
-					if line != "" {
-						m.emitLogData(self, line)
-					}
-					m.finishLogStream(self, true)
 					return
 				}
-				// Non-EOF read error (e.g. session closed): still notify the
-				// frontend the stream ended so it doesn't wait forever.
-				select {
-				case <-ctx:
-				default:
-					m.finishLogStream(self, true)
+				if batch.Len() >= maxLogBatchBytes {
+					flush()
+					resetTimer()
 				}
-				return
+			case <-timer.C:
+				flush()
+				timer.Reset(logFlushInterval)
 			}
-			m.emitLogData(self, line)
 		}
 	}()
 
 	return nil
+}
+
+const (
+	// maxLogLineBytes caps a single log line: bufio.Reader.ReadString would
+	// otherwise grow without bound on a line that never ends (e.g. a giant
+	// minified JSON dump). The remainder of an oversized line is discarded.
+	maxLogLineBytes = 256 * 1024
+	// logFlushInterval/maxLogBatchBytes bound the docker:log event rate the
+	// same way termio.Pump bounds terminal output (time- and size-based flush).
+	logFlushInterval = 50 * time.Millisecond
+	maxLogBatchBytes = 32 * 1024
+)
+
+// readBoundedLine reads one line including its trailing newline, capped at
+// maxLogLineBytes. An oversized line is truncated with a marker and the rest
+// of it is drained without being buffered. The returned line may be non-empty
+// even when err is non-nil (a final line without a newline before EOF).
+func readBoundedLine(reader *bufio.Reader) (string, error) {
+	var line strings.Builder
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		if line.Len()+len(chunk) > maxLogLineBytes {
+			line.Write(chunk[:maxLogLineBytes-line.Len()])
+			line.WriteString(" [line truncated]\n")
+			for err == bufio.ErrBufferFull {
+				_, err = reader.ReadSlice('\n')
+			}
+			return line.String(), err
+		}
+		line.Write(chunk)
+		if err == bufio.ErrBufferFull {
+			continue
+		}
+		return line.String(), err
+	}
 }
 
 // activateLogStream installs one concrete follow operation. A newer stream for

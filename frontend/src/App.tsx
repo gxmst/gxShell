@@ -7,8 +7,7 @@ import type { AutomationActivityEvent, AutomationActivityRecord, AutomationIndic
 import { normalizeAppTheme } from "./utils/format";
 import { useToasts } from "./hooks/useToasts";
 import { useProfiles } from "./hooks/useProfiles";
-import { useMonitor } from "./hooks/useMonitor";
-import { useTerminal } from "./hooks/useTerminal";
+import { useTerminal, type AppContextMenu } from "./hooks/useTerminal";
 import { useSessions } from "./hooks/useSessions";
 import { useSftp } from "./hooks/useSftp";
 import { useHotkeys } from "./hooks/useHotkeys";
@@ -39,7 +38,6 @@ import { formatAutomationTerminalEvent } from "./utils/automation";
 function App() {
   const { toasts, notify } = useToasts();
   const profileState = useProfiles(notify);
-  const { metrics } = useMonitor();
   const [drawer, setDrawer] = usePersistedState<Drawer>("gx:drawer", "monitor");
   const [profileModal, setProfileModal] = useState<types.Profile | null>(null);
   const [quickConnectOpen, setQuickConnectOpen] = useState(false);
@@ -53,7 +51,7 @@ function App() {
   const [logViewer, setLogViewer] = useState<{ name: string; content: string } | null>(null);
   const [floatingTabIds, setFloatingTabIds] = usePersistedState<string[]>("gx:floatingTabIds", []);
   const [splitPane, setSplitPane] = useState<SplitPane | null>(null);
-  const [ctxMenu, setCtxMenu] = useState<{x:number, y:number, items:{label:string, action:()=>void, danger?:boolean}[]} | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<AppContextMenu | null>(null);
   const [broadcastInput, setBroadcastInput] = useState(false);
   // Session ids currently recording. Backend owns the real state; this mirror
   // drives the TabBar toggle. Cleared for a session when it stops or closes.
@@ -173,7 +171,6 @@ function App() {
 
   const activeRecording = !!sessions.activeTab && recordingIds.includes(sessions.activeTab);
 
-  const activeMetrics = sessions.active ? metrics[sessions.active.id] : undefined;
   const sftp = useSftp(sessions.active, drawer, notify);
 
   // Clickable terminal links. Kept in a ref so useTerminal's per-terminal link
@@ -595,9 +592,10 @@ function App() {
     sessions.setActiveTab(sessionId);
     setTimeout(() => focusTerminal(sessionId), 30);
   }, [focusTerminal, notify, sessions.setActiveTab]);
-  // Stable identities so a monitor:update tick (which updates metrics state and
-  // re-renders App) does not break the memo(TerminalArea) boundary and re-render
-  // the whole terminal/markdown subtree every few seconds.
+  // Stable identities so an App re-render does not break the memo(TerminalArea)
+  // boundary and re-render the whole terminal/markdown subtree. (Metrics no
+  // longer live in App state; monitor:update consumers subscribe individually
+  // via useSessionMetrics.)
   const handleCloseLogViewer = useCallback(() => setLogViewer(null), []);
   const handleToggleBroadcast = useCallback(() => setBroadcastInput((v) => !v), []);
   const activeKiRequest = kiRequests[0] || null;
@@ -621,7 +619,6 @@ function App() {
           settings={profileState.settings}
           appInfo={profileState.appInfo}
           active={sessions.active}
-          activeMetrics={activeMetrics}
           remotePath={sftp.remotePath}
           remoteFiles={sftp.remoteFiles}
           sftpBusy={sftp.sftpBusy}

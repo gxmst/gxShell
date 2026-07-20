@@ -9,6 +9,19 @@ import type { Tab, Toast } from "../../types";
 const MAX_LOG_CHARS = 512 * 1024;
 const LOG_FLUSH_MS = 75;
 
+// Payload of the Go-side "docker:log" event (a map[string]string). The backend
+// may batch several log lines into one event, so `data` can contain embedded
+// newlines (and a "[line truncated]" marker for oversized lines); it is
+// appended verbatim into the <pre> log view, which renders newlines as-is.
+interface DockerLogEvent {
+  streamID?: string;
+  sessionID?: string;
+  containerID?: string;
+  data?: string;
+  /** "true" when the stream has ended. */
+  done?: string;
+}
+
 function nextLogStreamId() {
   return `docker-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -86,7 +99,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   onNotifyRef.current = props.onNotify;
 
   useEffect(() => {
-    const off = EventsOn("docker:log", (data: any) => {
+    const off = EventsOn("docker:log", (data: DockerLogEvent) => {
       if (!data?.streamID || data.streamID !== logStreamIdRef.current) return;
       if (data.done === "true") {
         flushPendingLogs();
@@ -95,7 +108,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
         return;
       }
       if (data.data) {
-        queueLogChunk(String(data.data));
+        queueLogChunk(data.data);
       }
     });
     return () => off();

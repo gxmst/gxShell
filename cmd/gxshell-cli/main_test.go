@@ -41,6 +41,34 @@ func TestStripTrailingFlagsOnlyConsumesTrailingFlags(t *testing.T) {
 	}
 }
 
+func TestScriptAndJobFlagsParse(t *testing.T) {
+	args, opts, err := stripTrailingFlags([]string{"script.sh", "--shell", "bash", "--detach"}, cliOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(args, []string{"script.sh"}) || opts.shell != "bash" || !opts.detach {
+		t.Fatalf("args=%#v opts=%#v", args, opts)
+	}
+
+	args, opts, err = parseLeadingFlags([]string{"--follow", "server", "uptime"}, cliOptions{})
+	if err != nil || !opts.follow || !reflect.DeepEqual(args, []string{"server", "uptime"}) {
+		t.Fatalf("args=%#v opts=%#v err=%v", args, opts, err)
+	}
+}
+
+func TestAllowedShellAndRemoteSpec(t *testing.T) {
+	if !isAllowedShell("bash") || isAllowedShell("bash -c") || isAllowedShell("powershell") {
+		t.Fatal("shell allowlist is not strict")
+	}
+	server, remotePath, err := parseRemoteSpec("2:/var/lib/app/config.yaml")
+	if err != nil || server != "2" || remotePath != "/var/lib/app/config.yaml" {
+		t.Fatalf("server=%q path=%q err=%v", server, remotePath, err)
+	}
+	if _, _, err := parseRemoteSpec("missing-colon"); err == nil {
+		t.Fatal("invalid remote spec was accepted")
+	}
+}
+
 func TestParseTimeoutValidatesRange(t *testing.T) {
 	if _, err := parseTimeout("500ms"); err == nil {
 		t.Fatal("500ms timeout should be rejected")

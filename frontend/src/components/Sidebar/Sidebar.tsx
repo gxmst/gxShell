@@ -4,6 +4,7 @@ import { ArrowUpRight, Bot, Edit3, FileText, Folder, FolderOpen, MoreHorizontal,
 import { types } from "../../../wailsjs/go/models";
 import { TraceRoute, PingHost, UpdateSettings } from "../../../wailsjs/go/main/App";
 import type { AutomationActivityRecord, AutomationIndicator, Drawer, RecentMarkdownItem, Tab, Toast } from "../../types";
+import type { AppContextMenu } from "../../hooks/useTerminal";
 import { AppIcon, drawerIcon } from "../../constants";
 import { stateClass } from "../../utils/format";
 import { t, navLabel } from "../../i18n";
@@ -25,13 +26,15 @@ const TunnelPanel = lazy(() => import("../TunnelPanel/TunnelPanel").then((mod) =
 const LogsPanel = lazy(() => import("../LogsPanel/LogsPanel").then((mod) => ({ default: mod.LogsPanel })));
 const AiPanel = lazy(() => import("../AiPanel/AiPanel").then((mod) => ({ default: mod.AiPanel })));
 const ContainerPanel = lazy(() => import("../ContainerPanel/ContainerPanel").then((mod) => ({ default: mod.ContainerPanel })));
+const ServicePanel = lazy(() => import("../ServicePanel/ServicePanel").then((mod) => ({ default: mod.ServicePanel })));
+const FirewallPanel = lazy(() => import("../FirewallPanel/FirewallPanel").then((mod) => ({ default: mod.FirewallPanel })));
 const RecordingsPanel = lazy(() => import("../RecordingsPanel/RecordingsPanel").then((mod) => ({ default: mod.RecordingsPanel })));
 
 function DrawerFallback() {
   return <div className="drawer-loading"><span className="drawer-loading-dot" /></div>;
 }
 
-const toolDrawers: Drawer[] = ["commands", "tunnels", "containers", "logs", "recordings"];
+const toolDrawers: Drawer[] = ["commands", "tunnels", "containers", "services", "firewall", "logs", "recordings"];
 
 function primaryForDrawer(drawer: Drawer): PrimaryNav | "ai" | "settings" {
   if (drawer === "monitor") return "connections";
@@ -44,15 +47,14 @@ function primaryForDrawer(drawer: Drawer): PrimaryNav | "ai" | "settings" {
 export function Sidebar(props: {
   collapsed: boolean;
   setCollapsed: (value: boolean | ((value: boolean) => boolean)) => void;
-  setCtxMenu: any;
-    drawer: Drawer;
+  setCtxMenu: (menu: AppContextMenu | null) => void;
+  drawer: Drawer;
   setDrawer: (drawer: Drawer) => void;
   profiles: types.Profile[];
   commands: types.CommandTemplate[];
   settings: types.AppSettings | null;
   appInfo: Record<string, string>;
   active?: Tab;
-  activeMetrics?: types.Metrics;
   remotePath: string;
   remoteFiles: types.RemoteFile[];
   sftpBusy: boolean;
@@ -338,7 +340,6 @@ export function Sidebar(props: {
               </div>
               <div className="tool-body">
                 <MonitorPanel
-                  metrics={props.activeMetrics}
                   active={props.active}
                   locale={lang}
                   onStart={props.onStartMonitor}
@@ -446,6 +447,8 @@ export function Sidebar(props: {
                 {props.drawer === "tunnels" && <TunnelPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
                 {props.drawer === "logs" && <LogsPanel locale={lang} onOpenLog={props.onOpenLog} activities={props.activityHistory || []} />}
                 {props.drawer === "containers" && <ContainerPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
+                {props.drawer === "services" && <ServicePanel active={props.active} locale={lang} onNotify={props.onNotify} />}
+                {props.drawer === "firewall" && <FirewallPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
                 {props.drawer === "recordings" && <RecordingsPanel active={props.active} locale={lang} onNotify={props.onNotify} settings={props.settings} />}
               </div>
             </>
@@ -475,7 +478,7 @@ export function Sidebar(props: {
 
       {floats.memory && (
         <MemoryCard
-          metrics={props.activeMetrics}
+          sessionId={props.active?.id}
           initialLeft={floatLeft()}
           initialTop={60}
           locale={lang}
@@ -487,7 +490,7 @@ export function Sidebar(props: {
         <MonitorDetailCard
           key={kind}
           kind={kind}
-          metrics={props.activeMetrics}
+          sessionId={props.active?.id}
           initialLeft={floatLeft()}
           initialTop={kind === "cpu" ? 60 : kind === "disk" ? 90 : 120}
           locale={lang}

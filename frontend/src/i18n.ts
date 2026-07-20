@@ -1,67 +1,9 @@
-export type LangKey =
-  | "monitor" | "files" | "cmd" | "settings"
-  | "servers" | "new" | "search" | "currentServer"
-  | "noServers" | "connectFirstSftp" | "openTerminal"
-  | "noActiveTerminal" | "noActiveTerminalHint" | "newConnection" | "openCmdPalette"
-  | "collapse" | "lang" | "theme" | "termTheme" | "font" | "size"
-  | "monitorInterval" | "timeout" | "enableMonitor" | "highlightOutput"
-  | "confirmClose" | "save" | "openData"
-  | "cpu" | "mem" | "disk" | "load" | "ping" | "collectionTime" | "down" | "up"
-  | "topProcesses" | "startMonitor" | "newCommand"
-  | "loading" | "cancel" | "connect" | "enterPassword" | "enterPassphrase"
-  | "showSecret" | "downloadFinished" | "uploading" | "downloading"
-  | "progressDownload" | "progressUpload"
-  | "hostKeyTitle" | "hostKeyMessage"
-  | "copy" | "paste" | "pasteFailed" | "selectAll" | "clearTerminal"
-  | "copyToClipboard" | "all" | "none"
-  | "confirmDisconnectBody" | "connecting"
-  | "highlighting" | "highlightOff" | "highlightBasic" | "highlightFull"
-  | "clickableLinks" | "clickableLinksHint"
-  | "emptyServersTitle" | "emptyServersHint"
-  | "exportHistory" | "savePassword"
-  | "editServer" | "newServer" | "name" | "group" | "host" | "port"
-  | "username" | "auth" | "password" | "privateKey" | "passphrase" | "authAgent" | "authAgentHint"
-  | "favorite" | "cliServerAccess" | "cliServerAlias" | "description" | "delete" | "duplicate"
-  | "cliServerEnabled" | "cliServerEnabledHint"
-  | "mdContextMenu" | "mdContextMenuHint" | "mdContextMenuFailed"
-  | "hostRequired" | "usernameRequired" | "cliAliasRequired" | "cliAliasDuplicate" | "portRange"
-  | "category" | "command" | "saveCommand" | "editCommand" | "newCommandModal"
-  | "confirm" | "copyFailed" | "monitorLinuxOnly"
-  | "networkPath" | "refresh" | "jitter" | "loss" | "routeHops"
-  | "traceRoute" | "tracing" | "clickTraceRoute"
-  | "local" | "remote" | "upload" | "download"
-  | "sshTunnels" | "restartTunnels" | "noTunnels" | "tunnelsRestarted"
-  | "reconnecting" | "reconnectFailed" | "autoReconnect"
-  | "broadcastToggle" | "broadcastActive" | "broadcastStop"
-  | "tunnelRules" | "addTunnel" | "tunnelType" | "tunnelLocal" | "tunnelRemote" | "tunnelDynamic" | "tunnelBindHost" | "removeTunnel" | "tunnelAdded"
-  | "proxyJump"
-  | "presetWeb" | "presetMySQL" | "presetRedis" | "presetSOCKS"
-  | "transfer" | "transferTitle" | "noActiveTransfer" | "transferProgress" | "transferComplete" | "transferFailed" | "transferCancelled"
-  | "transferManager" | "transferActiveCount" | "noActiveTransferHint" | "dualPaneTransfer" | "dualPaneShort"
-  | "transferHistory" | "clearHistory" | "noTransferHistory" | "pathPlaceholder" | "pathSuggestions" | "noPathSuggestions"
-  | "parentDir" | "goHomeRoot" | "filterFiles" | "noMatchingFiles" | "emptyFolder" | "openTerminalInDir" | "openTerminalInDirDone"
-  | "open" | "fileSizeCol"
-  | "memoryDetail" | "topMemProcesses" | "close" | "closeEsc" | "settingsSaved" | "profileCopied"
-  | "profileSaved" | "logReadFailed" | "cliServerError"
-  | "sshConnection" | "showSidebar" | "splitHorizontal" | "splitVertical" | "reconnect" | "run"
-  | "cpuDetail" | "diskDetail" | "networkDetail" | "cpuUsage" | "diskUsage" | "used" | "total" | "latency" | "topCpuProcesses" | "linuxCommands" | "rootDiskHint" | "noData" | "minMax" | "outline" | "hideOutline" | "find" | "wrapCode" | "wrapText" | "openTextFile" | "fileSaved" | "discardChanges" | "downloadFolder" | "folderDownloadFinished" | "copyPath" | "newFolder" | "folderName" | "renameFile" | "newName" | "deleteRemoteFile" | "deleteRemoteFileBody" | "searchPlaceholder" | "typeToSearch" | "findInCurrentTerminal" | "findNext" | "findPrev" | "ram" | "swap"
-  | "textFiles" | "recentTextFiles" | "switchFilesView" | "noRecentTextFiles" | "connectServerFirstTextFile"
-  | "defaultGroup" | "allGroups" | "favorites" | "recentConnections" | "noFavorites" | "noRecentConnections"
-  | "quickConnect" | "quickConnectHint" | "saveConnection" | "saveAndConnect" | "connectOnce" | "privateKeyRequired"
-  | "profileTools" | "importProfiles" | "importOpenSSH" | "exportProfiles" | "addFavorite" | "removeFavorite"
-  | "profilesImported" | "profilesExported"
-  | "logs" | "logFiles" | "noLogFiles" | "selectLogFile" | "runAll"
-  | "ai" | "aiAssistant" | "aiSettings" | "aiProvider" | "aiModel" | "aiApiKey" | "aiEndpoint" | "aiCustom" | "aiSend" | "aiThinking" | "aiNoConfig" | "aiNoConfigHint" | "aiContext" | "aiTokenUsage" | "aiClear" | "aiDiagnose" | "aiInputPlaceholder" | "aiFetchModels" | "aiSelectModel" | "aiNewChat" | "aiChatHistory" | "aiNoChats"
-  | "aiToolExecute" | "aiToolReadFile" | "aiToolRunning" | "aiRunTool" | "aiRunAllTools" | "aiPreset" | "aiOpenAICompatible" | "aiResetUsage" | "aiApiKeySaved" | "aiNoApiKey" | "aiContextReady" | "aiNoContext" | "aiNotConfigured" | "aiSettingsSaved" | "aiNoModels" | "aiNoTerminalOutput"
-  | "aiTarget" | "aiNoTarget" | "aiTargetConnected" | "aiTargetDisconnected" | "aiBindActiveTarget" | "aiTargetLocked" | "aiNoConnectedTarget" | "aiResolveToolsFirst" | "aiStop"
-  | "containers" | "noContainers" | "showAll" | "viewLogs" | "restart" | "stop" | "start" | "remove" | "noLogs" | "noActiveSession" | "localTerminal"
-  | "recordings" | "recordingsHint" | "noRecordings" | "playRecording" | "deleteRecording" | "openRecordingsDir"
-  | "startRecording" | "stopRecording" | "recordingStarted" | "recordingSaved" | "recordingActive" | "recordingEmpty" | "pause" | "play" | "playbackSpeed"
-  | "commandVarsHint" | "commandPreview"
-  | "knownHosts" | "knownHostsHint" | "noKnownHosts" | "removeKnownHost" | "knownHostRemoved" | "knownHostRemoveFailed" | "forgetHost"
-  | "kiTitle" | "kiSubmit" | "kiCancel";
-
-const en: Record<LangKey, string> = {
+// `en` is the source of truth for the key set. It is intentionally declared
+// WITHOUT a `Record<...>` annotation so `keyof typeof en` infers every key;
+// adding a string therefore only requires touching en + zhCN (tsc enforces the
+// zh side via the Record<LangKey, string> annotation below, and
+// scripts/check-i18n.mjs catches untranslated/placeholder drift).
+const en = {
   monitor: "Monitor",
   files: "Files",
   cmd: "Cmd",
@@ -401,7 +343,51 @@ const en: Record<LangKey, string> = {
   kiTitle: "Authentication required",
   kiSubmit: "Submit",
   kiCancel: "Cancel",
+  services: "Services",
+  svcCount: "{n} services",
+  svcSearch: "Filter by name or description…",
+  svcRunning: "Running",
+  svcFailed: "Failed",
+  noServices: "No services found",
+  svcNoSystemd: "systemd was not detected on this host.",
+  enable: "Enable",
+  disable: "Disable",
+  svcActionOk: "{name}: {action} succeeded",
+  svcCriticalTitle: "Critical service",
+  svcCriticalBody: "{name} may be required for SSH or network access. Forcing \"{action}\" can lock you out of this server. Continue anyway?",
+  svcForceConfirm: "Force anyway",
+  svcFollow: "Follow live output",
+  svcStopFollow: "Stop following",
+  firewall: "Firewall",
+  fwStatusActive: "Active",
+  fwStatusInactive: "Inactive",
+  fwBackendNone: "No supported firewall detected — install ufw or firewalld.",
+  fwEnable: "Enable firewall",
+  fwDisable: "Disable firewall",
+  fwDefaultPolicy: "Default policy",
+  fwSshPort: "SSH port",
+  fwRuleCount: "{n} rules",
+  fwNoRules: "No firewall rules yet.",
+  fwAnywhere: "anywhere",
+  fwAddRule: "Add rule",
+  fwAllow: "Allow",
+  fwDeny: "Deny",
+  fwPortPlaceholder: "Port — 8080 or 8000:8100",
+  fwSourcePlaceholder: "Source IP/CIDR (optional)",
+  fwInvalidPort: "Enter a valid port or range, e.g. 8080 or 8000:8100",
+  fwEnabledNotice: "Firewall enabled — SSH port {port} is auto-allowed.",
+  fwDisabledNotice: "Firewall disabled",
+  fwDisableTitle: "Disable firewall?",
+  fwDisableBody: "This turns off all firewall protection on this server. Continue?",
+  fwLockoutTitle: "SSH lockout risk",
+  fwDeleteLockoutBody: "This rule covers the SSH port ({port}). Deleting it may lock you out of this server. Delete anyway?",
+  fwDenyLockoutBody: "This deny rule covers the SSH port ({port}). Applying it may lock you out of this server. Apply anyway?",
+  fwRuleAdded: "Rule added",
+  fwRuleDeleted: "Rule deleted",
+  fwProceed: "Proceed anyway",
 };
+
+export type LangKey = keyof typeof en;
 
 const zhCN: Record<LangKey, string> = {
   monitor: "监控",
@@ -743,6 +729,48 @@ const zhCN: Record<LangKey, string> = {
   kiTitle: "需要身份验证",
   kiSubmit: "提交",
   kiCancel: "取消",
+  services: "服务",
+  svcCount: "{n} 个服务",
+  svcSearch: "按名称或描述筛选…",
+  svcRunning: "运行中",
+  svcFailed: "失败",
+  noServices: "未找到服务",
+  svcNoSystemd: "未在该主机上检测到 systemd。",
+  enable: "启用",
+  disable: "禁用",
+  svcActionOk: "{name}：{action}成功",
+  svcCriticalTitle: "关键服务",
+  svcCriticalBody: "{name} 可能是 SSH 或网络连接所依赖的关键服务。强制「{action}」可能导致无法再连接该服务器。仍要继续吗？",
+  svcForceConfirm: "强制执行",
+  svcFollow: "跟随实时输出",
+  svcStopFollow: "停止跟随",
+  firewall: "防火墙",
+  fwStatusActive: "运行中",
+  fwStatusInactive: "已停用",
+  fwBackendNone: "未检测到受支持的防火墙 — 请安装 ufw 或 firewalld。",
+  fwEnable: "启用防火墙",
+  fwDisable: "停用防火墙",
+  fwDefaultPolicy: "默认策略",
+  fwSshPort: "SSH 端口",
+  fwRuleCount: "{n} 条规则",
+  fwNoRules: "还没有防火墙规则。",
+  fwAnywhere: "任意来源",
+  fwAddRule: "添加规则",
+  fwAllow: "放行",
+  fwDeny: "拒绝",
+  fwPortPlaceholder: "端口 — 8080 或 8000:8100",
+  fwSourcePlaceholder: "来源 IP/CIDR（可选）",
+  fwInvalidPort: "请输入有效端口或端口段，如 8080 或 8000:8100",
+  fwEnabledNotice: "防火墙已启用 — SSH 端口 {port} 已自动放行。",
+  fwDisabledNotice: "防火墙已停用",
+  fwDisableTitle: "停用防火墙？",
+  fwDisableBody: "这将关闭该服务器上的所有防火墙防护。仍要继续吗？",
+  fwLockoutTitle: "SSH 失联风险",
+  fwDeleteLockoutBody: "该规则覆盖 SSH 端口（{port}）。删除后可能无法再连接该服务器。仍要删除吗？",
+  fwDenyLockoutBody: "该拒绝规则覆盖 SSH 端口（{port}）。生效后可能无法再连接该服务器。仍要添加吗？",
+  fwRuleAdded: "规则已添加",
+  fwRuleDeleted: "规则已删除",
+  fwProceed: "仍要继续",
 };
 
 const locales: Record<string, Record<LangKey, string>> = { en, "zh-CN": zhCN };
@@ -761,6 +789,8 @@ export function navLabel(key: string, locale: string): string {
     tunnels: "sshTunnels",
     logs: "logs",
     containers: "containers",
+    services: "services",
+    firewall: "firewall",
     recordings: "recordings",
     ai: "ai",
     settings: "settings",

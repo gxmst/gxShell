@@ -1,9 +1,11 @@
 package logger
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,15 +29,21 @@ type Logger struct {
 	path        string
 	historyPath string
 	mu          sync.Mutex
+	app         *logFile
+	history     *logFile
 }
 
 // LogFields represents structured log fields.
 type LogFields map[string]interface{}
 
 func New(dir string) *Logger {
+	path := filepath.Join(dir, "logs", "app.log")
+	historyPath := filepath.Join(dir, "logs", "history.log")
 	return &Logger{
-		path:        filepath.Join(dir, "logs", "app.log"),
-		historyPath: filepath.Join(dir, "logs", "history.log"),
+		path:        path,
+		historyPath: historyPath,
+		app:         &logFile{path: path},
+		history:     &logFile{path: historyPath},
 	}
 }
 
@@ -97,18 +105,95 @@ func (l *Logger) Write(level, message string, fields LogFields) {
 }
 
 func (l *Logger) writeToFile(content string) {
-	writeToFile(l.path, content)
+	l.app.write(content)
 }
 
-func writeToFile(path string, content string) {
-	_ = os.MkdirAll(filepath.Dir(path), 0755)
-	rotateLogIfNeeded(path, int64(len(content)))
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-	if err != nil {
+// logFile owns one open append handle per log target and mirrors the file size
+// in memory for rotation decisions, so the steady-state cost per entry is a
+// single write syscall instead of open/stat/write/close. The handle is opened
+// lazily and dropped on any write failure; the periodic existence re-check
+// recovers the file being deleted or moved externally (on Unix an unlinked
+// file would otherwise keep absorbing writes invisibly). Guarded by the owning
+// Logger's mu.
+type logFile struct {
+	path   string
+	f      *os.File
+	size   int64
+	writes int
+}
+
+// existenceRecheckWrites bounds how stale the handle can get after an external
+// deletion; one stat per N writes is noise next to the per-write open the old
+// implementation paid.
+const existenceRecheckWrites = 512
+
+func (lf *logFile) write(content string) {
+	if lf.f == nil && !lf.open() {
 		return
 	}
-	defer f.Close()
-	_, _ = f.WriteString(content)
+	lf.writes++
+	if lf.writes%existenceRecheckWrites == 0 {
+		if _, err := os.Stat(lf.path); err != nil {
+			lf.close()
+			if !lf.open() {
+				return
+			}
+		}
+	}
+	if lf.size+int64(len(content)) >= maxLogSize {
+		lf.close()
+		rotateLogFiles(lf.path)
+		if !lf.open() {
+			return
+		}
+	}
+	if _, err := lf.f.WriteString(content); err != nil {
+		// Retry once on a fresh handle in case the old one went stale.
+		lf.close()
+		if !lf.open() {
+			return
+		}
+		if _, err := lf.f.WriteString(content); err != nil {
+			lf.close()
+			return
+		}
+	}
+	lf.size += int64(len(content))
+}
+
+func (lf *logFile) open() bool {
+	if err := os.MkdirAll(filepath.Dir(lf.path), 0755); err != nil {
+		return false
+	}
+	f, err := os.OpenFile(lf.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		return false
+	}
+	size := int64(0)
+	if info, err := f.Stat(); err == nil {
+		size = info.Size()
+	}
+	lf.f = f
+	lf.size = size
+	lf.writes = 0
+	return true
+}
+
+func (lf *logFile) close() {
+	if lf.f != nil {
+		_ = lf.f.Close()
+		lf.f = nil
+	}
+}
+
+// Close releases the open log file handles (Windows cannot delete a file that
+// is still held open). Writes after Close simply reopen the handles lazily, so
+// calling it after the final shutdown entry is safe.
+func (l *Logger) Close() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.app.close()
+	l.history.close()
 }
 
 func (l *Logger) LogCommand(sessionID, host string, line string) {
@@ -119,7 +204,7 @@ func (l *Logger) LogCommand(sessionID, host string, line string) {
 	// persisting the command to history.log.
 	safeLine := redact(strings.TrimSpace(line))
 	entry := fmt.Sprintf("[%s] [%s@%s] %s\n", ts, sessionID, host, safeLine)
-	writeToFile(l.historyPath, entry)
+	l.history.write(entry)
 }
 
 func (l *Logger) OpenHistory() error {
@@ -133,11 +218,16 @@ func (l *Logger) OpenHistory() error {
 	}
 }
 
+// readLatestTailCap bounds how much of the log ReadLatest loads. The UI shows
+// at most a few hundred recent entries, so reading a full 10MB file on every
+// refresh is pure waste; a 512KB tail covers thousands of lines.
+const readLatestTailCap = 512 * 1024
+
 func (l *Logger) ReadLatest(limit int) []types.LogEntry {
 	l.mu.Lock()
-	data, err := os.ReadFile(l.path)
+	data := readTailBytes(l.path, readLatestTailCap)
 	l.mu.Unlock()
-	if err != nil {
+	if len(data) == 0 {
 		return []types.LogEntry{}
 	}
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
@@ -181,6 +271,40 @@ func (l *Logger) ReadLatest(limit int) []types.LogEntry {
 		entries = append(entries, entry)
 	}
 	return entries
+}
+
+// readTailBytes reads at most maxBytes from the end of the file. When the read
+// does not start at offset zero, the first line is almost certainly partial and
+// is dropped, so callers only ever parse whole lines.
+func readTailBytes(path string, maxBytes int64) []byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil
+	}
+	start := info.Size() - maxBytes
+	if start < 0 {
+		start = 0
+	}
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return nil
+	}
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil
+	}
+	if start > 0 {
+		idx := bytes.IndexByte(data, '\n')
+		if idx < 0 {
+			return nil
+		}
+		data = data[idx+1:]
+	}
+	return data
 }
 
 // plainLogLineRe parses the pre-JSON log line format. Package-level so
@@ -263,11 +387,10 @@ func fullCommandLoggingEnabled() bool {
 	return value == "1" || strings.EqualFold(value, "true") || strings.EqualFold(value, "yes")
 }
 
-func rotateLogIfNeeded(path string, incomingBytes int64) {
-	info, err := os.Stat(path)
-	if err != nil || info.Size()+incomingBytes < int64(maxLogSize) {
-		return
-	}
+// rotateLogFiles shifts path -> path.1 -> path.2 ... discarding the oldest.
+// The caller decides when rotation is due (logFile tracks the size in memory)
+// and must have closed its handle to path first.
+func rotateLogFiles(path string) {
 	for i := maxRotatedLogFiles; i >= 1; i-- {
 		src := rotatedLogPath(path, i-1)
 		dst := rotatedLogPath(path, i)

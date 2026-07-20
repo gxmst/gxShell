@@ -37,8 +37,8 @@ func (a *App) emitTerminalAutomation(event terminalAutomationEvent) {
 		a.automationEventFn(event)
 		return
 	}
-	if a.ctx != nil {
-		runtime.EventsEmit(a.ctx, "terminal:automation", event)
+	if ctx := a.ctx.Get(); ctx != nil {
+		runtime.EventsEmit(ctx, "terminal:automation", event)
 	}
 }
 

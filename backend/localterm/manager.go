@@ -127,6 +127,18 @@ func (m *Manager) ConnectWithOptions(shellSetting string, startDirectory string,
 	})
 
 	m.mu.Lock()
+	// Re-check the limit under the write lock: concurrent connects can pass the
+	// early read-locked check together, and by now the shell is already running,
+	// so a loser must tear its process and pty down again.
+	if len(m.sessions) >= maxLocalSessions {
+		m.mu.Unlock()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		pty.Close()
+		go func() { _ = cmd.Wait() }()
+		return types.SessionInfo{}, fmt.Errorf("local terminal limit reached (%d max)", maxLocalSessions)
+	}
 	m.sessions[id] = session
 	m.mu.Unlock()
 

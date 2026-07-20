@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -50,6 +51,9 @@ type Manager struct {
 	// createMu serializes client creation per session so concurrent cache
 	// misses don't each open a client and close one another's in-use handle.
 	createMu map[string]*sync.Mutex
+	// stopEvict ends the evictLoop goroutine on Shutdown.
+	stopEvict chan struct{}
+	stopOnce  sync.Once
 
 	transferMu sync.Mutex
 	transfers  map[string]*transferJob
@@ -82,12 +86,18 @@ const healthCheckInterval = 30 * time.Second
 // transfer itself.
 const progressEmitInterval = 100 * time.Millisecond
 
+type RemoteCopyResult struct {
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
 func NewManager(sessions SSHClientProvider, emit func(event string, data any)) *Manager {
 	m := &Manager{
 		sessions:  sessions,
 		emit:      emit,
 		cache:     map[string]*cachedClient{},
 		createMu:  map[string]*sync.Mutex{},
+		stopEvict: make(chan struct{}),
 		transfers: map[string]*transferJob{},
 	}
 	go m.evictLoop()
@@ -172,8 +182,20 @@ func (m *Manager) acquireSlow(sessionID string) (*sftp.Client, func(), error) {
 
 	m.mu.Lock()
 	cc := &cachedClient{client: client, lastUsed: time.Now(), lastCheck: time.Now(), refs: 1}
+	// InvalidateClient drops the createMu entry, so a creator that raced it can
+	// land here alongside us under a different creation lock. Detach whatever
+	// entry we displace; otherwise its client would leak with no path left to
+	// close it.
+	displaced := m.cache[sessionID]
+	if displaced != nil {
+		displaced.closing = true
+	}
 	m.cache[sessionID] = cc
+	shouldCloseDisplaced := displaced != nil && displaced.refs == 0
 	m.mu.Unlock()
+	if shouldCloseDisplaced {
+		_ = displaced.client.Close()
+	}
 	return client, func() { m.release(sessionID, cc, false) }, nil
 }
 
@@ -222,7 +244,9 @@ func (m *Manager) evictLRULocked() {
 }
 
 // InvalidateClient detaches a session's client from the cache. The handle is
-// closed once any in-flight operations release it.
+// closed once any in-flight operations release it. The per-session creation
+// mutex is dropped as well: session IDs are never reused, so without this the
+// createMu map grows by one entry per connection for the life of the process.
 func (m *Manager) InvalidateClient(sessionID string) {
 	m.mu.Lock()
 	cc, ok := m.cache[sessionID]
@@ -230,6 +254,7 @@ func (m *Manager) InvalidateClient(sessionID string) {
 		cc.closing = true
 		delete(m.cache, sessionID)
 	}
+	delete(m.createMu, sessionID)
 	shouldClose := ok && cc.refs == 0
 	m.mu.Unlock()
 	if shouldClose {
@@ -240,7 +265,12 @@ func (m *Manager) InvalidateClient(sessionID string) {
 func (m *Manager) evictLoop() {
 	ticker := time.NewTicker(2 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
+		select {
+		case <-m.stopEvict:
+			return
+		case <-ticker.C:
+		}
 		m.mu.Lock()
 		now := time.Now()
 		for id, cc := range m.cache {
@@ -254,6 +284,14 @@ func (m *Manager) evictLoop() {
 		}
 		m.mu.Unlock()
 	}
+}
+
+// Shutdown stops the background eviction goroutine. The cached clients
+// themselves are closed through InvalidateClient as their sessions disconnect
+// (ssh.Manager.Shutdown tears every session down), so only the ticker loop
+// needs stopping here.
+func (m *Manager) Shutdown() {
+	m.stopOnce.Do(func() { close(m.stopEvict) })
 }
 
 // beginTransfer registers an in-flight transfer before any filesystem or
@@ -499,6 +537,101 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) (err error
 		return err
 	}
 	return nil
+}
+
+// CopyRemoteFile streams one remote file through gxShell to another SSH
+// session. The destination is verified and atomically renamed into place, so a
+// disconnect or checksum failure cannot leave a partial final file.
+func (m *Manager) CopyRemoteFile(ctx context.Context, sourceSessionID, sourcePath, destinationSessionID, destinationPath string, progress func(done, total int64)) (result RemoteCopyResult, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	sourcePath = cleanRemotePath(sourcePath)
+	destinationPath = cleanRemotePath(destinationPath)
+
+	sourceClient, releaseSource, err := m.acquire(sourceSessionID)
+	if err != nil {
+		return result, err
+	}
+	defer releaseSource()
+	destinationClient, releaseDestination, err := m.acquire(destinationSessionID)
+	if err != nil {
+		return result, err
+	}
+	defer releaseDestination()
+
+	source, err := sourceClient.Open(sourcePath)
+	if err != nil {
+		return result, err
+	}
+	defer source.Close()
+	info, err := source.Stat()
+	if err != nil {
+		return result, err
+	}
+	if info.IsDir() {
+		return result, fmt.Errorf("remote copy currently supports files only")
+	}
+
+	tmpPath := destinationPath + ".gxshell-copy-" + randomSuffix() + ".part"
+	destination, err := destinationClient.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	if err != nil {
+		return result, err
+	}
+	removeTemp := true
+	defer func() {
+		_ = destination.Close()
+		if removeTemp {
+			_ = destinationClient.Remove(tmpPath)
+		}
+	}()
+
+	sourceHash := sha256.New()
+	reader := &progressReader{ctx: ctx, r: source, fn: func(done int64) {
+		if progress != nil {
+			progress(done, info.Size())
+		}
+	}}
+	result.Bytes, err = io.CopyBuffer(io.MultiWriter(destination, sourceHash), reader, make([]byte, 256*1024))
+	if closeErr := destination.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		return result, err
+	}
+	if err = checkTransferContext(ctx); err != nil {
+		return result, err
+	}
+	if result.Bytes != info.Size() {
+		return result, fmt.Errorf("remote copy size mismatch: copied %d of %d bytes", result.Bytes, info.Size())
+	}
+	if err = destinationClient.Chmod(tmpPath, info.Mode().Perm()); err != nil {
+		return result, fmt.Errorf("preserve destination mode: %w", err)
+	}
+
+	verify, err := destinationClient.Open(tmpPath)
+	if err != nil {
+		return result, err
+	}
+	destinationHash := sha256.New()
+	_, copyErr := io.CopyBuffer(destinationHash, &progressReader{ctx: ctx, r: verify, fn: func(int64) {}}, make([]byte, 256*1024))
+	closeErr := verify.Close()
+	if copyErr != nil {
+		return result, copyErr
+	}
+	if closeErr != nil {
+		return result, closeErr
+	}
+	sourceSum := sourceHash.Sum(nil)
+	if !bytes.Equal(sourceSum, destinationHash.Sum(nil)) {
+		return result, fmt.Errorf("remote copy checksum verification failed")
+	}
+	result.SHA256 = hex.EncodeToString(sourceSum)
+	if err = replaceRemoteTemp(destinationClient, tmpPath, destinationPath); err != nil {
+		return result, err
+	}
+	removeTemp = false
+	return result, nil
 }
 
 func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) (err error) {

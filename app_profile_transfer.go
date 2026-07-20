@@ -40,6 +40,13 @@ type profileSecretUpdate struct {
 // so exported files do not contain credentials and imported copies prompt for
 // them normally instead of claiming a missing password is already remembered.
 func (a *App) ExportProfiles(includeSecrets bool) (string, error) {
+	// Exporting credentials writes them to disk in plaintext, so it needs the
+	// same native-dialog consent boundary as the other security-sensitive
+	// actions: a compromised renderer can call this binding, but it cannot
+	// forge the user's click. Declining behaves like a cancelled save dialog.
+	if includeSecrets && !a.confirmPlaintextSecretExport() {
+		return "", nil
+	}
 	profiles, err := a.store.ListProfiles()
 	if err != nil {
 		return "", err
@@ -69,7 +76,7 @@ func (a *App) ExportProfiles(includeSecrets bool) (string, error) {
 		return "", err
 	}
 
-	filePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+	filePath, err := runtime.SaveFileDialog(a.ctx.Get(), runtime.SaveDialogOptions{
 		Title:           "Export gxShell profiles",
 		DefaultFilename: "gxShell-profiles-" + time.Now().Format("20060102") + ".json",
 		Filters: []runtime.FileFilter{
@@ -89,11 +96,36 @@ func (a *App) ExportProfiles(includeSecrets bool) (string, error) {
 	return filePath, nil
 }
 
+// confirmPlaintextSecretExport warns, via a native dialog, that the exported
+// JSON will contain passwords and passphrases in plaintext. Mirrors the
+// confirmHostKeyChange pattern: explicit wording, default answer No.
+func (a *App) confirmPlaintextSecretExport() bool {
+	ctx := a.ctx.Get()
+	if ctx == nil {
+		return false
+	}
+	a.nativeDialogMu.Lock()
+	defer a.nativeDialogMu.Unlock()
+	res, err := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
+		Type:  runtime.QuestionDialog,
+		Title: "Export Credentials in Plaintext",
+		Message: "This export will include saved passwords and private-key passphrases in PLAINTEXT inside the JSON file.\n\n" +
+			"Anyone who can read the exported file can log in to your servers with it. Store and transfer the file carefully, and delete it after importing.\n\n" +
+			"Continue with the export?",
+		DefaultButton: "No",
+	})
+	if err != nil {
+		a.log.ErrorFields("plaintext export confirm dialog failed", LogFields{"error": err.Error()})
+		return false
+	}
+	return res == "Yes"
+}
+
 // ImportProfiles lets the user select a gxShell JSON bundle and merges it into
 // the existing library. The returned counters are intentionally a plain map so
 // the Wails API stays small and the frontend can localise the summary itself.
 func (a *App) ImportProfiles() (map[string]int, error) {
-	filePath, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	filePath, err := runtime.OpenFileDialog(a.ctx.Get(), runtime.OpenDialogOptions{
 		Title: "Import gxShell profiles",
 		Filters: []runtime.FileFilter{
 			{DisplayName: "gxShell profile bundle (*.json)", Pattern: "*.json"},
@@ -146,7 +178,7 @@ func (a *App) ImportOpenSSHConfig() (map[string]int, error) {
 	if info, err := os.Stat(sshDir); err == nil && info.IsDir() {
 		options.DefaultDirectory = sshDir
 	}
-	filePath, err := runtime.OpenFileDialog(a.ctx, options)
+	filePath, err := runtime.OpenFileDialog(a.ctx.Get(), options)
 	if err != nil {
 		return nil, err
 	}
@@ -216,6 +248,10 @@ func profileIdentity(profile types.Profile) string {
 }
 
 func (a *App) mergeImportedProfiles(candidates []profileImportCandidate) (map[string]int, error) {
+	// The file dialogs and reads happen in the callers; only the
+	// read-merge-save cycle runs under the profiles lock.
+	a.profilesMu.Lock()
+	defer a.profilesMu.Unlock()
 	existing, err := a.store.ListProfiles()
 	if err != nil {
 		return nil, err

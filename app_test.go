@@ -385,6 +385,12 @@ func TestGuardCommand(t *testing.T) {
 	if reason, ok := guardCommand("cat /home/alice/.ssh/id_rsa.pub", true, neverConfirm); !ok || reason != "" {
 		t.Fatalf("public key read should be allowed without confirm, got ok=%v reason=%q", ok, reason)
 	}
+	if reason, ok := guardCommand("cat /etc/ssh/ssh_host_ed25519_key.pub", true, neverConfirm); !ok || reason != "" {
+		t.Fatalf("host public key read should be allowed without confirm, got ok=%v reason=%q", ok, reason)
+	}
+	if reason, ok := guardCommand("cat /etc/ssh/ssh_host_ed25519_key", true, neverConfirm); ok || reason == "" {
+		t.Fatalf("host private key read should be blocked, got ok=%v reason=%q", ok, reason)
+	}
 
 	// AI tools pass allowReadOnlyWithoutConfirm=false, so even read-only
 	// commands still require a native confirmation in that path.
@@ -515,10 +521,39 @@ func TestMigrateCliProfileFlagsPreservesFailedSecretMigrationPlaintext(t *testin
 func TestCheckDangerousCommandRmForce(t *testing.T) {
 	blocked := []string{
 		"rm -rf /",
-		"rm -fr /tmp/x",
-		"rm --force /tmp/x",
 		"rm --recursive --force /",
+		"rm -rf /etc/ssh",
+		"rm -rf /etc/nginx",
+		"rm /etc/hosts",
+		"rm -r /usr/local/tool",
+		"rm -rf /var/lib/docker",
+		"rm -rf /root/work",
+		"rm -rf /home/alice/.ssh",
+		"rm -rf /home/alice",
+		"rm -rf /opt/tool",
+		"rm -rf .",
+		"rm -rf ../",
+		"rm -rf ~",
+		"rm --force $TARGET",
+		"rm -rf *",
+		"bash -lc 'rm -rf /'",
+		"sh -xc 'rm -rf /usr/bin'",
+		"env rm -rf /etc/systemd",
+		"sudo env rm -rf /boot/grub",
+	}
+	confirmOnly := []string{
+		"rm -rf node_modules",
+		"rm -rf build/*",
+		"bash -lc 'rm -rf node_modules'",
+		"bash -lc 'cd project && rm -rf build/*'",
+		"env rm -rf ./dist/assets/*",
+		"rm -fr /tmp/x",
 		"rm --force /home/alice/project",
+	}
+	for _, cmd := range confirmOnly {
+		if reason, ok := checkDangerousCommand(cmd); ok {
+			t.Errorf("expected %q to reach confirmation, blocked as %q", cmd, reason)
+		}
 	}
 	for _, cmd := range blocked {
 		if reason, ok := checkDangerousCommand(cmd); !ok || reason == "" {
@@ -551,6 +586,8 @@ func TestCheckDangerousCommandNoFalsePositives(t *testing.T) {
 		"grep userdel /var/log/secure",
 		"journalctl -u shutdown.target",
 		"cat /var/log/dmesg",
+		"docker rm -f \"$c\"",
+		"rm -f /tmp/file >/dev/null",
 	}
 	for _, cmd := range allowed {
 		if reason, ok := checkDangerousCommand(cmd); ok {
@@ -567,11 +604,40 @@ func TestCheckDangerousCommandNoFalsePositives(t *testing.T) {
 		"/bin/dd if=/dev/zero of=/dev/sda",
 		"sudo init 0",
 		"passwd root",
+		"rm -rf /usr/bin",
 	}
 	for _, cmd := range blocked {
 		if reason, ok := checkDangerousCommand(cmd); !ok || reason == "" {
 			t.Errorf("expected %q to be blocked, got ok=%v reason=%q", cmd, ok, reason)
 		}
+	}
+}
+
+func TestWriteLocalFileDoesNotTouchFixedSidecars(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "notes.md")
+	if err := os.WriteFile(target, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	sidecars := []string{target + ".gxshell-tmp", target + ".gxshell-bak"}
+	for _, sidecar := range sidecars {
+		if err := os.WriteFile(sidecar, []byte("user-owned"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := NewApp()
+	app.allowFile(target)
+	if err := app.WriteLocalFile(target, "new"); err != nil {
+		t.Fatalf("WriteLocalFile: %v", err)
+	}
+	for _, sidecar := range sidecars {
+		data, err := os.ReadFile(sidecar)
+		if err != nil || string(data) != "user-owned" {
+			t.Fatalf("sidecar %s changed: %q, err=%v", sidecar, data, err)
+		}
+	}
+	if data, err := os.ReadFile(target); err != nil || string(data) != "new" {
+		t.Fatalf("target content = %q, err=%v", data, err)
 	}
 }
 

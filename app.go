@@ -7,16 +7,19 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gxShell/backend/ai"
 	"gxShell/backend/config"
 	"gxShell/backend/docker"
+	"gxShell/backend/firewall"
 	"gxShell/backend/localterm"
 	"gxShell/backend/logger"
 	"gxShell/backend/monitor"
 	"gxShell/backend/network"
 	"gxShell/backend/secrets"
+	"gxShell/backend/services"
 	sftpmanager "gxShell/backend/sftp"
 	sshmanager "gxShell/backend/ssh"
 	"gxShell/backend/tunnel"
@@ -25,9 +28,35 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
+// appContext publishes the Wails context to goroutines that may start before
+// the startup/domReady callbacks run (systray menu loop, CLI server) and keep
+// reading it afterwards. A bare context.Context field would be a data race
+// between those readers and the Wails callback threads; atomic.Value makes the
+// handoff safe. Get returns nil until Set has run, so callers keep the same
+// nil-checks they used against the bare field.
+type appContext struct {
+	v atomic.Value
+}
+
+// ctxHolder keeps the stored dynamic type constant: atomic.Value panics when
+// consecutive stores carry different concrete types, and the startup and
+// domReady contexts are not guaranteed to share one.
+type ctxHolder struct{ ctx context.Context }
+
+func (c *appContext) Set(ctx context.Context) {
+	c.v.Store(ctxHolder{ctx: ctx})
+}
+
+func (c *appContext) Get() context.Context {
+	if h, ok := c.v.Load().(ctxHolder); ok {
+		return h.ctx
+	}
+	return nil
+}
+
 // App is the main application struct that coordinates all managers.
 type App struct {
-	ctx     context.Context
+	ctx     appContext
 	store   *config.Store
 	log     *logger.Logger
 	ssh     *sshmanager.Manager
@@ -38,7 +67,11 @@ type App struct {
 	tunnels *tunnel.Manager
 	ai      *ai.Manager
 	docker  *docker.Manager
-	local   *localterm.Manager
+	// services/firewall manage remote systemd units and the remote firewall
+	// over the same SSH exec channel as docker (no remote agent).
+	services *services.Manager
+	firewall *firewall.Manager
+	local    *localterm.Manager
 	// automationEventFn is a test seam for terminal activity events. Production
 	// leaves it nil and emitTerminalAutomation forwards events through Wails.
 	automationEventFn func(terminalAutomationEvent)
@@ -65,10 +98,22 @@ type App struct {
 	// seams for tests to exercise the batching logic without a GUI.
 	cliApprovalDelay  time.Duration
 	cliConfirmBatchFn func(serverName string, commands []string) bool
-	cliServer         *http.Server
-	rateLimiter       *connectionRateLimiter
-	startupFilePath   string
-	startedAt         time.Time
+	cliJobsMu         sync.Mutex
+	cliJobs           map[string]*cliJob
+	cliTunnelsMu      sync.Mutex
+	cliTunnels        map[string]cliTunnelRecord
+	// cliServer is written by the CLI server goroutine and read by shutdown on
+	// the Wails callback thread, hence the atomic pointer.
+	cliServer   atomic.Pointer[http.Server]
+	rateLimiter *connectionRateLimiter
+	// profilesMu serializes every read-modify-write cycle on profiles.json
+	// (profile CRUD, touchProfile, tunnel rule persistence, imports).
+	// config.Store only locks the individual read and write, so without this a
+	// CLI-triggered touchProfile and a UI profile edit can interleave and one
+	// silently overwrites the other.
+	profilesMu      sync.Mutex
+	startupFilePath string
+	startedAt       time.Time
 	// allowedFiles tracks the local file paths the user has genuinely chosen to
 	// open. ReadLocalFile/WriteLocalFile only operate on paths in this set, so a
 	// compromised renderer cannot use them to read or overwrite arbitrary files
@@ -112,6 +157,8 @@ func NewApp() *App {
 		cliConnecting:        map[string]*cliConnectCall{},
 		cliPreferredSessions: map[string]string{},
 		cliApprovals:         map[string]*cliApprovalBatch{},
+		cliJobs:              map[string]*cliJob{},
+		cliTunnels:           map[string]cliTunnelRecord{},
 	}
 	// The logger is not created until startup, so the collision callback reads
 	// a.log lazily and stays silent until it exists.
@@ -130,7 +177,7 @@ func NewApp() *App {
 
 // startup initializes all managers and loads configuration.
 func (a *App) startup(ctx context.Context) {
-	a.ctx = ctx
+	a.ctx.Set(ctx)
 	a.startedAt = time.Now()
 	store, err := config.NewStore()
 	if err != nil {
@@ -143,18 +190,19 @@ func (a *App) startup(ctx context.Context) {
 	a.secrets = secrets.NewStore(a.store.DataDir())
 
 	emit := func(event string, data any) {
-		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, event, data)
+		if emitCtx := a.ctx.Get(); emitCtx != nil {
+			runtime.EventsEmit(emitCtx, event, data)
 		}
 	}
 
 	confirm := func(host string, fingerprint string) bool {
-		if a.ctx == nil {
+		dialogCtx := a.ctx.Get()
+		if dialogCtx == nil {
 			return false
 		}
 		a.nativeDialogMu.Lock()
 		defer a.nativeDialogMu.Unlock()
-		res, _ := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+		res, _ := runtime.MessageDialog(dialogCtx, runtime.MessageDialogOptions{
 			Type:          runtime.QuestionDialog,
 			Title:         "Unknown Host Key",
 			Message:       fmt.Sprintf("The host key for %s is unknown.\nFingerprint: %s\n\nDo you want to trust this host and continue connecting?", host, fingerprint),
@@ -174,19 +222,29 @@ func (a *App) startup(ctx context.Context) {
 	a.ai = ai.NewManager()
 	a.docker = docker.NewManager(a.ssh)
 	a.docker.SetEmit(emit)
+	// Like docker, service/firewall log streams need no disconnect cleanup in
+	// SetOnClosed below: a dying SSH session EOFs the follow command and the
+	// stream tears itself down.
+	a.services = services.NewManager(a.ssh)
+	a.services.SetEmit(emit)
+	a.firewall = firewall.NewManager(a.ssh)
+	a.firewall.SetEmit(emit)
 	a.local = localterm.NewManager(emit)
 
 	// Cross-subsystem cleanup must follow EVERY disconnect path, not only the
 	// user-initiated App.Disconnect: a server-initiated drop (shell exit,
 	// keepalive failure) otherwise leaks the monitor poller and keeps tunnel
 	// listeners bound, so the auto-reconnected session cannot rebind its
-	// tunnels (address already in use) until the app restarts.
+	// tunnels (address already in use) until the app restarts. This callback is
+	// the SINGLE owner of that cleanup — App.Disconnect deliberately does not
+	// repeat these calls, and each of them is an idempotent map removal.
 	a.ssh.SetOnClosed(func(sessionID string) {
 		a.monitor.Stop(sessionID)
 		a.sftp.InvalidateClient(sessionID)
 		a.tunnels.StopTunnels(sessionID)
 		a.net.StopPing(sessionID)
 		a.discardAuthorizedAiToolCalls(sessionID)
+		a.forgetCliSession(sessionID)
 	})
 	a.ssh.SetKeyboardInteractivePrompt(a.handleKeyboardInteractive)
 	a.ssh.SetHostKeyChangeConfirm(a.confirmHostKeyChange)
@@ -230,7 +288,7 @@ func (a *App) startup(ctx context.Context) {
 
 // domReady is called when the frontend is ready.
 func (a *App) domReady(ctx context.Context) {
-	a.ctx = ctx
+	a.ctx.Set(ctx)
 	runtime.WindowCenter(ctx)
 
 	runtime.OnFileDrop(ctx, func(_ int, _ int, paths []string) {
@@ -305,16 +363,21 @@ func (a *App) GetStartupFile() string {
 
 // shutdown cleans up resources before application exit.
 func (a *App) shutdown(ctx context.Context) {
-	if a.cliServer != nil {
+	if srv := a.cliServer.Load(); srv != nil {
 		shutdownCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		_ = a.cliServer.Shutdown(shutdownCtx)
+		_ = srv.Shutdown(shutdownCtx)
 		cancel()
 	}
+	a.cancelCliJobs()
+	a.closeCliTunnels()
 	// startup may quit early when the config directory cannot be initialized.
 	// Wails still invokes shutdown in that case, so every subsystem must be
 	// treated as optional until startup has completed successfully.
 	if a.ssh != nil {
 		a.ssh.Shutdown()
+	}
+	if a.sftp != nil {
+		a.sftp.Shutdown()
 	}
 	if a.local != nil {
 		a.local.Shutdown()
@@ -330,6 +393,7 @@ func (a *App) shutdown(ctx context.Context) {
 		a.log.InfoFields("gxShell stopped", logger.LogFields{
 			"uptime": uptime.String(),
 		})
+		a.log.Close()
 	}
 }
 
@@ -340,11 +404,12 @@ func (a *App) shutdown(ctx context.Context) {
 // argument is a supported text file, open it in a tab via the same trusted path used
 // for startup files.
 func (a *App) handleSecondInstanceLaunch(args []string) {
-	if a.ctx == nil {
+	ctx := a.ctx.Get()
+	if ctx == nil {
 		return
 	}
-	runtime.WindowShow(a.ctx)
-	runtime.WindowUnminimise(a.ctx)
+	runtime.WindowShow(ctx)
+	runtime.WindowUnminimise(ctx)
 
 	for _, arg := range args {
 		if !isSupportedTextPath(arg) {
@@ -357,12 +422,13 @@ func (a *App) handleSecondInstanceLaunch(args []string) {
 			continue
 		}
 		a.log.InfoFields("Second instance opened file", logger.LogFields{"fileName": filepath.Base(allowed)})
-		runtime.EventsEmit(a.ctx, "file:open", allowed)
+		runtime.EventsEmit(ctx, "file:open", allowed)
 	}
 }
 
 func (a *App) confirmOpenDroppedTextFiles(paths []string) bool {
-	if a.ctx == nil {
+	ctx := a.ctx.Get()
+	if ctx == nil {
 		return false
 	}
 	a.nativeDialogMu.Lock()
@@ -379,7 +445,7 @@ func (a *App) confirmOpenDroppedTextFiles(paths []string) bool {
 		}
 		message = fmt.Sprintf("Open these %d dropped text files?\n\n%s%s", len(paths), strings.Join(shown, "\n"), suffix)
 	}
-	res, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+	res, err := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
 		Type:          runtime.QuestionDialog,
 		Title:         "Open text file",
 		Message:       truncate(message, 1200),
@@ -400,6 +466,8 @@ func (a *App) confirmOpenDroppedTextFiles(paths []string) bool {
 // IDs of profiles whose plaintext credentials had to remain in profiles.json
 // because secure storage failed, so later startup migrations do not wipe them.
 func (a *App) migrateSecrets() map[string]bool {
+	a.profilesMu.Lock()
+	defer a.profilesMu.Unlock()
 	profiles, err := a.store.ListProfiles()
 	if err != nil {
 		return nil
@@ -448,6 +516,8 @@ func (a *App) migrateSecrets() map[string]bool {
 // idempotent migration: once profiles are re-saved without the legacy keys it
 // becomes a no-op.
 func (a *App) migrateCliProfileFlags(preserveSecretIDs ...map[string]bool) {
+	a.profilesMu.Lock()
+	defer a.profilesMu.Unlock()
 	profiles, err := a.store.ListProfiles()
 	if err != nil {
 		return

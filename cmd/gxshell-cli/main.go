@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,7 +18,7 @@ import (
 const (
 	daemonURL        = "http://127.0.0.1:56789"
 	cliTokenFilename = "cli_token"
-	version          = "1.3.0"
+	version          = "1.4.0"
 	cliMinTimeout    = time.Second
 	cliMaxTimeout    = 30 * time.Minute
 )
@@ -27,6 +28,9 @@ var httpClient = &http.Client{Timeout: 31 * time.Minute}
 type cliOptions struct {
 	json    bool
 	timeout time.Duration
+	shell   string
+	follow  bool
+	detach  bool
 }
 
 func main() {
@@ -60,7 +64,7 @@ func main() {
 		if err != nil {
 			fatalError(nextOpts, 1, "failed to read script file: "+err.Error())
 		}
-		execCommand(server, normalizeScriptInput(data), nextOpts)
+		execScript(server, normalizeScriptInput(data), nextOpts)
 	case "exec-stdin":
 		server, nextOpts, err := parseOneArgCommand(args[1:], opts, "exec-stdin")
 		if err != nil {
@@ -70,7 +74,17 @@ func main() {
 		if err != nil {
 			fatalError(nextOpts, 1, "failed to read stdin: "+err.Error())
 		}
-		execCommand(server, normalizeScriptInput(data), nextOpts)
+		execScript(server, normalizeScriptInput(data), nextOpts)
+	case "copy":
+		source, destination, nextOpts, err := parseTwoArgCommand(args[1:], opts, "copy")
+		if err != nil {
+			fatalErrorKind(nextOpts, 1, "validation", err.Error())
+		}
+		copyRemote(source, destination, nextOpts)
+	case "job":
+		handleJobCommand(args[1:], opts)
+	case "tunnel":
+		handleTunnelCommand(args[1:], opts)
 	case "list":
 		nextOpts, err := parseNoArgCommand(args[1:], opts, "list")
 		if err != nil {
@@ -113,14 +127,61 @@ func execCommand(server, command string, opts cliOptions) {
 	if strings.TrimSpace(server) == "" || strings.TrimSpace(command) == "" {
 		fatalErrorKind(opts, 1, "validation", "server and command are required")
 	}
+	if opts.shell != "" {
+		fatalErrorKind(opts, 1, "validation", "--shell is only valid with exec-file or exec-stdin")
+	}
+	execRequest(server, command, "", opts)
+}
+
+func execScript(server, script string, opts cliOptions) {
+	if strings.TrimSpace(server) == "" || strings.TrimSpace(script) == "" {
+		fatalErrorKind(opts, 1, "validation", "server and script are required")
+	}
+	if !isAllowedShell(opts.shell) {
+		fatalErrorKind(opts, 1, "validation", "--shell is required and must be one of: sh, bash, dash, zsh, ksh")
+	}
+	execRequest(server, "", script, opts)
+}
+
+func execRequest(server, command, script string, opts cliOptions) {
+	if opts.follow && opts.detach {
+		fatalErrorKind(opts, 1, "validation", "--follow and --detach cannot be used together")
+	}
 	payload := map[string]any{
-		"server":  server,
-		"command": command,
+		"server": server,
+	}
+	if script != "" {
+		payload["script"] = script
+		payload["shell"] = opts.shell
+	} else {
+		payload["command"] = command
+	}
+	if opts.follow || opts.detach {
+		payload["async"] = true
 	}
 	if opts.timeout > 0 {
 		payload["timeoutMs"] = int(opts.timeout / time.Millisecond)
 	}
 	result := requestJSON("POST", "/cli/exec", payload, opts)
+	if opts.follow || opts.detach {
+		if errMsg := stringField(result, "error"); errMsg != "" {
+			fatalErrorKind(opts, 1, stringField(result, "errorKind"), errMsg)
+		}
+		jobID := stringField(result, "jobId")
+		if jobID == "" {
+			fatalError(opts, 1, "daemon did not return a job id")
+		}
+		if opts.detach {
+			if opts.json {
+				printJSON(result)
+			} else {
+				fmt.Println(jobID)
+			}
+			return
+		}
+		followJob(jobID, opts, true)
+		return
+	}
 	normalizeExecResult(result)
 	if opts.json {
 		printJSON(result)
@@ -169,6 +230,282 @@ func execCommand(server, command string, opts cliOptions) {
 			}
 		}
 		os.Exit(1)
+	}
+}
+
+func isAllowedShell(shell string) bool {
+	switch shell {
+	case "sh", "bash", "dash", "zsh", "ksh":
+		return true
+	default:
+		return false
+	}
+}
+
+func copyRemote(source, destination string, opts cliOptions) {
+	sourceServer, sourcePath, err := parseRemoteSpec(source)
+	if err != nil {
+		fatalErrorKind(opts, 1, "validation", "source: "+err.Error())
+	}
+	destinationServer, destinationPath, err := parseRemoteSpec(destination)
+	if err != nil {
+		fatalErrorKind(opts, 1, "validation", "destination: "+err.Error())
+	}
+	result := requestJSON("POST", "/cli/copy", map[string]any{
+		"sourceServer": sourceServer, "sourcePath": sourcePath,
+		"destinationServer": destinationServer, "destinationPath": destinationPath,
+	}, opts)
+	if errMsg := stringField(result, "error"); errMsg != "" {
+		fatalErrorKind(opts, 1, stringField(result, "errorKind"), errMsg)
+	}
+	if opts.json {
+		printJSON(result)
+		return
+	}
+	fmt.Printf("Copied %s -> %s\n", stringField(result, "source"), stringField(result, "destination"))
+	fmt.Printf("Bytes: %d\nSHA-256: %s\n", int64Field(result, "bytes"), stringField(result, "sha256"))
+}
+
+func parseRemoteSpec(value string) (string, string, error) {
+	parts := strings.SplitN(value, ":", 2)
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return "", "", fmt.Errorf("expected <server>:<remote-path>")
+	}
+	return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), nil
+}
+
+func handleJobCommand(args []string, opts cliOptions) {
+	args, opts, err := parseLeadingFlags(args, opts)
+	if err != nil {
+		fatalErrorKind(opts, 1, "validation", err.Error())
+	}
+	if len(args) < 2 {
+		fatalErrorKind(opts, 1, "validation", "job requires status, logs, or cancel followed by <id>")
+	}
+	subcommand, id := args[0], args[1]
+	rest, opts, err := stripTrailingFlags(args[2:], opts)
+	if err != nil || len(rest) != 0 {
+		if err == nil {
+			err = fmt.Errorf("unexpected job arguments")
+		}
+		fatalErrorKind(opts, 1, "validation", err.Error())
+	}
+	switch subcommand {
+	case "status":
+		showJobStatus(id, opts)
+	case "logs":
+		if opts.follow {
+			followJob(id, opts, true)
+		} else {
+			showJobLogs(id, opts)
+		}
+	case "cancel":
+		result := requestJSON("DELETE", "/cli/jobs?id="+url.QueryEscape(id), nil, opts)
+		if errMsg := stringField(result, "error"); errMsg != "" {
+			fatalErrorKind(opts, 1, stringField(result, "errorKind"), errMsg)
+		}
+		if opts.json {
+			printJSON(result)
+		} else if requested, _ := boolField(result, "cancelRequested"); requested {
+			fmt.Println("Cancellation requested for", id)
+		} else {
+			fmt.Println("Job is already finished:", id)
+		}
+	default:
+		fatalErrorKind(opts, 1, "validation", "unknown job command: "+subcommand)
+	}
+}
+
+func showJobStatus(id string, opts cliOptions) {
+	result := requestJSON("GET", "/cli/jobs?id="+url.QueryEscape(id), nil, opts)
+	if errMsg := stringField(result, "error"); errMsg != "" && stringField(result, "state") == "" {
+		fatalErrorKind(opts, 1, stringField(result, "errorKind"), errMsg)
+	}
+	if opts.json {
+		result["events"] = []any{}
+		printJSON(result)
+		return
+	}
+	fmt.Printf("%s: %s", id, stringField(result, "state"))
+	if exitCode, ok := intField(result, "exitCode"); ok {
+		fmt.Printf(" (exit %d)", exitCode)
+	}
+	fmt.Println()
+	if errMsg := stringField(result, "error"); errMsg != "" {
+		fmt.Println("Error:", errMsg)
+	}
+}
+
+func showJobLogs(id string, opts cliOptions) {
+	result := requestJSON("GET", "/cli/jobs?id="+url.QueryEscape(id)+"&after=0", nil, opts)
+	if errMsg := stringField(result, "error"); errMsg != "" && stringField(result, "state") == "" {
+		fatalErrorKind(opts, 1, stringField(result, "errorKind"), errMsg)
+	}
+	if opts.json {
+		printJSON(result)
+		return
+	}
+	printJobEvents(result)
+}
+
+func followJob(id string, opts cliOptions, exitWithJob bool) {
+	var after int
+	allEvents := make([]any, 0)
+	for {
+		result := requestJSON("GET", fmt.Sprintf("/cli/jobs?id=%s&after=%d", url.QueryEscape(id), after), nil, opts)
+		if errMsg := stringField(result, "error"); errMsg != "" && stringField(result, "state") == "" {
+			fatalErrorKind(opts, 1, stringField(result, "errorKind"), errMsg)
+		}
+		if events, ok := result["events"].([]any); ok {
+			if opts.json {
+				allEvents = append(allEvents, events...)
+			} else {
+				printJobEvents(result)
+			}
+			for _, raw := range events {
+				if event, ok := raw.(map[string]any); ok {
+					if seq, ok := intField(event, "sequence"); ok && seq > after {
+						after = seq
+					}
+				}
+			}
+		}
+		state := stringField(result, "state")
+		if isTerminalJobState(state) {
+			if opts.json {
+				result["events"] = allEvents
+				printJSON(result)
+			} else if errMsg := stringField(result, "error"); errMsg != "" && state != "cancelled" {
+				fmt.Fprintln(os.Stderr, "Error:", errMsg)
+			}
+			if !exitWithJob {
+				return
+			}
+			if state == "cancelled" {
+				os.Exit(130)
+			}
+			if timedOut, _ := boolField(result, "timedOut"); timedOut {
+				os.Exit(124)
+			}
+			if exitCode, ok := intField(result, "exitCode"); ok && exitCode != 0 {
+				os.Exit(normalizeExitCode(exitCode))
+			}
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+func printJobEvents(result map[string]any) {
+	events, _ := result["events"].([]any)
+	for _, raw := range events {
+		event, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		fmt.Print(stringField(event, "data"))
+	}
+}
+
+func isTerminalJobState(state string) bool {
+	return state == "succeeded" || state == "failed" || state == "cancelled"
+}
+
+func handleTunnelCommand(args []string, opts cliOptions) {
+	args, opts, err := parseLeadingFlags(args, opts)
+	if err != nil {
+		fatalErrorKind(opts, 1, "validation", err.Error())
+	}
+	if len(args) == 0 {
+		fatalErrorKind(opts, 1, "validation", "tunnel requires open, socks, list, or close")
+	}
+	subcommand := args[0]
+	positional, opts, err := stripTrailingFlags(args[1:], opts)
+	if err != nil {
+		fatalErrorKind(opts, 1, "validation", err.Error())
+	}
+	switch subcommand {
+	case "open":
+		if len(positional) != 3 {
+			fatalErrorKind(opts, 1, "validation", "tunnel open requires <server> <local-port-or-address> <remote-host:port>")
+		}
+		openTunnel(positional[0], "local", positional[1], positional[2], opts)
+	case "socks":
+		if len(positional) != 2 {
+			fatalErrorKind(opts, 1, "validation", "tunnel socks requires <server> <local-port-or-address>")
+		}
+		openTunnel(positional[0], "dynamic", positional[1], "", opts)
+	case "list":
+		if len(positional) != 0 {
+			fatalErrorKind(opts, 1, "validation", "tunnel list takes no arguments")
+		}
+		listTunnels(opts)
+	case "close":
+		if len(positional) != 1 {
+			fatalErrorKind(opts, 1, "validation", "tunnel close requires <id>")
+		}
+		closeTunnel(positional[0], opts)
+	default:
+		fatalErrorKind(opts, 1, "validation", "unknown tunnel command: "+subcommand)
+	}
+}
+
+func openTunnel(server, tunnelType, local, remote string, opts cliOptions) {
+	payload := map[string]any{"server": server, "type": tunnelType, "local": local}
+	if remote != "" {
+		payload["remote"] = remote
+	}
+	result := requestJSON("POST", "/cli/tunnels", payload, opts)
+	if errMsg := stringField(result, "error"); errMsg != "" {
+		fatalErrorKind(opts, 1, stringField(result, "errorKind"), errMsg)
+	}
+	if opts.json {
+		printJSON(result)
+		return
+	}
+	fmt.Printf("Opened %s at %s (id: %s)\n", stringField(result, "type"), stringField(result, "local"), stringField(result, "tunnelId"))
+	fmt.Println("Close it immediately after use with: gxshell-cli tunnel close " + stringField(result, "tunnelId"))
+}
+
+func listTunnels(opts cliOptions) {
+	result := requestJSON("GET", "/cli/tunnels", nil, opts)
+	if errMsg := stringField(result, "error"); errMsg != "" {
+		fatalErrorKind(opts, 1, stringField(result, "errorKind"), errMsg)
+	}
+	if opts.json {
+		printJSON(result)
+		return
+	}
+	items, _ := result["tunnels"].([]any)
+	if len(items) == 0 {
+		fmt.Println("No temporary CLI tunnels are open.")
+		return
+	}
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		fmt.Printf("%s  %s  %s  %s", stringField(item, "tunnelId"), stringField(item, "alias"), stringField(item, "type"), stringField(item, "local"))
+		if remote := stringField(item, "remote"); remote != "" {
+			fmt.Print(" -> " + remote)
+		}
+		if active, _ := boolField(item, "active"); !active {
+			fmt.Print("  (inactive)")
+		}
+		fmt.Println()
+	}
+}
+
+func closeTunnel(id string, opts cliOptions) {
+	result := requestJSON("DELETE", "/cli/tunnels?id="+url.QueryEscape(id), nil, opts)
+	if errMsg := stringField(result, "error"); errMsg != "" {
+		fatalErrorKind(opts, 1, stringField(result, "errorKind"), errMsg)
+	}
+	if opts.json {
+		printJSON(result)
+	} else {
+		fmt.Println("Closed tunnel", id)
 	}
 }
 
@@ -382,6 +719,18 @@ func parseLeadingFlags(args []string, opts cliOptions) ([]string, cliOptions, er
 			}
 			opts.timeout = timeout
 			args = args[2:]
+		case "--shell":
+			if len(args) < 2 {
+				return args, opts, fmt.Errorf("--shell requires a value")
+			}
+			opts.shell = strings.TrimSpace(args[1])
+			args = args[2:]
+		case "--follow":
+			opts.follow = true
+			args = args[1:]
+		case "--detach":
+			opts.detach = true
+			args = args[1:]
 		default:
 			return args, opts, nil
 		}
@@ -467,6 +816,21 @@ func stripTrailingFlags(args []string, opts cliOptions) ([]string, cliOptions, e
 			}
 			opts.timeout = timeout
 			out = out[:len(out)-2]
+			continue
+		}
+		if len(out) >= 2 && out[len(out)-2] == "--shell" {
+			opts.shell = strings.TrimSpace(out[len(out)-1])
+			out = out[:len(out)-2]
+			continue
+		}
+		if last == "--follow" {
+			opts.follow = true
+			out = out[:len(out)-1]
+			continue
+		}
+		if last == "--detach" {
+			opts.detach = true
+			out = out[:len(out)-1]
 			continue
 		}
 		break
@@ -699,6 +1063,19 @@ func intField(m map[string]any, key string) (int, bool) {
 	}
 }
 
+func int64Field(m map[string]any, key string) int64 {
+	switch value := m[key].(type) {
+	case float64:
+		return int64(value)
+	case int64:
+		return value
+	case int:
+		return int64(value)
+	default:
+		return 0
+	}
+}
+
 func normalizeExitCode(code int) int {
 	if code <= 0 {
 		return 1
@@ -716,9 +1093,20 @@ USAGE:
   gxshell-cli [options] <command> [arguments]
 
 COMMANDS:
-  exec <server> "<command>"    Execute a command on a CLI-enabled server
-  exec-file <server> <file>     Execute a local script file on a server
-  exec-stdin <server>           Execute a script read from stdin
+  exec <server> "<command>"     Execute a command on a CLI-enabled server
+  exec-file <server> <file>     Send a script to <shell> -s over SSH stdin
+  exec-stdin <server>           Send stdin to <shell> -s over SSH stdin
+  copy <server:path> <server:path>
+                               Copy one remote file atomically and verify SHA-256
+  job status <id>              Show a detached/followed job state
+  job logs <id> [--follow]     Read or follow ordered job output
+  job cancel <id>              Cancel a running job
+  tunnel open <server> <local> <remote-host:port>
+                               Open a temporary local SSH forward
+  tunnel socks <server> <local>
+                               Open a temporary SOCKS5 tunnel
+  tunnel list                  List temporary CLI tunnels
+  tunnel close <id>            Close a temporary CLI tunnel
   list                         List CLI-enabled server aliases
   status                       Show active CLI SSH connections
   ping                         Check if gxShell is running
@@ -737,15 +1125,26 @@ SECURITY:
 OPTIONS:
   --json                       Print machine-readable JSON
   --timeout <duration>          Remote command timeout, e.g. 60, 90s, 5m
+  --shell <name>                Script interpreter: sh, bash, dash, zsh, or ksh
+  --follow                      Run as a job and stream output until completion
+  --detach                      Run as a job and return its ID immediately
 
 EXAMPLES:
   gxshell-cli exec prod-web "uptime"
   gxshell-cli exec prod-web "docker compose up -d --build" --timeout 10m
   gxshell-cli --timeout 10m exec prod-web "docker compose up -d --build"
+  gxshell-cli exec prod-web "journalctl -f" --follow
+  gxshell-cli exec-file prod-web deploy.sh --shell bash
+  Get-Content deploy.sh | gxshell-cli exec-stdin prod-web --shell bash
+  gxshell-cli copy 2:/tmp/config.tar 3:/tmp/config.tar
+  gxshell-cli tunnel open 2 127.0.0.1:8080 127.0.0.1:80
+  gxshell-cli tunnel socks 2 1080
+  gxshell-cli tunnel close tun-0123456789abcdef
   gxshell-cli --json exec prod-web "df -h"
 
-TIP:
-  Put --timeout before exec or after the quoted remote command, not inside the remote command string.
+SECURITY NOTE:
+  CLI tunnels bind only to loopback and are temporary. Record the returned ID,
+  close the tunnel immediately after use, and verify with ` + "`gxshell-cli tunnel list`" + `.
 `
 	fmt.Print(help)
 }

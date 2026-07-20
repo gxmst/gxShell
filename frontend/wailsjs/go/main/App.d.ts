@@ -3,6 +3,8 @@
 import {types} from '../models';
 import {sshmanager} from '../models';
 
+export function AddFirewallRule(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:boolean):Promise<void>;
+
 export function AddTunnelRule(arg1:string,arg2:types.TunnelRule):Promise<types.TunnelStatus>;
 
 export function AiChat(arg1:types.AiChatRequest):Promise<void>;
@@ -37,6 +39,8 @@ export function CreateRemoteDir(arg1:string,arg2:string):Promise<void>;
 
 export function DeleteCommand(arg1:string):Promise<void>;
 
+export function DeleteFirewallRule(arg1:string,arg2:number,arg3:string,arg4:boolean):Promise<void>;
+
 export function DeleteProfile(arg1:string):Promise<void>;
 
 export function DeleteRecording(arg1:string):Promise<void>;
@@ -60,6 +64,8 @@ export function GetAiConfig():Promise<types.AiConfig>;
 export function GetAiUsage():Promise<types.AiTokenUsage>;
 
 export function GetAppInfo():Promise<Record<string, string>>;
+
+export function GetFirewallStatus(arg1:string):Promise<types.FirewallStatus>;
 
 export function GetLatestMetrics(arg1:string):Promise<types.Metrics>;
 
@@ -104,6 +110,8 @@ export function ListRemoteDir(arg1:string,arg2:string):Promise<Array<types.Remot
 export function ListRemoteMarkdownFilesInDir(arg1:string,arg2:string):Promise<Array<string>>;
 
 export function ListRemoteTextFilesInDir(arg1:string,arg2:string):Promise<Array<string>>;
+
+export function ListServices(arg1:string):Promise<Array<types.ServiceInfo>>;
 
 export function ListSessions():Promise<Array<types.SessionInfo>>;
 
@@ -187,6 +195,12 @@ export function SendCommandToAll(arg1:string):Promise<void>;
 
 export function SendCommandToTerminal(arg1:string,arg2:string):Promise<void>;
 
+export function ServiceAction(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
+
+export function ServiceLogs(arg1:string,arg2:string,arg3:number):Promise<string>;
+
+export function SetFirewallEnabled(arg1:string,arg2:boolean,arg3:boolean):Promise<void>;
+
 export function StartContainer(arg1:string,arg2:string):Promise<void>;
 
 export function StartMonitor(arg1:string):Promise<void>;
@@ -205,7 +219,11 @@ export function StopNetworkPing(arg1:string):Promise<void>;
 
 export function StopRecording(arg1:string):Promise<string>;
 
+export function StopServiceLogs(arg1:string):Promise<void>;
+
 export function StreamContainerLogs(arg1:string,arg2:string,arg3:string,arg4:number):Promise<void>;
+
+export function StreamServiceLogs(arg1:string,arg2:string,arg3:string,arg4:number):Promise<void>;
 
 export function TraceRoute(arg1:string):Promise<types.NetworkPath>;
 

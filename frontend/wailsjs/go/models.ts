@@ -340,6 +340,68 @@ export namespace types {
 	        this.created = source["created"];
 	    }
 	}
+	export class FirewallRule {
+	    index: number;
+	    raw: string;
+	    action: string;
+	    port: string;
+	    protocol: string;
+	    source: string;
+	    v6: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new FirewallRule(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.index = source["index"];
+	        this.raw = source["raw"];
+	        this.action = source["action"];
+	        this.port = source["port"];
+	        this.protocol = source["protocol"];
+	        this.source = source["source"];
+	        this.v6 = source["v6"];
+	    }
+	}
+	export class FirewallStatus {
+	    backend: string;
+	    enabled: boolean;
+	    defaultPolicy: string;
+	    sshPort: number;
+	    rules: FirewallRule[];
+
+	    static createFrom(source: any = {}) {
+	        return new FirewallStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.backend = source["backend"];
+	        this.enabled = source["enabled"];
+	        this.defaultPolicy = source["defaultPolicy"];
+	        this.sshPort = source["sshPort"];
+	        this.rules = this.convertValues(source["rules"], FirewallRule);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class LocalFile {
 	    name: string;
 	    path: string;
@@ -792,6 +854,28 @@ export namespace types {
 		    }
 		    return a;
 		}
+	}
+	export class ServiceInfo {
+	    name: string;
+	    description: string;
+	    loadState: string;
+	    activeState: string;
+	    subState: string;
+	    enabled: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ServiceInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.loadState = source["loadState"];
+	        this.activeState = source["activeState"];
+	        this.subState = source["subState"];
+	        this.enabled = source["enabled"];
+	    }
 	}
 	export class SessionInfo {
 	    id: string;

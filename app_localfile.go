@@ -108,9 +108,66 @@ func (a *App) WriteLocalFile(filePath string, content string) error {
 		mode = info.Mode().Perm()
 	}
 
-	if err := os.WriteFile(absPath, []byte(content), mode); err != nil {
+	// This is the local editor's save path: write a sibling temp file and
+	// rename it over the original, mirroring the SFTP editor save. An in-place
+	// truncating write would destroy the document if the app or machine died
+	// mid-write.
+	tmp, err := os.CreateTemp(filepath.Dir(absPath), "."+filepath.Base(absPath)+".gxshell-*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	removeTemp := true
+	defer func() {
+		_ = tmp.Close()
+		if removeTemp {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := tmp.Chmod(mode); err != nil {
+		return fmt.Errorf("failed to set temporary file mode: %w", err)
+	}
+	if _, err := tmp.WriteString(content); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("failed to flush file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close temporary file: %w", err)
+	}
+	if err := replaceLocalFile(tmpPath, absPath); err != nil {
+		return fmt.Errorf("failed to write file: %w", err)
+	}
+	removeTemp = false
+	return nil
+}
+
+// replaceLocalFile promotes a fully written sibling temp file over target.
+// os.Rename replaces the destination atomically where the platform allows it.
+// Where it does not (e.g. Windows with the destination held open elsewhere),
+// move the original aside and restore it if the promotion fails, so a failed
+// save never leaves a truncated document.
+func replaceLocalFile(tmpPath, target string) error {
+	if err := os.Rename(tmpPath, target); err == nil {
+		return nil
+	} else if _, statErr := os.Stat(target); statErr != nil {
+		return err
+	}
+
+	// tmpPath was created with CreateTemp, so this sibling name is unique and
+	// does not collide with a user-owned fixed .gxshell-bak file.
+	backupPath := tmpPath + ".bak"
+	if err := os.Rename(target, backupPath); err != nil {
+		return fmt.Errorf("prepare existing file for replace: %w", err)
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		if restoreErr := os.Rename(backupPath, target); restoreErr != nil {
+			return fmt.Errorf("replace file: %v; restore original: %w", err, restoreErr)
+		}
+		return fmt.Errorf("replace file: %w", err)
+	}
+	_ = os.Remove(backupPath)
 	return nil
 }
 
@@ -133,10 +190,10 @@ func (a *App) OpenRecentTextFile(filePath string) (string, error) {
 	if info.IsDir() {
 		return "", fmt.Errorf("path is a directory, not a file")
 	}
-	if a.ctx != nil {
+	if ctx := a.ctx.Get(); ctx != nil {
 		a.nativeDialogMu.Lock()
 		defer a.nativeDialogMu.Unlock()
-		res, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+		res, err := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
 			Type:          runtime.QuestionDialog,
 			Title:         "Open recent text file",
 			Message:       truncate(fmt.Sprintf("Open this recent text file?\n\n%s", absPath), 1200),
@@ -236,7 +293,7 @@ func (a *App) ReadLocalMarkdownResourceDataURL(markdownPath string, href string)
 
 // SelectTextFile opens a file dialog to select a supported text file.
 func (a *App) SelectTextFile() (string, error) {
-	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	path, err := runtime.OpenFileDialog(a.ctx.Get(), runtime.OpenDialogOptions{
 		Title: "Select text file",
 		Filters: []runtime.FileFilter{
 			{DisplayName: "Text Files", Pattern: supportedTextFileDialogPattern()},
@@ -257,7 +314,7 @@ func (a *App) SelectTextFile() (string, error) {
 // SelectMarkdownFile is kept for older frontend builds and preserves the
 // original Markdown-only contract.
 func (a *App) SelectMarkdownFile() (string, error) {
-	path, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	path, err := runtime.OpenFileDialog(a.ctx.Get(), runtime.OpenDialogOptions{
 		Title: "Select Markdown file",
 		Filters: []runtime.FileFilter{
 			{DisplayName: "Markdown Files (*.md;*.markdown)", Pattern: "*.md;*.markdown"},

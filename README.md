@@ -28,7 +28,7 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 - Session recording of terminal output to asciinema `.cast` files, with a built-in player (play, pause, restart, variable speed) and a recordings panel to play, delete, or reveal saved recordings. Recording taps terminal output only, not stdin; shell-echoed commands can appear in recordings, while password prompts with echo disabled are not captured.
 - Reusable command templates with `<name>` variable placeholders. Running a template with placeholders prompts for each value with a live preview before the command is sent, to the active terminal or broadcast to all sessions.
 - AI assistant for OpenAI-compatible APIs, with streaming responses, model listing, token usage, terminal context, and explicit native confirmation before remote tool execution.
-- External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands on opted-in profiles through the running app, without exposing saved SSH credentials. The CLI can be disabled globally, reuses active SSH sessions when possible, follows each profile's ProxyJump setting, runs simple read-only commands directly, batches approval prompts for nearby external requests, supports `--json`, `--timeout`, `exec-file`, `exec-stdin`, and `doctor`, and requires native confirmation for anything else. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
+- External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands, track jobs, copy remote files, and open temporary loopback SSH tunnels on opted-in profiles through the running app, without exposing saved SSH credentials. Script execution uses an explicit shell and SSH stdin. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
 - Local and remote text/Markdown viewer/editor with sanitized Markdown rendering, plain-text viewing for logs and other text formats, file-open support, drag-and-drop opening, recent files, sibling and relative-link navigation, relative image previews for Markdown, table of contents, code highlighting, Mermaid diagrams, in-document search, zoom, edit, save, split preview, and refresh.
 - Windows tray menu for showing the app, creating a connection, opening a text file, settings, and quit.
 - Windows text-file integration, including installed file-association metadata and an optional per-user "Open with gxShell" right-click menu entry for supported text formats.
@@ -208,7 +208,7 @@ gxShell 是一个基于 Wails v2、Go 和 React 构建的 Windows 桌面 SSH 工
 - 会话录制为 asciinema `.cast` 文件，内置播放器支持播放、暂停、重播和倍速；录制面板可播放、删除或打开录制文件夹。录制只捕获终端输出，不读取 stdin；Shell 回显的命令可能出现在录制中，关闭回显的密码输入不会被捕获。
 - 可复用命令模板，支持 `<name>` 变量占位符。执行带占位符的模板时，会先弹出填写窗口并显示实时预览，然后发送到当前终端或广播到所有会话。
 - AI 助手支持 OpenAI 兼容 API，包含流式响应、模型列表、token 用量、终端上下文，以及执行远程工具前的原生确认。
-- 外部 `gxshell-cli` 命令行客户端和本地 HTTP API，可让本地工具或 AI agent 通过正在运行的 gxShell 在已授权配置上执行命令，同时不暴露已保存的 SSH 凭据。CLI 可全局关闭，可复用活动 SSH 会话，遵循目标配置的 ProxyJump 设置，支持简单只读命令直通、邻近请求合并确认、`--json`、`--timeout`、`exec-file`、`exec-stdin` 和 `doctor`，其余操作需要原生确认。参见 [GXSHELL_CLI.md](GXSHELL_CLI.md)。
+- 外部 `gxshell-cli` 命令行客户端和本地 HTTP API，可让本地工具或 AI agent 通过正在运行的 gxShell 在已授权配置上执行命令、跟踪作业、跨服务器复制文件和开启临时回环 SSH 隧道，同时不暴露已保存的 SSH 凭据。脚本执行会显式选择 shell 并通过 SSH stdin 传输。参见 [GXSHELL_CLI.md](GXSHELL_CLI.md)。
 - 本地和远程文本/Markdown 查看与编辑，支持安全 Markdown 渲染、日志等文本格式查看、文件打开、拖拽打开、最近文件、同目录文件导航、相对链接导航、相对图片预览、目录、代码高亮、Mermaid 图、文内搜索、缩放、编辑、保存、分屏预览和刷新。
 - Windows 托盘菜单，支持显示应用、新建连接、打开文本文件、设置和退出。
 - Windows 文本文件集成，包括安装时的文件关联元数据，以及可选的当前用户右键菜单 “Open with gxShell”，适用于支持的文本格式。

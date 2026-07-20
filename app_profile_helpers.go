@@ -72,12 +72,19 @@ func (a *App) loadProfileSecrets(profile *types.Profile) error {
 
 // touchProfile updates the last connection timestamp for a profile.
 func (a *App) touchProfile(id string) {
+	a.profilesMu.Lock()
+	defer a.profilesMu.Unlock()
 	profiles, err := a.store.ListProfiles()
 	if err != nil {
 		return
 	}
 	for i := range profiles {
 		if profiles[i].ID == id {
+			// Coalesce write churn: every CLI exec may connect, and rewriting
+			// profiles.json for a timestamp that moved by seconds is disk noise.
+			if time.Since(profiles[i].LastConnectedAt) < time.Minute {
+				return
+			}
 			profiles[i].LastConnectedAt = time.Now()
 			profiles[i].UpdatedAt = time.Now()
 			_ = a.store.SaveProfiles(profiles)

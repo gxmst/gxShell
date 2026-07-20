@@ -1,0 +1,266 @@
+/* Firewall panel (FirewallPanel): status card, add-rule form, rule rows.
+   Shares the panel-page skeleton (unified.css) and container.css action
+   buttons; the two-step confirm state lives in services.css. */
+
+.fw-status-card {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 11px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--panel-raised) 48%, transparent), color-mix(in srgb, var(--panel) 46%, transparent));
+  box-shadow: var(--hairline);
+  animation: ui-enter var(--dur-panel) var(--ease-out) both;
+}
+
+.fw-status-icon {
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel-raised) 70%, transparent);
+  transition:
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    background var(--dur) var(--ease);
+}
+
+.fw-status-icon-on {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+
+.fw-status-icon-off {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 30%, transparent);
+  background: color-mix(in srgb, var(--bad) 8%, transparent);
+}
+
+.fw-status-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.fw-status-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.fw-backend {
+  font-family: var(--font-mono);
+}
+
+.fw-state-tag {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  line-height: 1.5;
+}
+
+.fw-state-on {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+
+.fw-state-off {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel-raised) 55%, transparent);
+}
+
+.fw-status-meta {
+  display: flex;
+  gap: 8px;
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.fw-toggle-btn {
+  display: inline-flex;
+  min-height: 26px;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 13%, var(--panel-raised));
+  font-size: 9.5px;
+  font-weight: 700;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.fw-toggle-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 22%, var(--panel-raised));
+}
+
+.fw-toggle-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.fw-toggle-btn:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.fw-toggle-btn-danger {
+  border-color: color-mix(in srgb, var(--bad) 45%, transparent);
+  background: color-mix(in srgb, var(--bad) 12%, var(--panel-raised));
+}
+
+.fw-toggle-btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bad) 20%, var(--panel-raised));
+}
+
+.fw-add-form {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 15%, var(--border));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--panel-raised) 38%, transparent);
+  animation: ui-enter var(--dur-panel) var(--ease-out) both;
+}
+
+.fw-add-row {
+  display: flex;
+  gap: 5px;
+}
+
+.fw-add-row > select {
+  flex: 0 0 auto;
+}
+
+.fw-add-row > input {
+  flex: 1;
+  min-width: 0;
+}
+
+.fw-rule {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel-raised) 38%, transparent);
+  box-shadow: var(--hairline);
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.fw-rule:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  background: color-mix(in srgb, var(--panel-raised) 70%, transparent);
+}
+
+.fw-rule > .container-action-btn {
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.fw-rule:hover > .container-action-btn,
+.fw-rule:focus-within > .container-action-btn,
+.fw-rule > .container-action-btn.action-armed {
+  opacity: 1;
+}
+
+.fw-tag {
+  flex: 0 0 auto;
+  min-width: 42px;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel-raised) 55%, transparent);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.fw-tag-allow {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
+}
+
+.fw-tag-deny,
+.fw-tag-reject {
+  color: var(--bad);
+  border-color: color-mix(in srgb, var(--bad) 38%, transparent);
+  background: color-mix(in srgb, var(--bad) 10%, transparent);
+}
+
+.fw-tag-limit {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 38%, transparent);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+
+.fw-rule-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.fw-rule-port {
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 650;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.fw-rule-src {
+  overflow: hidden;
+  margin-top: 1px;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.fw-v6 {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  border-radius: 999px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font-size: 8px;
+  font-weight: 700;
+}

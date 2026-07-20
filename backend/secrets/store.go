@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/zalando/go-keyring"
 )
@@ -28,6 +29,12 @@ type Store struct {
 	// key file) on every secret operation.
 	encKey        []byte
 	fallbackCache map[string]map[string]string
+	// fallbackDegraded is set when secrets.dat exists but could not be read or
+	// decrypted (e.g. a transient DPAPI failure). While set, reads retry the
+	// file instead of caching the empty view, and the first write moves the
+	// unreadable file aside (secrets.dat.corrupt-<timestamp>) instead of
+	// overwriting bytes that might still be recoverable. Guarded by mu.
+	fallbackDegraded bool
 }
 
 func NewStore(dataDir string) *Store {
@@ -241,34 +248,71 @@ func (s *Store) cachedKey() ([]byte, error) {
 }
 
 // fallbackData returns the decrypted fallback secrets, reading the file only
-// on first use and caching the result. Callers must hold s.mu.
+// on first use and caching the result. A degraded read (file exists but is
+// unreadable/undecryptable) is deliberately NOT cached, so a later call retries
+// the file — the failure may be transient. Callers must hold s.mu.
 func (s *Store) fallbackData() map[string]map[string]string {
-	if s.fallbackCache == nil {
-		s.fallbackCache = s.readFallback()
+	if s.fallbackCache == nil || s.fallbackDegraded {
+		data, degraded := s.readFallback()
+		s.fallbackDegraded = degraded
+		if degraded {
+			return data
+		}
+		s.fallbackCache = data
 	}
 	return s.fallbackCache
 }
 
-func (s *Store) readFallback() map[string]map[string]string {
-	data := map[string]map[string]string{}
+// readFallback loads and decrypts secrets.dat. degraded reports that the file
+// exists but could not be read or decrypted; a missing file is the normal
+// empty state and is not degraded.
+func (s *Store) readFallback() (data map[string]map[string]string, degraded bool) {
+	data = map[string]map[string]string{}
 	raw, err := os.ReadFile(s.fallbackPath())
 	if err != nil {
-		return data
+		return data, !errors.Is(err, os.ErrNotExist)
 	}
 	encKey, err := s.cachedKey()
 	if err != nil {
-		return data
+		return data, true
 	}
 	derived := deriveKey(encKey)
 	plain, err := decrypt(raw, derived)
 	if err != nil {
-		return data
+		return data, true
 	}
-	_ = json.Unmarshal(plain, &data)
-	return data
+	if err := json.Unmarshal(plain, &data); err != nil {
+		return map[string]map[string]string{}, true
+	}
+	return data, false
+}
+
+// quarantineFallback moves an undecryptable secrets.dat aside instead of
+// destroying it: the decrypt failure may be transient and the old bytes may
+// still be recoverable. Callers must hold s.mu.
+func (s *Store) quarantineFallback() error {
+	// Keep every recovery candidate. Reusing a fixed .corrupt name would either
+	// overwrite an older recovery copy or require deleting it first.
+	corrupt := fmt.Sprintf("%s.corrupt-%d", s.fallbackPath(), time.Now().UnixNano())
+	if err := os.Rename(s.fallbackPath(), corrupt); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			s.fallbackDegraded = false
+			return nil
+		}
+		return fmt.Errorf("preserve unreadable fallback secrets: %w", err)
+	}
+	s.fallbackDegraded = false
+	return nil
 }
 
 func (s *Store) writeFallback(data map[string]map[string]string) error {
+	// Never rename a fresh file over bytes we could not read: preserve them
+	// first so a transient decrypt failure does not become permanent data loss.
+	if s.fallbackDegraded {
+		if err := s.quarantineFallback(); err != nil {
+			return err
+		}
+	}
 	plain, err := json.Marshal(data)
 	if err != nil {
 		return err
@@ -292,8 +336,13 @@ func (s *Store) writeFallback(data map[string]map[string]string) error {
 		if readErr != nil {
 			return err
 		}
-		return os.WriteFile(s.fallbackPath(), dataCopy, 0600)
+		if err := os.WriteFile(s.fallbackPath(), dataCopy, 0600); err != nil {
+			return err
+		}
 	}
+	// Disk now matches data, so it is safe to (re)cache and leave degraded mode.
+	s.fallbackCache = data
+	s.fallbackDegraded = false
 	return nil
 }
 
@@ -324,6 +373,12 @@ func (s *Store) deleteFallback(profileID string) {
 	data := s.fallbackData()
 	delete(data, profileID)
 	if len(data) == 0 {
+		// A degraded file may still hold OTHER profiles' secrets we could not
+		// read; move it aside rather than deleting it outright.
+		if s.fallbackDegraded {
+			_ = s.quarantineFallback()
+			return
+		}
 		_ = os.Remove(s.fallbackPath())
 		return
 	}
@@ -350,6 +405,10 @@ func (s *Store) deleteFallbackKind(profileID, kind string) {
 		delete(data, profileID)
 	}
 	if len(data) == 0 {
+		if s.fallbackDegraded {
+			_ = s.quarantineFallback()
+			return
+		}
 		_ = os.Remove(s.fallbackPath())
 		return
 	}

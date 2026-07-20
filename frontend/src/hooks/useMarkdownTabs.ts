@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { types } from "../../wailsjs/go/models";
 import {
@@ -288,9 +288,24 @@ export function useMarkdownTabs({
     openMarkdownFile(path);
   }, [openMarkdownFile, openRemoteMarkdownFile]);
 
-  // Refresh the sibling list whenever the active markdown tab changes.
-  useEffect(() => {
+  // Stable identity of the active markdown document. Derived as a string so
+  // unrelated tab-state churn (session connect/disconnect, reorder) does not
+  // change it — only actually switching document triggers the effect below.
+  const activeMarkdownKey = useMemo(() => {
     const active = tabs.find(t => t.id === activeTab);
+    if (active?.type !== "markdown") return "";
+    if (active.markdownSource === "remote" && active.remoteSessionId && active.remotePath) {
+      return `remote|${active.id}|${active.remoteSessionId}|${active.remotePath}`;
+    }
+    if (active.filePath) return `local|${active.id}|${active.filePath}`;
+    return "";
+  }, [activeTab, tabs]);
+
+  // Refresh the sibling list whenever the active markdown document changes.
+  // Depends only on the derived key above (not on tabs), so a remote SFTP
+  // directory listing is never re-fired by unrelated tab updates.
+  useEffect(() => {
+    const active = tabsRef.current.find(t => t.id === activeTabRef.current);
     if (active?.type === 'markdown' && active.markdownSource === "remote" && active.remoteSessionId && active.remotePath) {
       ListRemoteTextFilesInDir(active.remoteSessionId, active.remotePath).then(siblings => {
         setMarkdownSiblings(siblings || []);
@@ -306,7 +321,7 @@ export function useMarkdownTabs({
     } else {
       setMarkdownSiblings([]);
     }
-  }, [activeTab, tabs]);
+  }, [activeMarkdownKey]);
 
   return {
     markdownSiblings,

@@ -92,6 +92,31 @@ func TestFallbackFileIsEncrypted(t *testing.T) {
 	}
 }
 
+func TestUnreadableFallbackIsPreservedBeforeNewWrite(t *testing.T) {
+	s := newTestStore(t)
+	original := []byte("not-valid-ciphertext")
+	if err := os.WriteFile(s.fallbackPath(), original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.loadFallback("p", "password"); got != "" || !s.fallbackDegraded {
+		t.Fatalf("invalid fallback should enter degraded mode, got %q degraded=%v", got, s.fallbackDegraded)
+	}
+	if err := s.saveFallback("new", "password", "new-secret"); err != nil {
+		t.Fatalf("save after quarantine: %v", err)
+	}
+	recovery, err := filepath.Glob(s.fallbackPath() + ".corrupt-*")
+	if err != nil || len(recovery) != 1 {
+		t.Fatalf("recovery files = %#v, err=%v", recovery, err)
+	}
+	gotOriginal, err := os.ReadFile(recovery[0])
+	if err != nil || string(gotOriginal) != string(original) {
+		t.Fatalf("recovery content = %q, err=%v", gotOriginal, err)
+	}
+	if got := s.loadFallback("new", "password"); got != "new-secret" {
+		t.Fatalf("new fallback secret = %q", got)
+	}
+}
+
 func TestDeleteFallbackRemovesProfile(t *testing.T) {
 	s := newTestStore(t)
 	if err := s.saveFallback("p1", "password", "a"); err != nil {

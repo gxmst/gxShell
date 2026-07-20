@@ -35,45 +35,45 @@ func (a *App) onTrayReady() {
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem(labels.quit, labels.quitTip)
 
-	// Handle menu clicks
+	// Handle menu clicks. This goroutine starts before wails.Run publishes the
+	// app context, so every read goes through a.ctx.Get() at the moment of the
+	// click; a click that lands before startup is ignored, as before.
 	go func() {
 		for {
-			// The app context may not be set yet when the tray starts;
-			// re-check each iteration so we exit once it is cancelled.
 			var done <-chan struct{}
-			if a.ctx != nil {
-				done = a.ctx.Done()
+			if ctx := a.ctx.Get(); ctx != nil {
+				done = ctx.Done()
 			}
 			select {
 			case <-done:
 				return
 			case <-mShow.ClickedCh:
-				if a.ctx != nil {
-					runtime.WindowShow(a.ctx)
-					runtime.WindowUnminimise(a.ctx)
+				if ctx := a.ctx.Get(); ctx != nil {
+					runtime.WindowShow(ctx)
+					runtime.WindowUnminimise(ctx)
 				}
 			case <-mNewConnection.ClickedCh:
-				if a.ctx != nil {
-					runtime.WindowShow(a.ctx)
-					runtime.WindowUnminimise(a.ctx)
-					runtime.EventsEmit(a.ctx, "tray:new-connection")
+				if ctx := a.ctx.Get(); ctx != nil {
+					runtime.WindowShow(ctx)
+					runtime.WindowUnminimise(ctx)
+					runtime.EventsEmit(ctx, "tray:new-connection")
 				}
 			case <-mOpenMarkdown.ClickedCh:
-				if a.ctx != nil {
-					runtime.WindowShow(a.ctx)
-					runtime.WindowUnminimise(a.ctx)
-					runtime.EventsEmit(a.ctx, "tray:open-markdown")
+				if ctx := a.ctx.Get(); ctx != nil {
+					runtime.WindowShow(ctx)
+					runtime.WindowUnminimise(ctx)
+					runtime.EventsEmit(ctx, "tray:open-markdown")
 				}
 			case <-mSettings.ClickedCh:
-				if a.ctx != nil {
-					runtime.WindowShow(a.ctx)
-					runtime.WindowUnminimise(a.ctx)
-					runtime.EventsEmit(a.ctx, "tray:settings")
+				if ctx := a.ctx.Get(); ctx != nil {
+					runtime.WindowShow(ctx)
+					runtime.WindowUnminimise(ctx)
+					runtime.EventsEmit(ctx, "tray:settings")
 				}
 			case <-mQuit.ClickedCh:
 				systray.Quit()
-				if a.ctx != nil {
-					runtime.Quit(a.ctx)
+				if ctx := a.ctx.Get(); ctx != nil {
+					runtime.Quit(ctx)
 				}
 				return
 			}

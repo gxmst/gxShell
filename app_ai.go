@@ -206,7 +206,7 @@ func (a *App) startAiChat(req types.AiChatRequest, continuing bool) error {
 		return err
 	}
 
-	parent := a.ctx
+	parent := a.ctx.Get()
 	if parent == nil {
 		parent = context.Background()
 	}
@@ -237,7 +237,8 @@ func (a *App) startAiChat(req types.AiChatRequest, continuing bool) error {
 
 		aiReq := toAiChatRequest(req)
 		err := a.ai.ChatWithContext(ctx, aiReq, func(resp ai.ChatResponse) {
-			if a.ctx == nil {
+			emitCtx := a.ctx.Get()
+			if emitCtx == nil {
 				return
 			}
 			event := aiChatEvent{
@@ -255,10 +256,11 @@ func (a *App) startAiChat(req types.AiChatRequest, continuing bool) error {
 				}
 				event.ToolCalls = serializeAiToolCalls(resp.ToolCalls)
 			}
-			runtime.EventsEmit(a.ctx, "ai:chunk", event)
+			runtime.EventsEmit(emitCtx, "ai:chunk", event)
 		})
 
-		if err == nil || a.ctx == nil {
+		emitCtx := a.ctx.Get()
+		if err == nil || emitCtx == nil {
 			return
 		}
 		cancelled := errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled)
@@ -269,7 +271,7 @@ func (a *App) startAiChat(req types.AiChatRequest, continuing bool) error {
 				"error":   err.Error(),
 			})
 		}
-		runtime.EventsEmit(a.ctx, "ai:error", aiChatEvent{
+		runtime.EventsEmit(emitCtx, "ai:error", aiChatEvent{
 			ChatID:    req.ChatID,
 			RequestID: req.RequestID,
 			Finish:    true,
@@ -469,7 +471,9 @@ func validateAiToolCommand(command string) (string, bool) {
 
 func (a *App) executeAiToolPlan(sessionID string, plan aiToolExecutionPlan) string {
 	activityID := a.beginTerminalAutomation(sessionID, "ai", plan.ToolName, plan.Command)
-	result, err := a.ssh.ExecuteCommandResult(sessionID, plan.Command, aiToolTimeout, aiToolOutputLimit)
+	// No caller context reaches this point (plans run from their own worker
+	// goroutines); the exec timeout remains the effective bound.
+	result, err := a.ssh.ExecuteCommandResult(context.Background(), sessionID, plan.Command, aiToolTimeout, aiToolOutputLimit)
 	terminalOutput := result.DisplayOutput()
 	var output string
 	if err != nil {
@@ -563,7 +567,8 @@ func (a *App) confirmAiToolExecution(toolName, detail string) bool {
 }
 
 func (a *App) confirmAiToolExecutionBatch(plans []aiToolExecutionPlan) bool {
-	if a.ctx == nil {
+	ctx := a.ctx.Get()
+	if ctx == nil {
 		return false
 	}
 	if len(plans) == 0 {
@@ -606,7 +611,7 @@ func (a *App) confirmAiToolExecutionBatch(plans []aiToolExecutionPlan) bool {
 	if len(plans) == 1 {
 		buttons = []string{"Allow", "Deny"}
 	}
-	res, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{
+	res, err := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
 		Type:          runtime.QuestionDialog,
 		Title:         title,
 		Message:       message,

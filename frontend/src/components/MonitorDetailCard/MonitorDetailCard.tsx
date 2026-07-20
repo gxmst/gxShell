@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Cpu, Gauge, HardDrive, Network, TerminalSquare } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { formatBytes } from "../../utils/format";
+import { useSessionMetrics } from "../../hooks/useSessionMetrics";
 import { t } from "../../i18n";
 import { FloatingCard } from "../FloatingCard/FloatingCard";
 
@@ -10,7 +11,7 @@ export type MonitorDetailKind = "cpu" | "disk" | "network";
 
 interface MonitorDetailCardProps {
   kind: MonitorDetailKind;
-  metrics?: types.Metrics;
+  sessionId?: string;
   initialLeft: number;
   initialTop: number;
   locale: string;
@@ -35,7 +36,9 @@ const COMMANDS: Record<MonitorDetailKind, string[]> = {
   ],
 };
 
-export function MonitorDetailCard({ kind, metrics, initialLeft, initialTop, locale, onClose }: MonitorDetailCardProps) {
+export function MonitorDetailCard({ kind, sessionId, initialLeft, initialTop, locale, onClose }: MonitorDetailCardProps) {
+  // Own monitor:update subscription; ticks re-render only this floating card.
+  const metrics = useSessionMetrics(sessionId);
   const lang = locale || "en";
   const title = kind === "cpu" ? t(lang, "cpuDetail") : kind === "disk" ? t(lang, "diskDetail") : t(lang, "networkDetail");
   const icon = kind === "cpu" ? <Cpu size={14} /> : kind === "disk" ? <HardDrive size={14} /> : <Network size={14} />;

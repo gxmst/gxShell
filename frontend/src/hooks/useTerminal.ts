@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, type MutableRefObject } from "
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { types } from "../../wailsjs/go/models";
 import { ResizeTerminal, WriteToTerminal, LogCommand } from "../../wailsjs/go/main/App";
@@ -12,8 +13,18 @@ import type { SplitPane } from "../types";
 import { t } from "../i18n";
 
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
+// requestAnimationFrame does not fire while the window is minimized/hidden in
+// WebView2, but terminal:data keeps arriving. Once the pending rAF queue for a
+// session exceeds this size, it is flushed synchronously (xterm buffers
+// internally, which is safe while hidden) so the queue cannot grow unbounded.
+const MAX_PENDING_OUTPUT_BYTES = 256 * 1024;
 const MAX_COMMAND_BUFFER_CHARS = 8192;
 const RESIZE_SETTLE_MS = 80;
+
+// The WebGL→canvas degradation toast fires from onContextLoss, which can
+// trigger repeatedly when many terminals force context recycling. Shown at
+// most once per app session.
+let webglFallbackToastShown = false;
 
 export type AppContextMenu = {
   x: number;
@@ -38,6 +49,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const pendingFitFrames = useRef<Record<string, number>>({});
   const pendingResizeTimers = useRef<Record<string, number>>({});
   const pendingOutput = useRef<Record<string, string[]>>({});
+  const pendingOutputSizes = useRef<Record<string, number>>({});
   const pendingWriteFrames = useRef<Record<string, number>>({});
   const pendingInput = useRef<Record<string, string[]>>({});
   const pendingInputSizes = useRef<Record<string, number>>({});
@@ -175,7 +187,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         allowProposedApi: true,
         convertEol: true,
         cursorBlink: s.terminal.cursorBlink,
-        cursorStyle: s.terminal.cursorStyle as any,
+        cursorStyle: (s.terminal.cursorStyle || "block") as "block" | "underline" | "bar",
         fontFamily: s.terminal.fontFamily || "JetBrains Mono, Cascadia Code, Fira Code, Maple Mono, Consolas, monospace",
         fontSize: s.terminal.fontSize || 13.5,
         fontWeight: 400,
@@ -190,6 +202,11 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       const searchAddon = new SearchAddon();
       term.loadAddon(fit);
       term.loadAddon(searchAddon);
+      // Unicode 11 width tables so newer emoji and wide characters advance the
+      // cursor correctly (xterm defaults to Unicode 6 measurements). Like the
+      // fit/search addons, it is disposed by term.dispose() in disposeTerminal.
+      term.loadAddon(new Unicode11Addon());
+      term.unicode.activeVersion = "11";
       // Report match count/position to the search bar. Fires after every
       // findNext/findPrevious, so the bar can show "3 / 12" live. resultIndex is
       // -1 when there is no match; the addon uses 0-based indices.
@@ -226,12 +243,18 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
           // to the canvas renderer, avoiding flickering / white screens.
           gl.dispose();
           delete webgl.current[activeTab];
-          notifyRef.current("WebGL context lost, using canvas renderer", "info");
+          if (!webglFallbackToastShown) {
+            webglFallbackToastShown = true;
+            notifyRef.current("WebGL context lost, using canvas renderer", "info");
+          }
         });
         term.loadAddon(gl);
         webgl.current[activeTab] = gl;
       } catch (err) {
-        notifyRef.current("WebGL unavailable, using canvas renderer", "info");
+        if (!webglFallbackToastShown) {
+          webglFallbackToastShown = true;
+          notifyRef.current("WebGL unavailable, using canvas renderer", "info");
+        }
       }
 
       // The listener lives on xterm's root element, which moves with the
@@ -385,16 +408,6 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   }, [splitPane, activeTab]);
 
   useEffect(() => {
-    if (!settings) return;
-    Object.values(terminals.current).forEach((term) => {
-      term.options.theme = getTerminalTheme(settings);
-      term.options.fontFamily = settings.terminal.fontFamily;
-      term.options.fontSize = settings.terminal.fontSize;
-      term.options.lineHeight = settings.terminal.lineHeight;
-    });
-  }, [settings]);
-
-  useEffect(() => {
     const ids = Object.keys(terminals.current);
     if (!ids.length) return;
     const timer = window.setTimeout(() => {
@@ -420,6 +433,20 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     return () => window.clearTimeout(timer);
   }, [sidebarCollapsed]);
 
+  const flushPendingOutput = useCallback((sessionId: string) => {
+    const chunks = pendingOutput.current[sessionId];
+    delete pendingOutput.current[sessionId];
+    delete pendingOutputSizes.current[sessionId];
+    if (!chunks?.length) return;
+    // Skip highlight under high throughput (>32 KB/s) to keep rendering smooth
+    const rate = throughputRef.current[sessionId] || 0;
+    const shouldHighlight = rate < 32768;
+    const combined = chunks.join("");
+    terminals.current[sessionId]?.write(
+      shouldHighlight ? applyHighlight(sessionId, combined) : combined
+    );
+  }, [applyHighlight]);
+
   const writeOutput = useCallback((sessionId: string, data: string) => {
     const term = terminals.current[sessionId];
     if (term) {
@@ -428,19 +455,24 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       const queue = pendingOutput.current[sessionId] || [];
       queue.push(data);
       pendingOutput.current[sessionId] = queue;
+      const size = (pendingOutputSizes.current[sessionId] || 0) + data.length;
+      pendingOutputSizes.current[sessionId] = size;
+      // rAF stops firing while the window is minimized/hidden, so cap the
+      // pending queue: past the limit, cancel the frame and write through to
+      // xterm immediately (it buffers internally, safe while hidden).
+      if (size >= MAX_PENDING_OUTPUT_BYTES) {
+        const frame = pendingWriteFrames.current[sessionId];
+        if (frame) {
+          window.cancelAnimationFrame(frame);
+          delete pendingWriteFrames.current[sessionId];
+        }
+        flushPendingOutput(sessionId);
+        return;
+      }
       if (pendingWriteFrames.current[sessionId]) return;
       pendingWriteFrames.current[sessionId] = window.requestAnimationFrame(() => {
         delete pendingWriteFrames.current[sessionId];
-        const chunks = pendingOutput.current[sessionId];
-        delete pendingOutput.current[sessionId];
-        if (!chunks?.length) return;
-        // Skip highlight under high throughput (>32 KB/s) to keep rendering smooth
-        const rate = throughputRef.current[sessionId] || 0;
-        const shouldHighlight = rate < 32768;
-        const combined = chunks.join("");
-        terminals.current[sessionId]?.write(
-          shouldHighlight ? applyHighlight(sessionId, combined) : combined
-        );
+        flushPendingOutput(sessionId);
       });
     } else {
       const buffer = bufferedOutput.current[sessionId] || [];
@@ -454,7 +486,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       bufferedOutput.current[sessionId] = buffer;
       bufferedOutputSizes.current[sessionId] = size;
     }
-  }, [applyHighlight]);
+  }, [flushPendingOutput]);
 
   const disposeTerminal = useCallback((id: string) => {
     observers.current[id]?.disconnect();
@@ -477,6 +509,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     delete bufferedOutputSizes.current[id];
     delete bufferedOutputDropped.current[id];
     delete pendingOutput.current[id];
+    delete pendingOutputSizes.current[id];
     delete pendingResizeTimers.current[id];
     delete refitTimers.current[id];
     delete pendingFitFrames.current[id];
@@ -529,6 +562,23 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       } catch {}
     }, 80);
   }, []);
+
+  // Apply live settings changes to every open terminal. Font metrics changes
+  // (size/family/line height) invalidate the current cols/rows, so each
+  // terminal is refit and the new grid pushed to the remote PTY — otherwise
+  // vim/htop layouts stay stale until the next window resize.
+  useEffect(() => {
+    if (!settings) return;
+    const theme = getTerminalTheme(settings);
+    Object.keys(terminals.current).forEach((id) => {
+      const term = terminals.current[id];
+      term.options.theme = theme;
+      term.options.fontFamily = settings.terminal.fontFamily;
+      term.options.fontSize = settings.terminal.fontSize;
+      term.options.lineHeight = settings.terminal.lineHeight;
+      refitTerminal(id);
+    });
+  }, [settings, refitTerminal]);
 
   const reattachTerminal = useCallback((id: string, newHost: HTMLDivElement) => {
     const term = terminals.current[id];

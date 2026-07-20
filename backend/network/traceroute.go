@@ -2,6 +2,7 @@ package network
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"math"
 	"os/exec"
@@ -10,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -83,15 +83,19 @@ func (m *Manager) TraceRoute(target string) (*types.NetworkPath, error) {
 	return path, nil
 }
 
+// tracerouteTimeout bounds the external tracert/traceroute/tracepath child
+// process. 30 hops probed with 2s waits can legitimately take a couple of
+// minutes, but without a deadline a wedged run would stay alive forever.
+const tracerouteTimeout = 3 * time.Minute
+
 func (m *Manager) localTracert(target string) (string, error) {
 	if err := sanitizeTarget(target); err != nil {
 		return "", err
 	}
-	cmd := exec.Command("tracert", "-d", "-w", "2000", "-h", "30", target)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		HideWindow:    true,
-		CreationFlags: 0x08000000,
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), tracerouteTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "tracert", "-d", "-w", "2000", "-h", "30", target)
+	cmd.SysProcAttr = hideWindowSysProcAttr()
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -100,10 +104,12 @@ func (m *Manager) localTraceroute(target string) (string, error) {
 	if err := sanitizeTarget(target); err != nil {
 		return "", err
 	}
-	cmd := exec.Command("traceroute", "-n", "-w", "2", "-m", "30", target)
+	ctx, cancel := context.WithTimeout(context.Background(), tracerouteTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "traceroute", "-n", "-w", "2", "-m", "30", target)
 	out, err := cmd.CombinedOutput()
 	if strings.TrimSpace(string(out)) == "" || strings.Contains(string(out), "command not found") {
-		out2, err2 := exec.Command("tracepath", "-n", target).CombinedOutput()
+		out2, err2 := exec.CommandContext(ctx, "tracepath", "-n", target).CombinedOutput()
 		if strings.TrimSpace(string(out2)) != "" {
 			return string(out2), err2
 		}
@@ -133,14 +139,23 @@ func (m *Manager) Ping(client *ssh.Client, target string, count int) (*types.Net
 	}
 
 	var rtts []float64
+	consecutiveFailures := 0
 	for i := 0; i < count; i++ {
 		start := time.Now()
 		_, err := m.remoteExec(client, "echo ping")
 		elapsed := time.Since(start).Seconds() * 1000
 		if err != nil {
 			m.logDebug("[Ping] SSH RTT measurement %d failed: %v", i+1, err)
+			consecutiveFailures++
+			// A disconnected session fails every remaining probe, each one
+			// eating its full exec timeout; stop early instead of grinding
+			// through the whole count against a dead client.
+			if consecutiveFailures >= 3 {
+				break
+			}
 			continue
 		}
+		consecutiveFailures = 0
 		rtts = append(rtts, elapsed)
 		m.logDebug("[Ping] SSH RTT #%d: %.3f ms", i+1, elapsed)
 	}

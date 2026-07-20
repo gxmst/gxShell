@@ -1,18 +1,20 @@
 import clsx from "clsx";
 import { MemoryStick, ArrowDownUp, Cpu } from "lucide-react";
-import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
+import { useSessionMetrics } from "../../hooks/useSessionMetrics";
 import { FloatingCard } from "../FloatingCard/FloatingCard";
 
 interface MemoryCardProps {
-  metrics?: types.Metrics;
+  sessionId?: string;
   initialLeft: number;
   initialTop: number;
   locale: string;
   onClose: () => void;
 }
 
-export function MemoryCard({ metrics, initialLeft, initialTop, locale, onClose }: MemoryCardProps) {
+export function MemoryCard({ sessionId, initialLeft, initialTop, locale, onClose }: MemoryCardProps) {
+  // Own monitor:update subscription; ticks re-render only this floating card.
+  const metrics = useSessionMetrics(sessionId);
   const lang = locale || "en";
 
   const memPct = metrics?.memoryPercent || 0;

@@ -163,14 +163,14 @@ func (a *App) CreateRemoteDir(sessionID, remotePath string) error {
 
 // SelectUploadFile opens a file dialog to select a file for upload.
 func (a *App) SelectUploadFile() (string, error) {
-	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	return runtime.OpenFileDialog(a.ctx.Get(), runtime.OpenDialogOptions{
 		Title: "Select file to upload",
 	})
 }
 
 // SelectDownloadPath opens a save dialog to choose where to save a downloaded file.
 func (a *App) SelectDownloadPath(defaultName string) (string, error) {
-	return runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+	return runtime.SaveFileDialog(a.ctx.Get(), runtime.SaveDialogOptions{
 		Title:           "Save downloaded file",
 		DefaultFilename: filepath.Base(defaultName),
 	})

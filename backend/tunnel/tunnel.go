@@ -54,6 +54,7 @@ func (m *Manager) StartTunnels(sessionID string, client *ssh.Client, rules []typ
 			m.emit("tunnel:error", map[string]any{"sessionId": sessionID, "ruleId": rule.ID, "error": err.Error()})
 		} else {
 			status.Active = true
+			status.Rule = fwd.rule
 			fwd.done = make(chan struct{})
 			m.active[sessionID] = append(m.active[sessionID], fwd)
 			go m.serve(sessionID, fwd, client)
@@ -72,6 +73,7 @@ func (m *Manager) startOne(client *ssh.Client, rule types.TunnelRule) (*forward,
 		if err != nil {
 			return nil, fmt.Errorf("local listen failed: %w", err)
 		}
+		rule.Local = ln.Addr().String()
 		return &forward{rule: rule, listener: ln}, nil
 
 	case types.TunnelRemote:
@@ -83,6 +85,7 @@ func (m *Manager) startOne(client *ssh.Client, rule types.TunnelRule) (*forward,
 		if err != nil {
 			return nil, fmt.Errorf("remote listen failed: %w", err)
 		}
+		rule.Remote = ln.Addr().String()
 		return &forward{rule: rule, listener: ln}, nil
 
 	case types.TunnelDynamic:
@@ -91,6 +94,7 @@ func (m *Manager) startOne(client *ssh.Client, rule types.TunnelRule) (*forward,
 		if err != nil {
 			return nil, fmt.Errorf("dynamic listen failed: %w", err)
 		}
+		rule.Local = ln.Addr().String()
 		return &forward{rule: rule, listener: ln}, nil
 
 	default:
@@ -335,6 +339,7 @@ func (m *Manager) AddTunnel(sessionID string, client *ssh.Client, rule types.Tun
 		return status
 	}
 	status.Active = true
+	status.Rule = fwd.rule
 	fwd.done = make(chan struct{})
 	m.active[sessionID] = append(m.active[sessionID], fwd)
 	go m.serve(sessionID, fwd, client)

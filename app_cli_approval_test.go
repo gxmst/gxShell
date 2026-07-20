@@ -19,7 +19,7 @@ import (
 // by a single batch call, and that every caller observes the batch's decision.
 func TestCliApprovalBatchCoalescesConcurrentRequests(t *testing.T) {
 	app := NewApp()
-	app.ctx = context.Background()
+	app.ctx.Set(context.Background())
 	app.cliApprovalDelay = 40 * time.Millisecond
 
 	var batchCalls int32
@@ -59,7 +59,7 @@ func TestCliApprovalBatchCoalescesConcurrentRequests(t *testing.T) {
 // every waiter, not just the leader.
 func TestCliApprovalBatchDecisionPropagatesToAll(t *testing.T) {
 	app := NewApp()
-	app.ctx = context.Background()
+	app.ctx.Set(context.Background())
 	app.cliApprovalDelay = 40 * time.Millisecond
 	app.cliConfirmBatchFn = func(serverName string, commands []string) bool {
 		return false
@@ -88,7 +88,7 @@ func TestCliApprovalBatchDecisionPropagatesToAll(t *testing.T) {
 // servers are batched independently: each server gets its own confirmation.
 func TestCliApprovalSeparateServersDoNotShareBatch(t *testing.T) {
 	app := NewApp()
-	app.ctx = context.Background()
+	app.ctx.Set(context.Background())
 	app.cliApprovalDelay = 40 * time.Millisecond
 
 	var mu sync.Mutex
@@ -122,7 +122,7 @@ func TestCliApprovalSeparateServersDoNotShareBatch(t *testing.T) {
 // "Prod-Web" and "prod-web" coalesce into one dialog rather than two.
 func TestCliApprovalKeyIsCaseInsensitive(t *testing.T) {
 	app := NewApp()
-	app.ctx = context.Background()
+	app.ctx.Set(context.Background())
 	app.cliApprovalDelay = 40 * time.Millisecond
 
 	var batchCalls int32
@@ -146,7 +146,7 @@ func TestCliApprovalKeyIsCaseInsensitive(t *testing.T) {
 // later request opens a fresh batch (the map entry is cleared, not leaked).
 func TestCliApprovalSequentialBatchesReopen(t *testing.T) {
 	app := NewApp()
-	app.ctx = context.Background()
+	app.ctx.Set(context.Background())
 	app.cliApprovalDelay = 20 * time.Millisecond
 
 	var batchCalls int32

@@ -14,6 +14,8 @@
 - Simple read-only commands (`ls`, `cat`, `df`, `uptime`, and similar inspection tools) run without a prompt.
 - Any other command triggers a native confirmation dialog in gxShell before it runs. Requests for the same alias that arrive within a short window are batched into one approval prompt.
 - Dangerous commands and sensitive paths are blocked before confirmation. Blocked responses include a reason, category, and diagnostic detail such as the matched command fragment or sensitive path pattern.
+- Remote file copies always require native confirmation and apply sensitive-path checks to both endpoints.
+- CLI-created SSH tunnels always require native confirmation and can bind only to a loopback address. They are temporary and are never saved into a profile.
 
 Localhost is not treated as a complete security boundary. The token and confirmation dialog are the real guardrails.
 
@@ -44,6 +46,8 @@ If a command reports `command not found`, do not immediately conclude the tool i
 ```
 
 For multi-server work, write notes and summaries with the alias on every remote fact or action, for example `prod-web: AlmaLinux, dnf present` rather than `the server has dnf`. If two outputs disagree, rerun a single read-only command against the exact alias before explaining or changing anything.
+
+AI agents must treat CLI tunnels as temporary resources. Record the returned tunnel ID, close it in the same workflow when no longer needed, and verify with `gxshell-cli tunnel list`. Never leave a tunnel open merely because the calling task ended or failed. Use cleanup/finally logic around tunnel-dependent work whenever the agent runtime supports it.
 
 ## Command Approval
 
@@ -119,8 +123,18 @@ go build -o gxshell-cli.exe .\cmd\gxshell-cli
 .\gxshell-cli.exe exec prod-web "docker compose up -d --build" --timeout 10m
 .\gxshell-cli.exe --timeout 10m exec prod-web "docker compose up -d --build"
 .\gxshell-cli.exe exec prod-web "uptime" --json
-.\gxshell-cli.exe exec-file prod-web .\script.sh
-Get-Content .\script.sh -Raw | .\gxshell-cli.exe exec-stdin prod-web
+.\gxshell-cli.exe exec-file prod-web .\script.sh --shell bash
+Get-Content .\script.sh -Raw | .\gxshell-cli.exe exec-stdin prod-web --shell bash
+.\gxshell-cli.exe exec prod-web "journalctl -f" --follow
+.\gxshell-cli.exe exec prod-web "long-task" --detach
+.\gxshell-cli.exe job status job-0123456789abcdef
+.\gxshell-cli.exe job logs job-0123456789abcdef --follow
+.\gxshell-cli.exe job cancel job-0123456789abcdef
+.\gxshell-cli.exe copy source:/tmp/config.tar destination:/tmp/config.tar
+.\gxshell-cli.exe tunnel open prod-web 8080 127.0.0.1:80
+.\gxshell-cli.exe tunnel socks prod-web 1080
+.\gxshell-cli.exe tunnel list
+.\gxshell-cli.exe tunnel close tun-0123456789abcdef
 .\gxshell-cli.exe status
 ```
 
@@ -128,9 +142,15 @@ Simple read-only commands run immediately. Any other `exec` request asks for app
 
 Put `--timeout` before `exec` or after the quoted remote command, not inside the remote command string. If it is inside the quoted command, the remote shell receives it as part of the command.
 
-`exec-file` and `exec-stdin` send the script text in the JSON request body instead of forcing the whole command through PowerShell argument quoting. Before sending, gxShell strips a leading UTF-8 BOM and normalizes CRLF/CR line endings to LF, which avoids common PowerShell pipeline and here-doc terminator surprises. They still use the same approval, timeout, output limit, and SSH exec-channel behavior as `exec`. The local CLI request body is capped at about 2 MB.
+`exec-file` and `exec-stdin` require an explicit `--shell` selected from `sh`, `bash`, `dash`, `zsh`, or `ksh`. The client sends normalized script text in the JSON request body; the daemon starts `<shell> -s` and writes the script through SSH stdin. The script is never embedded into the remote command string. Before sending, gxShell strips a leading UTF-8 BOM and normalizes CRLF/CR line endings to LF. Scripts use the same approval, timeout, output limit, and SSH exec-channel behavior as `exec`. The local CLI request body is capped at about 2 MB.
 
-`--json` is supported on `ping`, `doctor`, `list`, `status`, `exec`, `exec-file`, and `exec-stdin`. For `exec`, the result includes:
+`--follow` and `--detach` create a trackable command job. Follow mode polls ordered stdout/stderr chunks until completion; detach mode returns the job ID immediately. `job status`, `job logs`, and `job cancel` work while the GUI process remains running. Finished jobs and their captured output are retained in memory for 30 minutes, then pruned. Output capture remains capped at about 1 MB per stream. Closing gxShell cancels running CLI jobs.
+
+`copy` currently supports one remote file, not directories. It reuses gxShell's SFTP clients for both profiles, streams through the local app, writes a sibling temporary destination, verifies the temporary file with SHA-256, preserves source permission bits where supported, and only then atomically replaces the final destination. A failed or cancelled transfer removes the temporary file and leaves an existing destination intact.
+
+`tunnel open` creates local forwarding and `tunnel socks` creates a dynamic SOCKS5 listener. Both accept a port (`1080`) or an explicit loopback endpoint (`127.0.0.1:1080`, `[::1]:1080`); non-loopback binds such as `0.0.0.0` are rejected. Port `0` asks the OS to choose a free port and the CLI reports the actual endpoint. Tunnels close on `tunnel close`, SSH disconnect, or application shutdown. They are not persisted or reopened automatically.
+
+`--json` is supported on all commands. For synchronous `exec`, the result includes:
 
 ```json
 {
@@ -184,3 +204,5 @@ Authorization: Bearer <token>
 ```
 
 The token is generated by gxShell and is intended for same-user local CLI use.
+
+Authenticated routes are `POST /cli/exec`, `GET|DELETE /cli/jobs`, `POST /cli/copy`, `GET|POST|DELETE /cli/tunnels`, `GET /cli/list`, and `GET /cli/status`. `/cli/ping` is the unauthenticated liveness endpoint and exposes no profile data.

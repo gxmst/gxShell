@@ -165,7 +165,10 @@ function highlightCode(code: string, lang: string) {
     } catch {}
   }
   try {
-    const result = hljs.highlightAuto(code);
+    // Unlabeled blocks: restrict auto-detection to a small common subset —
+    // running it against every registered language is quadratic-ish and runs
+    // synchronously inside buildMarkdown.
+    const result = hljs.highlightAuto(code, ['bash', 'json', 'yaml', 'python', 'javascript']);
     return { html: result.value, label: language || result.language || 'text' };
   } catch {
     return { html: escapeHtml(code), label: language || 'text' };

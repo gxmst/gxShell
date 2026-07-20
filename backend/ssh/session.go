@@ -52,7 +52,10 @@ type Manager struct {
 type KeyboardInteractivePrompt func(sessionID, name, instruction string, questions []string, echos []bool) ([]string, error)
 
 type Session struct {
-	info        types.SessionInfo
+	info types.SessionInfo
+	// port is the remote SSH port from the connecting profile. It is immutable
+	// after Connect, and exposed via SessionPort for firewall lockout guards.
+	port        int
 	client      *ssh.Client
 	jumpClient  *ssh.Client
 	shell       *ssh.Session
@@ -99,12 +102,6 @@ func (m *Manager) Connect(profile types.Profile, timeoutSec int, cols int, rows 
 }
 
 func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profile, timeoutSec int, cols int, rows int) (types.SessionInfo, error) {
-	m.mu.RLock()
-	count := len(m.sessions)
-	m.mu.RUnlock()
-	if count >= maxSessions {
-		return types.SessionInfo{}, fmt.Errorf("connection limit reached (%d sessions max)", maxSessions)
-	}
 	if cols <= 0 {
 		cols = 120
 	}
@@ -125,8 +122,16 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 		Rows:      rows,
 		StartedAt: time.Now(),
 	}
-	session := &Session{info: info, done: make(chan struct{})}
+	session := &Session{info: info, port: profile.Port, done: make(chan struct{})}
+	// The limit check and the insert share one critical section: a separate
+	// count check would let concurrent connects race past the limit together.
+	// Inserting before the (slow) handshake reserves the slot; failConnect
+	// releases it on any failure.
 	m.mu.Lock()
+	if len(m.sessions) >= maxSessions {
+		m.mu.Unlock()
+		return types.SessionInfo{}, fmt.Errorf("connection limit reached (%d sessions max)", maxSessions)
+	}
 	m.sessions[id] = session
 	m.mu.Unlock()
 	m.emit("terminal:connecting", info)
@@ -624,6 +629,17 @@ func (m *Manager) Shutdown() {
 	}
 }
 
+// SessionPort returns the remote SSH port this session connected to. The
+// firewall manager uses it to warn before rules that would cut this very
+// connection.
+func (m *Manager) SessionPort(id string) (int, error) {
+	session, err := m.get(id)
+	if err != nil {
+		return 0, err
+	}
+	return session.port, nil
+}
+
 func (m *Manager) Client(id string) (*ssh.Client, error) {
 	session, err := m.get(id)
 	if err != nil {
@@ -647,8 +663,8 @@ func (m *Manager) Exec(id string, command string, timeout time.Duration) (string
 		return "", err
 	}
 	defer s.Close()
-	var out bytes.Buffer
-	var stderr bytes.Buffer
+	var out syncBuffer
+	var stderr syncBuffer
 	s.Stdout = &out
 	s.Stderr = &stderr
 
@@ -727,12 +743,26 @@ func (r CommandExecutionResult) DisplayOutput() string {
 }
 
 func (m *Manager) ExecuteCommand(sessionID string, command string, timeout time.Duration, maxOutput int64) (string, error) {
-	result, err := m.ExecuteCommandResult(sessionID, command, timeout, maxOutput)
+	result, err := m.ExecuteCommandResult(context.Background(), sessionID, command, timeout, maxOutput)
 	return result.DisplayOutput(), err
 }
 
-func (m *Manager) ExecuteCommandResult(sessionID string, command string, timeout time.Duration, maxOutput int64) (CommandExecutionResult, error) {
+// ExecuteCommandResult runs command over a dedicated exec channel. ctx lets the
+// caller abandon the run early (e.g. an external CLI client disconnecting): the
+// SSH session is closed so the remote side sees the channel go away instead of
+// the command running unobserved for the full timeout.
+func (m *Manager) ExecuteCommandResult(ctx context.Context, sessionID string, command string, timeout time.Duration, maxOutput int64) (CommandExecutionResult, error) {
+	return m.ExecuteCommandResultStream(ctx, sessionID, command, nil, timeout, maxOutput, nil)
+}
+
+// ExecuteCommandResultStream runs a command with optional stdin and reports
+// stdout/stderr chunks as they arrive. The callback may be invoked concurrently
+// by the SSH package and must return quickly.
+func (m *Manager) ExecuteCommandResultStream(ctx context.Context, sessionID string, command string, stdin *string, timeout time.Duration, maxOutput int64, onOutput func(stream string, chunk []byte)) (CommandExecutionResult, error) {
 	var result CommandExecutionResult
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
@@ -753,8 +783,18 @@ func (m *Manager) ExecuteCommandResult(sessionID string, command string, timeout
 	defer sshSession.Close()
 	stdout := newLimitedBuffer(maxOutput)
 	stderr := newLimitedBuffer(maxOutput)
-	sshSession.Stdout = stdout
-	sshSession.Stderr = stderr
+	sshSession.Stdout = &commandOutputWriter{stream: "stdout", buffer: stdout, callback: onOutput}
+	sshSession.Stderr = &commandOutputWriter{stream: "stderr", buffer: stderr, callback: onOutput}
+	if stdin != nil {
+		stdinPipe, pipeErr := sshSession.StdinPipe()
+		if pipeErr != nil {
+			return result, fmt.Errorf("failed to open SSH stdin: %w", pipeErr)
+		}
+		go func(input string) {
+			_, _ = io.WriteString(stdinPipe, input)
+			_ = stdinPipe.Close()
+		}(*stdin)
+	}
 
 	started := time.Now()
 	done := make(chan error, 1)
@@ -764,6 +804,13 @@ func (m *Manager) ExecuteCommandResult(sessionID string, command string, timeout
 
 	select {
 	case err = <-done:
+	case <-ctx.Done():
+		_ = sshSession.Close()
+		err = fmt.Errorf("command cancelled: %w", ctx.Err())
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
 	case <-time.After(timeout):
 		_ = sshSession.Close()
 		err = errors.New("remote command timeout")
@@ -804,6 +851,32 @@ func (m *Manager) ExecuteCommandResult(sessionID string, command string, timeout
 	}
 	result.Output = output
 	return result, nil
+}
+
+type commandOutputWriter struct {
+	stream   string
+	buffer   *limitedBuffer
+	callback func(stream string, chunk []byte)
+	mu       sync.Mutex
+	emitted  int
+}
+
+func (w *commandOutputWriter) Write(p []byte) (int, error) {
+	n, err := w.buffer.Write(p)
+	if n > 0 && w.callback != nil {
+		w.mu.Lock()
+		remaining := w.buffer.limit - w.emitted
+		if remaining > len(p) {
+			remaining = len(p)
+		}
+		if remaining > 0 {
+			chunk := append([]byte(nil), p[:remaining]...)
+			w.emitted += remaining
+			w.callback(w.stream, chunk)
+		}
+		w.mu.Unlock()
+	}
+	return n, err
 }
 
 func isBenignShellWaitError(err error) bool {
@@ -1042,8 +1115,39 @@ func appendLine(base string, line string) string {
 	return base + "\n" + line
 }
 
+// syncBuffer is a concurrency-safe capture buffer for exec output. On the
+// timeout/cancel paths the caller reads the partial output while Run's internal
+// stdout/stderr copy goroutines may still be writing, so every access must be
+// mutex-guarded (bytes.Buffer is not safe for concurrent use).
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (b *syncBuffer) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Len()
+}
+
+// limitedBuffer caps captured output at limit bytes. Like syncBuffer, all
+// access is mutex-guarded because the timeout/cancel paths read while the
+// session's copy goroutines may still be writing.
 type limitedBuffer struct {
-	bytes.Buffer
+	mu        sync.Mutex
+	buf       bytes.Buffer
 	limit     int
 	truncated bool
 }
@@ -1056,21 +1160,31 @@ func newLimitedBuffer(limit int64) *limitedBuffer {
 }
 
 func (b *limitedBuffer) Write(p []byte) (int, error) {
-	remaining := b.limit - b.Len()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	remaining := b.limit - b.buf.Len()
 	if remaining <= 0 {
 		b.truncated = true
 		return len(p), nil
 	}
 	if len(p) > remaining {
-		_, _ = b.Buffer.Write(p[:remaining])
+		_, _ = b.buf.Write(p[:remaining])
 		b.truncated = true
 		return len(p), nil
 	}
-	_, err := b.Buffer.Write(p)
+	_, err := b.buf.Write(p)
 	return len(p), err
 }
 
+func (b *limitedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func (b *limitedBuffer) Truncated() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	return b.truncated
 }
 

@@ -38,3 +38,25 @@ jobs:
 
       - name: Go vet
         run: go vet ./...
+
+  # The root package needs Wails/WebView2 and is Windows-first, but the backend
+  # and CLI packages carry *_other.go variants that nothing compiled until now.
+  # Building them on Linux keeps those files from silently rotting.
+  verify-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build backend and CLI packages
+        run: go build ./backend/... ./cmd/...
+
+      - name: Vet backend and CLI packages
+        run: go vet ./backend/... ./cmd/...
