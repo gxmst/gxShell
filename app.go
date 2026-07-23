@@ -83,7 +83,10 @@ type App struct {
 	// selected by an external CLI request so the frontend can ensure it has a
 	// visible terminal tab before automation output is mirrored.
 	cliSessionEventFn func(types.SessionInfo)
-	nativeDialogMu    sync.Mutex
+	// cliSessionReplacementEventFn lets tests observe stale CLI session
+	// recovery without requiring a live Wails event context.
+	cliSessionReplacementEventFn func(string, types.SessionInfo)
+	nativeDialogMu               sync.Mutex
 	// aiTools is the trust ledger of backend-authorized AI tool calls awaiting a
 	// native confirmation + execution. See aiToolRegistry.
 	aiTools       *aiToolRegistry

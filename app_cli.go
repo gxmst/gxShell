@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"gxShell/backend/logger"
+	sshmanager "gxShell/backend/ssh"
 	"gxShell/backend/types"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -243,7 +244,7 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	// surfaced before their automation output arrives.
 	a.announceCliSession(sessionID)
 	if req.Async {
-		job := a.startCliJob(serverName, sessionID, execCommand, stdin, timeout)
+		job := a.startCliJob(serverName, profile.ID, sessionID, execCommand, stdin, timeout, reusedConnection)
 		writeCliJSON(w, http.StatusAccepted, map[string]any{
 			"alias": serverName, "reusedConnection": reusedConnection,
 			"jobId": job.ID, "state": "queued", "timeoutMs": int(timeout / time.Millisecond),
@@ -253,18 +254,47 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 
 	safeActivityCommand := logger.RedactKnownSecrets(guardText, secretMapValues(secretValues))
 	activityID := a.beginTerminalAutomation(sessionID, "cli", "execute_command", safeActivityCommand)
+	activityFinished := false
 	// r.Context() ends when the CLI client disconnects, so an abandoned request
 	// does not keep the remote command's exec channel open for up to 30 minutes.
 	result, err := a.ssh.ExecuteCommandResultStream(r.Context(), sessionID, execCommand, stdin, timeout, cliOutputLimit, nil)
-	if err != nil {
+	reconnected := false
+	reconnectAttempted := false
+	reconnectFailed := false
+	if err != nil && r.Context().Err() == nil && reusedConnection && sshmanager.IsRetryableCommandStartError(err) {
+		reconnectAttempted = true
 		a.finishTerminalAutomation(sessionID, activityID, "cli", "execute_command", "", err.Error(), 1, 0, false)
+		activityFinished = true
+		oldSessionID := sessionID
+		a.announceCliSessionRecovering(oldSessionID)
+		_ = a.ssh.Disconnect(oldSessionID)
+
+		var reconnectErr error
+		sessionID, _, reconnectErr = a.cliSessionForProfile(profile.ID)
+		if reconnectErr == nil {
+			reconnected = true
+			a.announceCliSessionReplacement(oldSessionID, sessionID)
+			activityID = a.beginTerminalAutomation(sessionID, "cli", "execute_command", safeActivityCommand)
+			activityFinished = false
+			result, err = a.ssh.ExecuteCommandResultStream(r.Context(), sessionID, execCommand, stdin, timeout, cliOutputLimit, nil)
+		} else {
+			reconnectFailed = true
+			err = fmt.Errorf("stale reused SSH connection was closed; reconnect failed: %w", reconnectErr)
+		}
+	}
+	if err != nil {
+		if !activityFinished {
+			a.finishTerminalAutomation(sessionID, activityID, "cli", "execute_command", "", err.Error(), 1, 0, false)
+		}
 		writeCliJSON(w, http.StatusBadGateway, map[string]any{
-			"alias":            serverName,
-			"reusedConnection": reusedConnection,
-			"error":            err.Error(),
-			"errorKind":        "ssh",
-			"outcome":          "transport_error",
-			"blocked":          false,
+			"alias":              serverName,
+			"reusedConnection":   reusedConnection,
+			"reconnectAttempted": reconnectAttempted,
+			"reconnected":        reconnected,
+			"error":              err.Error(),
+			"errorKind":          map[bool]string{true: "connect", false: "ssh"}[reconnectFailed],
+			"outcome":            "transport_error",
+			"blocked":            false,
 		})
 		return
 	}
@@ -276,19 +306,21 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	a.finishTerminalAutomation(sessionID, activityID, "cli", "execute_command", result.DisplayOutput(), automationError, result.ExitCode, result.Duration, result.Truncated)
 
 	payload := map[string]any{
-		"alias":            serverName,
-		"reusedConnection": reusedConnection,
-		"exitCode":         result.ExitCode,
-		"stdout":           result.Stdout,
-		"stderr":           result.Stderr,
-		"output":           result.Output,
-		"summary":          result.Summary,
-		"displayOutput":    result.DisplayOutput(),
-		"durationMs":       result.Duration.Milliseconds(),
-		"timeoutMs":        int(timeout / time.Millisecond),
-		"timedOut":         result.TimedOut,
-		"truncated":        result.Truncated,
-		"blocked":          false,
+		"alias":              serverName,
+		"reusedConnection":   reusedConnection,
+		"reconnectAttempted": reconnectAttempted,
+		"reconnected":        reconnected,
+		"exitCode":           result.ExitCode,
+		"stdout":             result.Stdout,
+		"stderr":             result.Stderr,
+		"output":             result.Output,
+		"summary":            result.Summary,
+		"displayOutput":      result.DisplayOutput(),
+		"durationMs":         result.Duration.Milliseconds(),
+		"timeoutMs":          int(timeout / time.Millisecond),
+		"timedOut":           result.TimedOut,
+		"truncated":          result.Truncated,
+		"blocked":            false,
 	}
 	status := http.StatusOK
 	if result.TimedOut {
@@ -554,6 +586,31 @@ func (a *App) announceCliSession(sessionID string) {
 		return
 	}
 	a.emitCliSessionAvailable(info)
+}
+
+func (a *App) announceCliSessionReplacement(oldSessionID, newSessionID string) {
+	info, err := a.ssh.Get(newSessionID)
+	if err != nil {
+		return
+	}
+	if a.cliSessionReplacementEventFn != nil {
+		a.cliSessionReplacementEventFn(oldSessionID, info)
+		return
+	}
+	if ctx := a.ctx.Get(); ctx != nil {
+		runtime.EventsEmit(ctx, "terminal:cli-session-replaced", map[string]any{
+			"oldSessionId": oldSessionID,
+			"session":      info,
+		})
+	}
+}
+
+func (a *App) announceCliSessionRecovering(sessionID string) {
+	if ctx := a.ctx.Get(); ctx != nil {
+		runtime.EventsEmit(ctx, "terminal:cli-session-recovering", map[string]any{
+			"sessionId": sessionID,
+		})
+	}
 }
 
 func (a *App) emitCliSessionAvailable(info types.SessionInfo) {

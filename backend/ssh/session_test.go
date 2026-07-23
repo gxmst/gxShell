@@ -2,6 +2,7 @@ package sshmanager
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -110,5 +111,37 @@ func TestBenignShellWaitError(t *testing.T) {
 	}
 	if isBenignShellWaitError(errors.New("permission denied")) {
 		t.Fatal("unrelated errors should not be treated as benign")
+	}
+}
+
+func TestCommandNotStartedErrorClassification(t *testing.T) {
+	retryable := fmt.Errorf("wrapped: %w", &CommandNotStartedError{
+		Stage: "channel_open", Err: io.EOF, Retryable: true,
+	})
+	if !IsCommandNotStartedError(retryable) || !IsRetryableCommandStartError(retryable) {
+		t.Fatalf("retryable start error was not classified: %v", retryable)
+	}
+
+	refused := &CommandNotStartedError{
+		Stage: "channel_open", Err: errors.New("administratively prohibited"),
+	}
+	if !IsCommandNotStartedError(refused) {
+		t.Fatal("non-retryable start error should still prove the command did not start")
+	}
+	if IsRetryableCommandStartError(refused) {
+		t.Fatal("server channel refusal should not replace the transport")
+	}
+	if IsCommandNotStartedError(errors.New("command may have started")) {
+		t.Fatal("ordinary execution errors must not be classified as safe to retry")
+	}
+}
+
+func TestRetryableChannelOpenError(t *testing.T) {
+	if !isRetryableChannelOpenError(io.EOF) {
+		t.Fatal("transport EOF should allow a fresh connection retry")
+	}
+	refused := &ssh.OpenChannelError{Reason: ssh.Prohibited, Message: "administratively prohibited"}
+	if isRetryableChannelOpenError(refused) {
+		t.Fatal("explicit server channel refusal should not replace the transport")
 	}
 }

@@ -738,6 +738,42 @@ type CommandExecutionResult struct {
 	Error     string
 }
 
+// CommandNotStartedError means the exec request failed before ssh.Session.Run
+// was called. Callers may safely establish a fresh transport and retry once,
+// because the remote command could not have started through this attempt.
+type CommandNotStartedError struct {
+	Stage     string
+	Err       error
+	Retryable bool
+}
+
+func (e *CommandNotStartedError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *CommandNotStartedError) Unwrap() error {
+	return e.Err
+}
+
+func IsCommandNotStartedError(err error) bool {
+	var target *CommandNotStartedError
+	return errors.As(err, &target)
+}
+
+// IsRetryableCommandStartError is narrower than IsCommandNotStartedError: it
+// only accepts failures that indicate a missing or broken SSH transport. A
+// server's explicit channel refusal is safe from duplicate execution but will
+// not be fixed by replacing an otherwise healthy transport.
+func IsRetryableCommandStartError(err error) bool {
+	var target *CommandNotStartedError
+	return errors.As(err, &target) && target.Retryable
+}
+
+func isRetryableChannelOpenError(err error) bool {
+	var openErr *ssh.OpenChannelError
+	return !errors.As(err, &openErr)
+}
+
 func (r CommandExecutionResult) DisplayOutput() string {
 	return appendLine(r.Output, r.Summary)
 }
@@ -768,17 +804,21 @@ func (m *Manager) ExecuteCommandResultStream(ctx context.Context, sessionID stri
 	}
 	session, err := m.get(sessionID)
 	if err != nil {
-		return result, err
+		return result, &CommandNotStartedError{Stage: "lookup", Err: err, Retryable: true}
 	}
 	session.mu.RLock()
 	client := session.client
 	session.mu.RUnlock()
 	if client == nil {
-		return result, errors.New("SSH client not available")
+		return result, &CommandNotStartedError{Stage: "client", Err: errors.New("SSH client not available"), Retryable: true}
 	}
 	sshSession, err := client.NewSession()
 	if err != nil {
-		return result, fmt.Errorf("failed to create SSH session: %w", err)
+		return result, &CommandNotStartedError{
+			Stage:     "channel_open",
+			Err:       fmt.Errorf("failed to create SSH session: %w", err),
+			Retryable: isRetryableChannelOpenError(err),
+		}
 	}
 	defer sshSession.Close()
 	stdout := newLimitedBuffer(maxOutput)
@@ -788,7 +828,10 @@ func (m *Manager) ExecuteCommandResultStream(ctx context.Context, sessionID stri
 	if stdin != nil {
 		stdinPipe, pipeErr := sshSession.StdinPipe()
 		if pipeErr != nil {
-			return result, fmt.Errorf("failed to open SSH stdin: %w", pipeErr)
+			return result, &CommandNotStartedError{
+				Stage: "stdin",
+				Err:   fmt.Errorf("failed to open SSH stdin: %w", pipeErr),
+			}
 		}
 		go func(input string) {
 			_, _ = io.WriteString(stdinPipe, input)
