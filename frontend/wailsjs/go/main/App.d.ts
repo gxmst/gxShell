@@ -39,6 +39,8 @@ export function CreateRemoteDir(arg1:string,arg2:string):Promise<void>;
 
 export function DeleteCommand(arg1:string):Promise<void>;
 
+export function DeleteCronJob(arg1:string,arg2:string):Promise<void>;
+
 export function DeleteFirewallRule(arg1:string,arg2:number,arg3:string,arg4:boolean):Promise<void>;
 
 export function DeleteProfile(arg1:string):Promise<void>;
@@ -46,6 +48,8 @@ export function DeleteProfile(arg1:string):Promise<void>;
 export function DeleteRecording(arg1:string):Promise<void>;
 
 export function DeleteRemoteFile(arg1:string,arg2:string):Promise<void>;
+
+export function DeleteWebsite(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
 
 export function Disconnect(arg1:string):Promise<void>;
 
@@ -77,6 +81,10 @@ export function GetSettings():Promise<types.AppSettings>;
 
 export function GetStartupFile():Promise<string>;
 
+export function GetWebsiteConfig(arg1:string,arg2:string,arg3:string,arg4:string):Promise<string>;
+
+export function GetWebsiteStatus(arg1:string):Promise<types.WebsiteStatus>;
+
 export function ImportOpenSSHConfig():Promise<Record<string, number>>;
 
 export function ImportProfiles():Promise<Record<string, number>>;
@@ -92,6 +100,8 @@ export function ListAiModels(arg1:string,arg2:string,arg3:string):Promise<Array<
 export function ListCommands():Promise<Array<types.CommandTemplate>>;
 
 export function ListContainers(arg1:string,arg2:boolean):Promise<Array<types.ContainerInfo>>;
+
+export function ListCronJobs(arg1:string):Promise<Array<types.CronJob>>;
 
 export function ListKnownHosts():Promise<Array<sshmanager.KnownHostEntry>>;
 
@@ -179,7 +189,13 @@ export function RestartTunnels(arg1:string):Promise<Array<types.TunnelStatus>>;
 
 export function RestoreTextFiles(arg1:Array<string>):Promise<Array<string>>;
 
+export function RunCronJob(arg1:string,arg2:string):Promise<string>;
+
 export function SaveAiConfig(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
+
+export function SaveCronJob(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;
+
+export function SaveWebsiteConfig(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string):Promise<void>;
 
 export function SelectDownloadPath(arg1:string):Promise<string>;
 
@@ -199,7 +215,11 @@ export function ServiceAction(arg1:string,arg2:string,arg3:string,arg4:boolean):
 
 export function ServiceLogs(arg1:string,arg2:string,arg3:number):Promise<string>;
 
+export function SetCronJobEnabled(arg1:string,arg2:string,arg3:boolean):Promise<void>;
+
 export function SetFirewallEnabled(arg1:string,arg2:boolean,arg3:boolean):Promise<void>;
+
+export function SetWebsiteEnabled(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 
 export function StartContainer(arg1:string,arg2:string):Promise<void>;
 
@@ -224,6 +244,8 @@ export function StopServiceLogs(arg1:string):Promise<void>;
 export function StreamContainerLogs(arg1:string,arg2:string,arg3:string,arg4:number):Promise<void>;
 
 export function StreamServiceLogs(arg1:string,arg2:string,arg3:string,arg4:number):Promise<void>;
+
+export function TestWebsiteConfig(arg1:string,arg2:string):Promise<string>;
 
 export function TraceRoute(arg1:string):Promise<types.NetworkPath>;
 

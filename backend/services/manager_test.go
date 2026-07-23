@@ -3,6 +3,8 @@ package services
 import (
 	"sync/atomic"
 	"testing"
+
+	"gxShell/backend/types"
 )
 
 const listUnitsSample = `cron.service                          loaded    active   running Regular background program processing daemon
@@ -94,6 +96,26 @@ func TestParseUnitFilesAndMergeEnabled(t *testing.T) {
 	// Units without a unit file stay unknown.
 	if byName["systemd-vconsole-setup.service"] != "" {
 		t.Errorf("not-found unit enabled = %q", byName["systemd-vconsole-setup.service"])
+	}
+}
+
+func TestParseAndMergeResourceUsage(t *testing.T) {
+	usage := parseResourceUsage(`nginx.service 1.5 10240
+nginx.service 0.7 5120
+ssh.service 0.1 2048
+- 99.0 9999
+bad.service nope 10`)
+	nginx := usage["nginx.service"]
+	if nginx.cpuPercent != 2.2 || nginx.memoryBytes != 15*1024*1024 {
+		t.Fatalf("nginx usage = %+v", nginx)
+	}
+	services := []types.ServiceInfo{{Name: "nginx.service"}, {Name: "cron.service"}}
+	mergeResourceUsage(services, usage)
+	if services[0].CPUPercent != 2.2 || services[0].MemoryBytes != 15*1024*1024 {
+		t.Fatalf("merged nginx = %+v", services[0])
+	}
+	if services[1].CPUPercent != 0 || services[1].MemoryBytes != 0 {
+		t.Fatalf("missing usage should stay zero: %+v", services[1])
 	}
 }
 

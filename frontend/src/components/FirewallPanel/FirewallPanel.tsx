@@ -36,8 +36,57 @@ function portCoversSsh(port: string, sshPort: number): boolean {
 
 type FirewallDialog =
   | { kind: "disable" }
-  | { kind: "delete"; rule: types.FirewallRule }
+  | { kind: "delete"; group: FirewallRuleGroup }
   | { kind: "deny" };
+
+type FirewallRuleGroup = {
+  key: string;
+  rules: types.FirewallRule[];
+  rule: types.FirewallRule;
+  hasV4: boolean;
+  hasV6: boolean;
+};
+
+function groupFirewallRules(
+  rules: types.FirewallRule[],
+  backend?: string,
+): FirewallRuleGroup[] {
+  const groups: FirewallRuleGroup[] = [];
+  const buckets = new Map<string, FirewallRuleGroup[]>();
+  for (const rule of rules) {
+    const semanticKey = [
+      rule.action,
+      rule.port,
+      rule.protocol,
+      rule.source,
+    ].join("\u0000");
+    const bucket = buckets.get(semanticKey) || [];
+    // Pair one IPv4 and one IPv6 rule. Repeated rules of the same family stay
+    // separate instead of being hidden inside an accidental mega-group.
+    let group = bucket.find((candidate) =>
+      rule.v6 ? !candidate.hasV6 : !candidate.hasV4,
+    );
+    if (!group) {
+      group = {
+        key: `${semanticKey}\u0000${bucket.length}`,
+        rules: [],
+        rule,
+        hasV4: false,
+        hasV6: false,
+      };
+      bucket.push(group);
+      buckets.set(semanticKey, bucket);
+      groups.push(group);
+    }
+    group.rules.push(rule);
+    const firewalldDualFamily =
+      backend === "firewalld" && !/family="ipv[46]"/.test(rule.raw || "");
+    group.hasV6 ||= rule.v6 || firewalldDualFamily;
+    group.hasV4 ||= !rule.v6 || firewalldDualFamily;
+    if (!rule.v6) group.rule = rule;
+  }
+  return groups;
+}
 
 export function FirewallPanel(props: {
   active?: Tab;
@@ -141,8 +190,6 @@ export function FirewallPanel(props: {
     }, ARM_TIMEOUT_MS);
   }, []);
 
-  const ruleKey = (rule: types.FirewallRule) => `${rule.index}|${rule.raw}`;
-
   const toggleEnabled = useCallback(async () => {
     if (!props.active?.id || !status) return;
     if (status.enabled) {
@@ -180,13 +227,23 @@ export function FirewallPanel(props: {
     }
   }, [props.active?.id, refresh, lang]);
 
-  const deleteRule = useCallback(
-    async (rule: types.FirewallRule, force: boolean) => {
+  const deleteRuleGroup = useCallback(
+    async (group: FirewallRuleGroup, force: boolean) => {
       if (!props.active?.id) return;
-      const key = ruleKey(rule);
+      const key = group.key;
       setBusyRule(key);
       try {
-        await DeleteFirewallRule(props.active.id, rule.index, rule.raw, force);
+        // UFW indices shift after deletion, so remove numbered members from
+        // highest to lowest. firewalld rules use index -1 and are raw-addressed.
+        const ordered = [...group.rules].sort((a, b) => b.index - a.index);
+        for (const rule of ordered) {
+          await DeleteFirewallRule(
+            props.active.id,
+            rule.index,
+            rule.raw,
+            force,
+          );
+        }
         onNotifyRef.current(t(lang, "fwRuleDeleted"), "success");
         await refresh();
       } catch (err) {
@@ -195,9 +252,11 @@ export function FirewallPanel(props: {
         // surface the lockout warning as an explicit second confirmation.
         if (
           !force &&
-          (portCoversSsh(rule.port, status?.sshPort || 0) || /force/i.test(msg))
+          (group.rules.some((rule) =>
+            portCoversSsh(rule.port, status?.sshPort || 0),
+          ) || /force/i.test(msg))
         ) {
-          setDialog({ kind: "delete", rule });
+          setDialog({ kind: "delete", group });
         } else {
           onNotifyRef.current(msg, "error");
         }
@@ -211,16 +270,24 @@ export function FirewallPanel(props: {
   // Every delete is two-step (arm, then execute). Rules covering the SSH port
   // additionally hit the backend's force gate, which opens the strong dialog.
   const onDeleteClick = useCallback(
-    (rule: types.FirewallRule) => {
-      const key = ruleKey(rule);
+    (group: FirewallRuleGroup) => {
+      const key = group.key;
       if (armedRule !== key) {
         arm(key);
         return;
       }
       clearArm();
-      deleteRule(rule, false);
+      if (
+        group.rules.some((rule) =>
+          portCoversSsh(rule.port, status?.sshPort || 0),
+        )
+      ) {
+        setDialog({ kind: "delete", group });
+        return;
+      }
+      deleteRuleGroup(group, false);
     },
-    [armedRule, arm, clearArm, deleteRule],
+    [armedRule, arm, clearArm, deleteRuleGroup, status?.sshPort],
   );
 
   const submitRule = useCallback(
@@ -280,6 +347,7 @@ export function FirewallPanel(props: {
   }
 
   const rules = status?.rules || [];
+  const ruleGroups = groupFirewallRules(rules, status?.backend);
   const noBackend = !!status && status.backend === "none";
   const sshPortText = String(status?.sshPort || "");
 
@@ -294,7 +362,14 @@ export function FirewallPanel(props: {
             <strong>{t(lang, "firewall")}</strong>
             <small>
               {status && !noBackend
-                ? `${status.backend} · ${t(lang, "fwRuleCount", { n: String(rules.length) })}`
+                ? `${status.backend} · ${
+                    ruleGroups.length === rules.length
+                      ? t(lang, "fwRuleCount", { n: String(rules.length) })
+                      : t(lang, "fwGroupedRuleCount", {
+                          groups: String(ruleGroups.length),
+                          rules: String(rules.length),
+                        })
+                  }`
                 : t(lang, "firewall")}
             </small>
           </span>
@@ -431,18 +506,18 @@ export function FirewallPanel(props: {
           )}
 
           <div className="firewall-list panel-list">
-            {status && rules.length === 0 && !loading && (
+            {status && ruleGroups.length === 0 && !loading && (
               <div className="panel-empty">
                 <Shield size={20} />
                 <span>{t(lang, "fwNoRules")}</span>
               </div>
             )}
-            {rules.map((rule, i) => {
-              const key = ruleKey(rule);
+            {ruleGroups.map((group) => {
+              const { rule, key } = group;
               const isArmed = armedRule === key;
               const busy = busyRule === key;
               return (
-                <div key={`${key}-${i}`} className="fw-rule">
+                <div key={key} className="fw-rule">
                   <span className={clsx("fw-tag", `fw-tag-${rule.action}`)}>
                     {rule.action}
                   </span>
@@ -456,13 +531,16 @@ export function FirewallPanel(props: {
                       {rule.source || t(lang, "fwAnywhere")}
                     </div>
                   </div>
-                  {rule.v6 && <span className="fw-v6">v6</span>}
+                  <span className="fw-family-tags">
+                    {group.hasV4 && <span className="fw-family">IPv4</span>}
+                    {group.hasV6 && <span className="fw-family">IPv6</span>}
+                  </span>
                   <button
                     className={clsx(
                       "container-action-btn text-bad",
                       isArmed && "action-armed",
                     )}
-                    onClick={() => onDeleteClick(rule)}
+                    onClick={() => onDeleteClick(group)}
                     title={isArmed ? t(lang, "confirm") : t(lang, "delete")}
                     disabled={busy}
                   >
@@ -498,9 +576,9 @@ export function FirewallPanel(props: {
           body={t(lang, "fwDeleteLockoutBody", { port: sshPortText })}
           confirmText={t(lang, "fwProceed")}
           onConfirm={() => {
-            const rule = dialog.rule;
+            const group = dialog.group;
             setDialog(null);
-            deleteRule(rule, true);
+            deleteRuleGroup(group, true);
           }}
           onClose={() => setDialog(null)}
         />

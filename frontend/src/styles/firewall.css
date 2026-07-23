@@ -150,16 +150,14 @@
 }
 
 .fw-add-row {
-  display: flex;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.45fr) minmax(0, 0.72fr);
   gap: 5px;
 }
 
-.fw-add-row > select {
-  flex: 0 0 auto;
-}
-
-.fw-add-row > input {
-  flex: 1;
+.fw-add-row > * {
+  width: 100%;
   min-width: 0;
 }
 
@@ -254,13 +252,20 @@
   text-overflow: ellipsis;
 }
 
-.fw-v6 {
+.fw-family-tags {
+  display: flex;
   flex: 0 0 auto;
-  padding: 1px 5px;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fw-family {
+  flex: 0 0 auto;
+  padding: 1px 4px;
   border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
   border-radius: 999px;
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
-  font-size: 8px;
+  font-size: 7.5px;
   font-weight: 700;
 }

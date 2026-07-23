@@ -330,6 +330,9 @@ type aiToolExecutionPlan struct {
 	ToolName     string
 	Target       string
 	Command      string
+	Shell        string
+	SecretValues map[string]string
+	SecretNames  []string
 	Detail       string
 	EmptyMessage string
 }
@@ -420,7 +423,9 @@ func (a *App) prepareAiToolExecution(toolCall authorizedAIToolCall) (aiToolExecu
 	switch toolCall.ToolName {
 	case "execute_command":
 		var args struct {
-			Command string `json:"command"`
+			Command string            `json:"command"`
+			Shell   string            `json:"shell,omitempty"`
+			Secrets map[string]string `json:"secrets,omitempty"`
 		}
 		if err := json.Unmarshal([]byte(toolCall.Arguments), &args); err != nil {
 			return aiToolExecutionPlan{}, "Error parsing command arguments: " + err.Error(), false
@@ -429,11 +434,28 @@ func (a *App) prepareAiToolExecution(toolCall authorizedAIToolCall) (aiToolExecu
 			a.log.ErrorFields("AI tool command blocked", LogFields{"command": args.Command, "reason": reason})
 			return aiToolExecutionPlan{}, "BLOCKED: " + reason, false
 		}
+		if args.Shell == "" {
+			args.Shell = "sh"
+		}
+		if !isAllowedCliShell(args.Shell) {
+			return aiToolExecutionPlan{}, "BLOCKED: script shell must be one of: sh, bash, dash, zsh, ksh", false
+		}
+		secretValues, secretNames, err := a.resolveCliSecretRefs(args.Secrets)
+		if err != nil {
+			return aiToolExecutionPlan{}, "Error resolving named secret: " + err.Error(), false
+		}
+		detail := logger.RedactKnownSecrets(args.Command, nil)
+		if len(secretNames) > 0 {
+			detail += "\nNamed secrets: " + strings.Join(secretNames, ", ") + " (values hidden)"
+		}
 		return aiToolExecutionPlan{
 			ToolCallID:   toolCall.ToolCallID,
 			ToolName:     toolCall.ToolName,
 			Command:      args.Command,
-			Detail:       args.Command,
+			Shell:        args.Shell,
+			SecretValues: secretValues,
+			SecretNames:  secretNames,
+			Detail:       detail,
 			EmptyMessage: "(command produced no output)",
 		}, "", true
 
@@ -470,10 +492,18 @@ func validateAiToolCommand(command string) (string, bool) {
 }
 
 func (a *App) executeAiToolPlan(sessionID string, plan aiToolExecutionPlan) string {
-	activityID := a.beginTerminalAutomation(sessionID, "ai", plan.ToolName, plan.Command)
+	activityID := a.beginTerminalAutomation(sessionID, "ai", plan.ToolName, logger.RedactKnownSecrets(plan.Command, nil))
 	// No caller context reaches this point (plans run from their own worker
 	// goroutines); the exec timeout remains the effective bound.
-	result, err := a.ssh.ExecuteCommandResult(context.Background(), sessionID, plan.Command, aiToolTimeout, aiToolOutputLimit)
+	execCommand := plan.Command
+	var stdin *string
+	if len(plan.SecretValues) > 0 {
+		execCommand = plan.Shell + " -s"
+		script := buildSecretExecutionScript(plan.SecretValues, plan.Command, "")
+		stdin = &script
+	}
+	result, err := a.ssh.ExecuteCommandResultStream(context.Background(), sessionID, execCommand, stdin, aiToolTimeout, aiToolOutputLimit, nil)
+	redactCommandExecutionResult(&result, plan.SecretValues)
 	terminalOutput := result.DisplayOutput()
 	var output string
 	if err != nil {

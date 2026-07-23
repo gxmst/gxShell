@@ -1,4 +1,4 @@
-import { Activity, ArrowRightLeft, Bot, Box, Cog, Command, FileText, Folder, Settings, Shield, Video } from "lucide-react";
+import { Activity, ArrowRightLeft, Bot, Box, CalendarClock, Cog, Command, FileText, Folder, Globe2, Settings, Shield, Video } from "lucide-react";
 import { types } from "../wailsjs/go/models";
 import type { Drawer } from "./types";
 
@@ -151,6 +151,8 @@ export function drawerIcon(item: Drawer, size = 15) {
   if (item === "containers") return <Box size={size} />;
   if (item === "services") return <Cog size={size} />;
   if (item === "firewall") return <Shield size={size} />;
+  if (item === "cron") return <CalendarClock size={size} />;
+  if (item === "websites") return <Globe2 size={size} />;
   if (item === "ai") return <Bot size={size} />;
   if (item === "recordings") return <Video size={size} />;
   return <Settings size={size} />;
@@ -165,4 +167,3 @@ export function AppIcon() {
     />
   );
 }
-

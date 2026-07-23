@@ -177,6 +177,7 @@ func cliJobSnapshot(job *cliJob, after int64) map[string]any {
 	payload := map[string]any{
 		"jobId": job.ID, "alias": job.Alias, "state": job.State,
 		"createdAt": job.CreatedAt, "events": events, "nextSequence": job.NextSeq,
+		"blocked": false,
 	}
 	if !job.StartedAt.IsZero() {
 		payload["startedAt"] = job.StartedAt
@@ -191,6 +192,22 @@ func cliJobSnapshot(job *cliJob, after int64) map[string]any {
 			payload["error"] = job.Result.Error
 			payload["errorKind"] = "remote"
 		}
+		switch {
+		case job.State == "cancelled":
+			payload["outcome"] = "cancelled"
+		case job.Result.TimedOut:
+			payload["outcome"] = "timeout"
+		case job.Result.Error != "":
+			payload["outcome"] = "transport_error"
+		case job.Result.ExitCode != 0:
+			payload["outcome"] = "remote_failed"
+			payload["errorKind"] = "remote_exit"
+			payload["message"] = fmt.Sprintf("The remote shell returned exit code %d. gxShell did not block this command.", job.Result.ExitCode)
+		default:
+			payload["outcome"] = "succeeded"
+		}
+	} else {
+		payload["outcome"] = job.State
 	}
 	return payload
 }

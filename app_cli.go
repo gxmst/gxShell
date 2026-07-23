@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	goruntime "runtime"
 	"strings"
 	"time"
@@ -30,6 +31,8 @@ const (
 	cliApprovalDelay  = time.Second
 )
 
+var cliHeredocPattern = regexp.MustCompile(`(?:^|[;&|]\s*|\s)<<-?\s*["']?[A-Za-z_][A-Za-z0-9_]*["']?`)
+
 // startCliServer starts an authenticated localhost HTTP server for CLI access.
 // Profiles must opt in with CliEnabled before the CLI can see or execute them.
 func (a *App) startCliServer() {
@@ -42,6 +45,7 @@ func (a *App) startCliServer() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/cli/exec", a.requireCliAuth(token, a.handleCliExec))
+	mux.HandleFunc("/cli/secrets", a.requireCliAuth(token, a.handleCliSecrets))
 	mux.HandleFunc("/cli/jobs", a.requireCliAuth(token, a.handleCliJobs))
 	mux.HandleFunc("/cli/copy", a.requireCliAuth(token, a.handleCliCopy))
 	mux.HandleFunc("/cli/tunnels", a.requireCliAuth(token, a.handleCliTunnels))
@@ -97,12 +101,13 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Server    string `json:"server"`
-		Command   string `json:"command"`
-		Script    string `json:"script,omitempty"`
-		Shell     string `json:"shell,omitempty"`
-		Async     bool   `json:"async,omitempty"`
-		TimeoutMs int    `json:"timeoutMs,omitempty"`
+		Server    string            `json:"server"`
+		Command   string            `json:"command"`
+		Script    string            `json:"script,omitempty"`
+		Shell     string            `json:"shell,omitempty"`
+		Async     bool              `json:"async,omitempty"`
+		TimeoutMs int               `json:"timeoutMs,omitempty"`
+		Secrets   map[string]string `json:"secrets,omitempty"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, cliMaxRequestSize))
 	decoder.DisallowUnknownFields()
@@ -121,6 +126,14 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		writeCliError(w, http.StatusBadRequest, "validation", "provide exactly one of command or script")
 		return
 	}
+	if req.Command != "" && (strings.ContainsAny(req.Command, "\r\n") || cliHeredocPattern.MatchString(req.Command)) {
+		writeCliJSON(w, http.StatusBadRequest, map[string]any{
+			"error":     "Multiline commands and heredocs must use script input so content travels over SSH stdin without nested shell quoting.",
+			"errorKind": "script_input_required", "outcome": "validation_error", "blocked": false,
+			"recommendedCommand": "gxshell-cli exec-stdin " + req.Server + " --shell bash",
+		})
+		return
+	}
 	if req.Script != "" {
 		if !isAllowedCliShell(req.Shell) {
 			writeCliError(w, http.StatusBadRequest, "validation", "script shell must be one of: sh, bash, dash, zsh, ksh")
@@ -128,6 +141,10 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		}
 	} else if req.Shell != "" {
 		writeCliError(w, http.StatusBadRequest, "validation", "shell is only valid with script input")
+		return
+	}
+	if req.Async && len(req.Secrets) > 0 {
+		writeCliError(w, http.StatusBadRequest, "validation", "named secrets are supported only for synchronous execution; omit --follow/--detach")
 		return
 	}
 	timeout := cliCommandTimeout
@@ -145,10 +162,15 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 
 	profile, err := a.findCliProfile(req.Server)
 	if err != nil {
-		writeCliJSON(w, http.StatusNotFound, map[string]any{"error": err.Error(), "errorKind": "daemon"})
+		writeCliJSON(w, http.StatusNotFound, map[string]any{"error": err.Error(), "errorKind": "daemon", "outcome": "client_error", "blocked": false})
 		return
 	}
 	serverName := cliProfileName(profile)
+	secretValues, secretNames, err := a.resolveCliSecretRefs(req.Secrets)
+	if err != nil {
+		writeCliError(w, http.StatusBadRequest, "secret", err.Error())
+		return
+	}
 	guardText := req.Command
 	execCommand := req.Command
 	var stdin *string
@@ -158,11 +180,25 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		script := req.Script
 		stdin = &script
 	}
+	if len(secretValues) > 0 {
+		displayShell := req.Shell
+		if displayShell == "" {
+			displayShell = "sh"
+		}
+		execCommand = displayShell + " -s"
+		script := buildSecretExecutionScript(secretValues, req.Command, req.Script)
+		stdin = &script
+	}
 
 	if block, ok := guardCommandReport(guardText, req.Script == "", func() bool {
 		display := execCommand
 		if req.Script != "" {
 			display += " via SSH stdin:\n" + req.Script
+		} else if len(secretValues) > 0 {
+			display += " via SSH stdin:\n" + req.Command
+		}
+		if len(secretNames) > 0 {
+			display += "\nNamed secrets: " + strings.Join(secretNames, ", ") + " (values hidden)"
 		}
 		return a.confirmCliExecution(serverName, display)
 	}); !ok {
@@ -179,6 +215,7 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 			"blockedBy": block.Kind,
 			"reason":    block.Reason,
 			"detail":    block.Detail,
+			"outcome":   "blocked",
 		})
 		return
 	}
@@ -194,6 +231,8 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 			"alias":     serverName,
 			"error":     "failed to connect: " + err.Error(),
 			"errorKind": "connect",
+			"outcome":   "transport_error",
+			"blocked":   false,
 		})
 		return
 	}
@@ -212,7 +251,8 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	activityID := a.beginTerminalAutomation(sessionID, "cli", "execute_command", execCommand)
+	safeActivityCommand := logger.RedactKnownSecrets(guardText, secretMapValues(secretValues))
+	activityID := a.beginTerminalAutomation(sessionID, "cli", "execute_command", safeActivityCommand)
 	// r.Context() ends when the CLI client disconnects, so an abandoned request
 	// does not keep the remote command's exec channel open for up to 30 minutes.
 	result, err := a.ssh.ExecuteCommandResultStream(r.Context(), sessionID, execCommand, stdin, timeout, cliOutputLimit, nil)
@@ -223,9 +263,12 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 			"reusedConnection": reusedConnection,
 			"error":            err.Error(),
 			"errorKind":        "ssh",
+			"outcome":          "transport_error",
+			"blocked":          false,
 		})
 		return
 	}
+	redactCommandExecutionResult(&result, secretValues)
 	automationError := result.Error
 	if result.TimedOut && automationError == "" {
 		automationError = "remote command timeout"
@@ -245,16 +288,25 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		"timeoutMs":        int(timeout / time.Millisecond),
 		"timedOut":         result.TimedOut,
 		"truncated":        result.Truncated,
+		"blocked":          false,
 	}
 	status := http.StatusOK
 	if result.TimedOut {
+		payload["outcome"] = "timeout"
 		payload["error"] = "remote command timeout"
 		payload["errorKind"] = "remote"
 		payload["timeoutHint"] = cliTimeoutHint(timeout)
 		status = http.StatusGatewayTimeout
 	} else if result.Error != "" {
+		payload["outcome"] = "transport_error"
 		payload["error"] = result.Error
 		payload["errorKind"] = "remote"
+	} else if result.ExitCode != 0 {
+		payload["outcome"] = "remote_failed"
+		payload["errorKind"] = "remote_exit"
+		payload["message"] = fmt.Sprintf("The remote shell returned exit code %d. gxShell did not block this command. Inspect stdout/stderr before retrying.", result.ExitCode)
+	} else {
+		payload["outcome"] = "succeeded"
 	}
 	writeCliJSON(w, status, payload)
 }
@@ -685,5 +737,11 @@ func writeCliJSON(w http.ResponseWriter, status int, payload any) {
 }
 
 func writeCliError(w http.ResponseWriter, status int, kind string, message string) {
-	writeCliJSON(w, status, map[string]any{"error": message, "errorKind": kind})
+	outcome := "client_error"
+	if kind == "validation" || kind == "script_input_required" {
+		outcome = "validation_error"
+	} else if kind == "blocked" {
+		outcome = "blocked"
+	}
+	writeCliJSON(w, status, map[string]any{"error": message, "errorKind": kind, "outcome": outcome, "blocked": kind == "blocked"})
 }

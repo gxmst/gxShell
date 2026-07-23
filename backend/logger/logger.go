@@ -320,6 +320,16 @@ var redactPatterns = []struct {
 		`${1}${2}<redacted>`,
 	},
 	{
+		// Shell variables commonly used for credentials. Quoted values are
+		// consumed as a unit so KEY='abc def' cannot leave a suffix behind.
+		regexp.MustCompile(`(?i)\b(KEY|APIKEY|API_KEY|AUTH|AUTH_TOKEN|ACCESS_TOKEN|BEARER_TOKEN|CREDENTIAL)(\s*=\s*)(?:"[^"]*"|'[^']*'|[^;\s]+)`),
+		`${1}${2}<redacted>`,
+	},
+	{
+		regexp.MustCompile(`(?i)(Authorization\s*:\s*(?:Bearer|Basic)\s+)[^\s"']+`),
+		`${1}<redacted>`,
+	},
+	{
 		regexp.MustCompile(`(?i)("?(password|passphrase|privateKey|private_key|secret|token|apikey|api_key)"?\s*:\s*)"[^"]*"`),
 		`${1}"<redacted>"`,
 	},
@@ -344,6 +354,19 @@ func isSensitiveKey(key string) bool {
 func redact(s string) string {
 	for _, p := range redactPatterns {
 		s = p.re.ReplaceAllString(s, p.replace)
+	}
+	return s
+}
+
+// RedactKnownSecrets removes exact secret values after the normal pattern based
+// scrub. It is intended for execution boundaries that have resolved named
+// secrets and therefore know which opaque values must never be returned.
+func RedactKnownSecrets(s string, values []string) string {
+	s = redact(s)
+	for _, value := range values {
+		if value != "" {
+			s = strings.ReplaceAll(s, value, "<redacted>")
+		}
 	}
 	return s
 }

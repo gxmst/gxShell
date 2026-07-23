@@ -21,6 +21,8 @@ Localhost is not treated as a complete security boundary. The token and confirma
 
 ## AI Agent Usage
 
+The model-independent automation contract is [GXSHELL_AGENT_GUIDE.md](GXSHELL_AGENT_GUIDE.md). Model-specific files such as `CLAUDE.md` and `AGENTS.md` only point to that shared guide; safety and input rules are also enforced by the CLI/API.
+
 AI agents should treat the CLI alias as the only gxShell-provided target identity. The CLI intentionally does not expose hostnames, IP addresses, usernames, ports, profile IDs, or jump-host details, so agents must not rely on those values being available through `list`, `status`, or `exec` metadata.
 
 Before making claims about a server or running state-changing commands, verify the exact alias with a small read-only identity check and keep that alias attached to the result:
@@ -34,6 +36,8 @@ Before making claims about a server or running state-changing commands, verify t
 ```
 
 Use `--json` for automation whenever possible. The JSON response includes the requested `alias`, exit status, stdout, stderr, timeout status, and truncation status. After any state-changing `exec`, read back the `alias` field in the JSON response and confirm it matches the intended target before trusting or reporting the result.
+
+Read the `outcome` field before explaining a failure. `remote_failed` means the remote shell/program returned a non-zero status and gxShell did not block it. Only `outcome: blocked` with `blocked: true` is a gxShell/user-policy rejection.
 
 Local terminal output, user-pasted output, GUI terminal output, and CLI JSON output are different evidence streams; do not merge them unless the source alias and command are explicit. Never build an explanation on top of an unverified server fact. If a conclusion about a server's identity or state is not backed by a specific alias, command, and JSON response from this session, verify it before reasoning further.
 
@@ -142,7 +146,21 @@ Simple read-only commands run immediately. Any other `exec` request asks for app
 
 Put `--timeout` before `exec` or after the quoted remote command, not inside the remote command string. If it is inside the quoted command, the remote shell receives it as part of the command.
 
-`exec-file` and `exec-stdin` require an explicit `--shell` selected from `sh`, `bash`, `dash`, `zsh`, or `ksh`. The client sends normalized script text in the JSON request body; the daemon starts `<shell> -s` and writes the script through SSH stdin. The script is never embedded into the remote command string. Before sending, gxShell strips a leading UTF-8 BOM and normalizes CRLF/CR line endings to LF. Scripts use the same approval, timeout, output limit, and SSH exec-channel behavior as `exec`. The local CLI request body is capped at about 2 MB.
+`exec-file` and `exec-stdin` require an explicit `--shell` selected from `sh`, `bash`, `dash`, `zsh`, or `ksh`. The client sends normalized script text in the JSON request body; the daemon starts `<shell> -s` and writes the script through SSH stdin. The script is never embedded into the remote command string. Before sending, gxShell strips a leading UTF-8 BOM and normalizes CRLF/CR line endings to LF. Scripts use the same approval, timeout, output limit, and SSH exec-channel behavior as `exec`. The local CLI request body is capped at about 2 MB. Plain `exec` rejects literal newlines and heredocs with `script_input_required` so callers cannot accidentally create several nested quoting layers.
+
+## Named Secrets
+
+External and built-in AI agents should use named references instead of plaintext credentials. `secret set` reads the value from stdin so it never appears in the process argument list:
+
+```powershell
+Get-Content .\api-key.txt -Raw | .\gxshell-cli.exe secret set anyrouter-api-key
+.\gxshell-cli.exe secret status anyrouter-api-key --json
+.\gxshell-cli.exe exec prod-web 'curl -H "Authorization: Bearer $API_KEY" https://example.test/v1/models' --secret API_KEY=anyrouter-api-key --json
+```
+
+The value is stored through gxShell's OS credential-store/encrypted-fallback subsystem. During synchronous execution gxShell resolves `secret://anyrouter-api-key`, injects it through SSH stdin, keeps it out of approval/audit text, and removes exact occurrences from captured output. `--follow` and `--detach` cannot be combined with named secrets because streaming chunks could cross a redaction boundary.
+
+This prevents accidental plaintext disclosure but cannot make a general-purpose shell safe against deliberate encoding or transformation of a secret. Review the destination and purpose in the native confirmation dialog. Rotate any credential that was exposed before it was registered.
 
 `--follow` and `--detach` create a trackable command job. Follow mode polls ordered stdout/stderr chunks until completion; detach mode returns the job ID immediately. `job status`, `job logs`, and `job cancel` work while the GUI process remains running. Finished jobs and their captured output are retained in memory for 30 minutes, then pruned. Output capture remains capped at about 1 MB per stream. Closing gxShell cancels running CLI jobs.
 
@@ -205,4 +223,4 @@ Authorization: Bearer <token>
 
 The token is generated by gxShell and is intended for same-user local CLI use.
 
-Authenticated routes are `POST /cli/exec`, `GET|DELETE /cli/jobs`, `POST /cli/copy`, `GET|POST|DELETE /cli/tunnels`, `GET /cli/list`, and `GET /cli/status`. `/cli/ping` is the unauthenticated liveness endpoint and exposes no profile data.
+Authenticated routes are `POST /cli/exec`, `GET|POST|DELETE /cli/secrets`, `GET|DELETE /cli/jobs`, `POST /cli/copy`, `GET|POST|DELETE /cli/tunnels`, `GET /cli/list`, and `GET /cli/status`. Secret status responses expose only alias/existence metadata, never values. `/cli/ping` is the unauthenticated liveness endpoint and exposes no profile data.

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -112,7 +113,48 @@ func (m *Manager) ListServices(sessionID string) ([]types.ServiceInfo, error) {
 	if filesOut, err := m.ssh.Exec(sessionID, "systemctl list-unit-files --type=service --plain --no-legend --no-pager", 20*time.Second); err == nil {
 		mergeEnabled(services, parseUnitFiles(filesOut))
 	}
+	// procps exposes the owning systemd unit for every process. Aggregating one
+	// snapshot is much cheaper than running systemctl show once per service and
+	// gives the UI meaningful current CPU/RSS values. BusyBox/minimal hosts may
+	// not support the unit column; resource data is intentionally best-effort.
+	if usageOut, err := m.ssh.Exec(sessionID, "LC_ALL=C ps -eo unit=,pcpu=,rss= --no-headers", 20*time.Second); err == nil {
+		mergeResourceUsage(services, parseResourceUsage(usageOut))
+	}
 	return services, nil
+}
+
+type serviceResourceUsage struct {
+	cpuPercent  float64
+	memoryBytes int64
+}
+
+func parseResourceUsage(out string) map[string]serviceResourceUsage {
+	usage := make(map[string]serviceResourceUsage)
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 3 || fields[0] == "-" || fields[0] == "init.scope" {
+			continue
+		}
+		cpu, errCPU := strconv.ParseFloat(fields[1], 64)
+		rssKB, errRSS := strconv.ParseInt(fields[2], 10, 64)
+		if errCPU != nil || errRSS != nil || rssKB < 0 {
+			continue
+		}
+		current := usage[fields[0]]
+		current.cpuPercent += cpu
+		current.memoryBytes += rssKB * 1024
+		usage[fields[0]] = current
+	}
+	return usage
+}
+
+func mergeResourceUsage(services []types.ServiceInfo, usage map[string]serviceResourceUsage) {
+	for i := range services {
+		if current, ok := usage[services[i].Name]; ok {
+			services[i].CPUPercent = current.cpuPercent
+			services[i].MemoryBytes = current.memoryBytes
+		}
+	}
 }
 
 func isCommandNotFound(out string, err error) bool {

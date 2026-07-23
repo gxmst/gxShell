@@ -1,6 +1,6 @@
 import { types } from "../wailsjs/go/models";
 
-export type Drawer = "monitor" | "sftp" | "commands" | "tunnels" | "logs" | "containers" | "services" | "firewall" | "recordings" | "ai" | "settings";
+export type Drawer = "monitor" | "sftp" | "commands" | "tunnels" | "logs" | "containers" | "services" | "firewall" | "cron" | "websites" | "recordings" | "ai" | "settings";
 
 export type SplitDirection = "horizontal" | "vertical";
 

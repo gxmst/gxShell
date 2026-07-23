@@ -16,6 +16,21 @@ func newTestStore(t *testing.T) *Store {
 	return &Store{dataDir: dir, legacyDir: dir}
 }
 
+func TestNamedSecretFallbackRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	id := "named:cli:anyrouter-api-key"
+	if err := s.saveFallback(id, "value", "opaque-test-value"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.loadFallback(id, "value"); got != "opaque-test-value" {
+		t.Fatalf("named fallback value = %q", got)
+	}
+	s.deleteFallback(id)
+	if got := s.loadFallback(id, "value"); got != "" {
+		t.Fatalf("deleted named fallback value = %q", got)
+	}
+}
+
 // When the keyring accepts one secret kind, only that kind may be removed from
 // the fallback file: the other kind may still exist ONLY there (written during
 // an earlier keyring outage) and must survive.

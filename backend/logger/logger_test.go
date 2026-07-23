@@ -9,18 +9,28 @@ import (
 
 func TestRedactKeyValueAndPassword(t *testing.T) {
 	cases := map[string]string{
-		`password=hunter2`:     `password=<redacted>`,
-		`password: hunter2`:    `password: <redacted>`,
-		`"password":"hunter2"`: `"password":"<redacted>"`,
-		`passphrase=secret`:    `passphrase=<redacted>`,
-		`api_key=abc123`:       `api_key=<redacted>`,
-		`token: bearer xyz`:    `token: <redacted> xyz`,
+		`password=hunter2`:             `password=<redacted>`,
+		`password: hunter2`:            `password: <redacted>`,
+		`"password":"hunter2"`:         `"password":"<redacted>"`,
+		`passphrase=secret`:            `passphrase=<redacted>`,
+		`api_key=abc123`:               `api_key=<redacted>`,
+		`token: bearer xyz`:            `token: <redacted> xyz`,
+		`KEY='sk-live secret'`:         `KEY=<redacted>`,
+		`AUTH_TOKEN=abc123`:            `AUTH_TOKEN=<redacted>`,
+		`Authorization: Bearer abc123`: `Authorization: Bearer <redacted>`,
 	}
 	for in, want := range cases {
 		got := redact(in)
 		if got != want {
 			t.Errorf("redact(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestRedactKnownSecrets(t *testing.T) {
+	got := RedactKnownSecrets("response contains opaque-value and token=other", []string{"opaque-value"})
+	if strings.Contains(got, "opaque-value") || strings.Contains(got, "other") {
+		t.Fatalf("known secret was not redacted: %q", got)
 	}
 }
 

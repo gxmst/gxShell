@@ -77,6 +77,29 @@ func TestHandleCliExecValidationErrorKind(t *testing.T) {
 	}
 }
 
+func TestHandleCliExecRejectsHeredocWithStructuredGuidance(t *testing.T) {
+	app := NewApp()
+	body := []byte(`{"server":"prod","command":"cat <<'EOF'\nhello\nEOF"}`)
+	req := httptest.NewRequest(http.MethodPost, "/cli/exec", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	app.handleCliExec(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload["errorKind"] != "script_input_required" || payload["outcome"] != "validation_error" || payload["blocked"] != false {
+		t.Fatalf("payload = %#v", payload)
+	}
+	if !strings.Contains(payload["recommendedCommand"].(string), "exec-stdin prod") {
+		t.Fatalf("missing recommendation: %#v", payload)
+	}
+}
+
 func TestCliDefaultTimeoutAndHint(t *testing.T) {
 	if cliCommandTimeout != 2*time.Minute {
 		t.Fatalf("cliCommandTimeout = %s, want 2m", cliCommandTimeout)

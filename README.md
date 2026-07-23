@@ -29,6 +29,7 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 - Reusable command templates with `<name>` variable placeholders. Running a template with placeholders prompts for each value with a live preview before the command is sent, to the active terminal or broadcast to all sessions.
 - AI assistant for OpenAI-compatible APIs, with streaming responses, model listing, token usage, terminal context, and explicit native confirmation before remote tool execution.
 - External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands, track jobs, copy remote files, and open temporary loopback SSH tunnels on opted-in profiles through the running app, without exposing saved SSH credentials. Script execution uses an explicit shell and SSH stdin. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
+- Model-independent agent guidance, structured execution outcomes, enforced stdin/file handling for multiline scripts, and named `secret://` references for using credentials without placing plaintext values in model prompts, process arguments, confirmations, or command audits.
 - Local and remote text/Markdown viewer/editor with sanitized Markdown rendering, plain-text viewing for logs and other text formats, file-open support, drag-and-drop opening, recent files, sibling and relative-link navigation, relative image previews for Markdown, table of contents, code highlighting, Mermaid diagrams, in-document search, zoom, edit, save, split preview, and refresh.
 - Windows tray menu for showing the app, creating a connection, opening a text file, settings, and quit.
 - Windows text-file integration, including installed file-association metadata and an optional per-user "Open with gxShell" right-click menu entry for supported text formats.
@@ -47,6 +48,7 @@ Supported text viewer/editor extensions: `.md`, `.markdown`, `.txt`, `.text`, `.
 - The external `gxshell-cli` interface can be disabled globally, requires a local bearer token when enabled, exposes only opted-in profile aliases (never hosts, users, ports, profile IDs, or jump-host details), blocks dangerous commands and sensitive paths with diagnostic reason/detail fields, and requires native confirmation for anything that is not a simple read-only command. Nearby requests for the same alias are batched into one native prompt.
 - CLI commands run through gxShell-managed SSH sessions. Existing sessions may be reused, but each command uses a separate short-lived SSH exec channel rather than typing into the interactive terminal.
 - Logs redact common secret fields and avoid persisting AI message content previews.
+- Registered named secrets are stored in the OS credential store (or encrypted fallback), injected only at the execution boundary, and removed from captured output by exact-value redaction.
 - Local text-file read/write is limited to files the user opened through the native dialog, OS file-open, drag-and-drop, or authorized text-file siblings.
 
 ## Tech Stack
@@ -209,6 +211,7 @@ gxShell 是一个基于 Wails v2、Go 和 React 构建的 Windows 桌面 SSH 工
 - 可复用命令模板，支持 `<name>` 变量占位符。执行带占位符的模板时，会先弹出填写窗口并显示实时预览，然后发送到当前终端或广播到所有会话。
 - AI 助手支持 OpenAI 兼容 API，包含流式响应、模型列表、token 用量、终端上下文，以及执行远程工具前的原生确认。
 - 外部 `gxshell-cli` 命令行客户端和本地 HTTP API，可让本地工具或 AI agent 通过正在运行的 gxShell 在已授权配置上执行命令、跟踪作业、跨服务器复制文件和开启临时回环 SSH 隧道，同时不暴露已保存的 SSH 凭据。脚本执行会显式选择 shell 并通过 SSH stdin 传输。参见 [GXSHELL_CLI.md](GXSHELL_CLI.md)。
+- 提供与模型无关的 agent 使用规范、结构化执行结果、对多行脚本强制使用 stdin/file 通道，以及命名 `secret://` 引用，使凭据无需以明文进入模型提示、进程参数、确认框或命令审计。
 - 本地和远程文本/Markdown 查看与编辑，支持安全 Markdown 渲染、日志等文本格式查看、文件打开、拖拽打开、最近文件、同目录文件导航、相对链接导航、相对图片预览、目录、代码高亮、Mermaid 图、文内搜索、缩放、编辑、保存、分屏预览和刷新。
 - Windows 托盘菜单，支持显示应用、新建连接、打开文本文件、设置和退出。
 - Windows 文本文件集成，包括安装时的文件关联元数据，以及可选的当前用户右键菜单 “Open with gxShell”，适用于支持的文本格式。
@@ -227,6 +230,7 @@ gxShell 是一个基于 Wails v2、Go 和 React 构建的 Windows 桌面 SSH 工
 - 外部 `gxshell-cli` 接口可全局关闭；启用时需要本地 bearer token，只暴露已授权的 profile alias，不暴露主机、用户名、端口、profile ID 或跳板机细节；会阻止危险命令和敏感路径，并返回诊断用的原因/详情字段；除简单只读命令外都需要原生确认。针对同一 alias 的邻近请求会合并到一个原生确认窗口中。
 - CLI 命令通过 gxShell 管理的 SSH 会话执行。已有会话可能被复用，但每个命令会使用独立的短生命周期 SSH exec channel，而不是输入到交互式终端中。
 - 日志会脱敏常见密钥字段，并避免持久化 AI 消息内容预览。
+- 已登记的命名秘密存储在系统凭据库（或加密 fallback）中，只在执行边界注入，并按真实值从捕获输出中脱敏。
 - 本地文本文件读写仅限用户通过原生文件选择器、系统文件打开、拖拽打开，或授权文本文件同目录关系打开过的文件。
 
 ## 技术栈

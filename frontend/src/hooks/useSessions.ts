@@ -61,6 +61,11 @@ export function useSessions(options: UseSessionsOptions) {
   // tab from the backend event. External gxshell-cli connections emit the same
   // low-level event and must not steal focus from the user's current work.
   const creatingProfiles = useRef<Set<string>>(new Set());
+  const connectingSessionProfiles = useRef<Map<string, string>>(new Map());
+  // Connect failures are delivered both as terminal:error and as a rejected
+  // Connect promise. Remember the profile whose event was already surfaced so
+  // the Promise catch does not show the same message a second time.
+  const recentConnectionErrorProfiles = useRef<Map<string, number>>(new Map());
 
   // Auto-reconnect bookkeeping. Keyed by the tab id that owned the session that
   // dropped. userClosing marks ids the user is intentionally closing so their
@@ -80,6 +85,7 @@ export function useSessions(options: UseSessionsOptions) {
   useEffect(() => {
     const offConnecting = EventsOn("terminal:connecting", (info: types.SessionInfo) => {
       if (!info?.id || !creatingProfiles.current.has(info.profileId)) return;
+      connectingSessionProfiles.current.set(info.id, info.profileId);
       const profile = profilesRef.current.find((item) => item.id === info.profileId) || quickProfiles.current.get(info.profileId);
       setTabs((items) => items.some((tab) => tab.id === info.id)
         ? items
@@ -87,14 +93,22 @@ export function useSessions(options: UseSessionsOptions) {
       setActiveTab(info.id);
     });
     const offConnected = EventsOn("terminal:connected", (info: types.SessionInfo) => {
+      connectingSessionProfiles.current.delete(info.id);
       setTabs((items) => items.map((tab) => tab.id === info.id ? { ...tab, state: "connected", error: undefined } : tab));
       notifyRef.current(`${info.name} connected`, "success");
     });
     const offDisconnected = EventsOn("terminal:disconnected", (info: types.SessionInfo) => {
+      connectingSessionProfiles.current.delete(info.id);
       setTabs((items) => items.map((tab) => tab.id === info.id ? { ...tab, state: "disconnected" } : tab));
       scheduleAutoReconnectRef.current(info.id);
     });
     const offError = EventsOn("terminal:error", (payload: { sessionId: string; error: string }) => {
+      const failedTab = tabsRef.current.find((tab) => tab.id === payload.sessionId);
+      const failedProfileId = failedTab?.profileId || connectingSessionProfiles.current.get(payload.sessionId);
+      if (failedProfileId) {
+        recentConnectionErrorProfiles.current.set(failedProfileId, Date.now());
+      }
+      connectingSessionProfiles.current.delete(payload.sessionId);
       setTabs((items) => items.map((tab) => tab.id === payload.sessionId ? { ...tab, state: "error", error: payload.error } : tab));
       notifyRef.current(payload.error, "error");
       scheduleAutoReconnectRef.current(payload.sessionId);
@@ -196,7 +210,10 @@ export function useSessions(options: UseSessionsOptions) {
       // which updates the optimistic tab. This catch closes the Promise path
       // for failures that happen before a session id exists (profile/secrets,
       // rate limiting, etc.) instead of leaving an unhandled rejection.
-      if (!String(err).toLowerCase().includes("connection cancelled")) {
+      const eventAt = recentConnectionErrorProfiles.current.get(profile.id) || 0;
+      const alreadySurfaced = Date.now() - eventAt < 2000;
+      recentConnectionErrorProfiles.current.delete(profile.id);
+      if (!alreadySurfaced && !String(err).toLowerCase().includes("connection cancelled")) {
         notifyRef.current(`${profile.name || profile.host}: ${String(err)}`, "error");
       }
     }

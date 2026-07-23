@@ -18,12 +18,14 @@ import (
 	"gxShell/backend/logger"
 	"gxShell/backend/monitor"
 	"gxShell/backend/network"
+	"gxShell/backend/scheduler"
 	"gxShell/backend/secrets"
 	"gxShell/backend/services"
 	sftpmanager "gxShell/backend/sftp"
 	sshmanager "gxShell/backend/ssh"
 	"gxShell/backend/tunnel"
 	"gxShell/backend/types"
+	"gxShell/backend/websites"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -69,9 +71,11 @@ type App struct {
 	docker  *docker.Manager
 	// services/firewall manage remote systemd units and the remote firewall
 	// over the same SSH exec channel as docker (no remote agent).
-	services *services.Manager
-	firewall *firewall.Manager
-	local    *localterm.Manager
+	services  *services.Manager
+	firewall  *firewall.Manager
+	scheduler *scheduler.Manager
+	websites  *websites.Manager
+	local     *localterm.Manager
 	// automationEventFn is a test seam for terminal activity events. Production
 	// leaves it nil and emitTerminalAutomation forwards events through Wails.
 	automationEventFn func(terminalAutomationEvent)
@@ -229,6 +233,8 @@ func (a *App) startup(ctx context.Context) {
 	a.services.SetEmit(emit)
 	a.firewall = firewall.NewManager(a.ssh)
 	a.firewall.SetEmit(emit)
+	a.scheduler = scheduler.NewManager(a.ssh)
+	a.websites = websites.NewManager(a.ssh)
 	a.local = localterm.NewManager(emit)
 
 	// Cross-subsystem cleanup must follow EVERY disconnect path, not only the

@@ -56,6 +56,33 @@ func TestScriptAndJobFlagsParse(t *testing.T) {
 	}
 }
 
+func TestSecretBindingParsesWithoutValue(t *testing.T) {
+	args, opts, err := stripTrailingFlags([]string{"uptime", "--secret", "API_KEY=secret://anyrouter"}, cliOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(args, []string{"uptime"}) || opts.secrets["API_KEY"] != "anyrouter" {
+		t.Fatalf("args=%#v secrets=%#v", args, opts.secrets)
+	}
+	if err := addSecretBinding(&opts, "missing-separator"); err == nil {
+		t.Fatal("invalid secret binding was accepted")
+	}
+}
+
+func TestRequiresScriptInput(t *testing.T) {
+	for _, command := range []string{"echo one\necho two", "cat <<'EOF'"} {
+		if !requiresScriptInput(command) {
+			t.Fatalf("%q should require script input", command)
+		}
+	}
+	if requiresScriptInput("printf '%s' hello") {
+		t.Fatal("ordinary command should remain valid for exec")
+	}
+	if requiresScriptInput("python3 -c 'print(1 << 2)'") {
+		t.Fatal("bit shift should not be mistaken for a heredoc")
+	}
+}
+
 func TestAllowedShellAndRemoteSpec(t *testing.T) {
 	if !isAllowedShell("bash") || isAllowedShell("bash -c") || isAllowedShell("powershell") {
 		t.Fatal("shell allowlist is not strict")

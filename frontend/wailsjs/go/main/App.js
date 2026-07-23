@@ -74,6 +74,10 @@ export function DeleteCommand(arg1) {
   return window['go']['main']['App']['DeleteCommand'](arg1);
 }
 
+export function DeleteCronJob(arg1, arg2) {
+  return window['go']['main']['App']['DeleteCronJob'](arg1, arg2);
+}
+
 export function DeleteFirewallRule(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['DeleteFirewallRule'](arg1, arg2, arg3, arg4);
 }
@@ -88,6 +92,10 @@ export function DeleteRecording(arg1) {
 
 export function DeleteRemoteFile(arg1, arg2) {
   return window['go']['main']['App']['DeleteRemoteFile'](arg1, arg2);
+}
+
+export function DeleteWebsite(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['DeleteWebsite'](arg1, arg2, arg3, arg4);
 }
 
 export function Disconnect(arg1) {
@@ -150,6 +158,14 @@ export function GetStartupFile() {
   return window['go']['main']['App']['GetStartupFile']();
 }
 
+export function GetWebsiteConfig(arg1, arg2, arg3, arg4) {
+  return window['go']['main']['App']['GetWebsiteConfig'](arg1, arg2, arg3, arg4);
+}
+
+export function GetWebsiteStatus(arg1) {
+  return window['go']['main']['App']['GetWebsiteStatus'](arg1);
+}
+
 export function ImportOpenSSHConfig() {
   return window['go']['main']['App']['ImportOpenSSHConfig']();
 }
@@ -180,6 +196,10 @@ export function ListCommands() {
 
 export function ListContainers(arg1, arg2) {
   return window['go']['main']['App']['ListContainers'](arg1, arg2);
+}
+
+export function ListCronJobs(arg1) {
+  return window['go']['main']['App']['ListCronJobs'](arg1);
 }
 
 export function ListKnownHosts() {
@@ -354,8 +374,20 @@ export function RestoreTextFiles(arg1) {
   return window['go']['main']['App']['RestoreTextFiles'](arg1);
 }
 
+export function RunCronJob(arg1, arg2) {
+  return window['go']['main']['App']['RunCronJob'](arg1, arg2);
+}
+
 export function SaveAiConfig(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['SaveAiConfig'](arg1, arg2, arg3, arg4);
+}
+
+export function SaveCronJob(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SaveCronJob'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function SaveWebsiteConfig(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SaveWebsiteConfig'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function SelectDownloadPath(arg1) {
@@ -394,8 +426,16 @@ export function ServiceLogs(arg1, arg2, arg3) {
   return window['go']['main']['App']['ServiceLogs'](arg1, arg2, arg3);
 }
 
+export function SetCronJobEnabled(arg1, arg2, arg3) {
+  return window['go']['main']['App']['SetCronJobEnabled'](arg1, arg2, arg3);
+}
+
 export function SetFirewallEnabled(arg1, arg2, arg3) {
   return window['go']['main']['App']['SetFirewallEnabled'](arg1, arg2, arg3);
+}
+
+export function SetWebsiteEnabled(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['main']['App']['SetWebsiteEnabled'](arg1, arg2, arg3, arg4, arg5);
 }
 
 export function StartContainer(arg1, arg2) {
@@ -444,6 +484,10 @@ export function StreamContainerLogs(arg1, arg2, arg3, arg4) {
 
 export function StreamServiceLogs(arg1, arg2, arg3, arg4) {
   return window['go']['main']['App']['StreamServiceLogs'](arg1, arg2, arg3, arg4);
+}
+
+export function TestWebsiteConfig(arg1, arg2) {
+  return window['go']['main']['App']['TestWebsiteConfig'](arg1, arg2);
 }
 
 export function TraceRoute(arg1) {

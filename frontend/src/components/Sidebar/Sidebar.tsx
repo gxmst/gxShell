@@ -28,13 +28,15 @@ const AiPanel = lazy(() => import("../AiPanel/AiPanel").then((mod) => ({ default
 const ContainerPanel = lazy(() => import("../ContainerPanel/ContainerPanel").then((mod) => ({ default: mod.ContainerPanel })));
 const ServicePanel = lazy(() => import("../ServicePanel/ServicePanel").then((mod) => ({ default: mod.ServicePanel })));
 const FirewallPanel = lazy(() => import("../FirewallPanel/FirewallPanel").then((mod) => ({ default: mod.FirewallPanel })));
+const CronPanel = lazy(() => import("../CronPanel/CronPanel").then((mod) => ({ default: mod.CronPanel })));
+const WebsitePanel = lazy(() => import("../WebsitePanel/WebsitePanel").then((mod) => ({ default: mod.WebsitePanel })));
 const RecordingsPanel = lazy(() => import("../RecordingsPanel/RecordingsPanel").then((mod) => ({ default: mod.RecordingsPanel })));
 
 function DrawerFallback() {
   return <div className="drawer-loading"><span className="drawer-loading-dot" /></div>;
 }
 
-const toolDrawers: Drawer[] = ["commands", "tunnels", "containers", "services", "firewall", "logs", "recordings"];
+const toolDrawers: Drawer[] = ["commands", "tunnels", "containers", "services", "firewall", "cron", "websites", "logs", "recordings"];
 
 function primaryForDrawer(drawer: Drawer): PrimaryNav | "ai" | "settings" {
   if (drawer === "monitor") return "connections";
@@ -449,6 +451,8 @@ export function Sidebar(props: {
                 {props.drawer === "containers" && <ContainerPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
                 {props.drawer === "services" && <ServicePanel active={props.active} locale={lang} onNotify={props.onNotify} />}
                 {props.drawer === "firewall" && <FirewallPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
+                {props.drawer === "cron" && <CronPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
+                {props.drawer === "websites" && <WebsitePanel active={props.active} locale={lang} onNotify={props.onNotify} />}
                 {props.drawer === "recordings" && <RecordingsPanel active={props.active} locale={lang} onNotify={props.onNotify} settings={props.settings} />}
               </div>
             </>

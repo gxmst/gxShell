@@ -136,6 +136,19 @@
   background: color-mix(in srgb, var(--bad) 10%, transparent);
 }
 
+.svc-resource {
+  overflow: hidden;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.service-log-focus:focus {
+  outline: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 2px;
+}
+
 /* Two-step confirm: first click arms the button (warning pulse), second click
    within 3s executes. Shared with FirewallPanel's per-rule delete button. */
 .container-action-btn.action-armed {

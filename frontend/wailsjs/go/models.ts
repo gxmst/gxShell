@@ -1,14 +1,14 @@
 export namespace sshmanager {
-	
+
 	export class KnownHostEntry {
 	    hosts: string;
 	    keyType: string;
 	    fingerprint: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new KnownHostEntry(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.hosts = source["hosts"];
@@ -20,15 +20,15 @@ export namespace sshmanager {
 }
 
 export namespace types {
-	
+
 	export class AiFunctionCall {
 	    name: string;
 	    arguments: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AiFunctionCall(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -39,18 +39,18 @@ export namespace types {
 	    id: string;
 	    type: string;
 	    function: AiFunctionCall;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AiToolCall(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.type = source["type"];
 	        this.function = this.convertValues(source["function"], AiFunctionCall);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -75,11 +75,11 @@ export namespace types {
 	    reasoningContent?: string;
 	    toolCalls?: AiToolCall[];
 	    toolCallId?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AiMessage(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.role = source["role"];
@@ -88,7 +88,7 @@ export namespace types {
 	        this.toolCalls = this.convertValues(source["toolCalls"], AiToolCall);
 	        this.toolCallId = source["toolCallId"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -114,11 +114,11 @@ export namespace types {
 	    chatId: string;
 	    requestId: string;
 	    enableTools: boolean;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AiChatRequest(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.messages = this.convertValues(source["messages"], AiMessage);
@@ -340,7 +340,25 @@ export namespace types {
 	        this.created = source["created"];
 	    }
 	}
-	export class FirewallRule {
+export class CronJob {
+	    id: string;
+	    schedule: string;
+	    command: string;
+	    enabled: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new CronJob(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.schedule = source["schedule"];
+	        this.command = source["command"];
+	        this.enabled = source["enabled"];
+	    }
+	}
+export class FirewallRule {
 	    index: number;
 	    raw: string;
 	    action: string;
@@ -364,7 +382,7 @@ export namespace types {
 	        this.v6 = source["v6"];
 	    }
 	}
-	export class FirewallStatus {
+export class FirewallStatus {
 	    backend: string;
 	    enabled: boolean;
 	    defaultPolicy: string;
@@ -855,13 +873,15 @@ export namespace types {
 		    return a;
 		}
 	}
-	export class ServiceInfo {
+export class ServiceInfo {
 	    name: string;
 	    description: string;
 	    loadState: string;
 	    activeState: string;
 	    subState: string;
 	    enabled: string;
+	    cpuPercent: number;
+	    memoryBytes: number;
 
 	    static createFrom(source: any = {}) {
 	        return new ServiceInfo(source);
@@ -875,6 +895,8 @@ export namespace types {
 	        this.activeState = source["activeState"];
 	        this.subState = source["subState"];
 	        this.enabled = source["enabled"];
+	        this.cpuPercent = source["cpuPercent"];
+	        this.memoryBytes = source["memoryBytes"];
 	    }
 	}
 	export class SessionInfo {
@@ -958,6 +980,61 @@ export namespace types {
 		    return a;
 		}
 	}
+export class WebsiteInfo {
+	    backend: string;
+	    mode: string;
+	    name: string;
+	    enabled: boolean;
+	    serverNames: string[];
+	    listen: string[];
+	    root: string;
+
+	    static createFrom(source: any = {}) {
+	        return new WebsiteInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.backend = source["backend"];
+	        this.mode = source["mode"];
+	        this.name = source["name"];
+	        this.enabled = source["enabled"];
+	        this.serverNames = source["serverNames"];
+	        this.listen = source["listen"];
+	        this.root = source["root"];
+	    }
+	}
+export class WebsiteStatus {
+	    backends: string[];
+	    sites: WebsiteInfo[];
+
+	    static createFrom(source: any = {}) {
+	        return new WebsiteStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.backends = source["backends"];
+	        this.sites = this.convertValues(source["sites"], WebsiteInfo);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 
 }
-

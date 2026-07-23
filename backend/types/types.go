@@ -277,12 +277,36 @@ type AiTokenUsage struct {
 }
 
 type ServiceInfo struct {
-	Name        string `json:"name"` // full unit name, e.g. "nginx.service"
-	Description string `json:"description"`
-	LoadState   string `json:"loadState"`   // loaded|not-found|masked
-	ActiveState string `json:"activeState"` // active|inactive|failed|activating|deactivating
-	SubState    string `json:"subState"`    // running|exited|dead|...
-	Enabled     string `json:"enabled"`     // enabled|disabled|static|masked|"" when unknown
+	Name        string  `json:"name"` // full unit name, e.g. "nginx.service"
+	Description string  `json:"description"`
+	LoadState   string  `json:"loadState"`   // loaded|not-found|masked
+	ActiveState string  `json:"activeState"` // active|inactive|failed|activating|deactivating
+	SubState    string  `json:"subState"`    // running|exited|dead|...
+	Enabled     string  `json:"enabled"`     // enabled|disabled|static|masked|"" when unknown
+	CPUPercent  float64 `json:"cpuPercent"`  // aggregate CPU percentage of processes in this unit
+	MemoryBytes int64   `json:"memoryBytes"` // aggregate resident memory of processes in this unit
+}
+
+type CronJob struct {
+	ID       string `json:"id"`
+	Schedule string `json:"schedule"`
+	Command  string `json:"command"`
+	Enabled  bool   `json:"enabled"`
+}
+
+type WebsiteInfo struct {
+	Backend     string   `json:"backend"` // nginx|apache
+	Mode        string   `json:"mode"`    // sites|confd
+	Name        string   `json:"name"`
+	Enabled     bool     `json:"enabled"`
+	ServerNames []string `json:"serverNames"`
+	Listen      []string `json:"listen"`
+	Root        string   `json:"root"`
+}
+
+type WebsiteStatus struct {
+	Backends []string      `json:"backends"`
+	Sites    []WebsiteInfo `json:"sites"`
 }
 
 type FirewallRule struct {

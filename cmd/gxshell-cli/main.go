@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -31,6 +32,7 @@ type cliOptions struct {
 	shell   string
 	follow  bool
 	detach  bool
+	secrets map[string]string
 }
 
 func main() {
@@ -81,6 +83,8 @@ func main() {
 			fatalErrorKind(nextOpts, 1, "validation", err.Error())
 		}
 		copyRemote(source, destination, nextOpts)
+	case "secret":
+		handleSecretCommand(args[1:], opts)
 	case "job":
 		handleJobCommand(args[1:], opts)
 	case "tunnel":
@@ -130,6 +134,9 @@ func execCommand(server, command string, opts cliOptions) {
 	if opts.shell != "" {
 		fatalErrorKind(opts, 1, "validation", "--shell is only valid with exec-file or exec-stdin")
 	}
+	if requiresScriptInput(command) {
+		fatalScriptInput(opts, server)
+	}
 	execRequest(server, command, "", opts)
 }
 
@@ -161,6 +168,9 @@ func execRequest(server, command, script string, opts cliOptions) {
 	}
 	if opts.timeout > 0 {
 		payload["timeoutMs"] = int(opts.timeout / time.Millisecond)
+	}
+	if len(opts.secrets) > 0 {
+		payload["secrets"] = opts.secrets
 	}
 	result := requestJSON("POST", "/cli/exec", payload, opts)
 	if opts.follow || opts.detach {
@@ -218,6 +228,16 @@ func execRequest(server, command, script string, opts cliOptions) {
 		os.Exit(124)
 	}
 	if exitCode, ok := intField(result, "exitCode"); ok && exitCode != 0 {
+		if !opts.json {
+			if output != "" && !strings.HasSuffix(output, "\n") {
+				fmt.Println()
+			}
+			message := stringField(result, "message")
+			if message == "" {
+				message = fmt.Sprintf("The remote shell returned exit code %d. gxShell did not block this command.", exitCode)
+			}
+			fmt.Fprintln(os.Stderr, "Remote failure:", message)
+		}
 		os.Exit(normalizeExitCode(exitCode))
 	}
 
@@ -230,6 +250,78 @@ func execRequest(server, command, script string, opts cliOptions) {
 			}
 		}
 		os.Exit(1)
+	}
+}
+
+func requiresScriptInput(command string) bool {
+	return strings.ContainsAny(command, "\r\n") || heredocPattern.MatchString(command)
+}
+
+var heredocPattern = regexp.MustCompile(`(?:^|[;&|]\s*|\s)<<-?\s*["']?[A-Za-z_][A-Za-z0-9_]*["']?`)
+
+func fatalScriptInput(opts cliOptions, server string) {
+	recommended := fmt.Sprintf("gxshell-cli exec-stdin %s --shell bash", server)
+	message := "Multiline commands and heredocs must use exec-stdin or exec-file so script text travels over SSH stdin without nested shell quoting."
+	if opts.json {
+		printJSON(map[string]any{
+			"error": message, "errorKind": "script_input_required", "outcome": "validation_error",
+			"blocked": false, "recommendedCommand": recommended,
+		})
+	} else {
+		fmt.Println("Error:", message)
+		fmt.Println("Recommended:", recommended)
+	}
+	os.Exit(1)
+}
+
+func handleSecretCommand(args []string, opts cliOptions) {
+	if len(args) == 0 {
+		fatalErrorKind(opts, 1, "validation", "secret requires set, status, or delete")
+	}
+	action := args[0]
+	alias, nextOpts, err := parseOneArgCommand(args[1:], opts, "secret "+action)
+	if err != nil {
+		fatalErrorKind(nextOpts, 1, "validation", err.Error())
+	}
+	switch action {
+	case "set":
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			fatalError(nextOpts, 1, "failed to read secret from stdin: "+err.Error())
+		}
+		value := strings.TrimRight(string(data), "\r\n")
+		if value == "" {
+			fatalErrorKind(nextOpts, 1, "validation", "secret set reads a non-empty value from stdin; never pass the value as an argument")
+		}
+		result := requestJSON("POST", "/cli/secrets", map[string]any{"alias": alias, "value": value}, nextOpts)
+		printSecretResult(result, nextOpts, "Stored "+"secret://"+alias)
+	case "status":
+		result := requestJSON("GET", "/cli/secrets?alias="+url.QueryEscape(alias), nil, nextOpts)
+		printSecretResult(result, nextOpts, "")
+	case "delete":
+		result := requestJSON("DELETE", "/cli/secrets?alias="+url.QueryEscape(alias), nil, nextOpts)
+		printSecretResult(result, nextOpts, "Deleted "+"secret://"+alias)
+	default:
+		fatalErrorKind(nextOpts, 1, "validation", "unknown secret action: "+action)
+	}
+}
+
+func printSecretResult(result map[string]any, opts cliOptions, success string) {
+	if errMsg := stringField(result, "error"); errMsg != "" {
+		fatalErrorKind(opts, 1, stringField(result, "errorKind"), errMsg)
+	}
+	if opts.json {
+		printJSON(result)
+		return
+	}
+	if success != "" {
+		fmt.Println(success)
+		return
+	}
+	if exists, _ := boolField(result, "exists"); exists {
+		fmt.Println(stringField(result, "reference"), "is available (value hidden)")
+	} else {
+		fmt.Println("secret://"+stringField(result, "alias"), "is not set")
 	}
 }
 
@@ -731,6 +823,14 @@ func parseLeadingFlags(args []string, opts cliOptions) ([]string, cliOptions, er
 		case "--detach":
 			opts.detach = true
 			args = args[1:]
+		case "--secret":
+			if len(args) < 2 {
+				return args, opts, fmt.Errorf("--secret requires ENV=alias")
+			}
+			if err := addSecretBinding(&opts, args[1]); err != nil {
+				return args, opts, err
+			}
+			args = args[2:]
 		default:
 			return args, opts, nil
 		}
@@ -833,9 +933,29 @@ func stripTrailingFlags(args []string, opts cliOptions) ([]string, cliOptions, e
 			out = out[:len(out)-1]
 			continue
 		}
+		if len(out) >= 2 && out[len(out)-2] == "--secret" {
+			if err := addSecretBinding(&opts, out[len(out)-1]); err != nil {
+				return args, opts, err
+			}
+			out = out[:len(out)-2]
+			continue
+		}
 		break
 	}
 	return out, opts, nil
+}
+
+func addSecretBinding(opts *cliOptions, binding string) error {
+	envName, alias, ok := strings.Cut(binding, "=")
+	alias = strings.TrimPrefix(alias, "secret://")
+	if !ok || envName == "" || alias == "" {
+		return fmt.Errorf("invalid --secret %q; use ENV=alias", binding)
+	}
+	if opts.secrets == nil {
+		opts.secrets = map[string]string{}
+	}
+	opts.secrets[envName] = alias
+	return nil
 }
 
 func parseTimeout(value string) (time.Duration, error) {
@@ -871,11 +991,24 @@ func fatalError(opts cliOptions, code int, message string) {
 
 func fatalErrorKind(opts cliOptions, code int, kind string, message string) {
 	if opts.json {
-		printJSON(map[string]any{"error": message, "errorKind": kind})
+		printJSON(map[string]any{"error": message, "errorKind": kind, "outcome": errorOutcome(kind), "blocked": kind == "blocked"})
 	} else {
 		fmt.Println("Error:", message)
 	}
 	os.Exit(code)
+}
+
+func errorOutcome(kind string) string {
+	switch kind {
+	case "blocked":
+		return "blocked"
+	case "validation", "script_input_required":
+		return "validation_error"
+	case "remote", "remote_exit":
+		return "remote_failed"
+	default:
+		return "client_error"
+	}
 }
 
 func normalizeScriptInput(data []byte) string {
@@ -1096,6 +1229,9 @@ COMMANDS:
   exec <server> "<command>"     Execute a command on a CLI-enabled server
   exec-file <server> <file>     Send a script to <shell> -s over SSH stdin
   exec-stdin <server>           Send stdin to <shell> -s over SSH stdin
+  secret set <alias>            Store stdin as secret://<alias> (value never in argv)
+  secret status <alias>         Check whether a named secret exists
+  secret delete <alias>         Delete a named secret
   copy <server:path> <server:path>
                                Copy one remote file atomically and verify SHA-256
   job status <id>              Show a detached/followed job state
@@ -1128,6 +1264,7 @@ OPTIONS:
   --shell <name>                Script interpreter: sh, bash, dash, zsh, or ksh
   --follow                      Run as a job and stream output until completion
   --detach                      Run as a job and return its ID immediately
+  --secret ENV=alias            Inject secret://alias as ENV (sync exec only)
 
 EXAMPLES:
   gxshell-cli exec prod-web "uptime"
@@ -1136,6 +1273,8 @@ EXAMPLES:
   gxshell-cli exec prod-web "journalctl -f" --follow
   gxshell-cli exec-file prod-web deploy.sh --shell bash
   Get-Content deploy.sh | gxshell-cli exec-stdin prod-web --shell bash
+  Get-Content api-key.txt -Raw | gxshell-cli secret set anyrouter-api-key
+  gxshell-cli exec prod-web 'curl -H "Authorization: Bearer $API_KEY" https://example/api' --secret API_KEY=anyrouter-api-key --json
   gxshell-cli copy 2:/tmp/config.tar 3:/tmp/config.tar
   gxshell-cli tunnel open 2 127.0.0.1:8080 127.0.0.1:80
   gxshell-cli tunnel socks 2 1080

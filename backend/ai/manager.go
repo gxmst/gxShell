@@ -208,13 +208,22 @@ func getToolsDefinition() []map[string]any {
 			"type": "function",
 			"function": map[string]any{
 				"name":        "execute_command",
-				"description": "Execute a shell command on the user's remote terminal and return the output. Use this to diagnose issues, check system state, or fix problems. Commands run on the user's SSH-connected server.",
+				"description": "Execute a shell command on the user's SSH-connected server. Diagnose before changing state. A non-zero exit is a remote result, not proof that gxShell blocked the command. For registered credentials, bind secret:// aliases through the secrets object; never request, print, or embed plaintext secret values.",
 				"parameters": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"command": map[string]any{
 							"type":        "string",
 							"description": "The shell command to execute",
+						},
+						"shell": map[string]any{
+							"type": "string", "enum": []string{"sh", "bash", "dash", "zsh", "ksh"},
+							"description": "Shell used when named secrets are injected; defaults to sh",
+						},
+						"secrets": map[string]any{
+							"type":                 "object",
+							"additionalProperties": map[string]any{"type": "string", "pattern": `^secret://[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`},
+							"description":          "Environment variable to registered secret reference, e.g. API_KEY=secret://anyrouter-api-key. Values remain hidden.",
 						},
 					},
 					"required": []string{"command"},
@@ -369,13 +378,14 @@ func (m *Manager) resolveEndpoint(cfg Config) string {
 func (m *Manager) buildSystemPrompt(context string, enableTools bool) string {
 	base := `You are an AI assistant integrated into gxShell, a terminal/SSH client application. You help users diagnose and solve problems in their terminal sessions. Be concise, practical, and provide actionable advice. Format your responses in markdown.
 
-You have access to tools that let you execute commands and read files on the user's remote server. You MUST use them proactively and CONTINUOUSLY until the problem is fully resolved. Do NOT stop after a single step; chain multiple tool calls together to complete the entire workflow.
+You have tools that can execute commands and read files on the user's remote server. Use them when they materially help, but establish the target and error source before changing state. Continue through diagnosis, an authorized fix, and verification when the evidence supports doing so.
 
-CRITICAL: Be autonomous and thorough. When you start diagnosing or fixing an issue, keep going until it's done:
+Be thorough without guessing:
 1. Run diagnostic commands to investigate the problem
-2. Based on the results, run the fix commands immediately
-3. Verify the fix worked by running check commands
-4. Only stop when the issue is confirmed resolved or you need user input
+2. Distinguish gxShell policy blocks, transport failures, and remote program exit codes from the structured result and output
+3. Based on evidence, run the smallest appropriate fix
+4. Verify the fix with a separate check
+5. Stop when resolved, when authorization is required, or when evidence is insufficient
 
 For example, if the user has a "cargo/env not found" error:
 - Step 1: grep to find which file references it -> get result
@@ -383,13 +393,13 @@ For example, if the user has a "cargo/env not found" error:
 - Step 3: source the file or verify the fix -> get result
 - Step 4: Summarize what was done
 
-Do ALL steps in one response by making multiple tool calls. Never stop after just diagnosing; always proceed to fix and verify.
+Do not invent a reason for an error. In particular, a non-zero remote exit code does not mean gxShell blocked a command. A gxShell block is explicitly labeled BLOCKED.
 
 IMPORTANT notes about command execution:
 - When several diagnostic commands are independent, request them as multiple tool calls in the same assistant response so gxShell can batch approval and run them together.
 - Non-zero exit codes (shown as "(exit code: N)") do NOT necessarily mean failure. grep returns 1 for no matches, 2 for partial errors; the output is still useful.
 - Always analyze the OUTPUT content, not just the exit code. If the output has useful info, proceed with the next step.
-- When you find a problem, fix it directly (sed, rm, mv, etc.). Don't just report it and wait.
+- When you find a problem and the requested scope authorizes a change, fix it and verify it.
 - Use sed -i for in-place file edits. Use full paths for reliability.`
 	if !enableTools {
 		base = `You are an AI assistant integrated into gxShell, a terminal/SSH client application. You help users diagnose and solve problems in their terminal sessions. Be concise, practical, and provide actionable advice. Format your responses in markdown.

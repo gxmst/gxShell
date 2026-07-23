@@ -31,6 +31,13 @@ const MAX_LOG_CHARS = 512 * 1024;
 const LOG_FLUSH_MS = 75;
 const ARM_TIMEOUT_MS = 3000;
 
+function formatServiceMemory(bytes: number) {
+  if (!bytes) return "0 MB";
+  const mb = bytes / (1024 * 1024);
+  if (mb < 1024) return `${mb < 10 ? mb.toFixed(1) : mb.toFixed(0)} MB`;
+  return `${(mb / 1024).toFixed(1)} GB`;
+}
+
 // Payload of the Go-side "service:log" event (a map[string]string). Identical
 // semantics to "docker:log": the backend may batch several journal lines into
 // one event, so `data` can contain embedded newlines; it is appended verbatim.
@@ -98,7 +105,8 @@ export function ServicePanel(props: {
   } | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval>>();
   const armedTimerRef = useRef<number | null>(null);
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const logBodyRef = useRef<HTMLDivElement>(null);
+  const logPanelRef = useRef<HTMLDivElement>(null);
   const logStreamIdRef = useRef<string | null>(null);
   const pendingLogRef = useRef("");
   const pendingLogTimerRef = useRef<number | null>(null);
@@ -185,8 +193,11 @@ export function ServicePanel(props: {
   }, [refresh]);
 
   useEffect(() => {
-    if (logEndRef.current) {
-      logEndRef.current.scrollIntoView({ behavior: "smooth" });
+    if (logBodyRef.current) {
+      logBodyRef.current.scrollTo({
+        top: logBodyRef.current.scrollHeight,
+        behavior: "smooth",
+      });
     }
   }, [logs]);
 
@@ -262,6 +273,10 @@ export function ServicePanel(props: {
       const seq = ++logRequestSeqRef.current;
       setLogUnit(unit);
       setLogs("");
+      window.requestAnimationFrame(() => {
+        logPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        logPanelRef.current?.focus({ preventScroll: true });
+      });
       try {
         const text = await ServiceLogs(sessionID, unit, 200);
         if (
@@ -394,17 +409,30 @@ export function ServicePanel(props: {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return services.filter((s) => {
-      if (filter === "running" && s.activeState !== "active") return false;
-      if (filter === "failed" && s.activeState !== "failed") return false;
-      if (
-        q &&
-        !s.name.toLowerCase().includes(q) &&
-        !(s.description || "").toLowerCase().includes(q)
-      )
-        return false;
-      return true;
-    });
+    return services
+      .filter((s) => {
+        if (filter === "running" && s.activeState !== "active") return false;
+        if (filter === "failed" && s.activeState !== "failed") return false;
+        if (
+          q &&
+          !s.name.toLowerCase().includes(q) &&
+          !(s.description || "").toLowerCase().includes(q)
+        )
+          return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const aRunning = a.activeState === "active" ? 1 : 0;
+        const bRunning = b.activeState === "active" ? 1 : 0;
+        if (aRunning !== bRunning) return bRunning - aRunning;
+        if (aRunning) {
+          if (a.cpuPercent !== b.cpuPercent)
+            return b.cpuPercent - a.cpuPercent;
+          if (a.memoryBytes !== b.memoryBytes)
+            return b.memoryBytes - a.memoryBytes;
+        }
+        return a.name.localeCompare(b.name);
+      });
   }, [services, filter, query]);
 
   const stateDot = (state: string) => {
@@ -491,7 +519,9 @@ export function ServicePanel(props: {
           </span>
           <span>
             <strong>{t(lang, "services")}</strong>
-            <small>{t(lang, "svcCount", { n: String(services.length) })}</small>
+            <small>
+              {t(lang, "svcCount", { n: String(services.length) })} · {t(lang, "svcResourceSort")}
+            </small>
           </span>
         </div>
         <div className="panel-page-actions">
@@ -548,7 +578,7 @@ export function ServicePanel(props: {
       </div>
 
       {logUnit && (
-        <div className="container-log-panel">
+        <div className="container-log-panel service-log-focus" ref={logPanelRef} tabIndex={-1}>
           <div className="container-log-header">
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] font-semibold text-accent truncate">
@@ -575,10 +605,9 @@ export function ServicePanel(props: {
               </button>
             </div>
           </div>
-          <div className="container-log-body">
+          <div className="container-log-body" ref={logBodyRef}>
             <pre className="container-log-text">
               {logs}
-              <div ref={logEndRef} />
             </pre>
           </div>
         </div>
@@ -620,6 +649,14 @@ export function ServicePanel(props: {
                   </span>
                   <span className="text-muted">·</span>
                   <span>{s.subState}</span>
+                  {s.activeState === "active" && (
+                    <>
+                      <span className="text-muted">·</span>
+                      <span className="svc-resource" title={t(lang, "svcResourceSort")}>
+                        CPU {s.cpuPercent.toFixed(1)}% · {formatServiceMemory(s.memoryBytes)}
+                      </span>
+                    </>
+                  )}
                 </div>
                 {s.description && (
                   <div className="container-meta text-muted">

@@ -73,6 +73,46 @@ func (s *Store) SavePassphrase(profileID string, passphrase string) error {
 	return nil
 }
 
+// SaveNamed stores an application-managed secret under an explicit namespace.
+// Callers should expose only the name to untrusted clients; the returned value
+// from GetNamed must stay inside the final execution boundary.
+func (s *Store) SaveNamed(namespace string, name string, value string) error {
+	if namespace == "" || name == "" || value == "" {
+		return errors.New("secret namespace, name, and value are required")
+	}
+	id := "named:" + namespace + ":" + name
+	err := keyring.Set(service, key(id, "value"), value)
+	if err != nil {
+		return s.saveFallback(id, "value", value)
+	}
+	s.deleteFallbackKind(id, "value")
+	return nil
+}
+
+// GetNamed retrieves an application-managed secret without exposing it through
+// profile/config serialization.
+func (s *Store) GetNamed(namespace string, name string) (string, error) {
+	id := "named:" + namespace + ":" + name
+	value, err := keyring.Get(service, key(id, "value"))
+	if err == nil {
+		return value, nil
+	}
+	if fallback := s.loadFallback(id, "value"); fallback != "" {
+		return fallback, nil
+	}
+	if errors.Is(err, keyring.ErrNotFound) {
+		return "", nil
+	}
+	return "", err
+}
+
+// DeleteNamed removes one application-managed secret.
+func (s *Store) DeleteNamed(namespace string, name string) {
+	id := "named:" + namespace + ":" + name
+	_ = keyring.Delete(service, key(id, "value"))
+	s.deleteFallback(id)
+}
+
 func (s *Store) GetPassword(profileID string) (string, error) {
 	value, err := keyring.Get(service, key(profileID, "password"))
 	if err == nil {
