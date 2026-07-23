@@ -1,10 +1,14 @@
 package tunnel
 
 import (
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"gxShell/backend/types"
 
@@ -21,6 +25,11 @@ type forward struct {
 	rule     types.TunnelRule
 	listener net.Listener
 	done     chan struct{}
+	// dead flips when serve exits on its own (listener broken, SSH client
+	// gone) so ListStatus stops reporting a forward that no longer accepts
+	// connections as active. Atomic because serve cannot take m.mu: StopTunnels
+	// holds it while waiting on done.
+	dead atomic.Bool
 }
 
 func NewManager(emit func(event string, data any)) *Manager {
@@ -45,6 +54,7 @@ func (m *Manager) StartTunnels(sessionID string, client *ssh.Client, rules []typ
 			m.emit("tunnel:error", map[string]any{"sessionId": sessionID, "ruleId": rule.ID, "error": err.Error()})
 		} else {
 			status.Active = true
+			status.Rule = fwd.rule
 			fwd.done = make(chan struct{})
 			m.active[sessionID] = append(m.active[sessionID], fwd)
 			go m.serve(sessionID, fwd, client)
@@ -63,6 +73,7 @@ func (m *Manager) startOne(client *ssh.Client, rule types.TunnelRule) (*forward,
 		if err != nil {
 			return nil, fmt.Errorf("local listen failed: %w", err)
 		}
+		rule.Local = ln.Addr().String()
 		return &forward{rule: rule, listener: ln}, nil
 
 	case types.TunnelRemote:
@@ -74,6 +85,7 @@ func (m *Manager) startOne(client *ssh.Client, rule types.TunnelRule) (*forward,
 		if err != nil {
 			return nil, fmt.Errorf("remote listen failed: %w", err)
 		}
+		rule.Remote = ln.Addr().String()
 		return &forward{rule: rule, listener: ln}, nil
 
 	case types.TunnelDynamic:
@@ -82,6 +94,7 @@ func (m *Manager) startOne(client *ssh.Client, rule types.TunnelRule) (*forward,
 		if err != nil {
 			return nil, fmt.Errorf("dynamic listen failed: %w", err)
 		}
+		rule.Local = ln.Addr().String()
 		return &forward{rule: rule, listener: ln}, nil
 
 	default:
@@ -109,6 +122,7 @@ func resolveDialAddr(addr, defaultHost string) string {
 
 func (m *Manager) serve(sessionID string, fwd *forward, client *ssh.Client) {
 	defer close(fwd.done)
+	defer fwd.dead.Store(true)
 	for {
 		conn, err := fwd.listener.Accept()
 		if err != nil {
@@ -147,64 +161,96 @@ func (m *Manager) handleConn(sessionID string, fwd *forward, client *ssh.Client,
 	}
 }
 
+// handleSOCKS speaks the SOCKS5 CONNECT handshake and relays the connection
+// through the SSH client.
 func (m *Manager) handleSOCKS(sessionID string, fwd *forward, client *ssh.Client, conn net.Conn) {
-	buf := make([]byte, 262)
-	n, err := conn.Read(buf)
-	if err != nil || n < 3 {
+	target, ok := negotiateSOCKS(conn)
+	if !ok {
 		return
 	}
-	if buf[0] != 0x05 {
-		return
-	}
-	conn.Write([]byte{0x05, 0x00})
-
-	n, err = conn.Read(buf)
-	if err != nil || n < 7 {
-		return
-	}
-	if buf[0] != 0x05 || buf[1] != 0x01 {
-		conn.Write([]byte{0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
-		return
-	}
-
-	var host string
-	var portIdx int
-	switch buf[3] {
-	case 0x01:
-		if n < 10 {
-			return
-		}
-		host = fmt.Sprintf("%d.%d.%d.%d", buf[4], buf[5], buf[6], buf[7])
-		portIdx = 8
-	case 0x03:
-		hostLen := int(buf[4])
-		if n < 5+hostLen+2 {
-			return
-		}
-		host = string(buf[5 : 5+hostLen])
-		portIdx = 5 + hostLen
-	case 0x04:
-		conn.Write([]byte{0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
-		return
-	default:
-		return
-	}
-
-	if portIdx+2 > n {
-		return
-	}
-	port := uint16(buf[portIdx])<<8 | uint16(buf[portIdx+1])
-	target := fmt.Sprintf("%s:%d", host, port)
 
 	remoteConn, err := client.Dial("tcp", target)
 	if err != nil {
-		conn.Write([]byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		_, _ = conn.Write([]byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
 	}
 	defer remoteConn.Close()
 
-	conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+	if _, err := conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}); err != nil {
+		return
+	}
 	relay(conn, remoteConn)
+}
+
+// negotiateSOCKS reads the SOCKS5 greeting and CONNECT request and returns the
+// dial target. Each protocol element is read with io.ReadFull at its exact
+// wire length: a single conn.Read may return a TCP segment that splits the
+// greeting or request, which must not fail the handshake. The deadline bounds
+// how long a silent client can pin this goroutine.
+func negotiateSOCKS(conn net.Conn) (string, bool) {
+	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+
+	// Greeting: VER NMETHODS METHODS...
+	head := make([]byte, 2)
+	if _, err := io.ReadFull(conn, head); err != nil || head[0] != 0x05 {
+		return "", false
+	}
+	methods := make([]byte, int(head[1]))
+	if _, err := io.ReadFull(conn, methods); err != nil {
+		return "", false
+	}
+	if _, err := conn.Write([]byte{0x05, 0x00}); err != nil {
+		return "", false
+	}
+
+	// Request: VER CMD RSV ATYP DST.ADDR DST.PORT
+	req := make([]byte, 4)
+	if _, err := io.ReadFull(conn, req); err != nil || req[0] != 0x05 {
+		return "", false
+	}
+	if req[1] != 0x01 { // only CONNECT
+		_, _ = conn.Write([]byte{0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		return "", false
+	}
+
+	var host string
+	switch req[3] {
+	case 0x01: // IPv4
+		addr := make([]byte, 4)
+		if _, err := io.ReadFull(conn, addr); err != nil {
+			return "", false
+		}
+		host = net.IP(addr).String()
+	case 0x03: // domain
+		lenByte := make([]byte, 1)
+		if _, err := io.ReadFull(conn, lenByte); err != nil {
+			return "", false
+		}
+		name := make([]byte, int(lenByte[0]))
+		if _, err := io.ReadFull(conn, name); err != nil {
+			return "", false
+		}
+		host = string(name)
+	case 0x04: // IPv6
+		addr := make([]byte, 16)
+		if _, err := io.ReadFull(conn, addr); err != nil {
+			return "", false
+		}
+		host = net.IP(addr).String()
+	default:
+		_, _ = conn.Write([]byte{0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		return "", false
+	}
+
+	portBytes := make([]byte, 2)
+	if _, err := io.ReadFull(conn, portBytes); err != nil {
+		return "", false
+	}
+	port := binary.BigEndian.Uint16(portBytes)
+
+	// Handshake complete; the relay itself has no deadline.
+	_ = conn.SetReadDeadline(time.Time{})
+	return net.JoinHostPort(host, fmt.Sprintf("%d", port)), true
 }
 
 func relay(a, b net.Conn) {
@@ -270,10 +316,14 @@ func (m *Manager) ListStatus(sessionID string) []types.TunnelStatus {
 	fwds := m.active[sessionID]
 	statuses := make([]types.TunnelStatus, 0, len(fwds))
 	for _, fwd := range fwds {
-		statuses = append(statuses, types.TunnelStatus{
+		status := types.TunnelStatus{
 			Rule:   fwd.rule,
-			Active: true,
-		})
+			Active: !fwd.dead.Load(),
+		}
+		if fwd.dead.Load() {
+			status.Error = "forward stopped (listener closed or connection lost)"
+		}
+		statuses = append(statuses, status)
 	}
 	return statuses
 }
@@ -289,6 +339,7 @@ func (m *Manager) AddTunnel(sessionID string, client *ssh.Client, rule types.Tun
 		return status
 	}
 	status.Active = true
+	status.Rule = fwd.rule
 	fwd.done = make(chan struct{})
 	m.active[sessionID] = append(m.active[sessionID], fwd)
 	go m.serve(sessionID, fwd, client)

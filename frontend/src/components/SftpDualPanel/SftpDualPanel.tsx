@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { ArrowDown, ArrowUp, File, Folder, RefreshCw } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
@@ -9,14 +9,23 @@ import { t } from "../../i18n";
 
 export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; locale?: string; onNotify: (text: string, tone?: Toast["tone"]) => void }) {
   const lang = locale || "en";
+  const activeSessionId = active?.id || "";
   const [localPath, setLocalPath] = useState("");
-  const [remotePath, setRemotePath] = useState("/");
   const [localFiles, setLocalFiles] = useState<types.LocalFile[]>([]);
-  const [remoteFiles, setRemoteFiles] = useState<types.RemoteFile[]>([]);
   const [localBusy, setLocalBusy] = useState(false);
-  const [remoteBusy, setRemoteBusy] = useState(false);
+  const [remoteView, setRemoteView] = useState<{ sessionId: string; path: string; files: types.RemoteFile[]; busy: boolean }>({ sessionId: "", path: "/", files: [], busy: false });
   const [selectedLocal, setSelectedLocal] = useState<string | null>(null);
   const [selectedRemote, setSelectedRemote] = useState<string | null>(null);
+  const remoteSeq = useRef(0);
+  const remoteSessionRef = useRef(activeSessionId);
+  if (remoteSessionRef.current !== activeSessionId) {
+    remoteSessionRef.current = activeSessionId;
+    remoteSeq.current += 1;
+  }
+  const remoteMatches = remoteView.sessionId === activeSessionId;
+  const remotePath = remoteMatches ? remoteView.path : "/";
+  const remoteFiles = remoteMatches ? remoteView.files : [];
+  const remoteBusy = remoteMatches && remoteView.busy;
 
   useEffect(() => {
     LocalHomeDir().then((dir) => {
@@ -26,10 +35,11 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
   }, []);
 
   useEffect(() => {
-    if (active) {
-      loadRemoteDir(remotePath);
-    }
-  }, [active]);
+    remoteSeq.current += 1;
+    setSelectedRemote(null);
+    setRemoteView({ sessionId: activeSessionId, path: "/", files: [], busy: false });
+    if (activeSessionId) void loadRemoteDir("/");
+  }, [activeSessionId]);
 
   const loadLocalDir = async (dir: string) => {
     setLocalBusy(true);
@@ -45,24 +55,36 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
 
   const loadRemoteDir = async (dir: string) => {
     if (!active) return;
-    setRemoteBusy(true);
+    const sessionId = active.id;
+    if (sessionId !== remoteSessionRef.current) return;
+    const seq = ++remoteSeq.current;
+    setRemoteView((current) => ({
+      sessionId,
+      path: dir,
+      files: current.sessionId === sessionId ? current.files : [],
+      busy: true,
+    }));
     try {
-      const files = await ListRemoteDir(active.id, dir);
-      setRemoteFiles(files || []);
-      setRemotePath(dir);
+      const files = await ListRemoteDir(sessionId, dir);
+      if (seq !== remoteSeq.current || remoteSessionRef.current !== sessionId) return;
+      setRemoteView({ sessionId, path: dir, files: files || [], busy: false });
+      setSelectedRemote(null);
     } catch (err) {
+      if (seq !== remoteSeq.current || remoteSessionRef.current !== sessionId) return;
+      setRemoteView((current) => current.sessionId === sessionId ? { ...current, busy: false } : current);
       onNotify(String(err), "error");
     }
-    setRemoteBusy(false);
   };
 
   const uploadSelected = async () => {
     if (!active || !selectedLocal) return;
+    const sessionId = active.id;
     const file = localFiles.find((f) => f.path === selectedLocal);
     if (!file || file.isDir) return;
     try {
       const remoteTarget = remotePath.replace(/\/$/, "") + "/" + file.name;
-      await UploadFile(active.id, file.path, remoteTarget);
+      await UploadFile(sessionId, file.path, remoteTarget);
+      if (remoteSessionRef.current !== sessionId) return;
       onNotify(`${file.name} uploaded`, "success");
       loadRemoteDir(remotePath);
     } catch (err) {
@@ -126,7 +148,12 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
         <div className="sftp-dual-header">
           <span className="text-[10px] font-semibold text-accent">{t(lang, "remote")}</span>
           <div className="sftp-dual-path-row">
-            <input className="sftp-dual-input" value={remotePath} onChange={(e) => setRemotePath(e.target.value)} onKeyDown={(e) => e.key === "Enter" && loadRemoteDir(remotePath)} />
+            <input
+              className="sftp-dual-input"
+              value={remotePath}
+              onChange={(e) => setRemoteView((current) => ({ ...current, sessionId: activeSessionId, path: e.target.value }))}
+              onKeyDown={(e) => e.key === "Enter" && loadRemoteDir(remotePath)}
+            />
             <button className="sftp-dual-icon-btn" onClick={() => loadRemoteDir(remotePath)}><RefreshCw size={11} /></button>
           </div>
         </div>

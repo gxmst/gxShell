@@ -1,6 +1,12 @@
 package sftpmanager
 
 import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"gxShell/backend/types"
@@ -24,6 +31,10 @@ type SSHClientProvider interface {
 type cachedClient struct {
 	client   *sftp.Client
 	lastUsed time.Time
+	// lastCheck is when the client last proved healthy (creation, or a Getwd
+	// probe). The probe costs a full round trip, so acquire only re-probes
+	// after healthCheckInterval instead of on every operation.
+	lastCheck time.Time
 	// refs counts in-flight operations holding this client. closing marks the
 	// client as removed from the cache (evicted or invalidated); the underlying
 	// handle is only Closed once the last in-flight operation releases it, so we
@@ -40,16 +51,54 @@ type Manager struct {
 	// createMu serializes client creation per session so concurrent cache
 	// misses don't each open a client and close one another's in-use handle.
 	createMu map[string]*sync.Mutex
+	// stopEvict ends the evictLoop goroutine on Shutdown.
+	stopEvict chan struct{}
+	stopOnce  sync.Once
+
+	transferMu sync.Mutex
+	transfers  map[string]*transferJob
+}
+
+type transferJob struct {
+	id        string
+	sessionID string
+	path      string
+	direction string
+	ctx       context.Context
+	cancel    context.CancelFunc
+	once      sync.Once
+	cancelled atomic.Bool
+
+	interruptMu sync.Mutex
+	interrupt   func()
+	interruptID uint64
 }
 
 const maxSFTPCache = 10
 
+// healthCheckInterval bounds how often acquire spends a round trip probing a
+// cached client. Between probes, a broken client surfaces through the
+// operation's own error and invalidateOnConnErr.
+const healthCheckInterval = 30 * time.Second
+
+// progressEmitInterval throttles sftp:progress events. Emitting per 64KB chunk
+// floods the IPC bridge (a 1GB transfer would be ~16k events) and slows the
+// transfer itself.
+const progressEmitInterval = 100 * time.Millisecond
+
+type RemoteCopyResult struct {
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
 func NewManager(sessions SSHClientProvider, emit func(event string, data any)) *Manager {
 	m := &Manager{
-		sessions: sessions,
-		emit:     emit,
-		cache:    map[string]*cachedClient{},
-		createMu: map[string]*sync.Mutex{},
+		sessions:  sessions,
+		emit:      emit,
+		cache:     map[string]*cachedClient{},
+		createMu:  map[string]*sync.Mutex{},
+		stopEvict: make(chan struct{}),
+		transfers: map[string]*transferJob{},
 	}
 	go m.evictLoop()
 	return m
@@ -80,11 +129,17 @@ func (m *Manager) acquire(sessionID string) (*sftp.Client, func(), error) {
 		cc.lastUsed = time.Now()
 		cc.refs++
 		client := cc.client
+		needProbe := time.Since(cc.lastCheck) > healthCheckInterval
 		m.mu.Unlock()
-		if _, err := client.Getwd(); err != nil {
-			// Health check failed: detach it and retry via the slow path.
-			m.release(sessionID, cc, true)
-			return m.acquireSlow(sessionID)
+		if needProbe {
+			if _, err := client.Getwd(); err != nil {
+				// Health check failed: detach it and retry via the slow path.
+				m.release(sessionID, cc, true)
+				return m.acquireSlow(sessionID)
+			}
+			m.mu.Lock()
+			cc.lastCheck = time.Now()
+			m.mu.Unlock()
 		}
 		return client, func() { m.release(sessionID, cc, false) }, nil
 	}
@@ -114,15 +169,33 @@ func (m *Manager) acquireSlow(sessionID string) (*sftp.Client, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	client, err := sftp.NewClient(sshClient)
+	// Concurrent reads/writes pipeline multiple outstanding packets per
+	// transfer instead of one 32KB request per round trip; on a high-latency
+	// link this is the difference between ~1MB/s and saturating the pipe.
+	client, err := sftp.NewClient(sshClient,
+		sftp.UseConcurrentReads(true),
+		sftp.UseConcurrentWrites(true),
+	)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	m.mu.Lock()
-	cc := &cachedClient{client: client, lastUsed: time.Now(), refs: 1}
+	cc := &cachedClient{client: client, lastUsed: time.Now(), lastCheck: time.Now(), refs: 1}
+	// InvalidateClient drops the createMu entry, so a creator that raced it can
+	// land here alongside us under a different creation lock. Detach whatever
+	// entry we displace; otherwise its client would leak with no path left to
+	// close it.
+	displaced := m.cache[sessionID]
+	if displaced != nil {
+		displaced.closing = true
+	}
 	m.cache[sessionID] = cc
+	shouldCloseDisplaced := displaced != nil && displaced.refs == 0
 	m.mu.Unlock()
+	if shouldCloseDisplaced {
+		_ = displaced.client.Close()
+	}
 	return client, func() { m.release(sessionID, cc, false) }, nil
 }
 
@@ -171,7 +244,9 @@ func (m *Manager) evictLRULocked() {
 }
 
 // InvalidateClient detaches a session's client from the cache. The handle is
-// closed once any in-flight operations release it.
+// closed once any in-flight operations release it. The per-session creation
+// mutex is dropped as well: session IDs are never reused, so without this the
+// createMu map grows by one entry per connection for the life of the process.
 func (m *Manager) InvalidateClient(sessionID string) {
 	m.mu.Lock()
 	cc, ok := m.cache[sessionID]
@@ -179,6 +254,7 @@ func (m *Manager) InvalidateClient(sessionID string) {
 		cc.closing = true
 		delete(m.cache, sessionID)
 	}
+	delete(m.createMu, sessionID)
 	shouldClose := ok && cc.refs == 0
 	m.mu.Unlock()
 	if shouldClose {
@@ -189,7 +265,12 @@ func (m *Manager) InvalidateClient(sessionID string) {
 func (m *Manager) evictLoop() {
 	ticker := time.NewTicker(2 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
+	for {
+		select {
+		case <-m.stopEvict:
+			return
+		case <-ticker.C:
+		}
 		m.mu.Lock()
 		now := time.Now()
 		for id, cc := range m.cache {
@@ -205,6 +286,142 @@ func (m *Manager) evictLoop() {
 	}
 }
 
+// Shutdown stops the background eviction goroutine. The cached clients
+// themselves are closed through InvalidateClient as their sessions disconnect
+// (ssh.Manager.Shutdown tears every session down), so only the ticker loop
+// needs stopping here.
+func (m *Manager) Shutdown() {
+	m.stopOnce.Do(func() { close(m.stopEvict) })
+}
+
+// beginTransfer registers an in-flight transfer before any filesystem or
+// network work starts. Every registered job is paired with exactly one
+// terminal event by finishTransfer, including failures that happen before the
+// first byte is copied.
+func (m *Manager) beginTransfer(sessionID, transferPath, direction string) *transferJob {
+	ctx, cancel := context.WithCancel(context.Background())
+	job := &transferJob{
+		id:        fmt.Sprintf("%x-%s", time.Now().UnixNano(), randomSuffix()),
+		sessionID: sessionID,
+		path:      transferPath,
+		direction: direction,
+		ctx:       ctx,
+		cancel:    cancel,
+	}
+	m.transferMu.Lock()
+	if m.transfers == nil {
+		m.transfers = make(map[string]*transferJob)
+	}
+	m.transfers[job.id] = job
+	m.transferMu.Unlock()
+	m.emitTransfer(job, "started", 0, 0, nil)
+	return job
+}
+
+func (m *Manager) emitTransfer(job *transferJob, status string, done, total int64, err error) {
+	if m.emit == nil {
+		return
+	}
+	event := map[string]any{
+		"jobId":     job.id,
+		"sessionId": job.sessionID,
+		"path":      job.path,
+		"done":      done,
+		"total":     total,
+		"direction": job.direction,
+		"status":    status,
+	}
+	if status == "succeeded" || status == "failed" || status == "cancelled" {
+		// Keep finished for compatibility with older frontend builds while the
+		// richer status field carries the actual terminal outcome.
+		event["finished"] = true
+	}
+	if err != nil {
+		event["error"] = err.Error()
+	}
+	m.emit("sftp:progress", event)
+}
+
+func (m *Manager) finishTransfer(job *transferJob, err error, done, total int64) {
+	job.once.Do(func() {
+		job.cancel()
+		job.interruptMu.Lock()
+		job.interrupt = nil
+		job.interruptMu.Unlock()
+
+		status := "succeeded"
+		if err != nil {
+			if job.cancelled.Load() || errors.Is(err, context.Canceled) {
+				status = "cancelled"
+			} else {
+				status = "failed"
+			}
+		}
+		m.transferMu.Lock()
+		delete(m.transfers, job.id)
+		m.transferMu.Unlock()
+		m.emitTransfer(job, status, done, total, err)
+	})
+}
+
+// CancelTransfer requests cancellation of an active job. Closing the current
+// file handles unblocks most pending SFTP reads/writes; the context check in
+// the copy pipeline covers the normal path without tearing down the shared
+// cached SFTP client or disrupting unrelated transfers.
+func (m *Manager) CancelTransfer(jobID string) bool {
+	m.transferMu.Lock()
+	job, ok := m.transfers[jobID]
+	if ok {
+		job.cancelled.Store(true)
+		job.cancel()
+	}
+	m.transferMu.Unlock()
+	if !ok {
+		return false
+	}
+	job.interruptMu.Lock()
+	interrupt := job.interrupt
+	job.interruptMu.Unlock()
+	if interrupt != nil {
+		interrupt()
+	}
+	return true
+}
+
+// setInterrupt installs the operation that can unblock the job's current copy
+// call. The returned cleanup only clears the same generation, so a completed
+// file in a folder transfer cannot erase the next file's interrupt handler.
+func (j *transferJob) setInterrupt(interrupt func()) func() {
+	j.interruptMu.Lock()
+	j.interruptID++
+	id := j.interruptID
+	j.interrupt = interrupt
+	alreadyCancelled := j.cancelled.Load()
+	j.interruptMu.Unlock()
+	if alreadyCancelled && interrupt != nil {
+		interrupt()
+	}
+	return func() {
+		j.interruptMu.Lock()
+		if j.interruptID == id {
+			j.interrupt = nil
+		}
+		j.interruptMu.Unlock()
+	}
+}
+
+func checkTransferContext(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return context.Canceled
+	default:
+		return nil
+	}
+}
+
 func (m *Manager) ListRemoteDir(sessionID string, remotePath string) ([]types.RemoteFile, error) {
 	if remotePath == "" {
 		remotePath = "."
@@ -217,7 +434,7 @@ func (m *Manager) ListRemoteDir(sessionID string, remotePath string) ([]types.Re
 	defer release()
 	entries, err := client.ReadDir(remotePath)
 	if err != nil {
-		m.InvalidateClient(sessionID)
+		m.invalidateOnConnErr(sessionID, err)
 		return nil, err
 	}
 	files := make([]types.RemoteFile, 0, len(entries))
@@ -241,46 +458,193 @@ func (m *Manager) ListRemoteDir(sessionID string, remotePath string) ([]types.Re
 	return files, nil
 }
 
-func (m *Manager) UploadFile(sessionID, localPath, remotePath string) error {
+func (m *Manager) UploadFile(sessionID, localPath, remotePath string) (err error) {
 	remotePath = cleanRemotePath(remotePath)
+	job := m.beginTransfer(sessionID, remotePath, "upload")
+	var done, totalSize int64
+	defer func() {
+		m.finishTransfer(job, err, done, totalSize)
+		if !job.cancelled.Load() {
+			m.invalidateOnTransferErr(sessionID, err)
+		}
+	}()
+
+	src, err := os.Open(localPath)
+	if err != nil {
+		return err
+	}
+	srcClosed := false
+	defer func() {
+		if !srcClosed {
+			_ = src.Close()
+		}
+	}()
+	stat, statErr := src.Stat()
+	if statErr == nil {
+		totalSize = stat.Size()
+	}
+
 	client, release, err := m.acquire(sessionID)
 	if err != nil {
 		return err
 	}
 	defer release()
 
-	src, err := os.Open(localPath)
+	tmpPath := remotePath + ".gxshell-" + job.id + ".part"
+	dst, err := client.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 	if err != nil {
 		return err
 	}
-	defer src.Close()
-	stat, statErr := src.Stat()
-	var totalSize int64
-	if statErr == nil {
-		totalSize = stat.Size()
-	}
-
-	dst, err := client.Create(remotePath)
-	if err != nil {
-		m.InvalidateClient(sessionID)
-		return err
-	}
-
-	written, err := copyWithProgress(dst, src, func(n int64) {
-		m.emit("sftp:progress", map[string]any{"sessionId": sessionID, "path": remotePath, "done": n, "total": totalSize, "direction": "upload"})
+	dstClosed := false
+	defer func() {
+		if !dstClosed {
+			_ = dst.Close()
+		}
+		if err != nil {
+			_ = client.Remove(tmpPath)
+		}
+	}()
+	clearInterrupt := job.setInterrupt(func() {
+		_ = src.Close()
+		_ = dst.Close()
 	})
+	defer clearInterrupt()
+
+	progress := throttled(func(n int64) {
+		m.emitTransfer(job, "progress", n, totalSize, nil)
+	})
+	// ReadFrom lets the sftp client pipeline concurrent write packets (see
+	// acquireSlow); a manual read/write loop would fall back to one packet per
+	// round trip.
+	done, err = dst.ReadFrom(&progressReader{ctx: job.ctx, r: src, fn: progress})
 	closeErr := dst.Close()
+	dstClosed = true
 	if err == nil && closeErr != nil {
 		err = closeErr
 	}
-	if err == nil {
-		m.emit("sftp:progress", map[string]any{"sessionId": sessionID, "path": remotePath, "done": written, "total": totalSize, "direction": "upload", "finished": true})
+	closeErr = src.Close()
+	srcClosed = true
+	if err == nil && closeErr != nil {
+		err = closeErr
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if err = checkTransferContext(job.ctx); err != nil {
+		return err
+	}
+	if err = replaceRemoteTemp(client, tmpPath, remotePath); err != nil {
+		return err
+	}
+	return nil
 }
 
-func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) error {
+// CopyRemoteFile streams one remote file through gxShell to another SSH
+// session. The destination is verified and atomically renamed into place, so a
+// disconnect or checksum failure cannot leave a partial final file.
+func (m *Manager) CopyRemoteFile(ctx context.Context, sourceSessionID, sourcePath, destinationSessionID, destinationPath string, progress func(done, total int64)) (result RemoteCopyResult, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	sourcePath = cleanRemotePath(sourcePath)
+	destinationPath = cleanRemotePath(destinationPath)
+
+	sourceClient, releaseSource, err := m.acquire(sourceSessionID)
+	if err != nil {
+		return result, err
+	}
+	defer releaseSource()
+	destinationClient, releaseDestination, err := m.acquire(destinationSessionID)
+	if err != nil {
+		return result, err
+	}
+	defer releaseDestination()
+
+	source, err := sourceClient.Open(sourcePath)
+	if err != nil {
+		return result, err
+	}
+	defer source.Close()
+	info, err := source.Stat()
+	if err != nil {
+		return result, err
+	}
+	if info.IsDir() {
+		return result, fmt.Errorf("remote copy currently supports files only")
+	}
+
+	tmpPath := destinationPath + ".gxshell-copy-" + randomSuffix() + ".part"
+	destination, err := destinationClient.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	if err != nil {
+		return result, err
+	}
+	removeTemp := true
+	defer func() {
+		_ = destination.Close()
+		if removeTemp {
+			_ = destinationClient.Remove(tmpPath)
+		}
+	}()
+
+	sourceHash := sha256.New()
+	reader := &progressReader{ctx: ctx, r: source, fn: func(done int64) {
+		if progress != nil {
+			progress(done, info.Size())
+		}
+	}}
+	result.Bytes, err = io.CopyBuffer(io.MultiWriter(destination, sourceHash), reader, make([]byte, 256*1024))
+	if closeErr := destination.Close(); err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		return result, err
+	}
+	if err = checkTransferContext(ctx); err != nil {
+		return result, err
+	}
+	if result.Bytes != info.Size() {
+		return result, fmt.Errorf("remote copy size mismatch: copied %d of %d bytes", result.Bytes, info.Size())
+	}
+	if err = destinationClient.Chmod(tmpPath, info.Mode().Perm()); err != nil {
+		return result, fmt.Errorf("preserve destination mode: %w", err)
+	}
+
+	verify, err := destinationClient.Open(tmpPath)
+	if err != nil {
+		return result, err
+	}
+	destinationHash := sha256.New()
+	_, copyErr := io.CopyBuffer(destinationHash, &progressReader{ctx: ctx, r: verify, fn: func(int64) {}}, make([]byte, 256*1024))
+	closeErr := verify.Close()
+	if copyErr != nil {
+		return result, copyErr
+	}
+	if closeErr != nil {
+		return result, closeErr
+	}
+	sourceSum := sourceHash.Sum(nil)
+	if !bytes.Equal(sourceSum, destinationHash.Sum(nil)) {
+		return result, fmt.Errorf("remote copy checksum verification failed")
+	}
+	result.SHA256 = hex.EncodeToString(sourceSum)
+	if err = replaceRemoteTemp(destinationClient, tmpPath, destinationPath); err != nil {
+		return result, err
+	}
+	removeTemp = false
+	return result, nil
+}
+
+func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) (err error) {
 	remotePath = cleanRemotePath(remotePath)
+	job := m.beginTransfer(sessionID, remotePath, "download")
+	var done, totalSize int64
+	defer func() {
+		m.finishTransfer(job, err, done, totalSize)
+		if !job.cancelled.Load() {
+			m.invalidateOnTransferErr(sessionID, err)
+		}
+	}()
+
 	client, release, err := m.acquire(sessionID)
 	if err != nil {
 		return err
@@ -289,33 +653,212 @@ func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) error {
 
 	src, err := client.Open(remotePath)
 	if err != nil {
-		m.InvalidateClient(sessionID)
 		return err
 	}
-	defer src.Close()
+	srcClosed := false
+	defer func() {
+		if !srcClosed {
+			_ = src.Close()
+		}
+	}()
 	stat, statErr := src.Stat()
+	if statErr == nil {
+		totalSize = stat.Size()
+	}
 
-	dst, err := os.Create(localPath)
+	partPath := transferPartPath(localPath, job.id)
+	dst, err := os.OpenFile(partPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		return err
 	}
-	defer dst.Close()
-
-	written, err := copyWithProgress(dst, src, func(n int64) {
-		total := int64(0)
-		if statErr == nil {
-			total = stat.Size()
+	dstClosed := false
+	defer func() {
+		if !dstClosed {
+			_ = dst.Close()
 		}
-		m.emit("sftp:progress", map[string]any{"sessionId": sessionID, "path": remotePath, "done": n, "total": total, "direction": "download"})
+		if err != nil {
+			_ = os.Remove(partPath)
+		}
+	}()
+	clearInterrupt := job.setInterrupt(func() {
+		_ = src.Close()
+		_ = dst.Close()
 	})
-	if err == nil {
-		total := written
-		if statErr == nil {
-			total = stat.Size()
-		}
-		m.emit("sftp:progress", map[string]any{"sessionId": sessionID, "path": remotePath, "done": written, "total": total, "direction": "download", "finished": true})
+	defer clearInterrupt()
+
+	progress := throttled(func(n int64) {
+		m.emitTransfer(job, "progress", n, totalSize, nil)
+	})
+	// WriteTo lets the sftp client issue concurrent read-ahead requests.
+	done, err = src.WriteTo(&progressWriter{ctx: job.ctx, w: dst, fn: progress})
+	closeErr := dst.Close()
+	dstClosed = true
+	if err == nil && closeErr != nil {
+		err = closeErr
 	}
-	return err
+	closeErr = src.Close()
+	srcClosed = true
+	if err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err = checkTransferContext(job.ctx); err != nil {
+		return err
+	}
+	if err = replaceLocalTemp(partPath, localPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (m *Manager) ReadRemoteFile(sessionID string, remotePath string, maxSize int64) ([]byte, error) {
+	remotePath = cleanRemotePath(remotePath)
+	client, release, err := m.acquire(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	src, err := client.Open(remotePath)
+	if err != nil {
+		m.invalidateOnConnErr(sessionID, err)
+		return nil, err
+	}
+	defer src.Close()
+
+	stat, err := src.Stat()
+	if err != nil {
+		m.invalidateOnConnErr(sessionID, err)
+		return nil, err
+	}
+	if stat.IsDir() {
+		return nil, fmt.Errorf("remote path is a directory, not a file")
+	}
+	if maxSize > 0 && stat.Size() > maxSize {
+		return nil, fmt.Errorf("remote file too large")
+	}
+
+	limit := maxSize
+	if limit <= 0 {
+		limit = stat.Size()
+	}
+	data, err := io.ReadAll(io.LimitReader(src, limit+1))
+	if err != nil {
+		m.invalidateOnConnErr(sessionID, err)
+		return nil, err
+	}
+	if maxSize > 0 && int64(len(data)) > maxSize {
+		return nil, fmt.Errorf("remote file too large")
+	}
+	return data, nil
+}
+
+func (m *Manager) WriteRemoteFile(sessionID string, remotePath string, data []byte) error {
+	remotePath = cleanRemotePath(remotePath)
+	client, release, err := m.acquire(sessionID)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	var mode os.FileMode
+	if stat, statErr := client.Stat(remotePath); statErr == nil {
+		if stat.IsDir() {
+			return fmt.Errorf("remote path is a directory, not a file")
+		}
+		mode = stat.Mode().Perm()
+	}
+
+	// This is the remote editor's save path: write a sibling temp file and
+	// rename it over the target. An in-place O_TRUNC write would destroy the
+	// original if the connection drops mid-write.
+	tmpPath := remotePath + ".gxshell-" + randomSuffix() + ".tmp"
+	if err := writeRemoteFileAt(client, tmpPath, data, mode); err != nil {
+		_ = client.Remove(tmpPath)
+		if isPermissionErr(err) {
+			// Directory not writable but the file itself may be (e.g. sticky
+			// shared dirs): fall back to the old in-place write.
+			if fallbackErr := writeRemoteFileAt(client, remotePath, data, mode); fallbackErr == nil {
+				return nil
+			}
+		}
+		m.invalidateOnConnErr(sessionID, err)
+		return err
+	}
+	if err := client.PosixRename(tmpPath, remotePath); err != nil {
+		// posix-rename@openssh.com may be unsupported. Plain SFTP Rename is a
+		// safe fallback only when the server can complete it without deleting an
+		// existing target. If it refuses to overwrite, preserve the original file
+		// and report the save failure instead of removing remotePath first.
+		if err2 := client.Rename(tmpPath, remotePath); err2 != nil {
+			_ = client.Remove(tmpPath)
+			m.invalidateOnConnErr(sessionID, err2)
+			return fmt.Errorf("replace remote file: posix rename failed (%v); fallback rename failed without deleting original: %w", err, err2)
+		}
+	}
+	return nil
+}
+
+func writeRemoteFileAt(client *sftp.Client, remotePath string, data []byte, mode os.FileMode) error {
+	dst, err := client.OpenFile(remotePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	if err != nil {
+		return err
+	}
+	_, writeErr := io.Copy(dst, bytes.NewReader(data))
+	closeErr := dst.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if mode != 0 {
+		_ = client.Chmod(remotePath, mode)
+	}
+	return nil
+}
+
+// replaceRemoteTemp promotes a fully written sibling temp file without first
+// deleting the destination. If the server cannot overwrite with plain Rename
+// and does not support posix-rename, the existing file is left intact.
+func replaceRemoteTemp(client *sftp.Client, tmpPath, remotePath string) error {
+	if err := client.PosixRename(tmpPath, remotePath); err != nil {
+		if fallbackErr := client.Rename(tmpPath, remotePath); fallbackErr != nil {
+			return fmt.Errorf("replace remote file: posix rename failed (%v); fallback rename failed without deleting original: %w", err, fallbackErr)
+		}
+	}
+	return nil
+}
+
+func transferPartPath(localPath, jobID string) string {
+	return localPath + ".gxshell-" + jobID + ".part"
+}
+
+// replaceLocalTemp promotes a completed .part file. os.Rename is atomic when
+// the platform supports replacing the destination. On platforms where it does
+// not (notably Windows), move the old destination aside and restore it if the
+// promotion fails, so a failed download never leaves a truncated target.
+func replaceLocalTemp(tmpPath, localPath string) error {
+	if err := os.Rename(tmpPath, localPath); err == nil {
+		return nil
+	} else if _, statErr := os.Stat(localPath); statErr != nil {
+		return err
+	}
+
+	backupPath := localPath + ".gxshell-" + randomSuffix() + ".bak"
+	if err := os.Rename(localPath, backupPath); err != nil {
+		return fmt.Errorf("prepare existing download target: %w", err)
+	}
+	if err := os.Rename(tmpPath, localPath); err != nil {
+		if restoreErr := os.Rename(backupPath, localPath); restoreErr != nil {
+			return fmt.Errorf("promote completed download: %v; restore original: %w", err, restoreErr)
+		}
+		return fmt.Errorf("promote completed download: %w", err)
+	}
+	_ = os.Remove(backupPath)
+	return nil
 }
 
 func (m *Manager) DeleteRemoteFile(sessionID, remotePath string) error {
@@ -327,7 +870,7 @@ func (m *Manager) DeleteRemoteFile(sessionID, remotePath string) error {
 	defer release()
 	err = client.Remove(remotePath)
 	if err != nil {
-		m.InvalidateClient(sessionID)
+		m.invalidateOnConnErr(sessionID, err)
 	}
 	return err
 }
@@ -342,7 +885,7 @@ func (m *Manager) RenameRemoteFile(sessionID, oldPath, newPath string) error {
 	defer release()
 	err = client.Rename(oldPath, newPath)
 	if err != nil {
-		m.InvalidateClient(sessionID)
+		m.invalidateOnConnErr(sessionID, err)
 	}
 	return err
 }
@@ -356,13 +899,22 @@ func (m *Manager) CreateRemoteDir(sessionID, remotePath string) error {
 	defer release()
 	err = client.MkdirAll(remotePath)
 	if err != nil {
-		m.InvalidateClient(sessionID)
+		m.invalidateOnConnErr(sessionID, err)
 	}
 	return err
 }
 
-func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) error {
+func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) (err error) {
 	remotePath = cleanRemotePath(remotePath)
+	job := m.beginTransfer(sessionID, remotePath, "download")
+	var done, totalSize int64
+	defer func() {
+		m.finishTransfer(job, err, done, totalSize)
+		if !job.cancelled.Load() {
+			m.invalidateOnTransferErr(sessionID, err)
+		}
+	}()
+
 	client, release, err := m.acquire(sessionID)
 	if err != nil {
 		return err
@@ -389,8 +941,10 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) error {
 	}
 	walker := client.Walk(remotePath)
 	for walker.Step() {
+		if err = checkTransferContext(job.ctx); err != nil {
+			return err
+		}
 		if err := walker.Err(); err != nil {
-			m.InvalidateClient(sessionID)
 			return err
 		}
 		stat := walker.Stat()
@@ -423,81 +977,193 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) error {
 			if err := os.MkdirAll(localPath, 0755); err != nil {
 				return err
 			}
+		} else {
+			totalSize += stat.Size()
 		}
 	}
+	if walkErr := walker.Err(); walkErr != nil {
+		return walkErr
+	}
+	if err = checkTransferContext(job.ctx); err != nil {
+		return err
+	}
 
-	for i, f := range files {
+	progress := throttled(func(n int64) {
+		m.emitTransfer(job, "progress", n, totalSize, nil)
+	})
+	for _, f := range files {
 		if f.isDir {
 			continue
 		}
-		localPath := f.localPath
-		m.emit("sftp:progress", map[string]any{
-			"sessionId": sessionID,
-			"path":      f.remotePath,
-			"done":      int64(i + 1),
-			"total":     int64(len(files)),
-			"direction": "download",
+		if err = checkTransferContext(job.ctx); err != nil {
+			return err
+		}
+		baseDone := done
+		var fileDone int64
+		fileDone, err = m.downloadFileOnly(client, job, f.remotePath, f.localPath, func(n int64) {
+			progress(baseDone + n)
 		})
-		if err := m.downloadFileOnly(client, f.remotePath, localPath); err != nil {
-			m.InvalidateClient(sessionID)
+		done = baseDone + fileDone
+		if err != nil {
 			return err
 		}
 	}
-
-	m.emit("sftp:progress", map[string]any{
-		"sessionId": sessionID,
-		"path":      remotePath,
-		"done":      int64(len(files)),
-		"total":     int64(len(files)),
-		"direction": "download",
-		"finished":  true,
-	})
 	return nil
 }
 
-func (m *Manager) downloadFileOnly(client *sftp.Client, remotePath, localPath string) error {
+func (m *Manager) downloadFileOnly(client *sftp.Client, job *transferJob, remotePath, localPath string, progress func(int64)) (written int64, err error) {
 	src, err := client.Open(remotePath)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	defer src.Close()
+	srcClosed := false
+	defer func() {
+		if !srcClosed {
+			_ = src.Close()
+		}
+	}()
 
-	dst, err := os.Create(localPath)
+	partPath := transferPartPath(localPath, job.id)
+	dst, err := os.OpenFile(partPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
-		return err
+		return 0, err
 	}
+	dstClosed := false
+	defer func() {
+		if !dstClosed {
+			_ = dst.Close()
+		}
+		if err != nil {
+			_ = os.Remove(partPath)
+		}
+	}()
+	clearInterrupt := job.setInterrupt(func() {
+		_ = src.Close()
+		_ = dst.Close()
+	})
+	defer clearInterrupt()
 
-	_, copyErr := io.Copy(dst, src)
+	written, err = src.WriteTo(&progressWriter{ctx: job.ctx, w: dst, fn: progress})
 	closeErr := dst.Close()
-	if copyErr != nil {
-		return copyErr
+	dstClosed = true
+	if err == nil && closeErr != nil {
+		err = closeErr
 	}
-	return closeErr
+	closeErr = src.Close()
+	srcClosed = true
+	if err == nil && closeErr != nil {
+		err = closeErr
+	}
+	if err != nil {
+		return written, err
+	}
+	if err = checkTransferContext(job.ctx); err != nil {
+		return written, err
+	}
+	if err = replaceLocalTemp(partPath, localPath); err != nil {
+		return written, err
+	}
+	return written, nil
 }
 
-func copyWithProgress(dst io.Writer, src io.Reader, progress func(int64)) (int64, error) {
-	buf := make([]byte, 64*1024)
-	var total int64
-	for {
-		n, readErr := src.Read(buf)
-		if n > 0 {
-			w, writeErr := dst.Write(buf[:n])
-			total += int64(w)
-			progress(total)
-			if writeErr != nil {
-				return total, writeErr
-			}
-			if w != n {
-				return total, io.ErrShortWrite
-			}
-		}
-		if readErr == io.EOF {
-			return total, nil
-		}
-		if readErr != nil {
-			return total, readErr
-		}
+// invalidateOnConnErr drops the cached client only for transport-level
+// failures. A StatusError is the server answering over a healthy link
+// (permission denied, no such file, ...); recycling the client for those would
+// tear down an SFTP subsystem that concurrent operations are still using and
+// force a pointless reconnect.
+func (m *Manager) invalidateOnConnErr(sessionID string, err error) {
+	if err == nil {
+		return
 	}
+	var status *sftp.StatusError
+	if errors.As(err, &status) {
+		return
+	}
+	m.InvalidateClient(sessionID)
+}
+
+func (m *Manager) invalidateOnTransferErr(sessionID string, err error) {
+	if err == nil || errors.Is(err, context.Canceled) {
+		return
+	}
+	// Local open/write/rename failures do not say anything about the cached
+	// SFTP transport and must not disconnect concurrent remote operations.
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return
+	}
+	m.invalidateOnConnErr(sessionID, err)
+}
+
+func isPermissionErr(err error) bool {
+	var status *sftp.StatusError
+	if errors.As(err, &status) {
+		return status.FxCode() == sftp.ErrSSHFxPermissionDenied
+	}
+	return os.IsPermission(err)
+}
+
+func randomSuffix() string {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// throttled rate-limits a progress callback to one call per
+// progressEmitInterval. The final "finished" event is emitted separately by
+// the caller, so dropping intermediate ticks never loses the end state.
+func throttled(fn func(int64)) func(int64) {
+	var last time.Time
+	return func(n int64) {
+		now := time.Now()
+		if now.Sub(last) < progressEmitInterval {
+			return
+		}
+		last = now
+		fn(n)
+	}
+}
+
+// progressReader counts bytes as the sftp client drains the local file during
+// an upload.
+type progressReader struct {
+	ctx context.Context
+	r   io.Reader
+	n   int64
+	fn  func(int64)
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	if err := checkTransferContext(p.ctx); err != nil {
+		return 0, err
+	}
+	n, err := p.r.Read(b)
+	if n > 0 {
+		p.n += int64(n)
+		p.fn(p.n)
+	}
+	return n, err
+}
+
+// progressWriter counts bytes as the sftp client fills the local file during a
+// download.
+type progressWriter struct {
+	ctx context.Context
+	w   io.Writer
+	n   int64
+	fn  func(int64)
+}
+
+func (p *progressWriter) Write(b []byte) (int, error) {
+	if err := checkTransferContext(p.ctx); err != nil {
+		return 0, err
+	}
+	n, err := p.w.Write(b)
+	if n > 0 {
+		p.n += int64(n)
+		p.fn(p.n)
+	}
+	return n, err
 }
 
 // relRemote returns rp expressed relative to base, operating purely on

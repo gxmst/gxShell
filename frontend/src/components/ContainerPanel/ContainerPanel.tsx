@@ -6,6 +6,32 @@ import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import { t } from "../../i18n";
 import type { Tab, Toast } from "../../types";
 
+const MAX_LOG_CHARS = 512 * 1024;
+const LOG_FLUSH_MS = 75;
+
+// Payload of the Go-side "docker:log" event (a map[string]string). The backend
+// may batch several log lines into one event, so `data` can contain embedded
+// newlines (and a "[line truncated]" marker for oversized lines); it is
+// appended verbatim into the <pre> log view, which renders newlines as-is.
+interface DockerLogEvent {
+  streamID?: string;
+  sessionID?: string;
+  containerID?: string;
+  data?: string;
+  /** "true" when the stream has ended. */
+  done?: string;
+}
+
+function nextLogStreamId() {
+  return `docker-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function appendBoundedLog(previous: string, chunk: string) {
+  const combined = previous + chunk;
+  if (combined.length <= MAX_LOG_CHARS) return combined;
+  return `[gxShell: older Docker log output was truncated]\n${combined.slice(combined.length - MAX_LOG_CHARS)}`;
+}
+
 export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: (text: string, tone?: Toast["tone"]) => void }) {
   const lang = props.locale;
   const [containers, setContainers] = useState<types.ContainerInfo[]>([]);
@@ -17,6 +43,30 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval>>();
   const logEndRef = useRef<HTMLDivElement>(null);
+  const logStreamIdRef = useRef<string | null>(null);
+  const pendingLogRef = useRef("");
+  const pendingLogTimerRef = useRef<number | null>(null);
+
+  const flushPendingLogs = useCallback(() => {
+    if (pendingLogTimerRef.current !== null) {
+      window.clearTimeout(pendingLogTimerRef.current);
+      pendingLogTimerRef.current = null;
+    }
+    const chunk = pendingLogRef.current;
+    pendingLogRef.current = "";
+    if (chunk) setLogs((previous) => appendBoundedLog(previous, chunk));
+  }, []);
+
+  const queueLogChunk = useCallback((chunk: string) => {
+    pendingLogRef.current += chunk;
+    if (pendingLogRef.current.length >= 32 * 1024) {
+      flushPendingLogs();
+      return;
+    }
+    if (pendingLogTimerRef.current === null) {
+      pendingLogTimerRef.current = window.setTimeout(flushPendingLogs, LOG_FLUSH_MS);
+    }
+  }, [flushPendingLogs]);
 
   const refresh = useCallback(async () => {
     if (!props.active?.id) return;
@@ -48,58 +98,77 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   const onNotifyRef = useRef(props.onNotify);
   onNotifyRef.current = props.onNotify;
 
-  const activeIdRef = useRef(props.active?.id);
-  activeIdRef.current = props.active?.id;
-
-  const logContainerIdRef = useRef<string | null>(null);
-
   useEffect(() => {
-    const off = EventsOn("docker:log", (data: any) => {
-      if (data.containerID && data.containerID !== logContainerIdRef.current) return;
+    const off = EventsOn("docker:log", (data: DockerLogEvent) => {
+      if (!data?.streamID || data.streamID !== logStreamIdRef.current) return;
       if (data.done === "true") {
+        flushPendingLogs();
+        logStreamIdRef.current = null;
         setLogStreaming(false);
         return;
       }
       if (data.data) {
-        setLogs((prev) => prev + data.data);
+        queueLogChunk(data.data);
       }
     });
     return () => off();
-  }, []);
+  }, [flushPendingLogs, queueLogChunk]);
+
+  useEffect(() => {
+    const streamID = logStreamIdRef.current;
+    if (streamID) StopContainerLogs(streamID).catch(() => {});
+    logStreamIdRef.current = null;
+    pendingLogRef.current = "";
+    if (pendingLogTimerRef.current !== null) {
+      window.clearTimeout(pendingLogTimerRef.current);
+      pendingLogTimerRef.current = null;
+    }
+    setLogContainer(null);
+    setLogs("");
+    setLogStreaming(false);
+  }, [props.active?.id]);
 
   const viewLogs = useCallback(async (c: types.ContainerInfo) => {
     if (!props.active?.id) return;
-    const previous = logContainerIdRef.current;
-    if (previous && previous !== c.id) {
-      await StopContainerLogs(props.active.id, previous).catch(() => {});
+    const previousStream = logStreamIdRef.current;
+    if (previousStream) {
+      await StopContainerLogs(previousStream).catch(() => {});
     }
+    flushPendingLogs();
+    const streamID = nextLogStreamId();
     setLogContainer(c);
-    logContainerIdRef.current = c.id;
+    logStreamIdRef.current = streamID;
     setLogs("");
     setLogStreaming(true);
     try {
-      await StreamContainerLogs(props.active.id, c.id, 200);
+      await StreamContainerLogs(props.active.id, c.id, streamID, 200);
     } catch (err) {
-      setLogStreaming(false);
+      if (logStreamIdRef.current === streamID) {
+        logStreamIdRef.current = null;
+        setLogStreaming(false);
+      }
       onNotifyRef.current(String(err), "error");
     }
-  }, [props.active?.id]);
+  }, [props.active?.id, flushPendingLogs]);
 
   const closeLogs = useCallback(() => {
-    if (logContainer && activeIdRef.current) {
-      StopContainerLogs(activeIdRef.current, logContainer.id).catch(() => {});
+    const streamID = logStreamIdRef.current;
+    if (streamID) {
+      StopContainerLogs(streamID).catch(() => {});
     }
+    flushPendingLogs();
     setLogContainer(null);
-    logContainerIdRef.current = null;
+    logStreamIdRef.current = null;
     setLogs("");
     setLogStreaming(false);
-  }, [logContainer]);
+  }, [flushPendingLogs]);
 
   useEffect(() => {
     return () => {
-      if (logContainerIdRef.current && activeIdRef.current) {
-        StopContainerLogs(activeIdRef.current, logContainerIdRef.current).catch(() => {});
+      if (logStreamIdRef.current) {
+        StopContainerLogs(logStreamIdRef.current).catch(() => {});
       }
+      if (pendingLogTimerRef.current !== null) window.clearTimeout(pendingLogTimerRef.current);
     };
   }, []);
 
@@ -181,7 +250,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
 
   if (!props.active?.id) {
     return (
-      <div className="container-panel">
+      <div className="container-panel panel-page">
         <div className="container-empty">
           <Box size={28} className="text-muted mb-2" />
           <div className="text-[11px] text-muted">{t(lang, "noActiveSession")}</div>
@@ -191,19 +260,18 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   }
 
   return (
-    <div className="container-panel">
-      <div className="container-header">
-        <div className="flex items-center gap-1.5">
-          <Box size={14} className="text-accent" />
-          <span className="text-[11px] font-semibold">{t(lang, "containers")}</span>
-          <span className="text-[9px] text-muted">({containers.length})</span>
+    <div className="container-panel panel-page">
+      <div className="container-header panel-page-header">
+        <div className="panel-page-heading">
+          <span className="panel-page-icon"><Box size={14} /></span>
+          <span><strong>{t(lang, "containers")}</strong><small>{lang === "zh-CN" ? `${containers.length} 个容器` : `${containers.length} containers`}</small></span>
         </div>
-        <div className="flex items-center gap-1">
-          <label className="flex items-center gap-1 text-[9px] text-muted cursor-pointer">
+        <div className="panel-page-actions">
+          <label className="panel-page-check">
             <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} className="w-2.5 h-2.5" />
             {t(lang, "showAll")}
           </label>
-          <button className="mini-btn" onClick={refresh} disabled={loading}><RefreshCw size={11} className={loading ? "animate-spin" : ""} /></button>
+          <button className="panel-page-action" onClick={refresh} disabled={loading}><RefreshCw size={11} className={loading ? "animate-spin" : ""} /></button>
         </div>
       </div>
 
@@ -225,7 +293,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
         </div>
       )}
 
-      <div className="container-list">
+      <div className="container-list panel-list">
         {containers.length === 0 && !loading && (
           <div className="container-empty">
             <Box size={20} className="text-muted mb-1" />

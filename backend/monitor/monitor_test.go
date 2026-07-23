@@ -2,9 +2,97 @@ package monitor
 
 import (
 	"testing"
+	"time"
 
 	"gxShell/backend/types"
 )
+
+type recordingExecutor struct {
+	calls chan string
+}
+
+func (e *recordingExecutor) Exec(sessionID string, _ string, _ time.Duration) (string, error) {
+	e.calls <- sessionID
+	return "", nil
+}
+
+func waitForMonitorCall(t *testing.T, calls <-chan string) string {
+	t.Helper()
+	select {
+	case sessionID := <-calls:
+		return sessionID
+	case <-time.After(time.Second):
+		t.Fatal("monitor did not collect within one second")
+		return ""
+	}
+}
+
+func TestStartReplacesPollerWhenIntervalChanges(t *testing.T) {
+	executor := &recordingExecutor{calls: make(chan string, 4)}
+	m := NewManager(executor, nil)
+	defer m.StopAll()
+
+	m.Start("session-1", 3600)
+	if got := waitForMonitorCall(t, executor.calls); got != "session-1" {
+		t.Fatalf("first collection session = %q", got)
+	}
+	m.mu.RLock()
+	first := m.running["session-1"]
+	m.mu.RUnlock()
+
+	// Starting at the same cadence is idempotent.
+	m.Start("session-1", 3600)
+	m.mu.RLock()
+	same := m.running["session-1"]
+	m.mu.RUnlock()
+	if same != first {
+		t.Fatal("same interval unexpectedly replaced the poller")
+	}
+
+	// A changed cadence replaces the loop and collects immediately.
+	m.Start("session-1", 120)
+	if got := waitForMonitorCall(t, executor.calls); got != "session-1" {
+		t.Fatalf("replacement collection session = %q", got)
+	}
+	m.mu.RLock()
+	replacement := m.running["session-1"]
+	m.mu.RUnlock()
+	if replacement == first || replacement.intervalSec != 120 {
+		t.Fatalf("poller was not replaced at the new interval: %#v", replacement)
+	}
+	select {
+	case <-first.stop:
+	default:
+		t.Fatal("old poller was not stopped")
+	}
+}
+
+func TestRestartAllAndStopAll(t *testing.T) {
+	executor := &recordingExecutor{calls: make(chan string, 8)}
+	m := NewManager(executor, nil)
+	m.Start("session-1", 3600)
+	m.Start("session-2", 3600)
+	waitForMonitorCall(t, executor.calls)
+	waitForMonitorCall(t, executor.calls)
+
+	m.RestartAll(90)
+	waitForMonitorCall(t, executor.calls)
+	waitForMonitorCall(t, executor.calls)
+	m.mu.RLock()
+	for sessionID, run := range m.running {
+		if run.intervalSec != 90 {
+			t.Fatalf("%s interval = %d, want 90", sessionID, run.intervalSec)
+		}
+	}
+	m.mu.RUnlock()
+
+	m.StopAll()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if len(m.running) != 0 || len(m.latest) != 0 || len(m.lastCPU) != 0 || len(m.lastNet) != 0 {
+		t.Fatalf("StopAll left state behind: running=%d latest=%d cpu=%d net=%d", len(m.running), len(m.latest), len(m.lastCPU), len(m.lastNet))
+	}
+}
 
 func TestSection(t *testing.T) {
 	input := `GX_BEGIN_UPTIME_9b7c2d

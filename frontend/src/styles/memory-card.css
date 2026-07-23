@@ -6,29 +6,32 @@
 }
 
 .memcard-section {
-  margin-bottom: 10px;
+  margin-bottom: 11px;
 }
 
 .memcard-section-title {
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 10px;
-  font-weight: 600;
+  font-size: var(--text-xs);
+  font-weight: 650;
   color: var(--muted);
-  margin-bottom: 4px;
+  margin-bottom: 5px;
+  letter-spacing: 0.02em;
 }
 
 .memcard-pct {
   margin-left: auto;
   font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
 }
 
 .memcard-detail {
-  font-size: 9px;
+  font-size: 9.5px;
   color: var(--muted-2);
-  margin-top: 3px;
+  margin-top: 4px;
   font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
 }
 
 .memcard-proc-list {
@@ -37,6 +40,7 @@
   gap: 1px;
   max-height: 200px;
   overflow-y: auto;
+  border-radius: var(--radius-sm);
 }
 
 .memcard-proc-row {
@@ -44,28 +48,30 @@
   grid-template-columns: 36px minmax(0, 1fr) 44px;
   gap: 4px;
   align-items: center;
-  padding: 2px 4px;
-  border-radius: 4px;
-  font-size: 10px;
+  padding: 3px 5px;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-xs);
+  transition: background var(--dur-fast) var(--ease);
 }
 
 .memcard-proc-row:hover {
-  background: color-mix(in srgb, var(--panel-raised) 50%, transparent);
+  background: color-mix(in srgb, var(--panel-raised) 56%, transparent);
 }
 
 .memcard-proc-pid {
   color: var(--muted-2);
   font-variant-numeric: tabular-nums;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
 }
 
 .memcard-proc-name {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   min-width: 0;
 }
 
 .memcard-proc-mem {
   text-align: right;
   font-variant-numeric: tabular-nums;
-  font-weight: 600;
+  font-weight: 650;
+  font-family: var(--font-mono);
 }

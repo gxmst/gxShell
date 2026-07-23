@@ -1,19 +1,22 @@
 import { useState } from "react";
 import clsx from "clsx";
 import { Activity, AlertTriangle, ChevronDown, ChevronRight, Download, Gauge, HardDrive, MemoryStick, Upload, Wifi, Zap } from "lucide-react";
-import { types } from "../../../wailsjs/go/models";
 import type { Tab } from "../../types";
 import { formatBytes, stateClass } from "../../utils/format";
+import { useSessionMetrics } from "../../hooks/useSessionMetrics";
 import { t } from "../../i18n";
 
-export function MonitorPanel({ metrics, active, locale, onStart, onPingClick, onDiskClick, onMemClick }: { metrics?: types.Metrics; active?: Tab; locale?: string; onStart: () => void; onPingClick?: () => void; onDiskClick?: () => void; onMemClick?: () => void }) {
+export function MonitorPanel({ active, locale, onStart, onCpuClick, onPingClick, onDiskClick, onMemClick, onNetworkClick }: { active?: Tab; locale?: string; onStart: () => void; onCpuClick?: () => void; onPingClick?: () => void; onDiskClick?: () => void; onMemClick?: () => void; onNetworkClick?: () => void }) {
   const [expanded, setExpanded] = useState(false);
+  // Subscribes to monitor:update itself so each collection tick re-renders
+  // only this panel, not the whole Sidebar tree it lives in.
+  const metrics = useSessionMetrics(active?.id);
   const lang = locale || "en";
   if (!active) return <div className="empty compact">{t(lang, "openTerminal")}</div>;
   return (
-    <div className="space-y-1">
+    <div className="monitor-panel">
       <div className="current-card">
-        <Wifi size={13} className={clsx(active.state === "connected" ? "text-ok" : "text-muted")} />
+        <button className="mini-btn" onClick={onPingClick} disabled={!onPingClick} title={t(lang, "networkPath")}><Wifi size={13} className={clsx(active.state === "connected" ? "text-ok" : "text-muted")} /></button>
         <span className="min-w-0 flex-1 truncate text-[12px] font-medium">{active.title}</span>
         <span className={clsx("status-dot", stateClass(active.state))} />
       </div>
@@ -26,14 +29,14 @@ export function MonitorPanel({ metrics, active, locale, onStart, onPingClick, on
       )}
       {metrics && (
         <>
-          <MetricRow icon={<Gauge size={12} />} label="CPU" value={metrics.cpuPercent} />
-          <MetricRow icon={<MemoryStick size={12} />} label="Mem" value={metrics.memoryPercent} detail={`${metrics.memoryUsedMb || 0}/${metrics.memoryTotalMb || 0} MB`} clickable onClick={onMemClick} />
-          <MetricRow icon={<HardDrive size={12} />} label="Disk" value={metrics.diskPercent} detail={`${metrics.diskUsed || "-"} / ${metrics.diskTotal || "-"}`} clickable onClick={onDiskClick} />
+          <MetricRow icon={<Gauge size={12} />} label={t(lang, "cpu")} value={metrics.cpuPercent} clickable onClick={onCpuClick} />
+          <MetricRow icon={<MemoryStick size={12} />} label={t(lang, "mem")} value={metrics.memoryPercent} detail={`${metrics.memoryUsedMb || 0}/${metrics.memoryTotalMb || 0} MB`} clickable onClick={onMemClick} />
+          <MetricRow icon={<HardDrive size={12} />} label={t(lang, "disk")} value={metrics.diskPercent} detail={`${metrics.diskUsed || "-"} / ${metrics.diskTotal || "-"}`} clickable onClick={onDiskClick} />
           <div className="chip-grid compact-chip-grid">
-            <MiniMetric icon={<Zap size={11} />} label="Load" value={metrics.loadAverage || "-"} tone={loadTone(metrics.loadAverage)} />
-            <MiniMetric icon={<Wifi size={11} />} label="Ping" value={`${metrics.latencyMs || 0}ms`} tone={pingTone(metrics.latencyMs)} clickable onClick={onPingClick} />
-            <MiniMetric icon={<Download size={11} />} label="Down" value={formatBytes(metrics.networkRxPerSec)} tone={speedTone(metrics.networkRxPerSec)} />
-            <MiniMetric icon={<Upload size={11} />} label="Up" value={formatBytes(metrics.networkTxPerSec)} tone={speedTone(metrics.networkTxPerSec)} />
+            <MiniMetric icon={<Zap size={11} />} label={t(lang, "load")} value={metrics.loadAverage || "-"} tone={loadTone(metrics.loadAverage)} clickable onClick={onCpuClick} />
+            <MiniMetric icon={<Activity size={11} />} label={t(lang, "collectionTime")} value={`${metrics.latencyMs || 0}ms`} />
+            <MiniMetric icon={<Download size={11} />} label={t(lang, "down")} value={formatBytes(metrics.networkRxPerSec)} tone={speedTone(metrics.networkRxPerSec)} clickable onClick={onNetworkClick} />
+            <MiniMetric icon={<Upload size={11} />} label={t(lang, "up")} value={formatBytes(metrics.networkTxPerSec)} tone={speedTone(metrics.networkTxPerSec)} clickable onClick={onNetworkClick} />
           </div>
           <div className="pt-1 border-t border-border/50">
             <button className="process-toggle" onClick={() => setExpanded((value) => !value)}>
@@ -56,13 +59,6 @@ function loadTone(loadAvg: string): "ok" | "warn" | "bad" | undefined {
   if (isNaN(v)) return undefined;
   if (v >= 4) return "bad";
   if (v >= 2) return "warn";
-  return "ok";
-}
-
-function pingTone(ms: number): "ok" | "warn" | "bad" | undefined {
-  if (!ms || ms <= 0) return undefined;
-  if (ms >= 300) return "bad";
-  if (ms >= 100) return "warn";
   return "ok";
 }
 

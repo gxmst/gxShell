@@ -12,20 +12,58 @@
 - A profile must have `Allow CLI access` enabled before it appears in `gxshell-cli list`.
 - The CLI lists aliases only. It does not return hostnames, IP addresses, usernames, ports, profile IDs, or jump-host details.
 - Simple read-only commands (`ls`, `cat`, `df`, `uptime`, and similar inspection tools) run without a prompt.
-- Any other command triggers a native confirmation dialog in gxShell each time before it runs.
-- Dangerous commands and sensitive paths are blocked before confirmation.
+- Any other command triggers a native confirmation dialog in gxShell before it runs. Requests for the same alias that arrive within a short window are batched into one approval prompt.
+- Dangerous commands and sensitive paths are blocked before confirmation. Blocked responses include a reason, category, and diagnostic detail such as the matched command fragment or sensitive path pattern.
+- Remote file copies always require native confirmation and apply sensitive-path checks to both endpoints.
+- CLI-created SSH tunnels always require native confirmation and can bind only to a loopback address. They are temporary and are never saved into a profile.
 
 Localhost is not treated as a complete security boundary. The token and confirmation dialog are the real guardrails.
+
+## AI Agent Usage
+
+The model-independent automation contract is [GXSHELL_AGENT_GUIDE.md](GXSHELL_AGENT_GUIDE.md). Model-specific files such as `CLAUDE.md` and `AGENTS.md` only point to that shared guide; safety and input rules are also enforced by the CLI/API.
+
+AI agents should treat the CLI alias as the only gxShell-provided target identity. The CLI intentionally does not expose hostnames, IP addresses, usernames, ports, profile IDs, or jump-host details, so agents must not rely on those values being available through `list`, `status`, or `exec` metadata.
+
+Before making claims about a server or running state-changing commands, verify the exact alias with a small read-only identity check and keep that alias attached to the result:
+
+```powershell
+.\gxshell-cli.exe exec prod-web "uname -n" --json
+.\gxshell-cli.exe exec prod-web "cat /etc/os-release" --json
+.\gxshell-cli.exe exec prod-web "which dnf" --json
+.\gxshell-cli.exe exec prod-web "which apt" --json
+.\gxshell-cli.exe exec prod-web "uname -a" --json
+```
+
+Use `--json` for automation whenever possible. The JSON response includes the requested `alias`, exit status, stdout, stderr, timeout status, and truncation status. After any state-changing `exec`, read back the `alias` field in the JSON response and confirm it matches the intended target before trusting or reporting the result.
+
+Read the `outcome` field before explaining a failure. `remote_failed` means the remote shell/program returned a non-zero status and gxShell did not block it. Only `outcome: blocked` with `blocked: true` is a gxShell/user-policy rejection.
+
+Local terminal output, user-pasted output, GUI terminal output, and CLI JSON output are different evidence streams; do not merge them unless the source alias and command are explicit. Never build an explanation on top of an unverified server fact. If a conclusion about a server's identity or state is not backed by a specific alias, command, and JSON response from this session, verify it before reasoning further.
+
+If a command reports `command not found`, do not immediately conclude the tool is absent. First confirm which alias actually ran the command by checking the `alias` field in the `--json` response. Then check the remote exec environment for that same alias. A missing tool can be a command that landed on a different server than intended, not a tool that is truly absent.
+
+```powershell
+.\gxshell-cli.exe exec prod-web "printenv PATH" --json
+.\gxshell-cli.exe exec prod-web "which dnf" --json
+.\gxshell-cli.exe exec prod-web "ls /usr/bin/dnf" --json
+```
+
+For multi-server work, write notes and summaries with the alias on every remote fact or action, for example `prod-web: AlmaLinux, dnf present` rather than `the server has dnf`. If two outputs disagree, rerun a single read-only command against the exact alias before explaining or changing anything.
+
+AI agents must treat CLI tunnels as temporary resources. Record the returned tunnel ID, close it in the same workflow when no longer needed, and verify with `gxshell-cli tunnel list`. Never leave a tunnel open merely because the calling task ended or failed. Use cleanup/finally logic around tunnel-dependent work whenever the agent runtime supports it.
 
 ## Command Approval
 
 For an external caller (including an AI agent), every `exec` ends in one of three outcomes:
 
 - **Runs immediately, no prompt** - only when the command is a single read-only command on a fixed allowlist (`ls`, `cat`, `head`, `tail`, `df`, `du`, `uptime`, `ps`, `free`, `grep`, `stat`, `whoami`, and similar inspection tools), with only simple literal arguments.
-- **Asks for native confirmation each time** - everything else. This includes any command that writes or changes state, and any command containing shell operators or expansion syntax such as a pipe, redirect, chaining (`;`, `&&`), command substitution (`$(...)`, backticks), quotes, backslash escapes, variables, tilde expansion, or globs. Even `cat x | grep y` prompts because the allowlist only matches one simple command.
+- **Asks for native confirmation** - everything else. This includes any command that writes or changes state, and any command containing shell operators or expansion syntax such as a pipe, redirect, chaining (`;`, `&&`), command substitution (`$(...)`, backticks), quotes, backslash escapes, variables, tilde expansion, or globs. Even `cat x | grep y` prompts because the allowlist only matches one simple command. If several matching CLI requests arrive for the same alias within about one second, gxShell shows one batched prompt.
 - **Blocked outright, before any prompt or connection** - dangerous commands (for example destructive `rm`, `mkfs`, `shutdown`) and sensitive paths (for example `/etc/shadow`, SSH private keys).
 
-`exec` is capped at a 30-second remote command timeout and about 1 MB of output. A new SSH connection can also spend time in the profile's connection timeout before the command starts. Long-running or very chatty commands should be run inside the GUI terminal instead.
+`exec` defaults to a 2-minute remote command timeout and about 1 MB of output. Use `--timeout` to raise the command timeout up to 30 minutes. A new SSH connection can also spend time in the profile's connection timeout before the command starts. Long-running or very chatty interactive work should still be run inside the GUI terminal.
+
+If a command times out, the CLI exits with code `124` and prints a timeout hint. The SSH exec channel is closed, but remote commands such as package installs or `docker compose` rebuilds may already have made partial changes or may still need status checks. Inspect the remote state before retrying.
 
 ## Session Behavior
 
@@ -82,21 +120,98 @@ go build -o gxshell-cli.exe .\cmd\gxshell-cli
 
 ```powershell
 .\gxshell-cli.exe ping
+.\gxshell-cli.exe doctor
 .\gxshell-cli.exe list
 .\gxshell-cli.exe exec prod-web "uptime"
+.\gxshell-cli.exe exec prod-web "journalctl -u nginx -n 200" --timeout 2m
+.\gxshell-cli.exe exec prod-web "docker compose up -d --build" --timeout 10m
+.\gxshell-cli.exe --timeout 10m exec prod-web "docker compose up -d --build"
+.\gxshell-cli.exe exec prod-web "uptime" --json
+.\gxshell-cli.exe exec-file prod-web .\script.sh --shell bash
+Get-Content .\script.sh -Raw | .\gxshell-cli.exe exec-stdin prod-web --shell bash
+.\gxshell-cli.exe exec prod-web "journalctl -f" --follow
+.\gxshell-cli.exe exec prod-web "long-task" --detach
+.\gxshell-cli.exe job status job-0123456789abcdef
+.\gxshell-cli.exe job logs job-0123456789abcdef --follow
+.\gxshell-cli.exe job cancel job-0123456789abcdef
+.\gxshell-cli.exe copy source:/tmp/config.tar destination:/tmp/config.tar
+.\gxshell-cli.exe tunnel open prod-web 8080 127.0.0.1:80
+.\gxshell-cli.exe tunnel socks prod-web 1080
+.\gxshell-cli.exe tunnel list
+.\gxshell-cli.exe tunnel close tun-0123456789abcdef
 .\gxshell-cli.exe status
 ```
 
-Simple read-only commands run immediately. Any other `exec` request asks for approval in gxShell every time before it runs.
+Simple read-only commands run immediately. Any other `exec` request asks for approval in gxShell before it runs.
+
+Put `--timeout` before `exec` or after the quoted remote command, not inside the remote command string. If it is inside the quoted command, the remote shell receives it as part of the command.
+
+`exec-file` and `exec-stdin` require an explicit `--shell` selected from `sh`, `bash`, `dash`, `zsh`, or `ksh`. The client sends normalized script text in the JSON request body; the daemon starts `<shell> -s` and writes the script through SSH stdin. The script is never embedded into the remote command string. Before sending, gxShell strips a leading UTF-8 BOM and normalizes CRLF/CR line endings to LF. Scripts use the same approval, timeout, output limit, and SSH exec-channel behavior as `exec`. The local CLI request body is capped at about 2 MB. Plain `exec` rejects literal newlines and heredocs with `script_input_required` so callers cannot accidentally create several nested quoting layers.
+
+## Named Secrets
+
+External and built-in AI agents should use named references instead of plaintext credentials. `secret set` reads the value from stdin so it never appears in the process argument list:
+
+```powershell
+Get-Content .\api-key.txt -Raw | .\gxshell-cli.exe secret set anyrouter-api-key
+.\gxshell-cli.exe secret status anyrouter-api-key --json
+.\gxshell-cli.exe exec prod-web 'curl -H "Authorization: Bearer $API_KEY" https://example.test/v1/models' --secret API_KEY=anyrouter-api-key --json
+```
+
+The value is stored through gxShell's OS credential-store/encrypted-fallback subsystem. During synchronous execution gxShell resolves `secret://anyrouter-api-key`, injects it through SSH stdin, keeps it out of approval/audit text, and removes exact occurrences from captured output. `--follow` and `--detach` cannot be combined with named secrets because streaming chunks could cross a redaction boundary.
+
+This prevents accidental plaintext disclosure but cannot make a general-purpose shell safe against deliberate encoding or transformation of a secret. Review the destination and purpose in the native confirmation dialog. Rotate any credential that was exposed before it was registered.
+
+`--follow` and `--detach` create a trackable command job. Follow mode polls ordered stdout/stderr chunks until completion; detach mode returns the job ID immediately. `job status`, `job logs`, and `job cancel` work while the GUI process remains running. Finished jobs and their captured output are retained in memory for 30 minutes, then pruned. Output capture remains capped at about 1 MB per stream. Closing gxShell cancels running CLI jobs.
+
+`copy` currently supports one remote file, not directories. It reuses gxShell's SFTP clients for both profiles, streams through the local app, writes a sibling temporary destination, verifies the temporary file with SHA-256, preserves source permission bits where supported, and only then atomically replaces the final destination. A failed or cancelled transfer removes the temporary file and leaves an existing destination intact.
+
+`tunnel open` creates local forwarding and `tunnel socks` creates a dynamic SOCKS5 listener. Both accept a port (`1080`) or an explicit loopback endpoint (`127.0.0.1:1080`, `[::1]:1080`); non-loopback binds such as `0.0.0.0` are rejected. Port `0` asks the OS to choose a free port and the CLI reports the actual endpoint. Tunnels close on `tunnel close`, SSH disconnect, or application shutdown. They are not persisted or reopened automatically.
+
+`--json` is supported on all commands. For synchronous `exec`, the result includes:
+
+```json
+{
+  "alias": "prod-web",
+  "reusedConnection": true,
+  "exitCode": 0,
+  "stdout": "...",
+  "stderr": "",
+  "output": "...",
+  "summary": "",
+  "displayOutput": "...",
+  "durationMs": 123,
+  "timeoutMs": 120000,
+  "timedOut": false,
+  "truncated": false
+}
+```
+
+`stdout`, `stderr`, and `output` contain remote output only. Synthetic CLI notes such as `(exit code: 1)` or truncation notices are reported in `summary`; `displayOutput` is the human-readable combination used by the non-JSON CLI output. Timed-out responses also include `timeoutHint`.
+
+Blocked `exec` responses include additional fields that help callers adjust without guessing:
+
+```json
+{
+  "blocked": true,
+  "errorKind": "blocked",
+  "blockedBy": "dangerous-command",
+  "reason": "raw disk write",
+  "detail": "matched command fragment \"dd\""
+}
+```
+
+`gxshell-cli doctor` prints local diagnostics: the executable path, working directory, gxShell config/token location, whether the executable directory is on `PATH`, and whether the GUI daemon is reachable. Use it when the CLI works from one folder but not another, or when you need the directory to add to `PATH`.
 
 ## Troubleshooting
 
 - `gxShell daemon is not running`: start the gxShell GUI and try again.
+- CLI works only from one directory: run `.\gxshell-cli.exe doctor` from the directory containing the executable, then add the reported executable directory to `PATH`.
 - `No CLI-enabled servers configured`: enable `Allow CLI access` and set an alias on at least one profile. If the whole CLI is unreachable, also check that `Enable CLI server` is on in Settings and restart the app.
 - `server "<alias>" is not available to CLI`: check the alias spelling and whether the profile is opted in.
 - Slow first command but fast later commands: the first command likely paid the SSH connection cost, while later commands reused the connected session.
 - Direct connection is slow but ProxyJump is fast: the target profile can keep using ProxyJump; the CLI follows that profile setting automatically.
-- `remote command timeout`: the command exceeded the 30-second remote command timeout. Use the GUI terminal for longer work.
+- `remote command timeout`: the command exceeded the remote command timeout. Check the remote process/service/container state before retrying. Use `--timeout 10m` or the GUI terminal for longer work.
 
 ## API
 
@@ -107,3 +222,5 @@ Authorization: Bearer <token>
 ```
 
 The token is generated by gxShell and is intended for same-user local CLI use.
+
+Authenticated routes are `POST /cli/exec`, `GET|POST|DELETE /cli/secrets`, `GET|DELETE /cli/jobs`, `POST /cli/copy`, `GET|POST|DELETE /cli/tunnels`, `GET /cli/list`, and `GET /cli/status`. Secret status responses expose only alias/existence metadata, never values. `/cli/ping` is the unauthenticated liveness endpoint and exposes no profile data.

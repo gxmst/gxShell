@@ -16,6 +16,52 @@ func newTestStore(t *testing.T) *Store {
 	return &Store{dataDir: dir, legacyDir: dir}
 }
 
+func TestNamedSecretFallbackRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	id := "named:cli:anyrouter-api-key"
+	if err := s.saveFallback(id, "value", "opaque-test-value"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.loadFallback(id, "value"); got != "opaque-test-value" {
+		t.Fatalf("named fallback value = %q", got)
+	}
+	s.deleteFallback(id)
+	if got := s.loadFallback(id, "value"); got != "" {
+		t.Fatalf("deleted named fallback value = %q", got)
+	}
+}
+
+// When the keyring accepts one secret kind, only that kind may be removed from
+// the fallback file: the other kind may still exist ONLY there (written during
+// an earlier keyring outage) and must survive.
+func TestDeleteFallbackKindKeepsSibling(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.saveFallback("p1", "password", "pw"); err != nil {
+		t.Fatalf("saveFallback: %v", err)
+	}
+	if err := s.saveFallback("p1", "passphrase", "pp"); err != nil {
+		t.Fatalf("saveFallback: %v", err)
+	}
+
+	s.deleteFallbackKind("p1", "password")
+
+	if got := s.loadFallback("p1", "password"); got != "" {
+		t.Fatalf("password should be gone, got %q", got)
+	}
+	if got := s.loadFallback("p1", "passphrase"); got != "pp" {
+		t.Fatalf("passphrase must survive deleting the password kind, got %q", got)
+	}
+
+	// Removing the last kind drops the whole entry (and the file).
+	s.deleteFallbackKind("p1", "passphrase")
+	if got := s.loadFallback("p1", "passphrase"); got != "" {
+		t.Fatalf("passphrase should be gone, got %q", got)
+	}
+	if _, err := os.Stat(s.fallbackPath()); !os.IsNotExist(err) {
+		t.Fatalf("fallback file should be removed once empty, stat err=%v", err)
+	}
+}
+
 func TestFallbackRoundTrip(t *testing.T) {
 	s := newTestStore(t)
 
@@ -58,6 +104,31 @@ func TestFallbackFileIsEncrypted(t *testing.T) {
 	}
 	if bytesContains(raw, []byte(secret)) {
 		t.Fatal("secret stored in plaintext on disk")
+	}
+}
+
+func TestUnreadableFallbackIsPreservedBeforeNewWrite(t *testing.T) {
+	s := newTestStore(t)
+	original := []byte("not-valid-ciphertext")
+	if err := os.WriteFile(s.fallbackPath(), original, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.loadFallback("p", "password"); got != "" || !s.fallbackDegraded {
+		t.Fatalf("invalid fallback should enter degraded mode, got %q degraded=%v", got, s.fallbackDegraded)
+	}
+	if err := s.saveFallback("new", "password", "new-secret"); err != nil {
+		t.Fatalf("save after quarantine: %v", err)
+	}
+	recovery, err := filepath.Glob(s.fallbackPath() + ".corrupt-*")
+	if err != nil || len(recovery) != 1 {
+		t.Fatalf("recovery files = %#v, err=%v", recovery, err)
+	}
+	gotOriginal, err := os.ReadFile(recovery[0])
+	if err != nil || string(gotOriginal) != string(original) {
+		t.Fatalf("recovery content = %q, err=%v", gotOriginal, err)
+	}
+	if got := s.loadFallback("new", "password"); got != "new-secret" {
+		t.Fatalf("new fallback secret = %q", got)
 	}
 }
 

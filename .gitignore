@@ -19,3 +19,7 @@ frontend/package.json.md5
 *.key
 .env
 .env.*
+.codex/
+
+# Vite build temp files
+frontend/vite.config.ts.timestamp-*.mjs

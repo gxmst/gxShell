@@ -3,6 +3,7 @@ module gxShell
 go 1.24.0
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/charmbracelet/x/xpty v0.1.3
 	github.com/getlantern/systray v1.2.2
 	github.com/pkg/sftp v1.13.10

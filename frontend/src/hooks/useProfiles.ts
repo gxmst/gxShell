@@ -38,9 +38,9 @@ export function useProfiles(notify: (text: string, tone?: "info" | "error" | "su
   }, [reload, notify]);
 
   const saveProfile = useCallback(async (profile: types.Profile) => {
-    if (profile.id) await UpdateProfile(profile);
-    else await CreateProfile(profile);
+    const saved = profile.id ? await UpdateProfile(profile) : await CreateProfile(profile);
     await reload();
+    return saved;
   }, [reload]);
 
   const deleteProfile = useCallback(async (id: string) => {
@@ -73,4 +73,3 @@ export function useProfiles(notify: (text: string, tone?: "info" | "error" | "su
     saveSettings
   };
 }
-

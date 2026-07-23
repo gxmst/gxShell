@@ -1,60 +1,111 @@
+/* Solid floating window chrome — not glass. Clear edge, opaque fill, real title bar. */
+
 .floating-card {
   position: fixed;
-  z-index: 9999;
-  border-radius: var(--radius);
+  z-index: 10050;
+  border-radius: 12px;
+  /* Hard edge: solid border + outer ring so it never blends into the terminal. */
   border: 1px solid var(--border-strong);
-  background: var(--panel);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-  animation: fc-fade-in 150ms ease;
+  outline: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  outline-offset: 0;
+  /* Fully opaque panel surface (no see-through mix). */
+  background: var(--panel-raised);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--border) 90%, transparent),
+    0 12px 40px color-mix(in srgb, var(--shadow-color) 70%, transparent),
+    0 4px 12px color-mix(in srgb, var(--shadow-color) 45%, transparent);
+  animation: fc-fade-in var(--dur-slow) var(--ease-out);
   display: flex;
   flex-direction: column;
-  max-height: calc(100vh - 40px);
+  max-height: calc(100vh - 32px);
+  max-width: calc(100vw - 24px);
+  overflow: hidden;
+  box-sizing: border-box;
+  /* Explicitly no glass blur. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 @keyframes fc-fade-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translateY(6px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* Title bar / drag strip — denser band so the window has a clear "top edge". */
 .floating-card-drag-bar {
   position: absolute;
   top: 0;
   left: 0;
-  right: 30px;
-  height: 30px;
+  right: 0;
+  height: 36px;
   cursor: grab;
-  border-radius: var(--radius) var(--radius) 0 0;
   z-index: 1;
+  border-radius: 12px 12px 0 0;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--panel-soft) 88%, var(--panel-raised)),
+    var(--panel-soft)
+  );
+  border-bottom: 1px solid var(--border-strong);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
 }
 
 .floating-card-drag-bar:active {
   cursor: grabbing;
 }
 
+/* Leave a visual grip so the header doesn't look empty. */
+.floating-card-drag-bar::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 36px;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--muted) 42%, transparent);
+  pointer-events: none;
+}
+
 .floating-card-close {
   position: absolute;
-  top: 5px;
-  right: 5px;
+  top: 6px;
+  right: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  border: 1px solid transparent;
   color: var(--muted);
-  z-index: 2;
-  transition: 120ms ease;
+  background: color-mix(in srgb, var(--panel-raised) 60%, transparent);
+  z-index: 3;
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 
 .floating-card-close:hover {
-  background: color-mix(in srgb, var(--bad) 20%, transparent);
+  background: color-mix(in srgb, var(--bad) 16%, var(--panel-raised));
+  border-color: color-mix(in srgb, var(--bad) 36%, transparent);
   color: var(--bad);
 }
 
+.floating-card-close:active {
+  transform: scale(0.94);
+}
+
 .floating-card-body {
-  padding: 12px;
-  padding-top: 32px;
+  position: relative;
+  z-index: 0;
+  padding: 14px;
+  padding-top: 44px;
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+  background: var(--panel);
 }

@@ -1,51 +1,251 @@
 .app-shell {
-  --bg: #07111d;
-  --panel: #0b1624;
-  --panel-soft: #0e1a2a;
-  --panel-raised: #111f31;
-  --terminal: #030b16;
-  --terminal-top: #06111f;
-  --border: rgba(116, 142, 174, .18);
-  --border-strong: rgba(116, 142, 174, .28);
-  --text: #d7e3f4;
-  --muted: #7f90a7;
-  --muted-2: #596b82;
-  --accent: #66c8ff;
-  --accent-soft: rgba(102, 200, 255, .11);
-  --ok: #53d18d;
-  --warn: #f4c95d;
-  --bad: #ff6b6b;
-  --radius: 11px;
+  /* Default dark — neutral slate workbench: flat surfaces that step up clearly,
+     one restrained azure accent, no neon. Tuned to read like a mature desktop
+     tool (VS Code Dark Modern / Zed / Linear) rather than an AI demo. */
+  --bg: #0e1217;
+  --panel: #151a21;
+  --panel-soft: #1a212a;
+  --panel-raised: #212a35;
+  --bg-secondary: var(--panel-soft);
+  --terminal: #0b0e13;
+  --terminal-top: #12161d;
+  --border: rgba(146, 164, 188, .14);
+  --border-strong: rgba(146, 164, 188, .26);
+  --text: #e6e9ef;
+  --muted: #9aa4b2;
+  --muted-2: #6b7480;
+  --accent: #4d90d6;
+  --accent-soft: rgba(77, 144, 214, .12);
+  --ok: #3fb984;
+  --warn: #d9a441;
+  --bad: #e5687a;
+  --error: var(--bad);
+
+  /* Radius scale — components pick a step instead of inventing values. */
+  --radius-xs: 5px;
+  --radius-sm: 7px;
+  --radius: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  /* Spacing scale (4px base). */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+
+  /* Type scale. */
+  --text-xs: 10px;
+  --text-sm: 11px;
+  --text-md: 12.5px;
+  --text-base: 13px;
+  --text-lg: 15px;
+
+  /* Layout proportions. */
+  --sidebar-width: 328px;
+  --tab-height: 34px;
+  --control-height: 28px;
+  --dur-sidebar: 320ms;
+
+  /* Motion tokens. */
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  /* Kept as an alias so existing references stay valid, but the overshoot is
+     removed — production tools don't bounce. Now a plain ease-out. */
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-fast: 100ms;
+  --dur: 150ms;
+  --dur-slow: 220ms;
+  --dur-panel: 180ms;
+
+  /* Typography. */
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "Cascadia Code", "JetBrains Mono", "Fira Code", Consolas, ui-monospace, "SF Mono", monospace;
+  --mono: var(--font-mono);
+
+  /* Elevation — single-layer, contained shadows. Mature desktop UIs cast one
+     soft shadow for depth, not a stacked halo. */
+  --shadow-color: rgba(0, 3, 8, 0.55);
+  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--shadow-color) 60%, transparent);
+  --shadow-md: 0 4px 12px color-mix(in srgb, var(--shadow-color) 55%, transparent);
+  --shadow-lg: 0 10px 30px color-mix(in srgb, var(--shadow-color) 60%, transparent);
+  /* Formerly a glow; now just a hairline border + normal elevation so raised
+     surfaces read as edges, not light sources. */
+  --shadow-glow: 0 0 0 1px var(--border-strong), var(--shadow-lg);
+
+  /* Signal / focus. The old accent "glow ring" was the biggest GPT tell —
+     every active tab, selected row, hovered button and card wore the same blue
+     halo. It's retired to `none`: each element now signals state with its own
+     real indicator (underline bar, left bar, background fill, border) instead
+     of a shared ring. Kept as aliases so the 7 call sites stay valid.
+     The keyboard focus ring (--ring) is a separate a11y affordance and stays. */
+  --glow-accent: none;
+  --glow-ok: none;
+  --ring: 0 0 0 2px color-mix(in srgb, var(--accent) 42%, transparent);
+  --ring-soft: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+
+  --accent-contrast: #041018;
+  --bg-hover: color-mix(in srgb, var(--panel-raised) 72%, transparent);
+  --surface: color-mix(in srgb, var(--panel-raised) 56%, transparent);
+  --surface-strong: color-mix(in srgb, var(--panel-raised) 82%, transparent);
+  --hairline: inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
+
+  /* Scrollbar tokens (overridden lightly by light themes). */
+  --scrollbar-size: 6px;
+  --scrollbar-thumb: color-mix(in srgb, var(--muted) 48%, transparent);
+  --scrollbar-thumb-strong: color-mix(in srgb, var(--accent) 58%, var(--muted));
+
+  /* Code + syntax. */
+  --code-bg: color-mix(in srgb, var(--terminal) 78%, black);
+  --code-fg: var(--text);
+  --code-border: var(--border);
+  --code-keyword: #7dd3fc;
+  --code-string: #86efac;
+  --code-number: #fcd34d;
+  --code-title: #fdba74;
+  --code-comment: var(--muted);
+
   height: 100vh;
   overflow: hidden;
+  /* Flat background. No accent light-bleed — a tool window is a flat surface. */
   background: var(--bg);
   color: var(--text);
+  font-family: var(--font-ui);
 }
 
+/* Deep Blue — saturated ocean cockpit: blue panels clearly step up, ice accent. */
 .app-shell[data-theme="Deep Blue"] {
-  --bg: #07162a;
-  --panel: #091a32;
-  --panel-soft: #0b213e;
-  --panel-raised: #0e294d;
-  --terminal: #06111f;
-  --terminal-top: #071426;
-  --border: rgba(117, 162, 213, .20);
-  --border-strong: rgba(117, 162, 213, .32);
-  --text: #dce9ff;
-  --muted: #8aa8ca;
-  --muted-2: #6683a6;
-  --accent: #8bd3ff;
+  --bg: #04101f;
+  --panel: #071a32;
+  --panel-soft: #0b2648;
+  --panel-raised: #123862;
+  --terminal: #020c18;
+  --terminal-top: #061528;
+  --border: rgba(100, 180, 255, .26);
+  --border-strong: rgba(100, 180, 255, .42);
+  --text: #edf5ff;
+  --muted: #8eb6de;
+  --muted-2: #5f8ab8;
+  --accent: #5cbcff;
+  --accent-soft: rgba(92, 188, 255, .16);
+  --ok: #34d399;
+  --warn: #fbbf24;
+  --bad: #fb7185;
+  --accent-contrast: #021018;
+  --scrollbar-thumb: color-mix(in srgb, var(--accent) 32%, transparent);
+  --scrollbar-thumb-strong: color-mix(in srgb, var(--accent) 70%, white 10%);
+  --code-keyword: #7dd3fc;
+  --code-string: #6ee7b7;
+  --code-number: #fcd34d;
+  --code-title: #fda4af;
 }
 
+/* Ember Terminal — phosphor green on near-black, high signal contrast. */
+.app-shell[data-theme="Ember Terminal"] {
+  --bg: #0a0b09;
+  --panel: #11140f;
+  --panel-soft: #1a1f17;
+  --panel-raised: #273022;
+  --bg-secondary: #1a1f17;
+  --terminal: #050604;
+  --terminal-top: #0e100c;
+  --border: rgba(165, 230, 95, .24);
+  --border-strong: rgba(165, 230, 95, .40);
+  --text: #f2fce6;
+  --muted: #a8c08e;
+  --muted-2: #738664;
+  --accent: #a3e635;
+  --accent-soft: rgba(163, 230, 53, .15);
+  --ok: #a3e635;
+  --warn: #facc15;
+  --bad: #fb7185;
+  --error: var(--bad);
+  --accent-contrast: #0a1204;
+  --scrollbar-thumb: color-mix(in srgb, var(--accent) 30%, transparent);
+  --scrollbar-thumb-strong: color-mix(in srgb, var(--accent) 65%, transparent);
+  --code-keyword: #bef264;
+  --code-string: #86efac;
+  --code-number: #fde047;
+  --code-title: #fdba74;
+}
+
+/* Twilight Amber — warm dusk cockpit, copper accent vs deep espresso. */
+.app-shell[data-theme="Twilight Amber"] {
+  --bg: #120d09;
+  --panel: #1a120d;
+  --panel-soft: #261a12;
+  --panel-raised: #3a281c;
+  --bg-secondary: #261a12;
+  --terminal: #0a0705;
+  --terminal-top: #16100c;
+  --border: rgba(255, 180, 110, .26);
+  --border-strong: rgba(255, 180, 110, .42);
+  --text: #fff6eb;
+  --muted: #d4b89a;
+  --muted-2: #a08468;
+  --accent: #ffb86b;
+  --accent-soft: rgba(255, 184, 107, .16);
+  --ok: #a3e635;
+  --warn: #fbbf24;
+  --bad: #fb7185;
+  --error: var(--bad);
+  --accent-contrast: #1a0e06;
+  --scrollbar-thumb: color-mix(in srgb, var(--accent) 32%, transparent);
+  --scrollbar-thumb-strong: color-mix(in srgb, var(--accent) 68%, transparent);
+  --code-keyword: #fdba74;
+  --code-string: #bef264;
+  --code-number: #fde68a;
+  --code-title: #f9a8d4;
+}
+
+/* Yuzu Study — warm cream light (already solid identity). */
+.app-shell[data-theme="Yuzu Study"] {
+  --bg: #fcf7ed;
+  --panel: #f3e8d6;
+  --panel-soft: #f0e4cf;
+  --panel-raised: #fffaf0;
+  --bg-secondary: #f3e8d6;
+  --terminal: #fffaf0;
+  --terminal-top: #f6ecda;
+  --border: rgba(169, 116, 63, .20);
+  --border-strong: rgba(169, 116, 63, .34);
+  --text: #342519;
+  --muted: #6b5640;
+  --muted-2: #93795c;
+  --accent: #a9743f;
+  --accent-soft: rgba(169, 116, 63, .12);
+  --ok: #5f8a3f;
+  --warn: #c2870c;
+  --bad: #c0492f;
+  --error: var(--bad);
+  --shadow-color: rgba(74, 52, 28, 0.28);
+  --accent-contrast: #fffaf0;
+  --scrollbar-thumb: color-mix(in srgb, var(--accent) 28%, transparent);
+  --scrollbar-thumb-strong: color-mix(in srgb, var(--accent) 55%, transparent);
+  --code-bg: #f6edda;
+  --code-border: rgba(169, 116, 63, .28);
+  --code-keyword: #9a4a1e;
+  --code-string: #4d7c1f;
+  --code-number: #9a5c00;
+  --code-title: #a03a8f;
+  --code-comment: #93795c;
+}
+
+/* Light — cool slate / blue product UI. */
 .app-shell[data-theme="Light"] {
   --bg: #e8edf4;
   --panel: #f0f3f8;
   --panel-soft: #e9eef5;
   --panel-raised: #f8fafd;
+  --bg-secondary: var(--panel-soft);
   --terminal: #f4f7fb;
   --terminal-top: #eef1f7;
-  --border: rgba(76, 94, 118, .18);
-  --border-strong: rgba(76, 94, 118, .28);
+  --border: rgba(76, 94, 118, .16);
+  --border-strong: rgba(76, 94, 118, .26);
   --text: #192038;
   --muted: #5a6b82;
   --muted-2: #7d8ea3;
@@ -54,4 +254,15 @@
   --ok: #15803d;
   --warn: #b45309;
   --bad: #dc2626;
+  --shadow-color: rgba(30, 41, 66, 0.24);
+  --accent-contrast: #ffffff;
+  --scrollbar-thumb: color-mix(in srgb, var(--muted) 36%, transparent);
+  --scrollbar-thumb-strong: color-mix(in srgb, var(--accent) 48%, transparent);
+  --code-bg: #eef2f8;
+  --code-border: rgba(76, 94, 118, .22);
+  --code-keyword: #7c3aed;
+  --code-string: #0f7d3d;
+  --code-number: #b45309;
+  --code-title: #b0378a;
+  --code-comment: #6b7a90;
 }

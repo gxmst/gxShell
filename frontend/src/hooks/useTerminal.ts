@@ -1,24 +1,46 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, type MutableRefObject } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { types } from "../../wailsjs/go/models";
 import { ResizeTerminal, WriteToTerminal, LogCommand } from "../../wailsjs/go/main/App";
 import { getTerminalTheme } from "../utils/format";
 import { highlight, type HighlightLevel } from "../utils/highlight";
+import { createLinkProvider, type TerminalLinkAppHandlers } from "../utils/terminalLinks";
 import type { SplitPane } from "../types";
+import { t } from "../i18n";
 
-const MAX_BUFFERED_CHUNKS = 100;
+const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
+// requestAnimationFrame does not fire while the window is minimized/hidden in
+// WebView2, but terminal:data keeps arriving. Once the pending rAF queue for a
+// session exceeds this size, it is flushed synchronously (xterm buffers
+// internally, which is safe while hidden) so the queue cannot grow unbounded.
+const MAX_PENDING_OUTPUT_BYTES = 256 * 1024;
+const MAX_COMMAND_BUFFER_CHARS = 8192;
 const RESIZE_SETTLE_MS = 80;
 
-export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null) {
+// The WebGL→canvas degradation toast fires from onContextLoss, which can
+// trigger repeatedly when many terminals force context recycling. Shown at
+// most once per app session.
+let webglFallbackToastShown = false;
+
+export type AppContextMenu = {
+  x: number;
+  y: number;
+  items: Array<{ label: string; action: () => void; danger?: boolean }>;
+};
+
+export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null, broadcastRef?: MutableRefObject<{ enabled: boolean; targets: string[] }>, linkHandlersRef?: MutableRefObject<TerminalLinkAppHandlers>, setContextMenu?: (menu: AppContextMenu | null) => void) {
   const terminals = useRef<Record<string, Terminal>>({});
   const fits = useRef<Record<string, FitAddon>>({});
   const searches = useRef<Record<string, SearchAddon>>({});
   const webgl = useRef<Record<string, WebglAddon>>({});
   const terminalHosts = useRef<Record<string, HTMLDivElement | null>>({});
   const bufferedOutput = useRef<Record<string, string[]>>({});
+  const bufferedOutputSizes = useRef<Record<string, number>>({});
+  const bufferedOutputDropped = useRef<Record<string, boolean>>({});
   const observers = useRef<Record<string, ResizeObserver>>({});
   const timers = useRef<Set<any>>(new Set());
   const cleanupFns = useRef<Record<string, () => void>>({});
@@ -27,9 +49,20 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const pendingFitFrames = useRef<Record<string, number>>({});
   const pendingResizeTimers = useRef<Record<string, number>>({});
   const pendingOutput = useRef<Record<string, string[]>>({});
+  const pendingOutputSizes = useRef<Record<string, number>>({});
   const pendingWriteFrames = useRef<Record<string, number>>({});
+  const pendingInput = useRef<Record<string, string[]>>({});
+  const pendingInputSizes = useRef<Record<string, number>>({});
+  const pendingInputTimers = useRef<Record<string, number>>({});
+  const lastInputErrorAt = useRef<Record<string, number>>({});
   const lastHostSize = useRef<Record<string, string>>({});
   const throughputRef = useRef<Record<string, number>>({});
+  const refitTimers = useRef<Record<string, number>>({});
+  const linkProviders = useRef<Record<string, { dispose: () => void }>>({});
+  // searchResultsRef is set by the search UI (via registerSearchResults) so it
+  // receives live match counts from SearchAddon's onDidChangeResults for the
+  // terminal being searched: (sessionId, resultIndex, resultCount).
+  const searchResultsRef = useRef<((id: string, index: number, count: number) => void) | null>(null);
 
   const addTimer = useCallback((ms: number, fn: () => void) => {
     const id = window.setTimeout(() => {
@@ -43,6 +76,45 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
 
+  const flushTerminalInput = useCallback((id: string) => {
+    window.clearTimeout(pendingInputTimers.current[id]);
+    delete pendingInputTimers.current[id];
+    const chunks = pendingInput.current[id];
+    delete pendingInput.current[id];
+    delete pendingInputSizes.current[id];
+    if (!chunks?.length) return;
+    const combined = chunks.join("");
+    // Keep each bridge message comfortably below the backend's bounded 1 MiB
+    // queue. Large pastes remain ordered while ordinary key presses collapse
+    // into one call every few milliseconds.
+    for (let offset = 0; offset < combined.length; offset += 64 * 1024) {
+      const part = combined.slice(offset, offset + 64 * 1024);
+      WriteToTerminal(id, part).catch((err) => {
+        const now = Date.now();
+        if (now - (lastInputErrorAt.current[id] || 0) > 2000) {
+          lastInputErrorAt.current[id] = now;
+          notifyRef.current(String(err), "error");
+        }
+      });
+    }
+  }, []);
+
+  const enqueueTerminalInput = useCallback((id: string, data: string) => {
+    if (!id || !data) return;
+    const queue = pendingInput.current[id] || [];
+    queue.push(data);
+    pendingInput.current[id] = queue;
+    const size = (pendingInputSizes.current[id] || 0) + data.length;
+    pendingInputSizes.current[id] = size;
+    if (size >= 8 * 1024) {
+      flushTerminalInput(id);
+      return;
+    }
+    if (!pendingInputTimers.current[id]) {
+      pendingInputTimers.current[id] = window.setTimeout(() => flushTerminalInput(id), 4);
+    }
+  }, [flushTerminalInput]);
+
   const highlightLevelRef = useRef<HighlightLevel>("off");
   {
     const raw = settings?.highlightLevel;
@@ -51,6 +123,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
 
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const settingsReady = !!settings;
 
   const applyHighlight = useCallback((sessionId: string, data: string) => {
     const level = highlightLevelRef.current;
@@ -114,7 +187,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         allowProposedApi: true,
         convertEol: true,
         cursorBlink: s.terminal.cursorBlink,
-        cursorStyle: s.terminal.cursorStyle as any,
+        cursorStyle: (s.terminal.cursorStyle || "block") as "block" | "underline" | "bar",
         fontFamily: s.terminal.fontFamily || "JetBrains Mono, Cascadia Code, Fira Code, Maple Mono, Consolas, monospace",
         fontSize: s.terminal.fontSize || 13.5,
         fontWeight: 400,
@@ -129,7 +202,39 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       const searchAddon = new SearchAddon();
       term.loadAddon(fit);
       term.loadAddon(searchAddon);
+      // Unicode 11 width tables so newer emoji and wide characters advance the
+      // cursor correctly (xterm defaults to Unicode 6 measurements). Like the
+      // fit/search addons, it is disposed by term.dispose() in disposeTerminal.
+      term.loadAddon(new Unicode11Addon());
+      term.unicode.activeVersion = "11";
+      // Report match count/position to the search bar. Fires after every
+      // findNext/findPrevious, so the bar can show "3 / 12" live. resultIndex is
+      // -1 when there is no match; the addon uses 0-based indices.
+      try {
+        searchAddon.onDidChangeResults((res) => {
+          if (searchResultsRef.current) {
+            searchResultsRef.current(activeTab, res.resultIndex, res.resultCount);
+          }
+        });
+      } catch {}
       term.open(host);
+
+      // Clickable URLs and remote file paths, detected in the xterm display
+      // layer so the SSH output stream is never rewritten. The provider reads
+      // linkHandlersRef lazily on each click, so it stays valid across renders.
+      if (linkHandlersRef?.current) {
+        const provider = createLinkProvider(
+          term,
+          {
+            openUrl: (url) => linkHandlersRef.current?.openUrl(url),
+            openPath: (path) => linkHandlersRef.current?.openPath(activeTab, path),
+          },
+          // smartHighlight gates the clickable-link feature; read live so the
+          // settings toggle applies without reopening the terminal.
+          () => settingsRef.current?.smartHighlight !== false,
+        );
+        linkProviders.current[activeTab] = term.registerLinkProvider(provider);
+      }
 
       try {
         const gl = new WebglAddon();
@@ -138,32 +243,60 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
           // to the canvas renderer, avoiding flickering / white screens.
           gl.dispose();
           delete webgl.current[activeTab];
-          notifyRef.current("WebGL context lost, using canvas renderer", "info");
+          if (!webglFallbackToastShown) {
+            webglFallbackToastShown = true;
+            notifyRef.current("WebGL context lost, using canvas renderer", "info");
+          }
         });
         term.loadAddon(gl);
         webgl.current[activeTab] = gl;
       } catch (err) {
-        notifyRef.current("WebGL unavailable, using canvas renderer", "info");
+        if (!webglFallbackToastShown) {
+          webglFallbackToastShown = true;
+          notifyRef.current("WebGL unavailable, using canvas renderer", "info");
+        }
       }
 
-      host.addEventListener("contextmenu", async (e) => {
+      // The listener lives on xterm's root element, which moves with the
+      // terminal when it is torn off/docked. Shift+right-click deliberately
+      // keeps the platform menu available for troubleshooting.
+      term.element?.addEventListener("contextmenu", (e) => {
+        if (e.shiftKey) return;
         e.preventDefault();
+        e.stopPropagation();
+        const lang = settingsRef.current?.language || "en";
         const selection = term.getSelection();
+        const items: AppContextMenu["items"] = [];
         if (selection) {
-          try {
-            await navigator.clipboard.writeText(selection);
-            notifyRef.current("Copied to clipboard", "success");
-          } catch {
-            notifyRef.current("Copy failed, use Ctrl+C instead", "error");
-          }
-          term.clearSelection();
-        } else {
-          try {
-            const text = await navigator.clipboard.readText();
-            WriteToTerminal(activeTab, text).catch(() => {});
-          } catch {
-            notifyRef.current("Paste failed, use Ctrl+V instead", "error");
-          }
+          items.push({
+            label: t(lang, "copy"),
+            action: () => {
+              navigator.clipboard.writeText(selection)
+                .then(() => notifyRef.current(t(lang, "copyToClipboard"), "success"))
+                .catch(() => notifyRef.current(t(lang, "copyFailed"), "error"));
+            },
+          });
+        }
+        items.push({
+          label: t(lang, "paste"),
+          action: () => {
+            navigator.clipboard.readText().then((text) => {
+              if (!text) return;
+              // xterm.paste honours bracketed-paste mode and routes through the
+              // same onData path, preserving broadcast and command history.
+              term.paste(text);
+            }).catch(() => notifyRef.current(t(lang, "pasteFailed"), "error"));
+          },
+        });
+        items.push({ label: t(lang, "selectAll"), action: () => term.selectAll() });
+        items.push({ label: t(lang, "clearTerminal"), action: () => { term.clear(); term.focus(); } });
+
+        if (setContextMenu) {
+          setContextMenu({ x: e.clientX, y: e.clientY, items });
+        } else if (selection) {
+          // Backward-compatible fallback while the host app is still wiring the
+          // visual menu: retain the former one-click copy behavior.
+          navigator.clipboard.writeText(selection).catch(() => undefined);
         }
       });
 
@@ -173,7 +306,16 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       searches.current[activeTab] = searchAddon;
 
       term.onData((data) => {
-        WriteToTerminal(activeTab, data).catch((err) => notifyRef.current(String(err), "error"));
+        enqueueTerminalInput(activeTab, data);
+        // Broadcast (synchronized input): when enabled, mirror the same keystrokes
+        // to every other connected SSH terminal. Only the active terminal drives
+        // the command buffer / history below.
+        const bc = broadcastRef?.current;
+        if (bc?.enabled) {
+          for (const id of bc.targets) {
+            if (id !== activeTab) enqueueTerminalInput(id, data);
+          }
+        }
         const buf = cmdBuffer.current[activeTab] || "";
         if (data === "\r") {
           if (buf.trim()) {
@@ -182,14 +324,19 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
           cmdBuffer.current[activeTab] = "";
         } else if (data === "\x7f" || data === "\b") {
           cmdBuffer.current[activeTab] = buf.slice(0, -1);
-        } else if (data.length === 1 && data.charCodeAt(0) >= 32) {
+        } else if (data.length === 1 && data.charCodeAt(0) >= 32 && buf.length < MAX_COMMAND_BUFFER_CHARS) {
           cmdBuffer.current[activeTab] = buf + data;
         }
       });
 
       const buffered = bufferedOutput.current[activeTab] || [];
+      if (bufferedOutputDropped.current[activeTab]) {
+        term.write("\r\n\x1b[33m[gxShell: earlier buffered output was truncated]\x1b[39m\r\n");
+      }
       buffered.forEach((chunk) => term.write(chunk));
       delete bufferedOutput.current[activeTab];
+      delete bufferedOutputSizes.current[activeTab];
+      delete bufferedOutputDropped.current[activeTab];
 
       fitAndResize();
     }
@@ -220,7 +367,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       delete cmdBuffer.current[activeTab];
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, activeIsTerminal]);
+  }, [activeTab, activeIsTerminal, enqueueTerminalInput, settingsReady]);
 
   useEffect(() => {
     if (!splitPane) return;
@@ -261,16 +408,6 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   }, [splitPane, activeTab]);
 
   useEffect(() => {
-    if (!settings) return;
-    Object.values(terminals.current).forEach((term) => {
-      term.options.theme = getTerminalTheme(settings);
-      term.options.fontFamily = settings.terminal.fontFamily;
-      term.options.fontSize = settings.terminal.fontSize;
-      term.options.lineHeight = settings.terminal.lineHeight;
-    });
-  }, [settings]);
-
-  useEffect(() => {
     const ids = Object.keys(terminals.current);
     if (!ids.length) return;
     const timer = window.setTimeout(() => {
@@ -296,6 +433,20 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     return () => window.clearTimeout(timer);
   }, [sidebarCollapsed]);
 
+  const flushPendingOutput = useCallback((sessionId: string) => {
+    const chunks = pendingOutput.current[sessionId];
+    delete pendingOutput.current[sessionId];
+    delete pendingOutputSizes.current[sessionId];
+    if (!chunks?.length) return;
+    // Skip highlight under high throughput (>32 KB/s) to keep rendering smooth
+    const rate = throughputRef.current[sessionId] || 0;
+    const shouldHighlight = rate < 32768;
+    const combined = chunks.join("");
+    terminals.current[sessionId]?.write(
+      shouldHighlight ? applyHighlight(sessionId, combined) : combined
+    );
+  }, [applyHighlight]);
+
   const writeOutput = useCallback((sessionId: string, data: string) => {
     const term = terminals.current[sessionId];
     if (term) {
@@ -304,48 +455,69 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       const queue = pendingOutput.current[sessionId] || [];
       queue.push(data);
       pendingOutput.current[sessionId] = queue;
+      const size = (pendingOutputSizes.current[sessionId] || 0) + data.length;
+      pendingOutputSizes.current[sessionId] = size;
+      // rAF stops firing while the window is minimized/hidden, so cap the
+      // pending queue: past the limit, cancel the frame and write through to
+      // xterm immediately (it buffers internally, safe while hidden).
+      if (size >= MAX_PENDING_OUTPUT_BYTES) {
+        const frame = pendingWriteFrames.current[sessionId];
+        if (frame) {
+          window.cancelAnimationFrame(frame);
+          delete pendingWriteFrames.current[sessionId];
+        }
+        flushPendingOutput(sessionId);
+        return;
+      }
       if (pendingWriteFrames.current[sessionId]) return;
       pendingWriteFrames.current[sessionId] = window.requestAnimationFrame(() => {
         delete pendingWriteFrames.current[sessionId];
-        const chunks = pendingOutput.current[sessionId];
-        delete pendingOutput.current[sessionId];
-        if (!chunks?.length) return;
-        // Skip highlight under high throughput (>32 KB/s) to keep rendering smooth
-        const rate = throughputRef.current[sessionId] || 0;
-        const shouldHighlight = rate < 32768;
-        const combined = chunks.join("");
-        terminals.current[sessionId]?.write(
-          shouldHighlight ? applyHighlight(sessionId, combined) : combined
-        );
+        flushPendingOutput(sessionId);
       });
     } else {
       const buffer = bufferedOutput.current[sessionId] || [];
-      if (buffer.length < MAX_BUFFERED_CHUNKS) {
-        bufferedOutput.current[sessionId] = [...buffer, data];
+      buffer.push(data);
+      let size = (bufferedOutputSizes.current[sessionId] || 0) + data.length;
+      while (size > MAX_BUFFERED_BYTES && buffer.length > 1) {
+        const removed = buffer.shift();
+        size -= removed?.length || 0;
+        bufferedOutputDropped.current[sessionId] = true;
       }
+      bufferedOutput.current[sessionId] = buffer;
+      bufferedOutputSizes.current[sessionId] = size;
     }
-  }, [applyHighlight]);
+  }, [flushPendingOutput]);
 
   const disposeTerminal = useCallback((id: string) => {
     observers.current[id]?.disconnect();
     delete observers.current[id];
     cleanupFns.current[id]?.();
     delete cleanupFns.current[id];
+    linkProviders.current[id]?.dispose();
+    delete linkProviders.current[id];
     webgl.current[id]?.dispose();
     terminals.current[id]?.dispose();
     if (pendingFitFrames.current[id]) window.cancelAnimationFrame(pendingFitFrames.current[id]);
     if (pendingWriteFrames.current[id]) window.cancelAnimationFrame(pendingWriteFrames.current[id]);
     window.clearTimeout(pendingResizeTimers.current[id]);
+    window.clearTimeout(pendingInputTimers.current[id]);
     delete webgl.current[id];
     delete terminals.current[id];
     delete fits.current[id];
     delete searches.current[id];
     delete bufferedOutput.current[id];
+    delete bufferedOutputSizes.current[id];
+    delete bufferedOutputDropped.current[id];
     delete pendingOutput.current[id];
+    delete pendingOutputSizes.current[id];
     delete pendingResizeTimers.current[id];
     delete refitTimers.current[id];
     delete pendingFitFrames.current[id];
     delete pendingWriteFrames.current[id];
+    delete pendingInput.current[id];
+    delete pendingInputSizes.current[id];
+    delete pendingInputTimers.current[id];
+    delete lastInputErrorAt.current[id];
     delete cmdBuffer.current[id];
     delete lastDimensions.current[id];
     delete lastHostSize.current[id];
@@ -358,7 +530,11 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     searches.current[id]?.findNext(query);
   }, []);
 
-  const refitTimers = useRef<Record<string, number>>({});
+  const findPrev = useCallback((id: string, query: string) => {
+    if (!id || !query) return;
+    searches.current[id]?.findPrevious(query);
+  }, []);
+
   const refitTerminal = useCallback((id: string, _depth = 0) => {
     const fit = fits.current[id];
     const term = terminals.current[id];
@@ -386,6 +562,23 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       } catch {}
     }, 80);
   }, []);
+
+  // Apply live settings changes to every open terminal. Font metrics changes
+  // (size/family/line height) invalidate the current cols/rows, so each
+  // terminal is refit and the new grid pushed to the remote PTY — otherwise
+  // vim/htop layouts stay stale until the next window resize.
+  useEffect(() => {
+    if (!settings) return;
+    const theme = getTerminalTheme(settings);
+    Object.keys(terminals.current).forEach((id) => {
+      const term = terminals.current[id];
+      term.options.theme = theme;
+      term.options.fontFamily = settings.terminal.fontFamily;
+      term.options.fontSize = settings.terminal.fontSize;
+      term.options.lineHeight = settings.terminal.lineHeight;
+      refitTerminal(id);
+    });
+  }, [settings, refitTerminal]);
 
   const reattachTerminal = useCallback((id: string, newHost: HTMLDivElement) => {
     const term = terminals.current[id];
@@ -432,6 +625,8 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     return () => {
       timers.current.forEach((id) => window.clearTimeout(id));
       timers.current.clear();
+      Object.values(pendingInputTimers.current).forEach((id) => window.clearTimeout(id));
+      pendingInputTimers.current = {};
     };
   }, []);
 
@@ -456,16 +651,24 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     }
   }, []);
 
+  // Current grid size for a terminal, read from the cached dimensions the
+  // resize logic already tracks. Feeds the status bar's cols×rows readout.
+  const getDimensions = useCallback((id: string): { cols: number; rows: number } | null => {
+    return lastDimensions.current[id] || null;
+  }, []);
+
   const stable = useMemo(() => ({
     terminalHosts,
     writeOutput,
     disposeTerminal,
     findNext,
+    findPrev,
     focusTerminal,
     refitTerminal,
     reattachTerminal,
     getTerminalLines,
-  }), [writeOutput, disposeTerminal, findNext, focusTerminal, refitTerminal, reattachTerminal, getTerminalLines]);
+    getDimensions,
+  }), [writeOutput, disposeTerminal, findNext, findPrev, focusTerminal, refitTerminal, reattachTerminal, getTerminalLines, getDimensions]);
 
   return stable;
 }

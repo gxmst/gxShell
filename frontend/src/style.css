@@ -8,9 +8,111 @@
 @import "./styles/modal.css";
 @import "./styles/toast.css";
 @import "./styles/network-card.css";
+@import "./styles/monitor-detail-card.css";
 @import "./styles/tunnel.css";
 @import "./styles/sftp-dual.css";
 @import "./styles/floating-card.css";
 @import "./styles/memory-card.css";
 @import "./styles/ai.css";
 @import "./styles/container.css";
+@import "./styles/services.css";
+@import "./styles/firewall.css";
+@import "./styles/admin.css";
+@import "./styles/settings.css";
+@import "./styles/unified.css";
+
+/* Tactile press + hover motion on shared controls. */
+.btn-primary,
+.btn-secondary,
+.btn-danger,
+.icon-btn,
+.mini-btn,
+.nav-chip,
+.nav-icon-chip,
+.tab-action,
+.group-tab,
+.subnav-chip {
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease),
+    filter var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease);
+}
+
+.btn-primary:active,
+.btn-secondary:active,
+.btn-danger:active,
+.icon-btn:active,
+.mini-btn:active,
+.nav-chip:active,
+.nav-icon-chip:active,
+.tab-action:active:not(:disabled),
+.group-tab:active,
+.subnav-chip:active {
+  /* A tiny press feedback, no exaggerated shrink. */
+  transform: scale(0.985);
+}
+
+/* Icon buttons do not lift on hover — mature tools change color/background on
+   hover, not position. Only a subtle press-in on active. */
+.icon-btn:active {
+  transform: scale(0.985);
+}
+
+/* Theme changes and primary surface swaps should feel continuous without
+   applying expensive transitions to every terminal glyph. */
+.app-shell,
+.left-rail,
+.side-content,
+.main-stage,
+.terminal-pane,
+.tabbar,
+.panel,
+.settings-card {
+  transition:
+    background-color var(--dur-slow) var(--ease),
+    border-color var(--dur-slow) var(--ease),
+    color var(--dur-slow) var(--ease),
+    box-shadow var(--dur-slow) var(--ease);
+}
+
+/* Context menu (App.tsx) — shared modern dropdown chrome. */
+.ctx-menu {
+  position: fixed;
+  z-index: 100;
+  min-width: 168px;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-md);
+  animation: dropdown-in var(--dur-fast) var(--ease-out) both;
+}
+
+.ctx-menu button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: var(--text-md);
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.ctx-menu button:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.ctx-menu button.danger {
+  color: var(--bad);
+}
+
+.ctx-menu button.danger:hover {
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+}

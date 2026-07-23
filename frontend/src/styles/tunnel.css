@@ -1,18 +1,21 @@
 .tunnel-panel {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
 }
 
 .tunnel-icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 5px;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-xs);
   color: var(--muted);
-  transition: 120ms ease;
+  transition:
+    background var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 
 .tunnel-icon-btn:hover {
@@ -20,22 +23,38 @@
   color: var(--text);
 }
 
+.tunnel-icon-btn:active {
+  transform: scale(0.94);
+}
+
 .tunnel-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 16px 0;
+  gap: 7px;
+  padding: 18px 0;
 }
 
 .tunnel-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 8px;
-  border-radius: 7px;
-  background: color-mix(in srgb, var(--panel-raised) 40%, transparent);
+  gap: 7px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-raised) 38%, transparent);
   border: 1px solid var(--border);
+  box-shadow: var(--hairline);
+  transition:
+    border-color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease),
+    box-shadow var(--dur-fast) var(--ease),
+    transform var(--dur-fast) var(--ease);
+}
+
+.tunnel-row:hover {
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border));
+  background: color-mix(in srgb, var(--panel-raised) 62%, transparent);
+  box-shadow: var(--shadow-sm);
 }
 
 .tunnel-row-inactive {
@@ -43,16 +62,17 @@
 }
 
 .tunnel-type-badge {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 5px;
-  font-size: 10px;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-xs);
   font-weight: 700;
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 16%, transparent);
   flex-shrink: 0;
 }
 
@@ -68,24 +88,32 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
 }
 
 .tunnel-add-form {
-  padding: 6px 8px;
-  border-radius: 7px;
+  padding: 8px 9px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--panel-raised) 40%, transparent);
   border: 1px solid var(--border);
+  box-shadow: var(--hairline);
+  animation: ui-enter var(--dur) var(--ease-out) both;
 }
 
 .tunnel-preset-btn {
   font-size: 9px;
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: 3px 9px;
+  border-radius: var(--radius-xs);
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
-  transition: 120ms ease;
+  border: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
+  transition:
+    background var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
 }
 
 .tunnel-preset-btn:hover {
-  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
 }

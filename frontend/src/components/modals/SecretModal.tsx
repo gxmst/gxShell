@@ -1,32 +1,44 @@
 import { useState } from "react";
+import { KeyRound } from "lucide-react";
 import type { SecretRequest } from "../../types";
-import { ModalShell, Label } from "./ModalShell";
+import { DialogHeader, ModalShell, Label } from "./ModalShell";
 import { t } from "../../i18n";
 
-export function SecretModal({ request, language, onSubmit, onClose }: { request: SecretRequest; language: string; onSubmit: (password: string, passphrase: string) => void; onClose: () => void }) {
+export function SecretModal({ request, language, onSubmit, onClose }: { request: SecretRequest; language: string; onSubmit: (password: string, passphrase: string) => Promise<void>; onClose: () => void }) {
   const [password, setPassword] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [show, setShow] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
   const isPassword = request.profile.authType === "password";
+  const submit = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      await onSubmit(password, passphrase);
+    } catch (err) {
+      setError(String(err));
+      setSubmitting(false);
+    }
+  };
   return (
-    <ModalShell onClose={onClose} compact>
-      <div className="mb-3">
-        <div className="text-sm font-semibold">{isPassword ? t(language, "enterPassword") : t(language, "enterPassphrase")}</div>
-        <div className="mt-1 truncate text-xs text-muted">{request.profile.username}@{request.profile.host}</div>
-      </div>
+    <ModalShell onClose={() => { if (!submitting) onClose(); }} compact>
+      <DialogHeader icon={<KeyRound size={15} />} title={isPassword ? t(language, "enterPassword") : t(language, "enterPassphrase")} description={`${request.profile.username}@${request.profile.host}`} />
       {isPassword ? (
-        <Label text="Password">
-          <input autoFocus className="input" type={show ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && onSubmit(password, "")} />
+        <Label text={t(language, "password")}>
+          <input autoFocus className="input" disabled={submitting} type={show ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
         </Label>
       ) : (
-        <Label text="Private key passphrase">
-          <input autoFocus className="input" type={show ? "text" : "password"} value={passphrase} onChange={(e) => setPassphrase(e.target.value)} onKeyDown={(e) => e.key === "Enter" && onSubmit("", passphrase)} />
+        <Label text={t(language, "passphrase")}>
+          <input autoFocus className="input" disabled={submitting} type={show ? "text" : "password"} value={passphrase} onChange={(e) => setPassphrase(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
         </Label>
       )}
-      <label className="check mt-3"><input type="checkbox" checked={show} onChange={(e) => setShow(e.target.checked)} /> {t(language, "showSecret")}</label>
-      <div className="mt-4 flex justify-end gap-2">
-        <button className="btn-secondary" onClick={onClose}>{t(language, "cancel")}</button>
-        <button className="btn-primary" onClick={() => onSubmit(password, passphrase)}>{t(language, "connect")}</button>
+      <label className="check mt-3"><input type="checkbox" disabled={submitting} checked={show} onChange={(e) => setShow(e.target.checked)} /> {t(language, "showSecret")}</label>
+      {error && <div className="profile-modal-error mt-2">{error}</div>}
+      <div className="dialog-footer">
+        <button className="btn-secondary" disabled={submitting} onClick={onClose}>{t(language, "cancel")}</button>
+        <button className="btn-primary" disabled={submitting} onClick={submit}>{submitting ? (language === "zh-CN" ? "连接中…" : "Connecting…") : t(language, "connect")}</button>
       </div>
     </ModalShell>
   );

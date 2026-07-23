@@ -107,13 +107,12 @@ func (a *App) ConnectWithSecrets(profileID string, password string, privateKeyPa
 	return info, nil
 }
 
-// Disconnect closes an SSH session and cleans up resources.
+// Disconnect closes an SSH or local terminal session. Cross-subsystem cleanup
+// (monitor, SFTP cache, tunnels, ping, AI tool grants, CLI session pins) is
+// deliberately NOT repeated here: it lives in the ssh.Manager onClosed
+// callback (see startup), which fires exactly once on every disconnect path —
+// including server-initiated drops that never pass through this method.
 func (a *App) Disconnect(sessionID string) error {
-	a.monitor.Stop(sessionID)
-	a.sftp.InvalidateClient(sessionID)
-	a.tunnels.StopTunnels(sessionID)
-	a.net.StopPing(sessionID)
-	a.discardAuthorizedAiToolCalls(sessionID)
 	backend, err := a.terminalBackend(sessionID)
 	if err != nil {
 		return err
@@ -123,7 +122,11 @@ func (a *App) Disconnect(sessionID string) error {
 
 // ConnectLocal establishes a local terminal session.
 func (a *App) ConnectLocal(cols int, rows int) (types.SessionInfo, error) {
-	return a.local.Connect(cols, rows)
+	settings, err := a.store.GetSettings()
+	if err != nil {
+		settings = config.DefaultSettings()
+	}
+	return a.local.ConnectWithOptions(settings.Terminal.LocalShell, settings.Terminal.LocalStartDirectory, cols, rows)
 }
 
 // Reconnect re-establishes a disconnected SSH session.

@@ -1,11 +1,101 @@
 /* ── Terminal Pane ────────────────────────────────────── */
 
 .terminal-pane {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   background: var(--terminal);
+}
+
+.terminal-state-banner {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 35%, var(--border));
+  background: color-mix(in srgb, var(--warn) 9%, var(--panel));
+  padding: 5px 10px;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.terminal-state-banner span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-state-banner button {
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+  border-radius: var(--radius-sm);
+  background: transparent;
+  padding: 3px 8px;
+  color: inherit;
+}
+
+.terminal-state-error {
+  border-bottom-color: color-mix(in srgb, var(--bad) 45%, var(--border));
+  background: color-mix(in srgb, var(--bad) 10%, var(--panel));
+}
+
+.terminal-state-error button {
+  border-color: color-mix(in srgb, var(--bad) 45%, var(--border));
+}
+
+.terminal-pane > .terminal-stage {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+/* ── Broadcast banner ─────────────────────────────────── */
+
+.broadcast-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 14px;
+  font-size: var(--text-md);
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--warn) 28%, transparent);
+  animation: ui-enter var(--dur) var(--ease-out) both;
+}
+
+.broadcast-banner-off {
+  margin-left: auto;
+  padding: 3px 11px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--text);
+  background: color-mix(in srgb, var(--warn) 22%, transparent);
+  transition: background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+.broadcast-banner-off:hover {
+  background: color-mix(in srgb, var(--warn) 34%, transparent);
+}
+
+.broadcast-banner-off:active {
+  transform: scale(0.97);
+}
+
+.tab-action.tab-action-on {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 22%, transparent);
+}
+
+.tab-dirty-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--warn);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn) 16%, transparent);
 }
 
 /* ── Tab Bar ─────────────────────────────────────────── */
@@ -14,9 +104,12 @@
   display: flex;
   min-width: 0;
   align-items: flex-end;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  background: linear-gradient(180deg, var(--terminal-top), var(--terminal));
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--terminal-top) 92%, var(--panel)),
+    var(--terminal));
   padding: 6px 8px 0;
+  gap: 2px;
 }
 
 .tabs-scroll {
@@ -25,6 +118,7 @@
   flex: 1;
   overflow-x: auto;
   scrollbar-width: none;
+  gap: 1px;
 }
 
 .tabs-scroll::-webkit-scrollbar {
@@ -34,23 +128,27 @@
 .tab {
   position: relative;
   display: flex;
-  height: 34px;
-  max-width: 200px;
+  height: var(--tab-height, 34px);
+  max-width: 210px;
   flex: 0 0 auto;
   align-items: center;
   gap: 8px;
   border: 1px solid transparent;
   border-bottom: 0;
   border-radius: 9px 9px 0 0;
-  padding: 0 10px;
+  padding: 0 11px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--text-md);
   line-height: 1;
-  transition: all 200ms var(--ease);
+  transition:
+    background var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
 }
 
 .tab:hover {
-  background: color-mix(in srgb, var(--panel-raised) 55%, transparent);
+  background: color-mix(in srgb, var(--panel-raised) 52%, transparent);
   color: var(--text);
 }
 
@@ -58,6 +156,17 @@
   border-color: var(--border);
   background: var(--terminal);
   color: var(--text);
+  box-shadow: var(--hairline);
+}
+
+.tab-automation {
+  border-color: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.tab-automation-badge {
+  height: 15px;
+  padding-inline: 4px;
+  font-size: 7.5px;
 }
 
 .tab-active::after {
@@ -68,14 +177,23 @@
   bottom: -1px;
   height: 2px;
   border-radius: 2px 2px 0 0;
-  background: color-mix(in srgb, var(--accent) 75%, transparent);
+  background: var(--accent);
 }
 
 .tab svg[data-lucide="x"] {
   opacity: 0;
   color: var(--muted);
-  transition: opacity 200ms var(--ease), color 150ms var(--ease);
+  border-radius: var(--radius-xs);
+  transition:
+    opacity var(--dur) var(--ease),
+    color var(--dur-fast) var(--ease),
+    background var(--dur-fast) var(--ease);
   flex-shrink: 0;
+}
+
+.tab:hover svg[data-lucide="x"],
+.tab-active svg[data-lucide="x"] {
+  opacity: 0.72;
 }
 
 .tab:hover svg[data-lucide="x"] {
@@ -83,7 +201,34 @@
 }
 
 .tab svg[data-lucide="x"]:hover {
-  color: var(--text);
+  color: var(--bad, #f16d6d);
+  background: color-mix(in srgb, var(--bad, #f16d6d) 16%, transparent);
+}
+
+/* ── Tab Drag Reorder ────────────────────────────────── */
+
+.tab-dragging {
+  opacity: 0.4;
+}
+
+.tab-drag-over {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.tab-drag-over::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: var(--glow-accent);
+}
+
+.tabbar[data-dragging="true"] .tab {
+  transition: none;
 }
 
 /* ── Tab Actions ─────────────────────────────────────── */
@@ -103,10 +248,14 @@
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   color: var(--muted);
   gap: 2px;
-  transition: all 200ms var(--ease);
+  transition:
+    background var(--dur) var(--ease),
+    color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease),
+    transform var(--dur-fast) var(--ease);
 }
 
 .tab-action:hover:not(:disabled) {
@@ -114,28 +263,32 @@
   background: color-mix(in srgb, var(--panel-raised) 65%, transparent);
 }
 
+.tab-action:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
 .tab-action:disabled {
   opacity: 0.3;
   pointer-events: none;
 }
 
-/* Dropdown menu */
 .tab-action-dropdown {
   position: absolute;
-  top: calc(100% + 4px);
+  top: calc(100% + 5px);
   right: 0;
-  min-width: 160px;
-  border-radius: 10px;
-  background: var(--panel-raised);
+  min-width: 168px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--panel-raised) 96%, black);
   border: 1px solid var(--border-strong);
   box-shadow: var(--shadow-lg);
   z-index: 50;
   overflow: hidden;
-  animation: dropdown-in 150ms var(--ease);
+  animation: dropdown-in var(--dur) var(--ease-out) both;
+  backdrop-filter: blur(10px);
 }
 
 @keyframes dropdown-in {
-  from { opacity: 0; transform: translateY(-4px) scale(0.97); }
+  from { opacity: 0; transform: translateY(-5px) scale(0.97); }
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
@@ -146,8 +299,8 @@
   width: 100%;
   padding: 9px 14px;
   color: var(--text);
-  font-size: 12px;
-  transition: background 150ms var(--ease);
+  font-size: var(--text-md);
+  transition: background var(--dur-fast) var(--ease);
   white-space: nowrap;
   border: none;
   background: none;
@@ -173,8 +326,6 @@
   background: var(--terminal);
 }
 
-/* ── Terminal Host ───────────────────────────────────── */
-
 .terminal-host {
   box-sizing: border-box;
   width: 100%;
@@ -189,7 +340,7 @@
 .terminal-host > div {
   width: 100%;
   height: 100%;
-  padding: 6px 8px;
+  padding: 10px 12px;
 }
 
 .terminal-hidden {
@@ -208,13 +359,14 @@
 /* ── Split Divider ───────────────────────────────────── */
 
 .split-divider {
-  background: var(--border);
+  background: color-mix(in srgb, var(--border) 85%, transparent);
   cursor: col-resize;
-  transition: background 200ms var(--ease);
+  transition: background var(--dur) var(--ease);
 }
 
-.split-divider:hover {
-  background: var(--accent);
+.split-divider:hover,
+.split-divider:active {
+  background: color-mix(in srgb, var(--accent) 60%, var(--border));
 }
 
 .split-divider-vertical {
@@ -240,17 +392,22 @@
 
 .terminal-empty-card {
   display: flex;
-  max-width: 420px;
+  max-width: 440px;
   flex-direction: column;
   align-items: center;
-  padding: 32px;
-  border-radius: 14px;
-  background: transparent;
-  border: none;
-  box-shadow: none;
+  padding: 36px 32px;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--panel-raised) 22%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  box-shadow: var(--hairline), var(--shadow-sm);
+  animation: empty-card-in var(--dur-slow) var(--ease-out);
 }
 
-/* GPU compositing hints for xterm.js */
+@keyframes empty-card-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 .xterm-viewport {
   will-change: transform;
 }
@@ -285,22 +442,24 @@
   background: var(--terminal);
   grid-column: 1 / -1;
   grid-row: 1 / -1;
+  animation: ui-enter var(--dur-panel) var(--ease-out) both;
 }
 
 .log-viewer-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 9px 14px;
   border-bottom: 1px solid var(--border);
-  background: var(--terminal-top);
+  background: linear-gradient(180deg, var(--terminal-top), var(--terminal));
 }
 
 .log-viewer-title {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--text-md);
   font-weight: 600;
   color: var(--text);
+  letter-spacing: -0.01em;
 }
 
 .log-viewer-content {
@@ -308,9 +467,9 @@
   min-height: 0;
   overflow: auto;
   margin: 0;
-  padding: 12px;
-  font-family: var(--font-mono, "JetBrains Mono", "Cascadia Code", Consolas, monospace);
-  font-size: 12px;
+  padding: 14px;
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
   line-height: 1.6;
   color: var(--text);
   white-space: pre-wrap;
@@ -324,17 +483,17 @@
   z-index: 8000;
   display: flex;
   flex-direction: column;
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border-strong);
   background: var(--terminal);
-  box-shadow: var(--shadow-lg), 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
-  animation: ft-fade-in 200ms var(--ease);
+  box-shadow: var(--shadow-glow);
+  animation: ft-fade-in var(--dur-slow) var(--ease-out);
   overflow: hidden;
 }
 
 @keyframes ft-fade-in {
-  from { opacity: 0; transform: scale(0.96); }
-  to { opacity: 1; transform: scale(1); }
+  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
 }
 
 .floating-terminal-header {
@@ -355,12 +514,13 @@
 
 .floating-terminal-title {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--text-md);
   font-weight: 600;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  letter-spacing: -0.01em;
 }
 
 .floating-terminal-body {
@@ -406,9 +566,107 @@
   border-right: 2px solid var(--muted);
   border-bottom: 2px solid var(--muted);
   opacity: 0.3;
-  transition: opacity 200ms var(--ease);
+  transition: opacity var(--dur) var(--ease), border-color var(--dur) var(--ease);
 }
 
 .floating-terminal-resize:hover::before {
-  opacity: 0.7;
+  opacity: 0.75;
+  border-color: var(--accent);
+}
+
+/* ── Terminal status bar ──────────────────────────────── */
+
+.terminal-statusbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  height: 23px;
+  padding: 0 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  background: color-mix(in srgb, var(--terminal-top) 82%, var(--panel));
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.tsb-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.tsb-target {
+  min-width: 0;
+  flex-shrink: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  color: var(--muted-2);
+}
+
+.tsb-spacer {
+  flex: 1 1 0;
+  min-width: 8px;
+}
+
+.tsb-sep {
+  width: 1px;
+  height: 11px;
+  flex-shrink: 0;
+  background: color-mix(in srgb, var(--border) 80%, transparent);
+}
+
+.tsb-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted-2);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--muted-2) 22%, transparent);
+}
+
+.terminal-statusbar[data-state="connected"] .tsb-dot {
+  background: var(--ok, #5ee0a3);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok, #5ee0a3) 24%, transparent);
+}
+
+.terminal-statusbar[data-state="connecting"] .tsb-dot {
+  background: var(--warn, #f5c451);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn, #f5c451) 24%, transparent);
+}
+
+.terminal-statusbar[data-state="error"] .tsb-dot {
+  background: var(--bad, #f16d6d);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bad, #f16d6d) 24%, transparent);
+}
+
+.tsb-state {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tsb-latency-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.tsb-latency.tsb-ok { color: var(--ok, #5ee0a3); }
+.tsb-latency.tsb-warn { color: var(--warn, #f5c451); }
+.tsb-latency.tsb-bad { color: var(--bad, #f16d6d); }
+
+.tsb-broadcast {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tsb-dims,
+.tsb-enc {
+  font-family: var(--font-mono);
 }

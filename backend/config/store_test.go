@@ -148,6 +148,78 @@ func TestSaveAndGetSettingsRoundTripCliFlag(t *testing.T) {
 	}
 }
 
+func TestMigrateCommandDefaultsDoesNotReseedExistingLibrary(t *testing.T) {
+	s := newTestStore(t)
+	commands := []types.CommandTemplate{
+		{
+			ID:          "edited-builtin",
+			Name:        "查看磁盘",
+			Command:     "df -hT",
+			Category:    "Custom",
+			Description: "user edited",
+		},
+		{
+			ID:       "custom-2",
+			Name:     "自定义巡检",
+			Command:  "echo ok",
+			Category: "Custom",
+		},
+	}
+	if err := s.SaveCommands(commands); err != nil {
+		t.Fatal(err)
+	}
+
+	s.MigrateCommandDefaults()
+	got, err := s.ListCommands()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != len(commands) {
+		t.Fatalf("startup reseeded deleted commands: got %d commands, want %d", len(got), len(commands))
+	}
+	if got[0].ID != "edited-builtin" || got[0].Command != "df -hT" || got[0].Description != "user edited" {
+		t.Fatalf("edited command was changed during startup: %#v", got[0])
+	}
+	if got[1].ID != "custom-2" || got[1].Command != "echo ok" {
+		t.Fatalf("custom command was changed during startup: %#v", got[1])
+	}
+
+	s.MigrateCommandDefaults()
+	again, err := s.ListCommands()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != len(got) {
+		t.Fatal("migration should be idempotent")
+	}
+}
+
+func TestNewStoreSeedsCommandsOnlyWhenFileIsMissing(t *testing.T) {
+	s, err := NewStoreAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	commands, err := s.ListCommands()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) == 0 {
+		t.Fatal("new stores should receive the initial built-in command library")
+	}
+
+	if err := s.SaveCommands([]types.CommandTemplate{}); err != nil {
+		t.Fatal(err)
+	}
+	s.MigrateCommandDefaults()
+	commands, err = s.ListCommands()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 0 {
+		t.Fatal("an intentionally emptied command library must stay empty")
+	}
+}
+
 func TestSaveProfilesStripsLegacyAndSecrets(t *testing.T) {
 	s := newTestStore(t)
 	profiles := []types.Profile{{
@@ -171,5 +243,26 @@ func TestSaveProfilesStripsLegacyAndSecrets(t *testing.T) {
 	}
 	if !got[0].CliEnabled || got[0].CliAlias != "prod" {
 		t.Fatalf("CLI fields not persisted: %#v", got[0])
+	}
+}
+
+func TestSaveProfilesPreservingSecretsRetainsOnlyListedProfiles(t *testing.T) {
+	s := newTestStore(t)
+	profiles := []types.Profile{
+		{ID: "keep", Password: "retry-password", PrivateKeyPassphrase: "retry-passphrase"},
+		{ID: "clear", Password: "clear-password", PrivateKeyPassphrase: "clear-passphrase"},
+	}
+	if err := s.SaveProfilesPreservingSecrets(profiles, map[string]bool{"keep": true}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ListProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Password != "retry-password" || got[0].PrivateKeyPassphrase != "retry-passphrase" {
+		t.Fatalf("preserved profile credentials were not retained: %#v", got[0])
+	}
+	if got[1].Password != "" || got[1].PrivateKeyPassphrase != "" {
+		t.Fatalf("unpreserved profile credentials were not stripped: %#v", got[1])
 	}
 }

@@ -106,7 +106,7 @@ export function NetworkPathCard({ sessionId, initialLeft, initialTop, locale, on
           </div>
           <div className="npc-stat">
             <Activity size={11} />
-            <span className="npc-stat-label">Min/Max</span>
+            <span className="npc-stat-label">{t(lang, "minMax")}</span>
             <span className="npc-stat-value">{path.pingMin > 0 ? `${path.pingMin.toFixed(1)}/${path.pingMax.toFixed(1)}ms` : "-"}</span>
           </div>
         </div>

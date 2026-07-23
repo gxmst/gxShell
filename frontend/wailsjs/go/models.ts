@@ -1,13 +1,34 @@
+export namespace sshmanager {
+
+	export class KnownHostEntry {
+	    hosts: string;
+	    keyType: string;
+	    fingerprint: string;
+
+	    static createFrom(source: any = {}) {
+	        return new KnownHostEntry(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.hosts = source["hosts"];
+	        this.keyType = source["keyType"];
+	        this.fingerprint = source["fingerprint"];
+	    }
+	}
+
+}
+
 export namespace types {
-	
+
 	export class AiFunctionCall {
 	    name: string;
 	    arguments: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AiFunctionCall(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -18,18 +39,18 @@ export namespace types {
 	    id: string;
 	    type: string;
 	    function: AiFunctionCall;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AiToolCall(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.type = source["type"];
 	        this.function = this.convertValues(source["function"], AiFunctionCall);
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -54,11 +75,11 @@ export namespace types {
 	    reasoningContent?: string;
 	    toolCalls?: AiToolCall[];
 	    toolCallId?: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AiMessage(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.role = source["role"];
@@ -67,7 +88,7 @@ export namespace types {
 	        this.toolCalls = this.convertValues(source["toolCalls"], AiToolCall);
 	        this.toolCallId = source["toolCallId"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -90,16 +111,22 @@ export namespace types {
 	    messages: AiMessage[];
 	    context: string;
 	    sessionId: string;
-	
+	    chatId: string;
+	    requestId: string;
+	    enableTools: boolean;
+
 	    static createFrom(source: any = {}) {
 	        return new AiChatRequest(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.messages = this.convertValues(source["messages"], AiMessage);
 	        this.context = source["context"];
 	        this.sessionId = source["sessionId"];
+	        this.chatId = source["chatId"];
+	        this.requestId = source["requestId"];
+	        this.enableTools = source["enableTools"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -166,6 +193,8 @@ export namespace types {
 	    themeName: string;
 	    backgroundOpacity: number;
 	    scrollbackLines: number;
+	    localShell?: string;
+	    localStartDirectory?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new TerminalSettings(source);
@@ -181,6 +210,8 @@ export namespace types {
 	        this.themeName = source["themeName"];
 	        this.backgroundOpacity = source["backgroundOpacity"];
 	        this.scrollbackLines = source["scrollbackLines"];
+	        this.localShell = source["localShell"];
+	        this.localStartDirectory = source["localStartDirectory"];
 	    }
 	}
 	export class AppSettings {
@@ -308,6 +339,86 @@ export namespace types {
 	        this.ports = source["ports"];
 	        this.created = source["created"];
 	    }
+	}
+export class CronJob {
+	    id: string;
+	    schedule: string;
+	    command: string;
+	    enabled: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new CronJob(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.schedule = source["schedule"];
+	        this.command = source["command"];
+	        this.enabled = source["enabled"];
+	    }
+	}
+export class FirewallRule {
+	    index: number;
+	    raw: string;
+	    action: string;
+	    port: string;
+	    protocol: string;
+	    source: string;
+	    v6: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new FirewallRule(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.index = source["index"];
+	        this.raw = source["raw"];
+	        this.action = source["action"];
+	        this.port = source["port"];
+	        this.protocol = source["protocol"];
+	        this.source = source["source"];
+	        this.v6 = source["v6"];
+	    }
+	}
+export class FirewallStatus {
+	    backend: string;
+	    enabled: boolean;
+	    defaultPolicy: string;
+	    sshPort: number;
+	    rules: FirewallRule[];
+
+	    static createFrom(source: any = {}) {
+	        return new FirewallStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.backend = source["backend"];
+	        this.enabled = source["enabled"];
+	        this.defaultPolicy = source["defaultPolicy"];
+	        this.sshPort = source["sshPort"];
+	        this.rules = this.convertValues(source["rules"], FirewallRule);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class LocalFile {
 	    name: string;
@@ -684,6 +795,41 @@ export namespace types {
 		    return a;
 		}
 	}
+	export class Recording {
+	    name: string;
+	    size: number;
+	    // Go type: time
+	    modTime: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new Recording(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.size = source["size"];
+	        this.modTime = this.convertValues(source["modTime"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class RemoteFile {
 	    name: string;
 	    path: string;
@@ -726,6 +872,32 @@ export namespace types {
 		    }
 		    return a;
 		}
+	}
+export class ServiceInfo {
+	    name: string;
+	    description: string;
+	    loadState: string;
+	    activeState: string;
+	    subState: string;
+	    enabled: string;
+	    cpuPercent: number;
+	    memoryBytes: number;
+
+	    static createFrom(source: any = {}) {
+	        return new ServiceInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.loadState = source["loadState"];
+	        this.activeState = source["activeState"];
+	        this.subState = source["subState"];
+	        this.enabled = source["enabled"];
+	        this.cpuPercent = source["cpuPercent"];
+	        this.memoryBytes = source["memoryBytes"];
+	    }
 	}
 	export class SessionInfo {
 	    id: string;
@@ -808,6 +980,61 @@ export namespace types {
 		    return a;
 		}
 	}
+export class WebsiteInfo {
+	    backend: string;
+	    mode: string;
+	    name: string;
+	    enabled: boolean;
+	    serverNames: string[];
+	    listen: string[];
+	    root: string;
+
+	    static createFrom(source: any = {}) {
+	        return new WebsiteInfo(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.backend = source["backend"];
+	        this.mode = source["mode"];
+	        this.name = source["name"];
+	        this.enabled = source["enabled"];
+	        this.serverNames = source["serverNames"];
+	        this.listen = source["listen"];
+	        this.root = source["root"];
+	    }
+	}
+export class WebsiteStatus {
+	    backends: string[];
+	    sites: WebsiteInfo[];
+
+	    static createFrom(source: any = {}) {
+	        return new WebsiteStatus(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.backends = source["backends"];
+	        this.sites = this.convertValues(source["sites"], WebsiteInfo);
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 
 }
-

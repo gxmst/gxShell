@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,7 +65,9 @@ func TestAIToolAuthorizationIgnoresUnknownTools(t *testing.T) {
 func TestAIToolAuthorizationExpires(t *testing.T) {
 	app := NewApp()
 	key := aiToolAuthorizationKey("sess-1", "call-1")
-	app.aiTools[key] = authorizedAIToolCall{
+	// Inject an already-expired authorization straight into the registry ledger
+	// (same package, so the unexported map is reachable) to exercise pruning.
+	app.aiTools.calls[key] = authorizedAIToolCall{
 		SessionID:  "sess-1",
 		ToolCallID: "call-1",
 		ToolName:   "read_file",
@@ -74,7 +78,7 @@ func TestAIToolAuthorizationExpires(t *testing.T) {
 	if _, err := app.claimAuthorizedAiToolCall("sess-1", "call-1"); err == nil {
 		t.Fatal("expired tool call should not be claimable")
 	}
-	if _, ok := app.aiTools[key]; ok {
+	if _, ok := app.aiTools.calls[key]; ok {
 		t.Fatal("expired tool call should be pruned")
 	}
 }
@@ -165,6 +169,106 @@ func TestListMarkdownFilesInDirRejectsNonMarkdownFile(t *testing.T) {
 	}
 }
 
+func TestListTextFilesInDirAuthorizesSupportedTextSiblings(t *testing.T) {
+	app := NewApp()
+	dir := t.TempDir()
+	readme := filepath.Join(dir, "readme.md")
+	notes := filepath.Join(dir, "notes.txt")
+	logFile := filepath.Join(dir, "service.log")
+	binary := filepath.Join(dir, "image.bin")
+	for path, content := range map[string]string{
+		readme:  "# readme",
+		notes:   "plain text",
+		logFile: "log line",
+		binary:  "binary-ish",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	app.allowFile(readme)
+	files, err := app.ListTextFilesInDir(readme)
+	if err != nil {
+		t.Fatalf("ListTextFilesInDir error: %v", err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("text files = %#v, want 3 files", files)
+	}
+	for _, path := range []string{notes, logFile} {
+		if _, err := app.ReadLocalFile(path); err != nil {
+			t.Fatalf("text sibling %s should be authorized: %v", filepath.Base(path), err)
+		}
+	}
+	if _, err := app.ReadLocalFile(binary); err == nil {
+		t.Fatal("unsupported sibling should not be authorized")
+	}
+}
+
+func TestResolveLocalMarkdownLinkAuthorizesRelativeChild(t *testing.T) {
+	app := NewApp()
+	dir := t.TempDir()
+	base := filepath.Join(dir, "readme.md")
+	childDir := filepath.Join(dir, "docs")
+	child := filepath.Join(childDir, "next.md")
+	if err := os.MkdirAll(childDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(base, []byte("[next](docs/next.md)"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(child, []byte("# next"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	app.allowFile(base)
+	got, err := app.ResolveLocalMarkdownLink(base, "docs/next.md#intro")
+	if err != nil {
+		t.Fatalf("ResolveLocalMarkdownLink error: %v", err)
+	}
+	if filepath.Clean(got) != filepath.Clean(child) {
+		t.Fatalf("resolved path = %q, want %q", got, child)
+	}
+	if _, err := app.ReadLocalFile(child); err != nil {
+		t.Fatalf("resolved markdown should be authorized: %v", err)
+	}
+}
+
+func TestReadLocalMarkdownResourceDataURLRejectsParentTraversal(t *testing.T) {
+	app := NewApp()
+	dir := t.TempDir()
+	docDir := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(docDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Join(docDir, "readme.md")
+	outside := filepath.Join(dir, "secret.png")
+	if err := os.WriteFile(base, []byte("![x](../secret.png)"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, []byte("png"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	app.allowFile(base)
+	if _, err := app.ReadLocalMarkdownResourceDataURL(base, "../secret.png"); err == nil {
+		t.Fatal("parent traversal image should be rejected")
+	}
+	if dataURL, err := app.ReadLocalMarkdownResourceDataURL(base, "readme.md"); err == nil {
+		t.Fatalf("non-image resource should be rejected, got %q", dataURL)
+	}
+}
+
+func TestResolveRemoteMarkdownLinkAllowsCurrentDirSibling(t *testing.T) {
+	got, err := resolveRemoteMarkdownRelativePath("readme.md", "other.md#intro", map[string]bool{".md": true})
+	if err != nil {
+		t.Fatalf("resolveRemoteMarkdownRelativePath error: %v", err)
+	}
+	if got != "other.md" {
+		t.Fatalf("resolved path = %q, want %q", got, "other.md")
+	}
+}
+
 func TestIsReadOnlyCommand(t *testing.T) {
 	readOnly := []string{
 		"uptime",
@@ -172,7 +276,6 @@ func TestIsReadOnlyCommand(t *testing.T) {
 		"df -h",
 		"cat /var/log/syslog",
 		"grep -r needle /etc/hosts",
-		"/usr/bin/ls", // path-qualified binary
 	}
 	for _, cmd := range readOnly {
 		if !isReadOnlyCommand(cmd) {
@@ -199,11 +302,51 @@ func TestIsReadOnlyCommand(t *testing.T) {
 		"cat /var/log/*.log",      // globbing can hide sensitive paths
 		"cat ~/.ssh/id_rsa",       // tilde expansion can hide sensitive paths
 		"cat $HOME/.ssh/id_rsa",   // variable expansion can hide sensitive paths
+		"/usr/bin/ls",             // path-qualified binaries require confirmation
+		"/tmp/ls -la",             // basename cannot make a custom binary trusted
 	}
 	for _, cmd := range notReadOnly {
 		if isReadOnlyCommand(cmd) {
 			t.Errorf("expected NOT read-only: %q", cmd)
 		}
+	}
+}
+
+func TestShutdownBeforeStartupIsSafe(t *testing.T) {
+	app := NewApp()
+	app.shutdown(context.Background())
+}
+
+func TestLimitTerminalAutomationOutput(t *testing.T) {
+	short := "hello"
+	if got, truncated := limitTerminalAutomationOutput(short); got != short || truncated {
+		t.Fatalf("short output = %q, truncated=%v", got, truncated)
+	}
+	long := strings.Repeat("x", terminalAutomationEchoLimit+20)
+	got, truncated := limitTerminalAutomationOutput(long)
+	if !truncated || !strings.Contains(got, "terminal echo truncated") {
+		t.Fatalf("long output was not marked as truncated")
+	}
+}
+
+func TestTerminalAutomationEmitsLifecycle(t *testing.T) {
+	app := NewApp()
+	events := make([]terminalAutomationEvent, 0, 2)
+	app.automationEventFn = func(event terminalAutomationEvent) {
+		events = append(events, event)
+	}
+
+	activityID := app.beginTerminalAutomation("session-1", "ai", "execute_command", "uptime")
+	app.finishTerminalAutomation("session-1", activityID, "ai", "execute_command", "ok", "", 0, 25*time.Millisecond, false)
+
+	if len(events) != 2 {
+		t.Fatalf("event count = %d, want 2", len(events))
+	}
+	if events[0].Phase != "started" || events[0].Command != "uptime" {
+		t.Fatalf("start event = %#v", events[0])
+	}
+	if events[1].Phase != "completed" || events[1].Output != "ok" || events[1].DurationMs != 25 {
+		t.Fatalf("finish event = %#v", events[1])
 	}
 }
 
@@ -242,6 +385,12 @@ func TestGuardCommand(t *testing.T) {
 	if reason, ok := guardCommand("cat /home/alice/.ssh/id_rsa.pub", true, neverConfirm); !ok || reason != "" {
 		t.Fatalf("public key read should be allowed without confirm, got ok=%v reason=%q", ok, reason)
 	}
+	if reason, ok := guardCommand("cat /etc/ssh/ssh_host_ed25519_key.pub", true, neverConfirm); !ok || reason != "" {
+		t.Fatalf("host public key read should be allowed without confirm, got ok=%v reason=%q", ok, reason)
+	}
+	if reason, ok := guardCommand("cat /etc/ssh/ssh_host_ed25519_key", true, neverConfirm); ok || reason == "" {
+		t.Fatalf("host private key read should be blocked, got ok=%v reason=%q", ok, reason)
+	}
 
 	// AI tools pass allowReadOnlyWithoutConfirm=false, so even read-only
 	// commands still require a native confirmation in that path.
@@ -265,6 +414,30 @@ func TestGuardCommand(t *testing.T) {
 	// A declined confirmation blocks the command.
 	if reason, ok := guardCommand("touch /tmp/x", true, func() bool { return false }); ok || reason != "user declined execution" {
 		t.Fatalf("declined command should be blocked, got ok=%v reason=%q", ok, reason)
+	}
+}
+
+func TestGuardCommandReportIncludesDiagnosticDetail(t *testing.T) {
+	neverConfirm := func() bool {
+		t.Helper()
+		t.Fatal("confirm must not be called")
+		return false
+	}
+
+	block, ok := guardCommandReport("dd if=/dev/zero of=/tmp/test.img bs=1M count=1", true, neverConfirm)
+	if ok {
+		t.Fatal("dd command should be blocked")
+	}
+	if block.Kind != "dangerous-command" || block.Reason != "raw disk write" || !strings.Contains(block.Detail, "dd") {
+		t.Fatalf("unexpected dangerous block detail: %#v", block)
+	}
+
+	block, ok = guardCommandReport("cat /etc/../etc/shadow", true, neverConfirm)
+	if ok {
+		t.Fatal("sensitive path should be blocked")
+	}
+	if block.Kind != "sensitive-path" || block.Reason != "password hashes" || !strings.Contains(block.Detail, "/etc/shadow") {
+		t.Fatalf("unexpected sensitive path block detail: %#v", block)
 	}
 }
 
@@ -305,6 +478,166 @@ func TestMigrateCliProfileFlagsMovesLegacyValues(t *testing.T) {
 	}
 	if p1.LegacyAIEnabled || p1.LegacyAIAlias != "" {
 		t.Fatalf("legacy fields not cleared: %#v", p1)
+	}
+}
+
+func TestMigrateCliProfileFlagsPreservesFailedSecretMigrationPlaintext(t *testing.T) {
+	app := NewApp()
+	dir := t.TempDir()
+	legacy := `[
+		{"id":"p1","aiEnabled":true,"aiAlias":"prod-web","rememberPassword":true,"password":"retry-me"},
+		{"id":"p2","aiEnabled":true,"aiAlias":"dev-box","rememberPassword":true,"password":"strip-me"}
+	]`
+	if err := os.WriteFile(filepath.Join(dir, "profiles.json"), []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := config.NewStoreAt(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.store = store
+
+	app.migrateCliProfileFlags(map[string]bool{"p1": true})
+
+	profiles, err := store.ListProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]types.Profile{}
+	for _, p := range profiles {
+		byID[p.ID] = p
+	}
+	if byID["p1"].Password != "retry-me" {
+		t.Fatalf("failed secret migration plaintext was not preserved: %#v", byID["p1"])
+	}
+	if byID["p2"].Password != "" {
+		t.Fatalf("unpreserved plaintext should be stripped: %#v", byID["p2"])
+	}
+	if !byID["p1"].CliEnabled || byID["p1"].CliAlias != "prod-web" {
+		t.Fatalf("legacy CLI flags were not migrated for preserved profile: %#v", byID["p1"])
+	}
+}
+
+func TestCheckDangerousCommandRmForce(t *testing.T) {
+	blocked := []string{
+		"rm -rf /",
+		"rm --recursive --force /",
+		"rm -rf /etc/ssh",
+		"rm -rf /etc/nginx",
+		"rm /etc/hosts",
+		"rm -r /usr/local/tool",
+		"rm -rf /var/lib/docker",
+		"rm -rf /root/work",
+		"rm -rf /home/alice/.ssh",
+		"rm -rf /home/alice",
+		"rm -rf /opt/tool",
+		"rm -rf .",
+		"rm -rf ../",
+		"rm -rf ~",
+		"rm --force $TARGET",
+		"rm -rf *",
+		"bash -lc 'rm -rf /'",
+		"sh -xc 'rm -rf /usr/bin'",
+		"env rm -rf /etc/systemd",
+		"sudo env rm -rf /boot/grub",
+	}
+	confirmOnly := []string{
+		"rm -rf node_modules",
+		"rm -rf build/*",
+		"bash -lc 'rm -rf node_modules'",
+		"bash -lc 'cd project && rm -rf build/*'",
+		"env rm -rf ./dist/assets/*",
+		"rm -fr /tmp/x",
+		"rm --force /home/alice/project",
+	}
+	for _, cmd := range confirmOnly {
+		if reason, ok := checkDangerousCommand(cmd); ok {
+			t.Errorf("expected %q to reach confirmation, blocked as %q", cmd, reason)
+		}
+	}
+	for _, cmd := range blocked {
+		if reason, ok := checkDangerousCommand(cmd); !ok || reason == "" {
+			t.Errorf("expected %q to be blocked, got ok=%v reason=%q", cmd, ok, reason)
+		}
+	}
+	// rm without force targeting a normal path is not auto-blocked (it still
+	// goes through confirmation, but the dangerous-command gate should pass).
+	for _, cmd := range []string{
+		"rm /tmp/somefile",
+		"rm -r /tmp/dir",
+	} {
+		if _, ok := checkDangerousCommand(cmd); ok {
+			t.Errorf("expected %q to NOT be blocked by dangerous-command check", cmd)
+		}
+	}
+}
+
+// The blocklist fires before the confirmation gate with no override, so a
+// false positive hard-blocks a legitimate command. These once matched because
+// the patterns were unanchored substrings (`dd\s+` inside "git add .").
+func TestCheckDangerousCommandNoFalsePositives(t *testing.T) {
+	allowed := []string{
+		"git add .",
+		"git add -A",
+		"useradd bob",
+		"ldd /bin/ls",
+		"last reboot",
+		"cat shutdown.log",
+		"grep userdel /var/log/secure",
+		"journalctl -u shutdown.target",
+		"cat /var/log/dmesg",
+		"docker rm -f \"$c\"",
+		"rm -f /tmp/file >/dev/null",
+	}
+	for _, cmd := range allowed {
+		if reason, ok := checkDangerousCommand(cmd); ok {
+			t.Errorf("expected %q to NOT be blocked, got reason=%q", cmd, reason)
+		}
+	}
+	blocked := []string{
+		"shutdown -h now",
+		"sudo shutdown -h now",
+		"ls; reboot",
+		"echo hi && reboot",
+		"sudo userdel bob",
+		"dd if=/dev/zero of=/dev/sda",
+		"/bin/dd if=/dev/zero of=/dev/sda",
+		"sudo init 0",
+		"passwd root",
+		"rm -rf /usr/bin",
+	}
+	for _, cmd := range blocked {
+		if reason, ok := checkDangerousCommand(cmd); !ok || reason == "" {
+			t.Errorf("expected %q to be blocked, got ok=%v reason=%q", cmd, ok, reason)
+		}
+	}
+}
+
+func TestWriteLocalFileDoesNotTouchFixedSidecars(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "notes.md")
+	if err := os.WriteFile(target, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	sidecars := []string{target + ".gxshell-tmp", target + ".gxshell-bak"}
+	for _, sidecar := range sidecars {
+		if err := os.WriteFile(sidecar, []byte("user-owned"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app := NewApp()
+	app.allowFile(target)
+	if err := app.WriteLocalFile(target, "new"); err != nil {
+		t.Fatalf("WriteLocalFile: %v", err)
+	}
+	for _, sidecar := range sidecars {
+		data, err := os.ReadFile(sidecar)
+		if err != nil || string(data) != "user-owned" {
+			t.Fatalf("sidecar %s changed: %q, err=%v", sidecar, data, err)
+		}
+	}
+	if data, err := os.ReadFile(target); err != nil || string(data) != "new" {
+		t.Fatalf("target content = %q, err=%v", data, err)
 	}
 }
 

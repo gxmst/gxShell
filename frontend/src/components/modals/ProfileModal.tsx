@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, MoreHorizontal, Plus, Save, Trash2, X } from "lucide-react";
+import { Copy, MoreHorizontal, Plus, Save, Server, Trash2, X } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
 import { ModalShell, Label } from "./ModalShell";
@@ -48,7 +48,7 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
   return (
     <ModalShell onClose={props.onClose}>
       <div className="profile-modal-header">
-        <h2 className="profile-modal-title">{draft.id ? t(lang, "editServer") : t(lang, "newServer")}</h2>
+        <div className="profile-modal-heading"><span className="dialog-header-icon"><Server size={16} /></span><span><h2 className="profile-modal-title">{draft.id ? t(lang, "editServer") : t(lang, "newServer")}</h2><small>{lang === "zh-CN" ? "连接、认证和自动化选项" : "Connection, authentication and automation"}</small></span></div>
         <button className="icon-btn compact-icon" onClick={props.onClose}><X size={14} /></button>
       </div>
       <div className="profile-modal-grid">
@@ -57,11 +57,13 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
         <Label text={t(lang, "host")}><input className="input compact-input" value={draft.host} onChange={(e) => update({ host: e.target.value })} placeholder="e.g. 192.168.1.1" /></Label>
         <Label text={t(lang, "port")}><input className="input compact-input" type="number" value={draft.port} onChange={(e) => { const v = Number(e.target.value); update({ port: Number.isNaN(v) ? 22 : v }); }} /></Label>
         <Label text={t(lang, "username")}><input className="input compact-input" value={draft.username} onChange={(e) => update({ username: e.target.value })} /></Label>
-        <Label text={t(lang, "auth")}><select className="input compact-input" value={draft.authType} onChange={(e) => update({ authType: e.target.value })}><option value="password">{t(lang, "password")}</option><option value="privateKey">{t(lang, "privateKey")}</option></select></Label>
-        {draft.authType === "password" ? <Label text={t(lang, "password")}><input className="input compact-input" type="password" value={draft.password || ""} onChange={(e) => update({ password: e.target.value })} /></Label> : <>
+        <Label text={t(lang, "auth")}><select className="input compact-input" value={draft.authType} onChange={(e) => update({ authType: e.target.value })}><option value="password">{t(lang, "password")}</option><option value="privateKey">{t(lang, "privateKey")}</option><option value="agent">{t(lang, "authAgent")}</option></select></Label>
+        {draft.authType === "password" && <Label text={t(lang, "password")}><input className="input compact-input" type="password" value={draft.password || ""} onChange={(e) => update({ password: e.target.value })} /></Label>}
+        {draft.authType === "privateKey" && <>
           <Label text={t(lang, "privateKey")}><div className="flex gap-1"><input className="input compact-input" value={draft.privateKeyPath || ""} onChange={(e) => update({ privateKeyPath: e.target.value })} /><button className="icon-btn compact-icon" onClick={async () => { const path = await props.onPickKey(); if (path) update({ privateKeyPath: path }); }}><MoreHorizontal size={13} /></button></div></Label>
           <Label text={t(lang, "passphrase")}><input className="input compact-input" type="password" value={draft.privateKeyPassphrase || ""} onChange={(e) => update({ privateKeyPassphrase: e.target.value })} /></Label>
         </>}
+        {draft.authType === "agent" && <div className="col-span-2 text-[10px] text-muted leading-snug">{t(lang, "authAgentHint")}</div>}
         <Label text={t(lang, "proxyJump")}><select className="input compact-input" value={draft.proxyJumpId || ""} onChange={(e) => update({ proxyJumpId: e.target.value })}><option value="">— {t(lang, "none")} —</option>{(props.profiles || []).filter((p) => p.id !== draft.id && !p.proxyJumpId).map((p) => <option key={p.id} value={p.id}>{p.name} ({p.host})</option>)}</select></Label>
         <label className="check col-span-2"><input type="checkbox" checked={draft.favorite} onChange={(e) => update({ favorite: e.target.checked })} /> {t(lang, "favorite")}</label>
         <label className="check col-span-2"><input type="checkbox" checked={draft.cliEnabled || false} onChange={(e) => update({ cliEnabled: e.target.checked })} /> {t(lang, "cliServerAccess")}</label>

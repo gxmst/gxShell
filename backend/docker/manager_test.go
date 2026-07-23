@@ -1,6 +1,9 @@
 package docker
 
-import "testing"
+import (
+	"sync/atomic"
+	"testing"
+)
 
 func TestSanitizeDockerArg(t *testing.T) {
 	tests := []struct {
@@ -53,6 +56,54 @@ func TestSanitizeTailArg(t *testing.T) {
 				t.Errorf("sanitizeTailArg(%d) error = %v, wantErr %v", tt.tail, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestSanitizeLogStreamID(t *testing.T) {
+	for _, id := range []string{"docker-123", "2da950af-f4a6-4e8d-b0f6-43cf3bd32c2b", "stream_1"} {
+		if err := sanitizeLogStreamID(id); err != nil {
+			t.Fatalf("sanitizeLogStreamID(%q): %v", id, err)
+		}
+	}
+	for _, id := range []string{"", "bad/id", "bad id", "bad;id"} {
+		if err := sanitizeLogStreamID(id); err == nil {
+			t.Fatalf("sanitizeLogStreamID(%q) unexpectedly succeeded", id)
+		}
+	}
+}
+
+func TestLogStreamReplacementAndExactStop(t *testing.T) {
+	m := NewManager(nil)
+	var firstCancelled atomic.Int32
+	var secondCancelled atomic.Int32
+	first := &logStream{id: "first", key: "session:container", cancel: func() { firstCancelled.Add(1) }}
+	second := &logStream{id: "second", key: "session:container", cancel: func() { secondCancelled.Add(1) }}
+
+	if err := m.activateLogStream(first); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.activateLogStream(second); err != nil {
+		t.Fatal(err)
+	}
+	if got := firstCancelled.Load(); got != 1 {
+		t.Fatalf("replaced stream cancel count = %d, want 1", got)
+	}
+
+	// A stale UI stop names the old stream and must not affect its successor.
+	m.StopContainerLogs("first")
+	if got := secondCancelled.Load(); got != 0 {
+		t.Fatalf("stale stop cancelled replacement %d times", got)
+	}
+	if m.logStreams["second"] != second {
+		t.Fatal("replacement stream is no longer active")
+	}
+
+	m.StopContainerLogs("second")
+	if got := secondCancelled.Load(); got != 1 {
+		t.Fatalf("exact stop cancel count = %d, want 1", got)
+	}
+	if len(m.logStreams) != 0 || len(m.logByKey) != 0 {
+		t.Fatalf("stream indexes not cleaned up: streams=%d keys=%d", len(m.logStreams), len(m.logByKey))
 	}
 }
 

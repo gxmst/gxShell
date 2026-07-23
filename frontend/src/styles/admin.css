@@ -1,0 +1,83 @@
+/* Shared surfaces for the cron and website administration drawers. */
+
+.admin-editor {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid color-mix(in srgb, var(--section-accent) 20%, var(--border));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--panel-raised) 42%, transparent);
+  box-shadow: var(--hairline);
+  animation: ui-enter var(--dur-panel) var(--ease-out) both;
+}
+
+.admin-editor-title,
+.admin-editor-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+}
+
+.admin-editor-title {
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.admin-editor-footer {
+  margin-top: 1px;
+}
+
+.admin-command-input {
+  min-height: 56px;
+  resize: vertical;
+}
+
+.admin-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.admin-item-disabled {
+  opacity: 0.66;
+}
+
+.admin-state-icon {
+  color: var(--muted);
+}
+
+.admin-state-on {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 34%, transparent);
+  background: color-mix(in srgb, var(--ok) 9%, transparent);
+}
+
+.admin-schedule {
+  color: var(--accent);
+}
+
+.site-editor-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 6px;
+}
+
+.site-editor-grid > * {
+  min-width: 0;
+}
+
+.site-config-input {
+  min-height: 190px;
+  max-height: 360px;
+  resize: vertical;
+  line-height: 1.45;
+  tab-size: 4;
+}

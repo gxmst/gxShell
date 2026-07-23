@@ -1,18 +1,20 @@
 import clsx from "clsx";
 import { MemoryStick, ArrowDownUp, Cpu } from "lucide-react";
-import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
+import { useSessionMetrics } from "../../hooks/useSessionMetrics";
 import { FloatingCard } from "../FloatingCard/FloatingCard";
 
 interface MemoryCardProps {
-  metrics?: types.Metrics;
+  sessionId?: string;
   initialLeft: number;
   initialTop: number;
   locale: string;
   onClose: () => void;
 }
 
-export function MemoryCard({ metrics, initialLeft, initialTop, locale, onClose }: MemoryCardProps) {
+export function MemoryCard({ sessionId, initialLeft, initialTop, locale, onClose }: MemoryCardProps) {
+  // Own monitor:update subscription; ticks re-render only this floating card.
+  const metrics = useSessionMetrics(sessionId);
   const lang = locale || "en";
 
   const memPct = metrics?.memoryPercent || 0;
@@ -35,7 +37,7 @@ export function MemoryCard({ metrics, initialLeft, initialTop, locale, onClose }
       <div className="memcard-section">
         <div className="memcard-section-title">
           <MemoryStick size={11} />
-          <span>RAM</span>
+          <span>{t(lang, "ram")}</span>
           <span className="memcard-pct">{memPct.toFixed(0)}%</span>
         </div>
         <div className="meter w-full"><div className={clsx("meter-fill", `meter-${tone(memPct)}`)} style={{ width: `${Math.min(100, memPct)}%` }} /></div>
@@ -46,7 +48,7 @@ export function MemoryCard({ metrics, initialLeft, initialTop, locale, onClose }
         <div className="memcard-section">
           <div className="memcard-section-title">
             <ArrowDownUp size={11} />
-            <span>Swap</span>
+            <span>{t(lang, "swap")}</span>
             <span className="memcard-pct">{swapPct.toFixed(0)}%</span>
           </div>
           <div className="meter w-full"><div className={clsx("meter-fill", `meter-${tone(swapPct)}`)} style={{ width: `${Math.min(100, swapPct)}%` }} /></div>
@@ -56,9 +58,9 @@ export function MemoryCard({ metrics, initialLeft, initialTop, locale, onClose }
         <div className="memcard-section">
           <div className="memcard-section-title">
             <ArrowDownUp size={11} />
-            <span>Swap</span>
+            <span>{t(lang, "swap")}</span>
           </div>
-          <div className="memcard-detail">N/A</div>
+          <div className="memcard-detail">{t(lang, "noData")}</div>
         </div>
       )}
 

@@ -38,7 +38,16 @@ const fullRules: HighlightRule[] = [
 
 const basicQuickCheck = /\b(error|fail|fatal|panic|warn|success|ok|done|ready|running|debug|info)\b/i;
 const fullQuickCheck = /\b(error|fail|fatal|panic|warn|success|ok|done|ready|running|debug|info|root|admin|sudo|nginx|docker|ssh|http)\b|(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/i;
-const ansiRe = /\x1b\[[0-9;]*[a-zA-Z]/g;
+// Match escape sequences that must pass through untouched. Previously this
+// only recognized CSI codes (ESC[...), so a title-setting OSC sequence
+// (ESC]0;<user>@<host>:<pwd>BEL from the RHEL default PROMPT_COMMAND) was
+// treated as plain text: "user@host" matched the user@host rule and we
+// spliced ESC[36m into the middle of the title. That injected ESC aborts the
+// terminal's OSC parser, leaking "[36m" and the title onto the prompt line.
+// The alternation now also skips OSC (ESC]...BEL/ST), two-byte title/charset
+// forms (ESCk, ESC( ...), and DCS/PM/APC strings.
+// eslint-disable-next-line no-control-regex
+const ansiRe = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[PX^_k][^\x1b]*(?:\x1b\\)?|\x1b\[[0-9;?]*[a-zA-Z]|\x1b[a-zA-Z()#][0-9;]*/g;
 
 type Segment = { text: string; isAnsi: boolean };
 

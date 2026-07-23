@@ -1,6 +1,12 @@
 package ai
 
-import "testing"
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
 
 func TestParseOpenAIModels(t *testing.T) {
 	body := `{"object":"list","data":[{"id":"gpt-4o","object":"model"},{"id":"gpt-4o-mini","object":"model"},{"id":"gpt-3.5-turbo","object":"model"}]}`
@@ -95,6 +101,46 @@ func TestResolveEndpoint(t *testing.T) {
 			got := m.resolveEndpoint(tt.cfg)
 			if !contains(got, tt.contains) {
 				t.Errorf("resolveEndpoint() = %q, want to contain %q", got, tt.contains)
+			}
+		})
+	}
+}
+
+func TestChatWithContextOnlyAdvertisesToolsWhenEnabled(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(map[bool]string{false: "disabled", true: "enabled"}[enabled], func(t *testing.T) {
+			var requestBody map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+					t.Errorf("decode request: %v", err)
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			}))
+			defer server.Close()
+
+			manager := NewManager()
+			manager.UpdateConfig(Config{Provider: ProviderCustom, Endpoint: server.URL, Model: "test-model"})
+			err := manager.Chat(ChatRequest{
+				Messages:    []Message{{Role: "user", Content: "hello"}},
+				EnableTools: enabled,
+			}, func(ChatResponse) {})
+			if err != nil {
+				t.Fatalf("Chat returned error: %v", err)
+			}
+			_, hasTools := requestBody["tools"]
+			if hasTools != enabled {
+				t.Fatalf("tools present = %v, want %v (body=%#v)", hasTools, enabled, requestBody)
+			}
+			messages, _ := requestBody["messages"].([]any)
+			if len(messages) == 0 {
+				t.Fatalf("missing system message: %#v", requestBody)
+			}
+			systemMessage, _ := messages[0].(map[string]any)
+			systemContent, _ := systemMessage["content"].(string)
+			mentionsUnavailableTarget := strings.Contains(systemContent, "No connected remote target")
+			if mentionsUnavailableTarget == enabled {
+				t.Fatalf("unexpected system tool policy for enabled=%v: %q", enabled, systemContent)
 			}
 		})
 	}

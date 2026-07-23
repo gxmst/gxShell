@@ -13,13 +13,13 @@ func (a *App) ContainerLogs(sessionID, containerID string, tail int) (string, er
 }
 
 // StreamContainerLogs streams Docker container logs in real-time.
-func (a *App) StreamContainerLogs(sessionID, containerID string, tail int) error {
-	return a.docker.StreamContainerLogs(sessionID, containerID, tail)
+func (a *App) StreamContainerLogs(sessionID, containerID, streamID string, tail int) error {
+	return a.docker.StreamContainerLogs(sessionID, containerID, streamID, tail)
 }
 
-// StopContainerLogs stops streaming logs for a container.
-func (a *App) StopContainerLogs(sessionID, containerID string) {
-	a.docker.StopContainerLogs(sessionID, containerID)
+// StopContainerLogs stops exactly one log-follow operation.
+func (a *App) StopContainerLogs(streamID string) {
+	a.docker.StopContainerLogs(streamID)
 }
 
 // RestartContainer restarts a Docker container.

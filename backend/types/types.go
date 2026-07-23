@@ -7,6 +7,10 @@ type AuthType string
 const (
 	AuthPassword   AuthType = "password"
 	AuthPrivateKey AuthType = "privateKey"
+	// AuthAgent authenticates with keys held by the running SSH agent (the
+	// Windows OpenSSH Authentication Agent service, or SSH_AUTH_SOCK
+	// elsewhere). No secret is stored or prompted for.
+	AuthAgent AuthType = "agent"
 )
 
 type Profile struct {
@@ -73,6 +77,12 @@ type TerminalSettings struct {
 	ThemeName         string  `json:"themeName"`
 	BackgroundOpacity float64 `json:"backgroundOpacity"`
 	ScrollbackLines   int     `json:"scrollbackLines"`
+	// LocalShell is an optional executable name or absolute path used for new
+	// local terminals. Empty and "auto" keep the platform default.
+	LocalShell string `json:"localShell,omitempty"`
+	// LocalStartDirectory is expanded when a local terminal is opened. Empty
+	// means the current user's home directory.
+	LocalStartDirectory string `json:"localStartDirectory,omitempty"`
 }
 
 type CommandTemplate struct {
@@ -214,6 +224,12 @@ type LogFile struct {
 	ModTime time.Time `json:"modTime"`
 }
 
+type Recording struct {
+	Name    string    `json:"name"`
+	Size    int64     `json:"size"`
+	ModTime time.Time `json:"modTime"`
+}
+
 type AiConfig struct {
 	Provider string `json:"provider"`
 	APIKey   string `json:"apiKey"`
@@ -246,15 +262,69 @@ type AiToolResult struct {
 }
 
 type AiChatRequest struct {
-	Messages  []AiMessage `json:"messages"`
-	Context   string      `json:"context"`
-	SessionID string      `json:"sessionId"`
+	Messages    []AiMessage `json:"messages"`
+	Context     string      `json:"context"`
+	SessionID   string      `json:"sessionId"`
+	ChatID      string      `json:"chatId"`
+	RequestID   string      `json:"requestId"`
+	EnableTools bool        `json:"enableTools"`
 }
 
 type AiTokenUsage struct {
 	PromptTokens     int64 `json:"promptTokens"`
 	CompletionTokens int64 `json:"completionTokens"`
 	TotalTokens      int64 `json:"totalTokens"`
+}
+
+type ServiceInfo struct {
+	Name        string  `json:"name"` // full unit name, e.g. "nginx.service"
+	Description string  `json:"description"`
+	LoadState   string  `json:"loadState"`   // loaded|not-found|masked
+	ActiveState string  `json:"activeState"` // active|inactive|failed|activating|deactivating
+	SubState    string  `json:"subState"`    // running|exited|dead|...
+	Enabled     string  `json:"enabled"`     // enabled|disabled|static|masked|"" when unknown
+	CPUPercent  float64 `json:"cpuPercent"`  // aggregate CPU percentage of processes in this unit
+	MemoryBytes int64   `json:"memoryBytes"` // aggregate resident memory of processes in this unit
+}
+
+type CronJob struct {
+	ID       string `json:"id"`
+	Schedule string `json:"schedule"`
+	Command  string `json:"command"`
+	Enabled  bool   `json:"enabled"`
+}
+
+type WebsiteInfo struct {
+	Backend     string   `json:"backend"` // nginx|apache
+	Mode        string   `json:"mode"`    // sites|confd
+	Name        string   `json:"name"`
+	Enabled     bool     `json:"enabled"`
+	ServerNames []string `json:"serverNames"`
+	Listen      []string `json:"listen"`
+	Root        string   `json:"root"`
+}
+
+type WebsiteStatus struct {
+	Backends []string      `json:"backends"`
+	Sites    []WebsiteInfo `json:"sites"`
+}
+
+type FirewallRule struct {
+	Index    int    `json:"index"`    // ufw numbered index (1-based); -1 for firewalld
+	Raw      string `json:"raw"`      // raw rule text (ufw numbered line body / firewalld port or rich-rule string)
+	Action   string `json:"action"`   // allow|deny|reject|limit
+	Port     string `json:"port"`     // "8080" or "8000:8100" (normalized with ':' for ranges); may be "" for non-port rules
+	Protocol string `json:"protocol"` // tcp|udp|""
+	Source   string `json:"source"`   // CIDR/IP or "" meaning anywhere
+	V6       bool   `json:"v6"`
+}
+
+type FirewallStatus struct {
+	Backend       string         `json:"backend"` // "ufw" | "firewalld" | "none"
+	Enabled       bool           `json:"enabled"`
+	DefaultPolicy string         `json:"defaultPolicy"` // ufw: e.g. "deny (incoming), allow (outgoing)"; firewalld: default zone name
+	SSHPort       int            `json:"sshPort"`       // the port of THIS session's SSH connection (for lockout warnings in the UI)
+	Rules         []FirewallRule `json:"rules"`
 }
 
 type ContainerInfo struct {

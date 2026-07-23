@@ -1,11 +1,16 @@
 import clsx from "clsx";
-import { memo, useCallback, useRef } from "react";
-import { Plus, TerminalSquare, X } from "lucide-react";
-import type { SplitPane, Tab } from "../../types";
+import { lazy, memo, Suspense, useCallback, useMemo, useRef } from "react";
+import { Plus, Radio, TerminalSquare, X } from "lucide-react";
+import type { AutomationIndicator, MarkdownOpenTarget, SplitPane, Tab } from "../../types";
 import { TabBar } from "../TabBar/TabBar";
+import { TerminalStatusBar } from "./TerminalStatusBar";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
-import MarkdownViewer from "../MarkdownViewer/MarkdownViewer";
+
+// Lazy-loaded: MarkdownViewer pulls in marked, DOMPurify, highlight.js and
+// mermaid, which together dominate the bundle. Splitting them out keeps them
+// off the startup path so the app only fetches them when a text file is opened.
+const MarkdownViewer = lazy(() => import("../MarkdownViewer/MarkdownViewer"));
 
 export const TerminalArea = memo(function TerminalArea(props: {
   tabs: Tab[];
@@ -20,7 +25,9 @@ export const TerminalArea = memo(function TerminalArea(props: {
   onNewConnection: () => void;
   onNewLocal?: () => void;
   onOpenMarkdown?: () => void;
+  onOpenMarkdownFile?: (target: MarkdownOpenTarget) => void;
   onTearOff?: (tab: Tab) => void;
+  onReorder?: (draggedId: string, targetId: string) => void;
   language: string;
   logViewer?: { name: string; content: string } | null;
   onCloseLogViewer?: () => void;
@@ -29,10 +36,20 @@ export const TerminalArea = memo(function TerminalArea(props: {
   onSplitChange?: (split: SplitPane | null) => void;
   refitTerminal?: (id: string) => void;
   onNotify?: (text: string, tone?: "info" | "error" | "success") => void;
+  broadcastInput?: boolean;
+  broadcastCount?: number;
+  onToggleBroadcast?: () => void;
+  activeRecording?: boolean;
+  onToggleRecording?: (id: string) => void;
+  automationActivity?: Record<string, AutomationIndicator>;
+  dirtyTabIds?: string[];
+  onMarkdownDirtyChange?: (id: string, dirty: boolean, save: () => Promise<boolean>) => void;
+  getDimensions?: (id: string) => { cols: number; rows: number } | null;
 }) {
   const lang = props.language;
-  const floatingSet = new Set(props.floatingTabIds || []);
-  const visibleTabs = props.tabs.filter((tab) => !floatingSet.has(tab.id));
+  const floatingSet = useMemo(() => new Set(props.floatingTabIds || []), [props.floatingTabIds]);
+  const visibleTabs = useMemo(() => props.tabs.filter((tab) => !floatingSet.has(tab.id)), [props.tabs, floatingSet]);
+  const active = props.tabs.find((tab) => tab.id === props.activeTab);
   const split = props.splitPane;
   const splitRef = useRef<HTMLDivElement>(null);
 
@@ -68,7 +85,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
 
   return (
     <section className="terminal-pane">
-      <TabBar tabs={visibleTabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} onTearOff={props.onTearOff} onNewConnection={props.onNewConnection} onNewLocal={props.onNewLocal} onOpenMarkdown={props.onOpenMarkdown} language={lang} onSplitToggle={(tabId, direction) => {
+      <TabBar tabs={visibleTabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} onTearOff={props.onTearOff} onReorder={props.onReorder} onNewConnection={props.onNewConnection} onNewLocal={props.onNewLocal} onOpenMarkdown={props.onOpenMarkdown} language={lang} broadcastInput={props.broadcastInput} broadcastAvailable={(props.broadcastCount || 0) > 1} onToggleBroadcast={props.onToggleBroadcast} recording={props.activeRecording} onToggleRecording={props.onToggleRecording} automationActivity={props.automationActivity} dirtyTabIds={props.dirtyTabIds} onSplitToggle={(tabId, direction) => {
         if (!props.onSplitChange) return;
         if (isSplitVisible) {
           const leftId = split!.left;
@@ -90,6 +107,25 @@ export const TerminalArea = memo(function TerminalArea(props: {
           }
         }
       }} />
+      {active && active.type !== "markdown" && active.state === "connecting" && (
+        <div className="terminal-state-banner terminal-state-connecting">
+          <span>{lang === "zh-CN" ? `正在连接 ${active.title}…` : `Connecting to ${active.title}…`}</span>
+          <button onClick={() => props.onClose(active.id)}>{lang === "zh-CN" ? "取消" : "Cancel"}</button>
+        </div>
+      )}
+      {active && active.type !== "markdown" && (active.state === "error" || active.state === "disconnected") && (
+        <div className={clsx("terminal-state-banner", active.state === "error" && "terminal-state-error")}>
+          <span title={active.error}>{active.error || (lang === "zh-CN" ? "连接已断开" : "Connection closed")}</span>
+          {!active.local && <button onClick={() => props.onReconnect(active)}>{lang === "zh-CN" ? "重新连接" : "Reconnect"}</button>}
+        </div>
+      )}
+      {props.broadcastInput && (props.broadcastCount || 0) > 1 && (
+        <div className="broadcast-banner">
+          <Radio size={13} className="shrink-0" />
+          <span>{t(lang, "broadcastActive").replace("{n}", String(props.broadcastCount || 0))}</span>
+          <button className="broadcast-banner-off" onClick={() => props.onToggleBroadcast?.()}>{t(lang, "broadcastStop")}</button>
+        </div>
+      )}
       <div className="terminal-stage" style={stageStyle}>
         {props.tabs.map((tab) => {
           const isFloating = floatingSet.has(tab.id);
@@ -129,13 +165,21 @@ export const TerminalArea = memo(function TerminalArea(props: {
               ref={(el) => { props.terminalHosts.current[tab.id] = el; }}
               onClick={isSplitTab ? () => props.onActive(tab.id) : undefined}
             >
-              {tab.type === 'markdown' && tab.filePath && (
-                <MarkdownViewer
-                  filePath={tab.filePath}
-                  active={isActive && !isFloating}
-                  onClose={() => props.onClose(tab.id)}
-                  onNotify={props.onNotify}
-                />
+              {tab.type === 'markdown' && (tab.filePath || tab.remotePath) && (
+                <Suspense fallback={<div className="empty compact">{t(lang, "loading")}</div>}>
+                  <MarkdownViewer
+                    source={tab.markdownSource || (tab.remotePath ? 'remote' : 'local')}
+                    filePath={tab.filePath}
+                    remotePath={tab.remotePath}
+                    sessionId={tab.remoteSessionId}
+                    active={isActive && !isFloating}
+                    locale={lang}
+                    onClose={() => props.onClose(tab.id)}
+                    onNotify={props.onNotify}
+                    onOpenMarkdownFile={props.onOpenMarkdownFile}
+                    onDirtyChange={(dirty, save) => props.onMarkdownDirtyChange?.(tab.id, dirty, save)}
+                  />
+                </Suspense>
               )}
             </div>
           );
@@ -168,6 +212,18 @@ export const TerminalArea = memo(function TerminalArea(props: {
           </div>
         )}
       </div>
+      {active && active.type !== "markdown" && (
+        <TerminalStatusBar
+          tabId={active.id}
+          tab={active}
+          profile={props.profiles.find((p) => p.id === active.profileId)}
+          broadcastInput={props.broadcastInput}
+          broadcastCount={props.broadcastCount}
+          sessionCount={visibleTabs.filter((tab) => tab.type !== "markdown" && (tab.state === "connected" || tab.state === "connecting")).length}
+          getDimensions={props.getDimensions}
+          language={lang}
+        />
+      )}
     </section>
   );
 });

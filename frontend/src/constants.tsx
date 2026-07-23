@@ -1,8 +1,8 @@
-import { Activity, ArrowRightLeft, Bot, Box, Command, FileText, Folder, Settings } from "lucide-react";
+import { Activity, ArrowRightLeft, Bot, Box, CalendarClock, Cog, Command, FileText, Folder, Globe2, Settings, Shield, Video } from "lucide-react";
 import { types } from "../wailsjs/go/models";
 import type { Drawer } from "./types";
 
-export const appThemes = ["Light", "Dark", "Deep Blue"];
+export const appThemes = ["Light", "Dark", "Deep Blue", "Yuzu Study", "Ember Terminal", "Twilight Amber"];
 
 export const fontPresets = [
   "JetBrains Mono, Cascadia Code, Consolas, monospace",
@@ -93,6 +93,48 @@ export const terminalThemes: Record<string, any> = {
     magenta: "#7c3aed",
     cyan: "#0891b2"
   },
+  "Yuzu Study": {
+    background: "#fffaf0",
+    foreground: "#342519",
+    cursor: "#a9743f",
+    selectionBackground: "#ddcaa8",
+    black: "#4a3826",
+    red: "#c0492f",
+    green: "#5f8a3f",
+    yellow: "#c2870c",
+    blue: "#7b5f3f",
+    magenta: "#8c5d30",
+    cyan: "#6b7f56",
+    white: "#342519"
+  },
+  "Ember Terminal": {
+    background: "#111210",
+    foreground: "#ecf6df",
+    cursor: "#9bcf5f",
+    selectionBackground: "#3a3f33",
+    black: "#0c0d0b",
+    red: "#e57158",
+    green: "#9bcf5f",
+    yellow: "#e0b341",
+    blue: "#8fbf7a",
+    magenta: "#c6a0d9",
+    cyan: "#90d4b0",
+    white: "#ecf6df"
+  },
+  "Twilight Amber": {
+    background: "#18120e",
+    foreground: "#fff4e6",
+    cursor: "#f0a868",
+    selectionBackground: "#46352b",
+    black: "#120d09",
+    red: "#e8745a",
+    green: "#9ec96b",
+    yellow: "#e6b455",
+    blue: "#d19a66",
+    magenta: "#d7a6c7",
+    cyan: "#c9b36b",
+    white: "#fff4e6"
+  },
   Nord: { background: "#2e3440", foreground: "#d8dee9", cursor: "#88c0d0" },
   Dracula: { background: "#282a36", foreground: "#f8f8f2", cursor: "#bd93f9" },
   "Tokyo Night": { background: "#1a1b26", foreground: "#c0caf5", cursor: "#7aa2f7" },
@@ -107,7 +149,12 @@ export function drawerIcon(item: Drawer, size = 15) {
   if (item === "tunnels") return <ArrowRightLeft size={size} />;
   if (item === "logs") return <FileText size={size} />;
   if (item === "containers") return <Box size={size} />;
+  if (item === "services") return <Cog size={size} />;
+  if (item === "firewall") return <Shield size={size} />;
+  if (item === "cron") return <CalendarClock size={size} />;
+  if (item === "websites") return <Globe2 size={size} />;
   if (item === "ai") return <Bot size={size} />;
+  if (item === "recordings") return <Video size={size} />;
   return <Settings size={size} />;
 }
 
@@ -120,4 +167,3 @@ export function AppIcon() {
     />
   );
 }
-

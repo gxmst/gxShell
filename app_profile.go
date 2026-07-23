@@ -34,6 +34,8 @@ func (a *App) GetProfile(id string) (types.Profile, error) {
 
 // CreateProfile creates a new server profile.
 func (a *App) CreateProfile(profile types.Profile) (types.Profile, error) {
+	a.profilesMu.Lock()
+	defer a.profilesMu.Unlock()
 	profiles, err := a.store.ListProfiles()
 	if err != nil {
 		return types.Profile{}, err
@@ -58,6 +60,14 @@ func (a *App) CreateProfile(profile types.Profile) (types.Profile, error) {
 
 // UpdateProfile updates an existing server profile.
 func (a *App) UpdateProfile(profile types.Profile) (types.Profile, error) {
+	a.profilesMu.Lock()
+	defer a.profilesMu.Unlock()
+	return a.updateProfileLocked(profile)
+}
+
+// updateProfileLocked is UpdateProfile's body for callers that already hold
+// profilesMu around a larger read-modify-write cycle (tunnel rule persistence).
+func (a *App) updateProfileLocked(profile types.Profile) (types.Profile, error) {
 	profiles, err := a.store.ListProfiles()
 	if err != nil {
 		return types.Profile{}, err
@@ -91,6 +101,8 @@ func (a *App) UpdateProfile(profile types.Profile) (types.Profile, error) {
 
 // DeleteProfile deletes a server profile and clears references.
 func (a *App) DeleteProfile(id string) error {
+	a.profilesMu.Lock()
+	defer a.profilesMu.Unlock()
 	profiles, err := a.store.ListProfiles()
 	if err != nil {
 		return err
@@ -121,12 +133,17 @@ func (a *App) DuplicateProfile(id string) (types.Profile, error) {
 	}
 	profile.ID = ""
 	profile.Name = profile.Name + " Copy"
+	// GetProfile never exposes credentials. Keeping RememberPassword=true on a
+	// copy would therefore create a misleading profile that claims to have a
+	// saved secret but cannot connect without prompting. Copies deliberately
+	// start with credential saving disabled and can be opted in after re-entry.
+	profile.RememberPassword = false
 	return a.CreateProfile(profile)
 }
 
 // SelectPrivateKey opens a file dialog to select an SSH private key.
 func (a *App) SelectPrivateKey() (string, error) {
-	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{
+	return runtime.OpenFileDialog(a.ctx.Get(), runtime.OpenDialogOptions{
 		Title: "Select private key",
 	})
 }

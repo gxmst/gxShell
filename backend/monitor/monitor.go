@@ -18,10 +18,18 @@ type Manager struct {
 	exec    Executor
 	emit    func(event string, data any)
 	mu      sync.RWMutex
-	running map[string]chan struct{}
+	running map[string]*poller
 	latest  map[string]types.Metrics
 	lastCPU map[string]cpuSample
 	lastNet map[string]netSample
+}
+
+// poller identifies one concrete monitoring loop. Keeping the interval and a
+// stable identity together lets Start/RestartAll replace a running loop
+// without allowing a slow result from the old loop to overwrite fresh data.
+type poller struct {
+	stop        chan struct{}
+	intervalSec int
 }
 
 type cpuSample struct {
@@ -39,7 +47,7 @@ func NewManager(exec Executor, emit func(event string, data any)) *Manager {
 	return &Manager{
 		exec:    exec,
 		emit:    emit,
-		running: map[string]chan struct{}{},
+		running: map[string]*poller{},
 		latest:  map[string]types.Metrics{},
 		lastCPU: map[string]cpuSample{},
 		lastNet: map[string]netSample{},
@@ -47,27 +55,36 @@ func NewManager(exec Executor, emit func(event string, data any)) *Manager {
 }
 
 func (m *Manager) Start(sessionID string, intervalSec int) {
+	if sessionID == "" {
+		return
+	}
 	if intervalSec <= 0 {
 		intervalSec = 5
 	}
 	m.mu.Lock()
-	if _, ok := m.running[sessionID]; ok {
+	if current := m.running[sessionID]; current != nil && current.intervalSec == intervalSec {
 		m.mu.Unlock()
 		return
 	}
-	stop := make(chan struct{})
-	m.running[sessionID] = stop
+	if current := m.running[sessionID]; current != nil {
+		close(current.stop)
+	}
+	run := &poller{stop: make(chan struct{}), intervalSec: intervalSec}
+	m.running[sessionID] = run
 	m.mu.Unlock()
+	m.startPoller(sessionID, run)
+}
 
+func (m *Manager) startPoller(sessionID string, run *poller) {
 	go func() {
-		ticker := time.NewTicker(time.Duration(intervalSec) * time.Second)
+		ticker := time.NewTicker(time.Duration(run.intervalSec) * time.Second)
 		defer ticker.Stop()
-		m.collectAndEmit(sessionID)
+		m.collectAndEmit(sessionID, run)
 		for {
 			select {
 			case <-ticker.C:
-				m.collectAndEmit(sessionID)
-			case <-stop:
+				m.collectAndEmit(sessionID, run)
+			case <-run.stop:
 				return
 			}
 		}
@@ -77,9 +94,57 @@ func (m *Manager) Start(sessionID string, intervalSec int) {
 func (m *Manager) Stop(sessionID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if stop := m.running[sessionID]; stop != nil {
-		close(stop)
+	if run := m.running[sessionID]; run != nil {
+		close(run.stop)
 		delete(m.running, sessionID)
+	}
+	// Session IDs are unique per connection, so per-session samples are dead
+	// weight once the poller stops; without this the maps grow forever.
+	delete(m.latest, sessionID)
+	delete(m.lastCPU, sessionID)
+	delete(m.lastNet, sessionID)
+}
+
+// StopAll stops every active poller. It is used when monitoring is disabled in
+// settings, so a renderer reconnect event cannot leave background collectors
+// running against the user's explicit preference.
+func (m *Manager) StopAll() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for sessionID, run := range m.running {
+		close(run.stop)
+		delete(m.running, sessionID)
+	}
+	clear(m.latest)
+	clear(m.lastCPU)
+	clear(m.lastNet)
+}
+
+// RestartAll applies a new interval to active sessions. Sessions already using
+// the requested interval are left alone; replaced pollers collect immediately
+// at the new cadence.
+func (m *Manager) RestartAll(intervalSec int) {
+	if intervalSec <= 0 {
+		intervalSec = 5
+	}
+	type restart struct {
+		sessionID string
+		run       *poller
+	}
+	restarts := make([]restart, 0)
+	m.mu.Lock()
+	for sessionID, current := range m.running {
+		if current.intervalSec == intervalSec {
+			continue
+		}
+		close(current.stop)
+		run := &poller{stop: make(chan struct{}), intervalSec: intervalSec}
+		m.running[sessionID] = run
+		restarts = append(restarts, restart{sessionID: sessionID, run: run})
+	}
+	m.mu.Unlock()
+	for _, item := range restarts {
+		m.startPoller(item.sessionID, item.run)
 	}
 }
 
@@ -89,7 +154,13 @@ func (m *Manager) Latest(sessionID string) types.Metrics {
 	return m.latest[sessionID]
 }
 
-func (m *Manager) collectAndEmit(sessionID string) {
+func (m *Manager) collectAndEmit(sessionID string, run *poller) {
+	m.mu.RLock()
+	current := m.running[sessionID]
+	m.mu.RUnlock()
+	if current != run {
+		return
+	}
 	start := time.Now()
 	script := `gx_section() { printf 'GX_BEGIN_%s_9b7c2d\n' "$1"; sh -c "$2"; printf 'GX_END_%s_9b7c2d\n' "$1"; }
 	gx_section UPTIME 'LC_ALL=C uptime -p 2>/dev/null || LC_ALL=C uptime 2>/dev/null'
@@ -110,8 +181,16 @@ func (m *Manager) collectAndEmit(sessionID string) {
 	}
 
 	m.mu.Lock()
+	// A settings update may have replaced this poller while Exec was in flight.
+	// Discard that stale sample rather than publishing it under the new cadence.
+	if m.running[sessionID] != run {
+		m.mu.Unlock()
+		return
+	}
 	if cpu, ok := parseCPU(section(out, "CPU")); ok {
-		if prev, exists := m.lastCPU[sessionID]; exists {
+		// Skip the delta when counters went backwards (remote reboot resets
+		// /proc/stat); a uint64 underflow would produce one frame of garbage.
+		if prev, exists := m.lastCPU[sessionID]; exists && cpu.total >= prev.total && cpu.idle >= prev.idle {
 			totalDelta := cpu.total - prev.total
 			idleDelta := cpu.idle - prev.idle
 			if totalDelta > 0 {
@@ -121,7 +200,7 @@ func (m *Manager) collectAndEmit(sessionID string) {
 		m.lastCPU[sessionID] = cpu
 	}
 	if netNow, ok := parseNet(section(out, "NET"), strings.TrimSpace(section(out, "DEFAULT_IFACE"))); ok {
-		if prev, exists := m.lastNet[sessionID]; exists {
+		if prev, exists := m.lastNet[sessionID]; exists && netNow.rx >= prev.rx && netNow.tx >= prev.tx {
 			seconds := netNow.at.Sub(prev.at).Seconds()
 			if seconds > 0 {
 				metrics.NetworkRxPerSec = int64(float64(netNow.rx-prev.rx) / seconds)
@@ -132,7 +211,9 @@ func (m *Manager) collectAndEmit(sessionID string) {
 	}
 	m.latest[sessionID] = metrics
 	m.mu.Unlock()
-	m.emit("monitor:update", metrics)
+	if m.emit != nil {
+		m.emit("monitor:update", metrics)
+	}
 }
 
 func parseMetrics(sessionID, out string) types.Metrics {

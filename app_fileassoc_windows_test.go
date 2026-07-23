@@ -9,7 +9,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-// TestMarkdownContextMenuRoundTrip registers the right-click entry, verifies it
+// TestMarkdownContextMenuRoundTrip registers the right-click entries, verifies they
 // is detected, then removes it and verifies it is gone. It writes only to the
 // app's own per-user key and always cleans up, so it is safe to run on a dev
 // machine.
@@ -31,7 +31,7 @@ func TestMarkdownContextMenuRoundTrip(t *testing.T) {
 	}
 
 	// The command value must quote the executable and pass the selected file.
-	key, err := registry.OpenKey(registry.CURRENT_USER, mdContextMenuKey+`\command`, registry.QUERY_VALUE)
+	key, err := registry.OpenKey(registry.CURRENT_USER, textContextMenuKey(".md")+`\command`, registry.QUERY_VALUE)
 	if err != nil {
 		t.Fatalf("open command key: %v", err)
 	}
@@ -42,6 +42,9 @@ func TestMarkdownContextMenuRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(command, `"%1"`) {
 		t.Fatalf("command missing file placeholder: %q", command)
+	}
+	if !registryCommandMatches(textContextMenuKey(".log")+`\command`, command) {
+		t.Fatal("expected .log context menu command to be registered")
 	}
 
 	if err := app.UnregisterMarkdownContextMenu(); err != nil {
