@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { CancelTransfer } from "../../wailsjs/go/main/App";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 
-export type TransferStatus = "started" | "progress" | "succeeded" | "failed" | "cancelled";
+export type TransferStatus = "started" | "progress" | "resumed" | "succeeded" | "failed" | "cancelled";
 
 export type Transfer = {
   jobId: string;
@@ -13,6 +13,12 @@ export type Transfer = {
   direction: "upload" | "download";
   status: TransferStatus;
   error?: string;
+  /**
+   * Byte offset a resumed transfer continued from. Present only on the one
+   * "resumed" event, so the UI can distinguish "continuing an earlier partial"
+   * from a transfer that genuinely started this far along.
+   */
+  resumedAt?: number;
   /** Compatibility with events emitted by gxShell <= 1.3.0. */
   finished?: boolean;
 };
@@ -67,6 +73,7 @@ function normalizeEvent(data: Partial<Transfer>): Transfer | null {
     direction: data.direction,
     status,
     error: data.error,
+    resumedAt: data.resumedAt == null ? undefined : Number(data.resumedAt),
     finished: data.finished,
   };
 }
@@ -81,7 +88,14 @@ export function TransfersProvider({ children }: { children: ReactNode }) {
       if (!data) return;
       const terminal = data.status === "succeeded" || data.status === "failed" || data.status === "cancelled";
       if (!terminal) {
-        setTransfers((prev) => ({ ...prev, [data.jobId]: data }));
+        setTransfers((prev) => {
+          // resumedAt arrives once, on the single "resumed" event, while progress
+          // ticks keep coming. Carrying it forward keeps the badge visible for the
+          // whole transfer instead of for one frame.
+          const previous = prev[data.jobId];
+          const resumedAt = data.resumedAt ?? previous?.resumedAt;
+          return { ...prev, [data.jobId]: resumedAt == null ? data : { ...data, resumedAt } };
+        });
         return;
       }
 

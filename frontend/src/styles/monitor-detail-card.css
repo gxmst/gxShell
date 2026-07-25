@@ -81,6 +81,28 @@
   letter-spacing: 0.02em;
 }
 
+/* The peak sits at the right end of the section title, opposite the label. */
+.detail-chart-peak {
+  margin-left: auto;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.detail-chart {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--muted-2) 12%, transparent);
+  padding: 3px 0;
+}
+
+/* Sparkline strokes with currentColor, so tone is set here rather than passed
+   as a fill prop. */
+.detail-chart-ok { color: var(--ok); }
+.detail-chart-warn { color: var(--warn); }
+.detail-chart-bad { color: var(--bad); }
+
 .detail-process-list {
   display: flex;
   max-height: 180px;
@@ -165,4 +187,26 @@
   color: var(--muted);
   font-size: var(--text-xs);
   padding: 8px 0;
+}
+
+/* History curves. The stroke is currentColor in the SVG, so tone is set here
+   and the chart inherits it; a faint fill under the line reads as area without
+   needing a second path. */
+.detail-chart {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--muted-2) 10%, transparent);
+}
+
+.detail-chart-ok { color: var(--ok); }
+.detail-chart-warn { color: var(--warn); }
+.detail-chart-bad { color: var(--bad); }
+
+/* Pushed to the right of the section title, where it reads as an annotation on
+   the curve rather than another stat. */
+.detail-chart-peak {
+  margin-left: auto;
+  color: var(--muted-2);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
 }

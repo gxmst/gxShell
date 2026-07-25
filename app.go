@@ -293,6 +293,10 @@ func (a *App) startup(ctx context.Context) {
 	} else {
 		a.log.Info("CLI server disabled by settings")
 	}
+
+	// The update check is the app's only unprompted outbound request. It reads
+	// its own setting and returns immediately when disabled.
+	a.startUpdateCheck()
 }
 
 // domReady is called when the frontend is ready.

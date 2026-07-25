@@ -43,7 +43,7 @@ export type Tab = {
 };
 
 export type Toast = {
-  id: number;
+  id: string;
   tone: "info" | "error" | "success";
   text: string;
 };

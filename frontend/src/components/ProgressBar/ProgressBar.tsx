@@ -1,4 +1,4 @@
-import { Download, Upload, X } from "lucide-react";
+import { Download, RotateCcw, Upload, X } from "lucide-react";
 import { useTransfers } from "../../hooks/useTransfers";
 
 /** Compact bottom chips for in-flight SFTP jobs. Full history lives in Transfer manager. */
@@ -29,6 +29,9 @@ export function ProgressBar() {
                   style={{ width: `${pct}%` }}
                 />
               </div>
+              {/* A resumed transfer starts its bar part-filled; without a marker
+                  that reads as a stalled transfer rather than a continued one. */}
+              {tr.resumedAt ? <RotateCcw size={9} className="text-ok shrink-0" /> : null}
               <span className="transfer-progress-chip-pct">{pct}%</span>
               <button className="transfer-progress-chip-close" onClick={() => void cancelTransfer(tr.jobId)} title="Cancel">
                 <X size={10} />

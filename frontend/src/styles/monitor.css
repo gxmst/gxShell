@@ -74,6 +74,19 @@
   box-shadow: 0 0 7px color-mix(in srgb, var(--bad) 48%, transparent);
 }
 
+/* The sparkline replaces the meter in a row once history exists, so it sits in
+   the same slot and takes the same tone colours. The Sparkline component strokes
+   with currentColor, which is what these rules set. */
+.metric-spark {
+  display: block;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--muted-2) 12%, transparent);
+}
+
+.metric-spark-ok { color: var(--ok); }
+.metric-spark-warn { color: var(--warn); }
+.metric-spark-bad { color: var(--bad); }
+
 .chip-grid,
 .compact-chip-grid {
   display: grid;

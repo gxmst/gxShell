@@ -2,7 +2,13 @@
 
 ## 项目概述
 
-gxShell 是一款跨平台终端/SSH 客户端，集成了系统监控、文件管理、AI 辅助、Docker 管理、SSH 隧道等功能。采用 Go + React 架构，通过 Wails v2 框架将后端能力与前端界面桥接，打包为原生桌面应用。
+gxShell 是一款 Windows 桌面终端/SSH 客户端，集成了系统监控、文件管理、AI 辅助、Docker 管理、SSH 隧道等功能。采用 Go + React 架构，通过 Wails v2 框架将后端能力与前端界面桥接，打包为原生桌面应用。
+
+### 平台支持
+
+正式发布目标目前只有 Windows。CI 另外在原生 Ubuntu 和 macOS runner 上执行实验性桌面编译，以尽早发现平台分支和原生依赖的编译退化；这些未签名产物不发布，也不代表非 Windows 平台已经得到运行支持。
+
+`backend/` 和 `cmd/` 下的包保持平台无关，平台相关实现拆成 `*_windows.go` / `*_other.go` 两份；CI 的 `verify-linux` job 单独编译这些目录，两个实验性 desktop job 则分别完整编译 Linux 和 macOS Wails 应用。部分 `_other.go` 仍是占位实现（例如文件关联返回不支持）；托盘、系统密钥环、本地 PTY、对话框和单实例行为仍需真机验证。
 
 ---
 
@@ -27,7 +33,9 @@ gxShell 是一款跨平台终端/SSH 客户端，集成了系统监控、文件�
 | 模块 | 技术 | 说明 |
 |------|------|------|
 | 框架 | React 18 | 函数式组件 + Hooks |
-| 构建 | Vite 3 | 快速构建 + HMR |
+| 构建 | Vite 7 | 快速构建 + HMR，按 chrome120 目标产出 |
+| 测试 | Vitest 4 + Testing Library | jsdom 环境，`npm test` |
+| Lint | ESLint 10 flat config | `npm run lint` |
 | 样式 | Tailwind CSS 3 | 原子化 CSS + 自定义主题 |
 | 终端 | @xterm/xterm v6 + WebGL | GPU 加速终端渲染 |
 | 图标 | lucide-react | 轻量 SVG 图标库 |

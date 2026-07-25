@@ -104,6 +104,10 @@ func (a *App) ConnectWithSecrets(profileID string, password string, privateKeyPa
 		}
 	}
 
+	// Apply post-connect actions before returning the session, so frontend input
+	// cannot interleave with the generated shell script.
+	a.runPostConnectActions(info.ID, fullProfile)
+
 	return info, nil
 }
 

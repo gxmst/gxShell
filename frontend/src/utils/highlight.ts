@@ -46,7 +46,6 @@ const fullQuickCheck = /\b(error|fail|fatal|panic|warn|success|ok|done|ready|run
 // terminal's OSC parser, leaking "[36m" and the title onto the prompt line.
 // The alternation now also skips OSC (ESC]...BEL/ST), two-byte title/charset
 // forms (ESCk, ESC( ...), and DCS/PM/APC strings.
-// eslint-disable-next-line no-control-regex
 const ansiRe = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[PX^_k][^\x1b]*(?:\x1b\\)?|\x1b\[[0-9;?]*[a-zA-Z]|\x1b[a-zA-Z()#][0-9;]*/g;
 
 type Segment = { text: string; isAnsi: boolean };

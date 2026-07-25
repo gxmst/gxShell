@@ -342,6 +342,25 @@ func (m *Manager) emitTransfer(job *transferJob, status string, done, total int6
 	m.emit("sftp:progress", event)
 }
 
+// emitResumed announces that a transfer is continuing from a partial file
+// rather than starting over. It is a distinct status so the UI can say
+// "resuming at 40%" instead of appearing to have lost the earlier progress.
+func (m *Manager) emitResumed(job *transferJob, offset, total int64) {
+	if m.emit == nil {
+		return
+	}
+	m.emit("sftp:progress", map[string]any{
+		"jobId":     job.id,
+		"sessionId": job.sessionID,
+		"path":      job.path,
+		"done":      offset,
+		"total":     total,
+		"direction": job.direction,
+		"status":    "resumed",
+		"resumedAt": offset,
+	})
+}
+
 func (m *Manager) finishTransfer(job *transferJob, err error, done, total int64) {
 	job.once.Do(func() {
 		job.cancel()
@@ -480,8 +499,10 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) (err error
 		}
 	}()
 	stat, statErr := src.Stat()
+	var key resumeKey
 	if statErr == nil {
 		totalSize = stat.Size()
+		key = resumeKey{size: stat.Size(), modTime: stat.ModTime()}
 	}
 
 	client, release, err := m.acquire(sessionID)
@@ -490,8 +511,28 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) (err error
 	}
 	defer release()
 
-	tmpPath := remotePath + ".gxshell-" + job.id + ".part"
-	dst, err := client.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+	// As with downloads, the part name carries the local source's size and mtime,
+	// so editing the file locally invalidates the partial rather than appending
+	// new bytes onto old ones.
+	tmpPath := remotePartPath(remotePath, key)
+	for _, orphan := range m.remoteStaleParts(client, remotePath, tmpPath) {
+		_ = client.Remove(orphan)
+	}
+
+	var offset int64
+	// Without source metadata there is no identity to compare across attempts.
+	// Transfer from byte zero rather than trusting a zero-key partial.
+	if statErr == nil {
+		if info, statPartErr := client.Stat(tmpPath); statPartErr == nil && info.Mode().IsRegular() {
+			offset = resumeOffset(info.Size(), totalSize, true)
+		}
+	}
+
+	flags := os.O_WRONLY | os.O_CREATE
+	if offset == 0 {
+		flags |= os.O_TRUNC
+	}
+	dst, err := client.OpenFile(tmpPath, flags)
 	if err != nil {
 		return err
 	}
@@ -500,10 +541,21 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) (err error
 		if !dstClosed {
 			_ = dst.Close()
 		}
-		if err != nil {
-			_ = client.Remove(tmpPath)
-		}
+		// The part file survives a failure so the next attempt can resume from it.
+		// It is removed only on success (by the rename) or when a later attempt
+		// finds it unusable.
 	}()
+
+	if offset > 0 {
+		if _, err = src.Seek(offset, io.SeekStart); err != nil {
+			return err
+		}
+		if _, err = dst.Seek(offset, io.SeekStart); err != nil {
+			return err
+		}
+		m.emitResumed(job, offset, totalSize)
+	}
+
 	clearInterrupt := job.setInterrupt(func() {
 		_ = src.Close()
 		_ = dst.Close()
@@ -511,12 +563,14 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) (err error
 	defer clearInterrupt()
 
 	progress := throttled(func(n int64) {
-		m.emitTransfer(job, "progress", n, totalSize, nil)
+		m.emitTransfer(job, "progress", offset+n, totalSize, nil)
 	})
 	// ReadFrom lets the sftp client pipeline concurrent write packets (see
 	// acquireSlow); a manual read/write loop would fall back to one packet per
-	// round trip.
-	done, err = dst.ReadFrom(&progressReader{ctx: job.ctx, r: src, fn: progress})
+	// round trip. Like WriteTo, it starts from the handle's current offset.
+	var copied int64
+	copied, err = dst.ReadFrom(&progressReader{ctx: job.ctx, r: src, fn: progress})
+	done = offset + copied
 	closeErr := dst.Close()
 	dstClosed = true
 	if err == nil && closeErr != nil {
@@ -529,6 +583,9 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) (err error
 	}
 	if err != nil {
 		return err
+	}
+	if statErr == nil && done != totalSize {
+		return fmt.Errorf("upload source size changed during transfer: copied %d of expected %d bytes", done, totalSize)
 	}
 	if err = checkTransferContext(job.ctx); err != nil {
 		return err
@@ -662,12 +719,38 @@ func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) (err err
 		}
 	}()
 	stat, statErr := src.Stat()
+	var key resumeKey
 	if statErr == nil {
 		totalSize = stat.Size()
+		key = resumeKey{size: stat.Size(), modTime: stat.ModTime()}
 	}
 
-	partPath := transferPartPath(localPath, job.id)
-	dst, err := os.OpenFile(partPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	// The part file's name encodes the source's size and mtime, so a metadata
+	// change invalidates the old partial and starts a clean transfer.
+	partPath := localPartPath(localPath, key)
+	// Part files from abandoned transfers of this same destination can no longer
+	// be resumed once the source metadata changes; drop them rather than accumulate.
+	for _, orphan := range localStaleParts(localPath, partPath) {
+		_ = os.Remove(orphan)
+	}
+
+	var offset int64
+	// A failed remote Stat means the source version is unknown. Never resume a
+	// partial in that case, even if a previous zero-key file happens to exist.
+	if statErr == nil {
+		if info, statPartErr := os.Stat(partPath); statPartErr == nil && info.Mode().IsRegular() {
+			offset = resumeOffset(info.Size(), totalSize, true)
+		}
+	}
+
+	// O_EXCL is deliberately absent: the whole point is to reopen an existing
+	// part file. When offset is 0 the file is truncated, so a partial that failed
+	// the resume checks above cannot contribute stale bytes.
+	flags := os.O_WRONLY | os.O_CREATE
+	if offset == 0 {
+		flags |= os.O_TRUNC
+	}
+	dst, err := os.OpenFile(partPath, flags, 0644)
 	if err != nil {
 		return err
 	}
@@ -676,21 +759,39 @@ func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) (err err
 		if !dstClosed {
 			_ = dst.Close()
 		}
-		if err != nil {
-			_ = os.Remove(partPath)
-		}
+		// A failed transfer keeps its part file: that is what the next attempt
+		// resumes from. Cancellation keeps it too, since the user may retry.
+		// Only a corrupt-looking partial is discarded, above.
 	}()
+
+	if offset > 0 {
+		// Both sides must agree on the position. Seek the remote handle so the
+		// server sends only the remainder, and the local handle so the bytes land
+		// after what is already there.
+		if _, err = src.Seek(offset, io.SeekStart); err != nil {
+			return err
+		}
+		if _, err = dst.Seek(offset, io.SeekStart); err != nil {
+			return err
+		}
+		m.emitResumed(job, offset, totalSize)
+	}
+
 	clearInterrupt := job.setInterrupt(func() {
 		_ = src.Close()
 		_ = dst.Close()
 	})
 	defer clearInterrupt()
 
+	// Progress is reported against the whole file, not this attempt, so a resumed
+	// transfer's bar continues from where it stopped rather than restarting at 0.
 	progress := throttled(func(n int64) {
-		m.emitTransfer(job, "progress", n, totalSize, nil)
+		m.emitTransfer(job, "progress", offset+n, totalSize, nil)
 	})
 	// WriteTo lets the sftp client issue concurrent read-ahead requests.
-	done, err = src.WriteTo(&progressWriter{ctx: job.ctx, w: dst, fn: progress})
+	var copied int64
+	copied, err = src.WriteTo(&progressWriter{ctx: job.ctx, w: dst, fn: progress})
+	done = offset + copied
 	closeErr := dst.Close()
 	dstClosed = true
 	if err == nil && closeErr != nil {
@@ -703,6 +804,9 @@ func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) (err err
 	}
 	if err != nil {
 		return err
+	}
+	if statErr == nil && done != totalSize {
+		return fmt.Errorf("download source size changed during transfer: copied %d of expected %d bytes", done, totalSize)
 	}
 	if err = checkTransferContext(job.ctx); err != nil {
 		return err

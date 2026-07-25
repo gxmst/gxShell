@@ -4,10 +4,23 @@ import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
 import { ModalShell, Label } from "./ModalShell";
 
+// The post-connect textareas hold one entry per line, but the profile stores an
+// array. Blank lines are dropped on the way into the array so a trailing newline
+// never becomes an empty command; the backend trims and validates again.
+function splitLines(value: string): string[] {
+  return value.split("\n").filter((line) => line.trim() !== "");
+}
+
 export function ProfileModal(props: { profile: types.Profile; profiles: types.Profile[]; language: string; onClose: () => void; onSave: (profile: types.Profile) => void; onPickKey: () => Promise<string>; onDelete: (id: string) => void; onDuplicate: (id: string) => void }) {
   const lang = props.language;
   const [draft, setDraft] = useState(new types.Profile(props.profile));
   const [error, setError] = useState("");
+  // The two multi-line fields keep their raw text here. Deriving the textarea
+  // value from the stored array instead would filter blank lines on every
+  // keystroke, so pressing Enter would re-render the same string and the user
+  // could never start a new line.
+  const [envText, setEnvText] = useState((props.profile.environment || []).join("\n"));
+  const [loginText, setLoginText] = useState((props.profile.loginCommands || []).join("\n"));
   const update = (patch: any) => { setError(""); setDraft(new types.Profile({ ...draft, ...patch })); };
 
   const addTunnel = () => {
@@ -94,6 +107,36 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
           <button className="icon-btn compact-icon col-span-1" onClick={() => removeTunnel(idx)} title={t(lang, "removeTunnel")}><Trash2 size={11} /></button>
         </div>
       ))}
+
+      <div className="profile-modal-tunnel-header">
+        <span className="profile-modal-tunnel-title">{t(lang, "postConnect")}</span>
+      </div>
+      <div className="profile-modal-grid">
+        <Label text={t(lang, "startDirectory")}>
+          <input className="input compact-input font-mono" value={draft.startDirectory || ""} placeholder="/srv/app" onChange={(e) => update({ startDirectory: e.target.value })} />
+        </Label>
+        <div className="col-span-2 text-[10px] text-muted leading-snug">{t(lang, "postConnectHint")}</div>
+        <Label text={t(lang, "envVars")}>
+          {/* One KEY=VALUE per line. A textarea rather than a row editor because
+              these are usually pasted in from an existing shell profile. */}
+          <textarea
+            className="input compact-input min-h-[56px] font-mono text-[10px]"
+            value={envText}
+            placeholder="NODE_ENV=production"
+            onChange={(e) => { setEnvText(e.target.value); update({ environment: splitLines(e.target.value) }); }}
+          />
+        </Label>
+        <div className="col-span-2 text-[10px] text-muted leading-snug">{t(lang, "envVarsHint")}</div>
+        <Label text={t(lang, "loginCommands")}>
+          <textarea
+            className="input compact-input min-h-[56px] font-mono text-[10px]"
+            value={loginText}
+            placeholder="tmux attach || tmux new"
+            onChange={(e) => { setLoginText(e.target.value); update({ loginCommands: splitLines(e.target.value) }); }}
+          />
+        </Label>
+        <div className="col-span-2 text-[10px] text-muted leading-snug">{t(lang, "loginCommandsHint")}</div>
+      </div>
 
       {error && <div className="profile-modal-error">{error}</div>}
       <div className="profile-modal-footer">

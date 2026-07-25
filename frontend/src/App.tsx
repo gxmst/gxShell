@@ -13,6 +13,7 @@ import { useSftp } from "./hooks/useSftp";
 import { useHotkeys } from "./hooks/useHotkeys";
 import { useMarkdownTabs } from "./hooks/useMarkdownTabs";
 import { usePersistedState } from "./hooks/usePersistedState";
+import { useUpdateCheck } from "./hooks/useUpdateCheck";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { TerminalArea } from "./components/TerminalArea/TerminalArea";
 import { FloatingTerminal } from "./components/FloatingTerminal/FloatingTerminal";
@@ -25,6 +26,7 @@ import { QuickConnectModal } from "./components/modals/QuickConnectModal";
 import { UnsavedChangesDialog } from "./components/modals/UnsavedChangesDialog";
 import { KeyboardInteractiveDialog, type KiRequest } from "./components/modals/KeyboardInteractiveDialog";
 import { GlobalSearchModal, TerminalSearchModal } from "./components/modals/SearchModals";
+import { UpdateDialog } from "./components/modals/UpdateDialog";
 import { ProgressBar } from "./components/ProgressBar/ProgressBar";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastStack } from "./components/ToastStack";
@@ -38,6 +40,7 @@ import { formatAutomationTerminalEvent } from "./utils/automation";
 function App() {
   const { toasts, notify } = useToasts();
   const profileState = useProfiles(notify);
+  const updateCheck = useUpdateCheck();
   const [drawer, setDrawer] = usePersistedState<Drawer>("gx:drawer", "monitor");
   const [profileModal, setProfileModal] = useState<types.Profile | null>(null);
   const [quickConnectOpen, setQuickConnectOpen] = useState(false);
@@ -412,12 +415,39 @@ function App() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, []);
 
+  // Keyboard tab navigation walks the tab strip, so it has to see the same order
+  // and the same membership the strip shows: torn-off terminals live in their own
+  // windows and are not in it.
+  const activateTabByOffset = useCallback((offset: number) => {
+    const visible = sessions.tabs.filter((tab) => !floatingTabIds.includes(tab.id));
+    if (visible.length < 2) return;
+    const current = visible.findIndex((tab) => tab.id === sessions.activeTab);
+    // Wrap around; from an unknown/floating active tab, step in from the edge.
+    const next = current === -1
+      ? (offset > 0 ? 0 : visible.length - 1)
+      : (current + offset + visible.length) % visible.length;
+    const target = visible[next];
+    sessions.setActiveTab(target.id);
+    if (target.type !== "markdown") setTimeout(() => focusTerminal(target.id), 10);
+  }, [sessions.tabs, sessions.activeTab, sessions.setActiveTab, floatingTabIds, focusTerminal]);
+
+  const activateTabByIndex = useCallback((index: number) => {
+    const visible = sessions.tabs.filter((tab) => !floatingTabIds.includes(tab.id));
+    const target = visible[index];
+    if (!target) return;
+    sessions.setActiveTab(target.id);
+    if (target.type !== "markdown") setTimeout(() => focusTerminal(target.id), 10);
+  }, [sessions.tabs, sessions.setActiveTab, floatingTabIds, focusTerminal]);
+
   useHotkeys({
     activeTab: sessions.activeTab,
     activeIsMarkdown: sessions.active?.type === "markdown",
     onGlobalSearch: () => { setGlobalQuery(""); setGlobalSearchOpen(true); },
     onTerminalSearch: () => setTerminalSearchOpen(true),
-    onCloseTab: sessions.closeTab
+    onCloseTab: sessions.closeTab,
+    onNextTab: () => activateTabByOffset(1),
+    onPrevTab: () => activateTabByOffset(-1),
+    onSelectTab: activateTabByIndex,
   });
 
   const automationByProfile = useMemo(() => {
@@ -744,6 +774,12 @@ function App() {
           }
           return ok;
         }}
+      />}
+      {updateCheck.promptOpen && updateCheck.result && <UpdateDialog
+        result={updateCheck.result}
+        locale={profileState.settings?.language || "en"}
+        onSkip={updateCheck.skipVersion}
+        onClose={updateCheck.dismissPrompt}
       />}
       <ProgressBar />
       <ToastStack toasts={toasts} />

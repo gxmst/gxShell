@@ -43,9 +43,26 @@ type Profile struct {
 	LegacyAIAlias   string       `json:"aiAlias,omitempty"`
 	Tunnels         []TunnelRule `json:"tunnels"`
 	AutoReconnect   bool         `json:"autoReconnect"`
-	LastConnectedAt time.Time    `json:"lastConnectedAt,omitempty"`
-	CreatedAt       time.Time    `json:"createdAt"`
-	UpdatedAt       time.Time    `json:"updatedAt"`
+	// StartDirectory, Environment and LoginCommands are the post-connect
+	// actions. They are typed into the interactive shell after the session is
+	// up, in that order, because that is the only place they can affect what the
+	// user then sees and types: an SSH exec channel would run them in a separate
+	// shell whose cd/export could not outlive it, and SSH env requests are
+	// refused by default sshd configurations (AcceptEnv is usually just LANG/LC_*).
+	//
+	// The consequence worth knowing: these are POSIX shell input, not a protocol
+	// feature, so they are not supported for PowerShell, cmd or other non-POSIX
+	// login shells and they appear in shell history. LoginCommands must complete
+	// without prompting for input because all lines are sent together. Never put
+	// a credential here: it would land in the terminal scrollback and history.
+	StartDirectory string `json:"startDirectory,omitempty"`
+	// Environment holds KEY=VALUE entries exported before LoginCommands run.
+	Environment []string `json:"environment,omitempty"`
+	// LoginCommands run one per line after the shell is ready.
+	LoginCommands   []string  `json:"loginCommands,omitempty"`
+	LastConnectedAt time.Time `json:"lastConnectedAt,omitempty"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
 }
 
 type AppSettings struct {
@@ -64,8 +81,16 @@ type AppSettings struct {
 	// CliServerEnabled controls whether the local gxshell-cli HTTP server runs.
 	// When false the server does not listen at all, so no local process can use
 	// the CLI interface regardless of per-profile opt-in. Defaults to true.
-	CliServerEnabled bool     `json:"cliServerEnabled"`
-	Ai               AiConfig `json:"ai"`
+	CliServerEnabled bool `json:"cliServerEnabled"`
+	// UpdateCheckEnabled controls the startup check against the public release
+	// feed. It is the app's only unprompted outbound request, so it gets its own
+	// switch: someone running gxShell on an isolated network should be able to
+	// stop it reaching out at all, not just ignore the result.
+	UpdateCheckEnabled bool `json:"updateCheckEnabled"`
+	// UpdateSkippedVersion is a version the user chose to skip. The prompt stays
+	// quiet for it while still appearing for anything newer.
+	UpdateSkippedVersion string   `json:"updateSkippedVersion,omitempty"`
+	Ai                   AiConfig `json:"ai"`
 }
 
 type TerminalSettings struct {

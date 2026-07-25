@@ -5,6 +5,7 @@ import { types } from "../../../wailsjs/go/models";
 import { ListLocalDir, LocalHomeDir, ListRemoteDir, UploadFile, DownloadFile } from "../../../wailsjs/go/main/App";
 import { useTransfers } from "../../hooks/useTransfers";
 import { formatFileSize } from "../../utils/format";
+import { runQueue } from "../../utils/transferQueue";
 import { t } from "../../i18n";
 import { FloatingCard } from "../FloatingCard/FloatingCard";
 
@@ -123,13 +124,19 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
     if (!active || selectedLocal.size === 0) return;
     const sessionId = active.id;
     const files = localFiles.filter((f) => selectedLocal.has(f.path) && !f.isDir);
-    for (const file of files) {
-      if (remoteSessionRef.current !== sessionId) return;
+    // A few at a time rather than strictly serially: each file's round trip used
+    // to leave the connection idle. The signal stops queueing new files if the
+    // session changes underneath us, which the old loop did with its own check.
+    const signal = { get cancelled() { return remoteSessionRef.current !== sessionId; } };
+    await runQueue(files, async (file) => {
       const remoteTarget = remotePath.replace(/\/$/, "") + "/" + file.name;
-      try {
-        await UploadFile(sessionId, file.path, remoteTarget);
-      } catch {}
-    }
+      await UploadFile(sessionId, file.path, remoteTarget);
+    }, { signal });
+    if (remoteSessionRef.current !== sessionId) return;
+    // Per-file failures are not reported here: every transfer already emits a
+    // terminal sftp:progress event, which the history panel below renders with
+    // the file name and error. The old serial loop swallowed them for the same
+    // reason.
     loadRemoteDir(remotePath);
   };
 
@@ -137,13 +144,12 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
     if (!active || selectedRemote.size === 0) return;
     const sessionId = active.id;
     const files = remoteFiles.filter((f) => selectedRemote.has(f.path) && !f.isDir);
-    for (const file of files) {
-      if (remoteSessionRef.current !== sessionId) return;
+    const signal = { get cancelled() { return remoteSessionRef.current !== sessionId; } };
+    await runQueue(files, async (file) => {
       const localTarget = localPath.replace(/\/$/, "") + "/" + file.name;
-      try {
-        await DownloadFile(sessionId, file.path, localTarget);
-      } catch {}
-    }
+      await DownloadFile(sessionId, file.path, localTarget);
+    }, { signal });
+    if (remoteSessionRef.current !== sessionId) return;
     loadLocalDir(localPath);
   };
 
@@ -238,6 +244,9 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
                 <div className="transfer-progress-bar-wrap">
                   <div className="transfer-progress-bar" style={{ width: `${pct}%` }} />
                 </div>
+                {/* Without this, a resumed transfer looks like one that
+                    inexplicably started at 40%. */}
+                {tr.resumedAt ? <span className="text-[9px] text-ok shrink-0">{t(lang, "transferResumed")}</span> : null}
                 <span className="text-[9px] text-muted shrink-0 w-8 text-right tabular-nums">{pct}%</span>
                 <button className="mini-btn" onClick={() => void cancelTransfer(tr.jobId)} title={t(lang, "cancel")}><X size={10} /></button>
               </div>

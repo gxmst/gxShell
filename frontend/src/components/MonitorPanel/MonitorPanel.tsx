@@ -4,6 +4,8 @@ import { Activity, AlertTriangle, ChevronDown, ChevronRight, Download, Gauge, Ha
 import type { Tab } from "../../types";
 import { formatBytes, stateClass } from "../../utils/format";
 import { useSessionMetrics } from "../../hooks/useSessionMetrics";
+import { useMetricsHistory } from "../../hooks/useMetricsHistory";
+import { Sparkline } from "../Sparkline/Sparkline";
 import { t } from "../../i18n";
 
 export function MonitorPanel({ active, locale, onStart, onCpuClick, onPingClick, onDiskClick, onMemClick, onNetworkClick }: { active?: Tab; locale?: string; onStart: () => void; onCpuClick?: () => void; onPingClick?: () => void; onDiskClick?: () => void; onMemClick?: () => void; onNetworkClick?: () => void }) {
@@ -11,6 +13,9 @@ export function MonitorPanel({ active, locale, onStart, onCpuClick, onPingClick,
   // Subscribes to monitor:update itself so each collection tick re-renders
   // only this panel, not the whole Sidebar tree it lives in.
   const metrics = useSessionMetrics(active?.id);
+  // Rolling history for the sparklines. Same event, separate hook, so the panel
+  // keeps its shape when a session has no history yet.
+  const history = useMetricsHistory(active?.id);
   const lang = locale || "en";
   if (!active) return <div className="empty compact">{t(lang, "openTerminal")}</div>;
   return (
@@ -29,8 +34,8 @@ export function MonitorPanel({ active, locale, onStart, onCpuClick, onPingClick,
       )}
       {metrics && (
         <>
-          <MetricRow icon={<Gauge size={12} />} label={t(lang, "cpu")} value={metrics.cpuPercent} clickable onClick={onCpuClick} />
-          <MetricRow icon={<MemoryStick size={12} />} label={t(lang, "mem")} value={metrics.memoryPercent} detail={`${metrics.memoryUsedMb || 0}/${metrics.memoryTotalMb || 0} MB`} clickable onClick={onMemClick} />
+          <MetricRow icon={<Gauge size={12} />} label={t(lang, "cpu")} value={metrics.cpuPercent} series={history.map((s) => s.cpuPercent)} seriesLabel={t(lang, "historyLabel", { metric: t(lang, "cpu") })} clickable onClick={onCpuClick} />
+          <MetricRow icon={<MemoryStick size={12} />} label={t(lang, "mem")} value={metrics.memoryPercent} detail={`${metrics.memoryUsedMb || 0}/${metrics.memoryTotalMb || 0} MB`} series={history.map((s) => s.memoryPercent)} seriesLabel={t(lang, "historyLabel", { metric: t(lang, "mem") })} clickable onClick={onMemClick} />
           <MetricRow icon={<HardDrive size={12} />} label={t(lang, "disk")} value={metrics.diskPercent} detail={`${metrics.diskUsed || "-"} / ${metrics.diskTotal || "-"}`} clickable onClick={onDiskClick} />
           <div className="chip-grid compact-chip-grid">
             <MiniMetric icon={<Zap size={11} />} label={t(lang, "load")} value={metrics.loadAverage || "-"} tone={loadTone(metrics.loadAverage)} clickable onClick={onCpuClick} />
@@ -70,7 +75,7 @@ function speedTone(bps: number): "ok" | "warn" | "bad" | undefined {
   return "ok";
 }
 
-function MetricRow({ icon, label, value, detail, clickable, onClick }: { icon: JSX.Element; label: string; value: number; detail?: string; clickable?: boolean; onClick?: () => void }) {
+function MetricRow({ icon, label, value, detail, series, seriesLabel, clickable, onClick }: { icon: JSX.Element; label: string; value: number; detail?: string; series?: number[]; seriesLabel?: string; clickable?: boolean; onClick?: () => void }) {
   const safe = Math.max(0, Math.min(100, value || 0));
   const tone = safe >= 85 ? "bad" : safe >= 60 ? "warn" : "ok";
   return (
@@ -81,7 +86,13 @@ function MetricRow({ icon, label, value, detail, clickable, onClick }: { icon: J
           <span className="font-medium">{label}</span>
           <span className="truncate text-muted text-[10px]">{detail || `${safe.toFixed(0)}%`}</span>
         </div>
+        {/* The meter shows the current value, the sparkline the recent shape.
+            Only render the curve once there is history worth a line, so the row
+            keeps its existing height on a freshly connected session. */}
         <div className="meter w-full"><div className={clsx("meter-fill", `meter-${tone}`)} style={{ width: `${safe}%` }} /></div>
+        {series && series.length > 1 && (
+          <Sparkline className={clsx("metric-spark", `metric-spark-${tone}`)} values={series} max={100} height={16} label={seriesLabel} />
+        )}
       </div>
     </div>
   );

@@ -14,15 +14,22 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	appversion "gxShell/backend/version"
 )
 
 const (
 	daemonURL        = "http://127.0.0.1:56789"
 	cliTokenFilename = "cli_token"
-	version          = "1.4.0"
 	cliMinTimeout    = time.Second
 	cliMaxTimeout    = 30 * time.Minute
 )
+
+// version is the CLI's reported version. It used to be its own literal and had
+// drifted ahead of the desktop app (1.4.0 against the app's 1.3.0) even though
+// both ship from the same tag, so it now reads the shared constant. Kept as an
+// identifier of the same name so the call sites below are unchanged.
+var version = appversion.Version
 
 var httpClient = &http.Client{Timeout: 31 * time.Minute}
 

@@ -38,6 +38,10 @@ export function CancelTransfer(arg1) {
   return window['go']['main']['App']['CancelTransfer'](arg1);
 }
 
+export function CheckForUpdate() {
+  return window['go']['main']['App']['CheckForUpdate']();
+}
+
 export function Connect(arg1, arg2, arg3) {
   return window['go']['main']['App']['Connect'](arg1, arg2, arg3);
 }
@@ -156,6 +160,10 @@ export function GetSettings() {
 
 export function GetStartupFile() {
   return window['go']['main']['App']['GetStartupFile']();
+}
+
+export function GetVersion() {
+  return window['go']['main']['App']['GetVersion']();
 }
 
 export function GetWebsiteConfig(arg1, arg2, arg3, arg4) {
@@ -436,6 +444,10 @@ export function SetFirewallEnabled(arg1, arg2, arg3) {
 
 export function SetWebsiteEnabled(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['main']['App']['SetWebsiteEnabled'](arg1, arg2, arg3, arg4, arg5);
+}
+
+export function SkipUpdateVersion(arg1) {
+  return window['go']['main']['App']['SkipUpdateVersion'](arg1);
 }
 
 export function StartContainer(arg1, arg2) {
