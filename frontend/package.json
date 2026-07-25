@@ -1,13 +1,19 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "1.3.0",
+  "version": "1.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "check:i18n": "node scripts/check-i18n.mjs",
-    "build": "node scripts/check-i18n.mjs && tsc && vite build",
-    "preview": "vite preview"
+    "check:version": "node scripts/check-version.mjs",
+    "build": "node scripts/check-i18n.mjs && node scripts/check-version.mjs && tsc && vite build",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -16,23 +22,37 @@
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/xterm": "^6.0.0",
     "clsx": "^2.1.1",
-    "dompurify": "^3.4.3",
+    "dompurify": "^3.4.12",
     "highlight.js": "^11.11.1",
     "lucide-react": "^1.14.0",
     "marked": "^18.0.3",
-    "mermaid": "^10.9.3",
+    "mermaid": "^11.16.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
     "@types/d3-dispatch": "^3.0.6",
     "@types/react": "^18.0.17",
     "@types/react-dom": "^18.0.6",
-    "@vitejs/plugin-react": "^2.0.1",
+    "@vitejs/plugin-react": "^5.2.0",
+    "@vitest/coverage-v8": "^4.1.10",
+    "@vitest/ui": "^4.1.10",
     "autoprefixer": "^10.5.0",
-    "postcss": "^8.5.14",
+    "eslint": "^10.8.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.7.0",
+    "jsdom": "^29.1.1",
+    "postcss": "^8.5.18",
     "tailwindcss": "^3.4.17",
-    "typescript": "^4.6.4",
-    "vite": "^3.0.7"
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.65.0",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.10"
   }
 }

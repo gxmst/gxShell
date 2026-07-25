@@ -94,7 +94,6 @@ function readWrappedLine(term: Terminal, bufferRow: number): { text: string; fir
   let text = "";
   let row = first;
   // Concatenate this row and any wrapped continuation rows.
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const line: IBufferLine | undefined = buffer.getLine(row);
     if (!line) break;

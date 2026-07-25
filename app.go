@@ -83,7 +83,10 @@ type App struct {
 	// selected by an external CLI request so the frontend can ensure it has a
 	// visible terminal tab before automation output is mirrored.
 	cliSessionEventFn func(types.SessionInfo)
-	nativeDialogMu    sync.Mutex
+	// cliSessionReplacementEventFn lets tests observe stale CLI session
+	// recovery without requiring a live Wails event context.
+	cliSessionReplacementEventFn func(string, types.SessionInfo)
+	nativeDialogMu               sync.Mutex
 	// aiTools is the trust ledger of backend-authorized AI tool calls awaiting a
 	// native confirmation + execution. See aiToolRegistry.
 	aiTools       *aiToolRegistry
@@ -290,6 +293,10 @@ func (a *App) startup(ctx context.Context) {
 	} else {
 		a.log.Info("CLI server disabled by settings")
 	}
+
+	// The update check is the app's only unprompted outbound request. It reads
+	// its own setting and returns immediately when disabled.
+	a.startUpdateCheck()
 }
 
 // domReady is called when the frontend is ready.

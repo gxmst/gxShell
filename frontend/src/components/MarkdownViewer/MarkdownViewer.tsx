@@ -29,6 +29,7 @@ import {
   WriteRemoteTextFile,
 } from '../../../wailsjs/go/main/App';
 import type { MarkdownOpenTarget, MarkdownSource } from '../../types';
+import { writeClipboardText } from '../../utils/clipboard';
 import { isMarkdownPath } from '../../utils/textFiles';
 import { t } from '../../i18n';
 import '../../styles/markdown-viewer.css';
@@ -615,7 +616,7 @@ export default function MarkdownViewer({
       e.preventDefault();
       const code = copyBtn.closest('.md-code-block')?.querySelector('code')?.textContent || '';
       try {
-        await navigator.clipboard.writeText(code);
+        await writeClipboardText(code);
         onNotify?.(t(lang, 'copyToClipboard'), 'success');
       } catch {
         onNotify?.(t(lang, 'copyFailed'), 'error');

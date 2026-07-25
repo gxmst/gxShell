@@ -1,14 +1,14 @@
 export namespace sshmanager {
-
+	
 	export class KnownHostEntry {
 	    hosts: string;
 	    keyType: string;
 	    fingerprint: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new KnownHostEntry(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.hosts = source["hosts"];
@@ -20,15 +20,15 @@ export namespace sshmanager {
 }
 
 export namespace types {
-
+	
 	export class AiFunctionCall {
 	    name: string;
 	    arguments: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AiFunctionCall(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -39,18 +39,18 @@ export namespace types {
 	    id: string;
 	    type: string;
 	    function: AiFunctionCall;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AiToolCall(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.type = source["type"];
 	        this.function = this.convertValues(source["function"], AiFunctionCall);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -75,11 +75,11 @@ export namespace types {
 	    reasoningContent?: string;
 	    toolCalls?: AiToolCall[];
 	    toolCallId?: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AiMessage(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.role = source["role"];
@@ -88,7 +88,7 @@ export namespace types {
 	        this.toolCalls = this.convertValues(source["toolCalls"], AiToolCall);
 	        this.toolCallId = source["toolCallId"];
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -114,11 +114,11 @@ export namespace types {
 	    chatId: string;
 	    requestId: string;
 	    enableTools: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new AiChatRequest(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.messages = this.convertValues(source["messages"], AiMessage);
@@ -228,6 +228,8 @@ export namespace types {
 	    smartHighlight: boolean;
 	    confirmOnDisconnect: boolean;
 	    cliServerEnabled: boolean;
+	    updateCheckEnabled: boolean;
+	    updateSkippedVersion?: string;
 	    ai: AiConfig;
 	
 	    static createFrom(source: any = {}) {
@@ -249,6 +251,8 @@ export namespace types {
 	        this.smartHighlight = source["smartHighlight"];
 	        this.confirmOnDisconnect = source["confirmOnDisconnect"];
 	        this.cliServerEnabled = source["cliServerEnabled"];
+	        this.updateCheckEnabled = source["updateCheckEnabled"];
+	        this.updateSkippedVersion = source["updateSkippedVersion"];
 	        this.ai = this.convertValues(source["ai"], AiConfig);
 	    }
 	
@@ -340,16 +344,16 @@ export namespace types {
 	        this.created = source["created"];
 	    }
 	}
-export class CronJob {
+	export class CronJob {
 	    id: string;
 	    schedule: string;
 	    command: string;
 	    enabled: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new CronJob(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -358,7 +362,7 @@ export class CronJob {
 	        this.enabled = source["enabled"];
 	    }
 	}
-export class FirewallRule {
+	export class FirewallRule {
 	    index: number;
 	    raw: string;
 	    action: string;
@@ -366,11 +370,11 @@ export class FirewallRule {
 	    protocol: string;
 	    source: string;
 	    v6: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new FirewallRule(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.index = source["index"];
@@ -382,17 +386,17 @@ export class FirewallRule {
 	        this.v6 = source["v6"];
 	    }
 	}
-export class FirewallStatus {
+	export class FirewallStatus {
 	    backend: string;
 	    enabled: boolean;
 	    defaultPolicy: string;
 	    sshPort: number;
 	    rules: FirewallRule[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new FirewallStatus(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.backend = source["backend"];
@@ -401,7 +405,7 @@ export class FirewallStatus {
 	        this.sshPort = source["sshPort"];
 	        this.rules = this.convertValues(source["rules"], FirewallRule);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -738,6 +742,9 @@ export class FirewallStatus {
 	    aiAlias?: string;
 	    tunnels: TunnelRule[];
 	    autoReconnect: boolean;
+	    startDirectory?: string;
+	    environment?: string[];
+	    loginCommands?: string[];
 	    // Go type: time
 	    lastConnectedAt?: any;
 	    // Go type: time
@@ -772,6 +779,9 @@ export class FirewallStatus {
 	        this.aiAlias = source["aiAlias"];
 	        this.tunnels = this.convertValues(source["tunnels"], TunnelRule);
 	        this.autoReconnect = source["autoReconnect"];
+	        this.startDirectory = source["startDirectory"];
+	        this.environment = source["environment"];
+	        this.loginCommands = source["loginCommands"];
 	        this.lastConnectedAt = this.convertValues(source["lastConnectedAt"], null);
 	        this.createdAt = this.convertValues(source["createdAt"], null);
 	        this.updatedAt = this.convertValues(source["updatedAt"], null);
@@ -873,7 +883,7 @@ export class FirewallStatus {
 		    return a;
 		}
 	}
-export class ServiceInfo {
+	export class ServiceInfo {
 	    name: string;
 	    description: string;
 	    loadState: string;
@@ -882,11 +892,11 @@ export class ServiceInfo {
 	    enabled: string;
 	    cpuPercent: number;
 	    memoryBytes: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new ServiceInfo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
@@ -980,7 +990,7 @@ export class ServiceInfo {
 		    return a;
 		}
 	}
-export class WebsiteInfo {
+	export class WebsiteInfo {
 	    backend: string;
 	    mode: string;
 	    name: string;
@@ -988,11 +998,11 @@ export class WebsiteInfo {
 	    serverNames: string[];
 	    listen: string[];
 	    root: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new WebsiteInfo(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.backend = source["backend"];
@@ -1004,20 +1014,20 @@ export class WebsiteInfo {
 	        this.root = source["root"];
 	    }
 	}
-export class WebsiteStatus {
+	export class WebsiteStatus {
 	    backends: string[];
 	    sites: WebsiteInfo[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new WebsiteStatus(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.backends = source["backends"];
 	        this.sites = this.convertValues(source["sites"], WebsiteInfo);
 	    }
-
+	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -1038,3 +1048,87 @@ export class WebsiteStatus {
 	}
 
 }
+
+export namespace version {
+	
+	export class Release {
+	    version: string;
+	    url: string;
+	    notes: string;
+	    // Go type: time
+	    publishedAt: any;
+	    prerelease: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new Release(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.url = source["url"];
+	        this.notes = source["notes"];
+	        this.publishedAt = this.convertValues(source["publishedAt"], null);
+	        this.prerelease = source["prerelease"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	export class CheckResult {
+	    current: string;
+	    latest?: Release;
+	    updateAvailable: boolean;
+	    // Go type: time
+	    checkedAt: any;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CheckResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.current = source["current"];
+	        this.latest = this.convertValues(source["latest"], Release);
+	        this.updateAvailable = source["updateAvailable"];
+	        this.checkedAt = this.convertValues(source["checkedAt"], null);
+	        this.error = source["error"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+

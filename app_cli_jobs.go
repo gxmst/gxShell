@@ -32,19 +32,23 @@ type cliJobEvent struct {
 }
 
 type cliJob struct {
-	mu         sync.Mutex
-	ID         string
-	Alias      string
-	SessionID  string
-	Command    string
-	State      string
-	CreatedAt  time.Time
-	StartedAt  time.Time
-	FinishedAt time.Time
-	Events     []cliJobEvent
-	NextSeq    int64
-	Result     sshmanager.CommandExecutionResult
-	cancel     context.CancelFunc
+	mu                 sync.Mutex
+	ID                 string
+	Alias              string
+	ProfileID          string
+	SessionID          string
+	Command            string
+	State              string
+	CreatedAt          time.Time
+	StartedAt          time.Time
+	FinishedAt         time.Time
+	Events             []cliJobEvent
+	NextSeq            int64
+	Result             sshmanager.CommandExecutionResult
+	ReusedConnection   bool
+	ReconnectAttempted bool
+	Reconnected        bool
+	cancel             context.CancelFunc
 }
 
 func newCliResourceID(prefix string) string {
@@ -55,11 +59,12 @@ func newCliResourceID(prefix string) string {
 	return prefix + "-" + hex.EncodeToString(raw[:])
 }
 
-func (a *App) startCliJob(alias, sessionID, command string, stdin *string, timeout time.Duration) *cliJob {
+func (a *App) startCliJob(alias, profileID, sessionID, command string, stdin *string, timeout time.Duration, reusedConnection bool) *cliJob {
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &cliJob{
-		ID: newCliResourceID("job"), Alias: alias, SessionID: sessionID,
+		ID: newCliResourceID("job"), Alias: alias, ProfileID: profileID, SessionID: sessionID,
 		Command: command, State: "queued", CreatedAt: time.Now(), cancel: cancel,
+		ReusedConnection: reusedConnection,
 	}
 	a.cliJobsMu.Lock()
 	if a.cliJobs == nil {
@@ -75,20 +80,52 @@ func (a *App) startCliJob(alias, sessionID, command string, stdin *string, timeo
 		job.StartedAt = time.Now()
 		job.mu.Unlock()
 
-		activityID := a.beginTerminalAutomation(sessionID, "cli", "execute_command", command)
-		result, err := a.ssh.ExecuteCommandResultStream(ctx, sessionID, command, stdin, timeout, cliOutputLimit, func(stream string, chunk []byte) {
+		currentSessionID := sessionID
+		activityID := a.beginTerminalAutomation(currentSessionID, "cli", "execute_command", command)
+		activityFinished := false
+		run := func() (sshmanager.CommandExecutionResult, error) {
+			return a.ssh.ExecuteCommandResultStream(ctx, currentSessionID, command, stdin, timeout, cliOutputLimit, func(stream string, chunk []byte) {
+				job.mu.Lock()
+				job.NextSeq++
+				job.Events = append(job.Events, cliJobEvent{Sequence: job.NextSeq, Stream: stream, Data: string(chunk)})
+				job.mu.Unlock()
+			})
+		}
+		result, err := run()
+		if err != nil && ctx.Err() == nil && reusedConnection && sshmanager.IsRetryableCommandStartError(err) {
+			a.finishTerminalAutomation(currentSessionID, activityID, "cli", "execute_command", "", err.Error(), 1, 0, false)
+			activityFinished = true
+			oldSessionID := currentSessionID
+			a.announceCliSessionRecovering(oldSessionID)
+			_ = a.ssh.Disconnect(oldSessionID)
+
 			job.mu.Lock()
-			job.NextSeq++
-			job.Events = append(job.Events, cliJobEvent{Sequence: job.NextSeq, Stream: stream, Data: string(chunk)})
+			job.ReconnectAttempted = true
 			job.mu.Unlock()
-		})
+			var reconnectErr error
+			currentSessionID, _, reconnectErr = a.cliSessionForProfile(profileID)
+			if reconnectErr == nil {
+				a.announceCliSessionReplacement(oldSessionID, currentSessionID)
+				job.mu.Lock()
+				job.SessionID = currentSessionID
+				job.Reconnected = true
+				job.mu.Unlock()
+				activityID = a.beginTerminalAutomation(currentSessionID, "cli", "execute_command", command)
+				activityFinished = false
+				result, err = run()
+			} else {
+				err = fmt.Errorf("stale reused SSH connection was closed; reconnect failed: %w", reconnectErr)
+			}
+		}
 		if err != nil {
 			result.Error = err.Error()
 			if result.ExitCode == 0 {
 				result.ExitCode = 1
 			}
 		}
-		a.finishTerminalAutomation(sessionID, activityID, "cli", "execute_command", result.DisplayOutput(), result.Error, result.ExitCode, result.Duration, result.Truncated)
+		if !activityFinished {
+			a.finishTerminalAutomation(currentSessionID, activityID, "cli", "execute_command", result.DisplayOutput(), result.Error, result.ExitCode, result.Duration, result.Truncated)
+		}
 
 		job.mu.Lock()
 		job.Result = result
@@ -177,7 +214,10 @@ func cliJobSnapshot(job *cliJob, after int64) map[string]any {
 	payload := map[string]any{
 		"jobId": job.ID, "alias": job.Alias, "state": job.State,
 		"createdAt": job.CreatedAt, "events": events, "nextSequence": job.NextSeq,
-		"blocked": false,
+		"blocked":            false,
+		"reusedConnection":   job.ReusedConnection,
+		"reconnectAttempted": job.ReconnectAttempted,
+		"reconnected":        job.Reconnected,
 	}
 	if !job.StartedAt.IsZero() {
 		payload["startedAt"] = job.StartedAt

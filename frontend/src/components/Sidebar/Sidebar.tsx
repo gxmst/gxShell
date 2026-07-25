@@ -98,7 +98,9 @@ export function Sidebar(props: {
   automationByProfile?: Record<string, AutomationIndicator>;
 }) {
   const lang = props.settings?.language || "en";
-  const appVersion = props.appInfo.version || "1.3.0";
+  // GetAppInfo reports backend/version.Version, so there is no second literal to
+  // keep in sync here. Before appInfo resolves the label simply has no version.
+  const appVersion = props.appInfo.version || "";
   const [splitPct, setSplitPct] = useState(45);
   const dragRef = useRef({ active: false, startY: 0, startPct: 0 });
   const splitRef = useRef(splitPct);
@@ -239,7 +241,7 @@ export function Sidebar(props: {
           <div className="brand-mark"><AppIcon /></div>
           <div className="min-w-0">
             <div className="brand-name">gxShell</div>
-            <div className="brand-meta">v{appVersion} / Ctrl+K</div>
+            <div className="brand-meta">{appVersion ? `v${appVersion} / ` : ""}Ctrl+K</div>
           </div>
           <button className="icon-btn sidebar-collapse-btn ml-auto" onClick={() => props.setCollapsed((value) => !value)} title={t(lang, "collapse")}><PanelLeftClose size={15} /></button>
         </div>

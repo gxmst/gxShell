@@ -122,6 +122,60 @@ func TestMigrateSettingsDefaultsPreservesExplicitFalse(t *testing.T) {
 	}
 }
 
+func readBoolField(t *testing.T, s *Store, key string) (value bool, present bool) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(s.dir, "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	field, ok := raw[key]
+	if !ok {
+		return false, false
+	}
+	if err := json.Unmarshal(field, &value); err != nil {
+		t.Fatal(err)
+	}
+	return value, true
+}
+
+// updateCheckEnabled is true by default, so a settings.json written before the
+// key existed must be backfilled rather than read as an explicit opt-out.
+func TestMigrateSettingsDefaultsBackfillsUpdateCheck(t *testing.T) {
+	s := newTestStore(t)
+	writeSettingsJSON(t, s, `{"themeName":"Light","cliServerEnabled":true,"smartHighlight":true}`)
+
+	s.MigrateSettingsDefaults()
+
+	value, present := readBoolField(t, s, "updateCheckEnabled")
+	if !present {
+		t.Fatal("updateCheckEnabled was not written")
+	}
+	if !value {
+		t.Fatal("missing updateCheckEnabled should migrate to true")
+	}
+}
+
+// Someone who turned the update check off is opting out of the app's only
+// unprompted network request. That must survive a restart.
+func TestMigrateSettingsDefaultsPreservesUpdateCheckOptOut(t *testing.T) {
+	s := newTestStore(t)
+	writeSettingsJSON(t, s, `{"themeName":"Light","updateCheckEnabled":false}`)
+
+	s.MigrateSettingsDefaults()
+
+	value, present := readBoolField(t, s, "updateCheckEnabled")
+	if !present {
+		t.Fatal("updateCheckEnabled disappeared")
+	}
+	if value {
+		t.Fatal("explicit false must be preserved")
+	}
+}
+
 func TestMigrateSettingsDefaultsNoFileIsNoOp(t *testing.T) {
 	s := newTestStore(t)
 	// No settings.json on disk.

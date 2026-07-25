@@ -174,6 +174,8 @@ This prevents accidental plaintext disclosure but cannot make a general-purpose 
 {
   "alias": "prod-web",
   "reusedConnection": true,
+  "reconnectAttempted": false,
+  "reconnected": false,
   "exitCode": 0,
   "stdout": "...",
   "stderr": "",
@@ -186,6 +188,13 @@ This prevents accidental plaintext disclosure but cannot make a general-purpose 
   "truncated": false
 }
 ```
+
+If a reused SSH transport fails before the remote command can start, gxShell
+discards that stale session, reconnects, and retries exactly once. Responses
+set `reconnectAttempted` and `reconnected` so callers do not need to infer this
+from an SSH error string. gxShell never automatically replays a command after
+the SSH exec channel has been created, because the remote side may already have
+started it.
 
 `stdout`, `stderr`, and `output` contain remote output only. Synthetic CLI notes such as `(exit code: 1)` or truncation notices are reported in `summary`; `displayOutput` is the human-readable combination used by the non-JSON CLI output. Timed-out responses also include `timeoutHint`.
 

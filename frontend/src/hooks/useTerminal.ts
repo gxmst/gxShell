@@ -42,7 +42,6 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const bufferedOutputSizes = useRef<Record<string, number>>({});
   const bufferedOutputDropped = useRef<Record<string, boolean>>({});
   const observers = useRef<Record<string, ResizeObserver>>({});
-  const timers = useRef<Set<any>>(new Set());
   const cleanupFns = useRef<Record<string, () => void>>({});
   const cmdBuffer = useRef<Record<string, string>>({});
   const lastDimensions = useRef<Record<string, { cols: number; rows: number }>>({});
@@ -63,15 +62,6 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   // receives live match counts from SearchAddon's onDidChangeResults for the
   // terminal being searched: (sessionId, resultIndex, resultCount).
   const searchResultsRef = useRef<((id: string, index: number, count: number) => void) | null>(null);
-
-  const addTimer = useCallback((ms: number, fn: () => void) => {
-    const id = window.setTimeout(() => {
-      timers.current.delete(id);
-      fn();
-    }, ms);
-    timers.current.add(id);
-    return id;
-  }, []);
 
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
@@ -146,9 +136,17 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     const host = terminalHosts.current[activeTab];
     if (!host) return;
 
+    // These three refs hold the per-session maps for the lifetime of the hook:
+    // nothing reassigns .current, only mutates the map in place. Capturing them
+    // here states that invariant instead of relying on it, and it is what
+    // exhaustive-deps wants to see for refs touched from the cleanup below.
+    const observerMap = observers.current;
+    const cleanupMap = cleanupFns.current;
+    const cmdBufferMap = cmdBuffer.current;
+
     // Disconnect any observer left by reattachTerminal before setting up our own
-    observers.current[activeTab]?.disconnect();
-    delete observers.current[activeTab];
+    observerMap[activeTab]?.disconnect();
+    delete observerMap[activeTab];
 
     const fitAndResize = () => {
       if (pendingFitFrames.current[activeTab]) return;
@@ -250,7 +248,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         });
         term.loadAddon(gl);
         webgl.current[activeTab] = gl;
-      } catch (err) {
+      } catch {
         if (!webglFallbackToastShown) {
           webglFallbackToastShown = true;
           notifyRef.current("WebGL unavailable, using canvas renderer", "info");
@@ -351,20 +349,20 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     };
     const observer = new ResizeObserver(resize);
     observer.observe(host);
-    observers.current[activeTab] = observer;
+    observerMap[activeTab] = observer;
     window.addEventListener("resize", resize);
 
-    cleanupFns.current[activeTab] = () => {
+    cleanupMap[activeTab] = () => {
       observer.disconnect();
       window.removeEventListener("resize", resize);
     };
 
-  return () => {
+    return () => {
       observer.disconnect();
       window.removeEventListener("resize", resize);
-      delete observers.current[activeTab];
-      delete cleanupFns.current[activeTab];
-      delete cmdBuffer.current[activeTab];
+      delete observerMap[activeTab];
+      delete cleanupMap[activeTab];
+      delete cmdBufferMap[activeTab];
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, activeIsTerminal, enqueueTerminalInput, settingsReady]);
@@ -623,8 +621,6 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
 
   useEffect(() => {
     return () => {
-      timers.current.forEach((id) => window.clearTimeout(id));
-      timers.current.clear();
       Object.values(pendingInputTimers.current).forEach((id) => window.clearTimeout(id));
       pendingInputTimers.current = {};
     };

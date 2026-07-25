@@ -1,9 +1,11 @@
 import clsx from "clsx";
 import type { ReactNode } from "react";
-import { Cpu, Gauge, HardDrive, Network, TerminalSquare } from "lucide-react";
+import { Activity, Cpu, Gauge, HardDrive, Network, TerminalSquare } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { formatBytes } from "../../utils/format";
 import { useSessionMetrics } from "../../hooks/useSessionMetrics";
+import { useMetricsHistory, type MetricsSample } from "../../hooks/useMetricsHistory";
+import { Sparkline } from "../Sparkline/Sparkline";
 import { t } from "../../i18n";
 import { FloatingCard } from "../FloatingCard/FloatingCard";
 
@@ -39,6 +41,9 @@ const COMMANDS: Record<MonitorDetailKind, string[]> = {
 export function MonitorDetailCard({ kind, sessionId, initialLeft, initialTop, locale, onClose }: MonitorDetailCardProps) {
   // Own monitor:update subscription; ticks re-render only this floating card.
   const metrics = useSessionMetrics(sessionId);
+  // The card has room for a real curve, so it gets the same rolling history the
+  // sidebar sparklines use, drawn taller.
+  const history = useMetricsHistory(sessionId);
   const lang = locale || "en";
   const title = kind === "cpu" ? t(lang, "cpuDetail") : kind === "disk" ? t(lang, "diskDetail") : t(lang, "networkDetail");
   const icon = kind === "cpu" ? <Cpu size={14} /> : kind === "disk" ? <HardDrive size={14} /> : <Network size={14} />;
@@ -50,16 +55,16 @@ export function MonitorDetailCard({ kind, sessionId, initialLeft, initialTop, lo
         <span className="text-[12px] font-semibold">{title}</span>
       </div>
 
-      {kind === "cpu" && <CpuDetail metrics={metrics} lang={lang} />}
+      {kind === "cpu" && <CpuDetail metrics={metrics} history={history} lang={lang} />}
       {kind === "disk" && <DiskDetail metrics={metrics} lang={lang} />}
-      {kind === "network" && <NetworkDetail metrics={metrics} lang={lang} />}
+      {kind === "network" && <NetworkDetail metrics={metrics} history={history} lang={lang} />}
 
       <CommandSection commands={COMMANDS[kind]} lang={lang} />
     </FloatingCard>
   );
 }
 
-function CpuDetail({ metrics, lang }: { metrics?: types.Metrics; lang: string }) {
+function CpuDetail({ metrics, history, lang }: { metrics?: types.Metrics; history: MetricsSample[]; lang: string }) {
   const cpuPct = metrics?.cpuPercent || 0;
   const load = metrics?.loadAverage || "-";
   const procs = [...(metrics?.topProcesses || [])].sort((a, b) => (b.cpu || 0) - (a.cpu || 0)).slice(0, 8);
@@ -70,6 +75,13 @@ function CpuDetail({ metrics, lang }: { metrics?: types.Metrics; lang: string })
         <DetailStat label={t(lang, "load")} value={load} />
         <DetailStat label={t(lang, "latency")} value={`${metrics?.latencyMs || 0}ms`} />
       </DetailStatGrid>
+      <HistoryChart
+        values={history.map((s) => s.cpuPercent)}
+        max={100}
+        label={t(lang, "historyLabel", { metric: t(lang, "cpu") })}
+        tone={tone(cpuPct)}
+        lang={lang}
+      />
       <div className="detail-section">
         <div className="detail-section-title">
           <Gauge size={11} />
@@ -100,14 +112,46 @@ function DiskDetail({ metrics, lang }: { metrics?: types.Metrics; lang: string }
   );
 }
 
-function NetworkDetail({ metrics, lang }: { metrics?: types.Metrics; lang: string }) {
+function NetworkDetail({ metrics, history, lang }: { metrics?: types.Metrics; history: MetricsSample[]; lang: string }) {
   const latency = metrics?.latencyMs || 0;
   return (
-    <DetailStatGrid>
-      <DetailStat label={t(lang, "ping")} value={`${latency}ms`} tone={latency >= 300 ? "bad" : latency >= 100 ? "warn" : "ok"} />
-      <DetailStat label={t(lang, "down")} value={formatBytes(metrics?.networkRxPerSec || 0)} />
-      <DetailStat label={t(lang, "up")} value={formatBytes(metrics?.networkTxPerSec || 0)} />
-    </DetailStatGrid>
+    <>
+      <DetailStatGrid>
+        <DetailStat label={t(lang, "ping")} value={`${latency}ms`} tone={latency >= 300 ? "bad" : latency >= 100 ? "warn" : "ok"} />
+        <DetailStat label={t(lang, "down")} value={formatBytes(metrics?.networkRxPerSec || 0)} />
+        <DetailStat label={t(lang, "up")} value={formatBytes(metrics?.networkTxPerSec || 0)} />
+      </DetailStatGrid>
+      {/* Throughput auto-scales to its own peak (no max): unlike a percentage it
+          has no ceiling, so a fixed scale would flatten every line on a link
+          that is not saturated. The peak is labelled so the shape is readable. */}
+      <HistoryChart
+        values={history.map((s) => s.networkRxPerSec)}
+        label={t(lang, "historyLabel", { metric: t(lang, "down") })}
+        tone="ok"
+        lang={lang}
+        formatPeak={formatBytes}
+      />
+    </>
+  );
+}
+
+// A labelled sparkline for the detail cards: taller than the sidebar version and
+// annotated with the window's peak, which is the one number a curve alone cannot
+// convey.
+function HistoryChart({ values, max, label, tone: chartTone, lang, formatPeak }: { values: number[]; max?: number; label: string; tone: "ok" | "warn" | "bad"; lang: string; formatPeak?: (value: number) => string }) {
+  if (values.length < 2) {
+    return <div className="detail-hint">{t(lang, "historyCollecting")}</div>;
+  }
+  const peak = Math.max(...values);
+  return (
+    <div className="detail-section">
+      <div className="detail-section-title">
+        <Activity size={11} />
+        <span>{label}</span>
+        <span className="detail-chart-peak">{formatPeak ? formatPeak(peak) : `${peak.toFixed(0)}%`}</span>
+      </div>
+      <Sparkline className={`detail-chart detail-chart-${chartTone}`} values={values} max={max} height={40} />
+    </div>
   );
 }
 

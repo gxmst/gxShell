@@ -64,5 +64,8 @@ func (a *App) ConnectQuick(profile types.Profile, cols int, rows int) (types.Ses
 	if settings.MonitorEnabled {
 		a.monitor.Start(info.ID, settings.MonitorIntervalSec)
 	}
+	// A quick-connect profile can carry post-connect actions too: it is a real
+	// profile that simply never reaches profiles.json.
+	a.runPostConnectActions(info.ID, profile)
 	return info, nil
 }

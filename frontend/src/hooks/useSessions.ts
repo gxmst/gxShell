@@ -132,10 +132,40 @@ export function useSessions(options: UseSessionsOptions) {
       // host immediately.
       setActiveTab((current) => current || info.id);
     });
+    const offCliSessionRecovering = EventsOn("terminal:cli-session-recovering", (payload: { sessionId: string }) => {
+      if (!payload?.sessionId) return;
+      clearAutoReconnect(payload.sessionId);
+      // The backend owns this reconnect. Suppress the normal disconnected
+      // event path so it cannot start a second connection in parallel.
+      userClosing.current.add(payload.sessionId);
+      setTabs((items) => items.map((tab) => tab.id === payload.sessionId
+        ? { ...tab, state: "connecting", error: undefined }
+        : tab));
+    });
+    const offCliSessionReplaced = EventsOn("terminal:cli-session-replaced", (payload: { oldSessionId: string; session: types.SessionInfo }) => {
+      const info = payload?.session;
+      if (!payload?.oldSessionId || !info?.id) return;
+      clearAutoReconnect(payload.oldSessionId);
+      disposeTerminalRef.current(payload.oldSessionId);
+      const profile = profilesRef.current.find((item) => item.id === info.profileId);
+      setTabs((items) => {
+        const oldTab = items.find((tab) => tab.id === payload.oldSessionId);
+        const withoutDuplicate = items.filter((tab) => tab.id !== info.id);
+        if (!oldTab) {
+          return [...withoutDuplicate, {
+            id: info.id, profileId: info.profileId, title: tabTitle(profile, info.name), state: info.state,
+          }];
+        }
+        return withoutDuplicate.map((tab) => tab.id === payload.oldSessionId
+          ? { ...tab, id: info.id, profileId: info.profileId, title: tabTitle(profile, info.name), state: info.state, error: undefined }
+          : tab);
+      });
+      setActiveTab((current) => current === payload.oldSessionId ? info.id : current);
+    });
     return () => {
-      offConnecting(); offConnected(); offDisconnected(); offError(); offCliSession();
+      offConnecting(); offConnected(); offDisconnected(); offError(); offCliSession(); offCliSessionRecovering(); offCliSessionReplaced();
     };
-  }, []);
+  }, [clearAutoReconnect]);
 
   // A renderer reload should not make still-running backend sessions vanish.
   // Hydrate the tab strip from the authoritative managers, while merging with

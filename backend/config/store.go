@@ -240,7 +240,8 @@ func (s *Store) MigrateSettingsDefaults() {
 	}
 	_, hasCliServerEnabled := raw["cliServerEnabled"]
 	_, hasSmartHighlight := raw["smartHighlight"]
-	if hasCliServerEnabled && hasSmartHighlight {
+	_, hasUpdateCheckEnabled := raw["updateCheckEnabled"]
+	if hasCliServerEnabled && hasSmartHighlight && hasUpdateCheckEnabled {
 		return
 	}
 	// Start from DefaultSettings and overlay the on-disk file so any field the
@@ -256,6 +257,9 @@ func (s *Store) MigrateSettingsDefaults() {
 	}
 	if !hasSmartHighlight {
 		settings.SmartHighlight = true
+	}
+	if !hasUpdateCheckEnabled {
+		settings.UpdateCheckEnabled = true
 	}
 	_ = s.SaveSettings(settings)
 }
@@ -289,6 +293,7 @@ func DefaultSettings() types.AppSettings {
 		SmartHighlight:     true,
 		HighlightLevel:     "off",
 		CliServerEnabled:   true,
+		UpdateCheckEnabled: true,
 		Terminal: types.TerminalSettings{
 			FontFamily:        "JetBrains Mono, Cascadia Code, Consolas, monospace",
 			FontSize:          14,
