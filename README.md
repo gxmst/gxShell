@@ -211,7 +211,8 @@ Use release notes that describe behavior and fixes only. Do not include local pa
   unsigned Linux and macOS desktop targets on native runners, but those builds
   have not received runtime testing. Tray integration, keyring behavior, local
   terminals, dialogs, single-instance handling, and packaging may still differ
-  or fail outside Windows.
+  or fail outside Windows. The current macOS build deliberately has no tray
+  because the existing tray library conflicts with Wails' application delegate.
 - System monitoring expects Linux-style remote hosts.
 - Docker management runs over SSH and does not use a local Docker socket.
 - ProxyJump supports one jump host level.
@@ -427,7 +428,8 @@ Release notes 只应描述行为和修复。不要包含本地路径、token、A
 
 - Windows 是目前唯一正式支持的发布平台。CI 会在原生 runner 上编译实验性的 Linux 和
   macOS 桌面目标，但这些未签名构建尚未经过运行验证；托盘、系统密钥环、本地终端、文件
-  对话框、单实例行为和打包结果在非 Windows 平台上仍可能存在差异或无法使用。
+  对话框、单实例行为和打包结果在非 Windows 平台上仍可能存在差异或无法使用。当前 macOS
+  构建会主动禁用托盘，因为现有托盘库与 Wails 的应用代理存在符号冲突。
 - 系统监控面向 Linux 风格的远程主机。
 - Docker 管理通过 SSH 执行，不使用本地 Docker socket。
 - ProxyJump 支持一层跳板机。

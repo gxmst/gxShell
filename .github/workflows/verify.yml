@@ -114,6 +114,27 @@ jobs:
       - name: Build experimental Linux desktop app
         run: wails build -s -skipbindings -platform linux/amd64 -tags webkit2_41
 
+      - name: Package experimental Linux build
+        run: |
+          VERSION="$(node -p "require('./frontend/package.json').version")"
+          PACKAGE="gxShell-v${VERSION}-linux-amd64"
+          mkdir -p "release/${PACKAGE}"
+          install -m 0755 build/bin/gxShell "release/${PACKAGE}/gxShell"
+          go build -o "release/${PACKAGE}/gxshell-cli" ./cmd/gxshell-cli
+          cp LICENSE "release/${PACKAGE}/LICENSE"
+          tar -C release -czf "release/${PACKAGE}.tar.gz" "${PACKAGE}"
+          (cd release && sha256sum "${PACKAGE}.tar.gz" > "${PACKAGE}.tar.gz.sha256")
+
+      - name: Upload experimental Linux build
+        uses: actions/upload-artifact@v4
+        with:
+          name: gxshell-linux-amd64
+          path: |
+            release/*.tar.gz
+            release/*.sha256
+          if-no-files-found: error
+          retention-days: 7
+
   build-macos-desktop-experimental:
     runs-on: macos-14
 
@@ -146,4 +167,25 @@ jobs:
           go install "github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}"
 
       - name: Build experimental macOS desktop app
-        run: wails build -s -skipbindings -platform darwin/amd64
+        run: wails build -s -skipbindings -platform darwin/arm64
+
+      - name: Package experimental macOS build
+        run: |
+          VERSION="$(node -p "require('./frontend/package.json').version")"
+          PACKAGE="gxShell-v${VERSION}-macos-arm64"
+          mkdir -p "release/${PACKAGE}"
+          cp -R build/bin/gxShell.app "release/${PACKAGE}/gxShell.app"
+          go build -o "release/${PACKAGE}/gxshell-cli" ./cmd/gxshell-cli
+          cp LICENSE "release/${PACKAGE}/LICENSE"
+          ditto -c -k --sequesterRsrc --keepParent "release/${PACKAGE}" "release/${PACKAGE}.zip"
+          (cd release && shasum -a 256 "${PACKAGE}.zip" > "${PACKAGE}.zip.sha256")
+
+      - name: Upload experimental macOS build
+        uses: actions/upload-artifact@v4
+        with:
+          name: gxshell-macos-arm64
+          path: |
+            release/*.zip
+            release/*.sha256
+          if-no-files-found: error
+          retention-days: 7
