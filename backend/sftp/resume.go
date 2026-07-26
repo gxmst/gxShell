@@ -14,6 +14,28 @@ package sftpmanager
 // too and the transfer starts over. A metadata-preserving rewrite is outside
 // this scheme's guarantee; detecting that would require content hashing and a
 // sidecar or server-side hash support.
+//
+// # The contiguous-prefix invariant
+//
+// Resuming at the part file's length assumes the first N bytes of a part file
+// are the first N bytes of the source — that is, that every attempt leaves
+// behind a contiguous prefix and never a file with a hole in it. Nothing about
+// a file's size proves this on its own, so both transfer directions have to
+// keep it true by construction:
+//
+//   - Downloads: pkg/sftp reads ahead concurrently but serializes the results
+//     into ordered local writes (its WriteTo "Reduce" phase), so the local file
+//     is always a prefix.
+//   - Uploads: pkg/sftp's ReadFrom writes sequentially at a monotonic offset
+//     *unless* the reader it is handed advertises a length, which switches it to
+//     writing chunks at explicit offsets from several goroutines. That mode
+//     documents that an error can leave the file longer than its last
+//     contiguous byte, which would make the length a lie. progressReader
+//     therefore deliberately hides the source's size; see the invariant test in
+//     resume_test.go.
+//
+// Anything that changes how bytes reach a part file has to preserve this, or
+// resume has to stop trusting the length and start verifying content.
 
 import (
 	"fmt"
@@ -32,9 +54,31 @@ import (
 const partSuffix = ".part"
 const partMarker = ".gxshell-r1-"
 
+// artifactMarker is common to every temporary file gxShell writes beside a
+// transfer destination: resumable parts, the per-job parts that directory
+// downloads use, the remote-copy staging file, and the backup replaceLocalTemp
+// takes on platforms where rename cannot replace.
+const artifactMarker = ".gxshell-"
+
+// backupSuffix is the extension replaceLocalTemp gives that backup.
+const backupSuffix = ".bak"
+
 // minResumeBytes is the smallest partial worth continuing. Below this, the
 // round trips to stat and seek cost more than just re-sending the data.
 const minResumeBytes = 256 * 1024
+
+// partSweepAge is how long a part file for some *other* destination is left
+// alone before a transfer passing through the same directory removes it.
+//
+// Parts for the destination being retried are handled exactly (see
+// removableParts): their source metadata changed, so they are unresumable and
+// go immediately. Everything else belongs to a transfer this one knows nothing
+// about — possibly one running in another window right now, or one the user
+// intends to retry after lunch. Age is the only signal available without a
+// registry that survives app restarts, so the window is deliberately generous:
+// a week-old part is certainly abandoned, while a resume that matters happens
+// within one sitting.
+const partSweepAge = 7 * 24 * time.Hour
 
 // resumeKey fingerprints one source version by the metadata available locally
 // or through SFTP.
@@ -49,10 +93,100 @@ func partName(destination string, size, modTime int64) string {
 	return fmt.Sprintf("%s%s%x-%x%s", destination, partMarker, size, modTime, partSuffix)
 }
 
-// isPartPath reports whether name is one of our part files, so directory
-// listings and cleanup can recognise them without re-deriving a key.
+// isPartPath reports whether name is a resumable part file in this version's
+// format, so resume bookkeeping can recognise one without re-deriving a key.
 func isPartPath(name string) bool {
-	return strings.Contains(name, partMarker) && strings.HasSuffix(name, partSuffix)
+	suffix, ok := transferArtifactSuffix(name)
+	return ok && isResumePartSuffix(suffix)
+}
+
+// IsTransferArtifact reports whether name is any temporary file gxShell writes
+// next to a transfer destination.
+//
+// It is broader than isPartPath on purpose. These files used to be deleted the
+// moment a transfer failed, so they were never visible; now that a part file
+// survives a failure in order to be resumed, the file browsers have to know
+// which entries are gxShell's plumbing rather than the user's data. It also
+// covers the pre-1.5 job-id part names, which no longer match the resume format
+// but can still be sitting in a directory from an older build.
+//
+// Match only the exact suffixes gxShell generates. A loose contains/suffix
+// check can hide and eventually delete a user's similarly named backup, and
+// checking the full path can even mistake an ordinary .bak inside a directory
+// whose name contains ".gxshell-" for a transfer artifact.
+func IsTransferArtifact(name string) bool {
+	suffix, ok := transferArtifactSuffix(name)
+	if !ok {
+		return false
+	}
+
+	if strings.HasSuffix(suffix, backupSuffix) {
+		return isRandomSuffix(strings.TrimSuffix(suffix, backupSuffix))
+	}
+	if !strings.HasSuffix(suffix, partSuffix) {
+		return false
+	}
+
+	partID := strings.TrimSuffix(suffix, partSuffix)
+	if strings.HasPrefix(partID, "r1-") {
+		return isResumePartSuffix(suffix)
+	}
+	if strings.HasPrefix(partID, "copy-") {
+		return isRandomSuffix(strings.TrimPrefix(partID, "copy-"))
+	}
+
+	// Directory downloads use the transfer job ID: a hexadecimal UnixNano
+	// timestamp followed by the same eight-hex random suffix used elsewhere.
+	timestamp, random, found := strings.Cut(partID, "-")
+	return found && isHex(timestamp) && isRandomSuffix(random)
+}
+
+// transferArtifactSuffix returns the generated portion following the last
+// marker in the filename. Strip both local and remote separators explicitly so
+// this helper remains correct for slash-style SFTP paths on Windows and for
+// local paths on every supported platform.
+func transferArtifactSuffix(name string) (string, bool) {
+	base := name
+	if separator := strings.LastIndexAny(base, `/\`); separator >= 0 {
+		base = base[separator+1:]
+	}
+	marker := strings.LastIndex(base, artifactMarker)
+	if marker < 0 {
+		return "", false
+	}
+	return base[marker+len(artifactMarker):], true
+}
+
+func isResumePartSuffix(suffix string) bool {
+	if !strings.HasPrefix(suffix, "r1-") || !strings.HasSuffix(suffix, partSuffix) {
+		return false
+	}
+	version := strings.TrimSuffix(strings.TrimPrefix(suffix, "r1-"), partSuffix)
+	size, modTime, found := strings.Cut(version, "-")
+	return found && isHex(size) && isSignedHex(modTime)
+}
+
+func isRandomSuffix(value string) bool {
+	return len(value) == 8 && isHex(value)
+}
+
+func isSignedHex(value string) bool {
+	if strings.HasPrefix(value, "-") {
+		value = strings.TrimPrefix(value, "-")
+	}
+	return isHex(value)
+}
+
+func isHex(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if (char < '0' || char > '9') && (char < 'a' || char > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // resumeOffset decides where a transfer should start.
@@ -60,6 +194,9 @@ func isPartPath(name string) bool {
 // existing is the size of the part file already on the destination, or -1 when
 // there is none. The returned offset is 0 for "start from the beginning", in
 // which case the caller truncates. total is the source size.
+//
+// This trusts existing as a byte count of correct leading data, which holds only
+// under the contiguous-prefix invariant documented at the top of this file.
 //
 // A part file larger than the source means the name collided with a stale file
 // from a different version, or the source shrank without its recorded size
@@ -94,43 +231,70 @@ func remotePartPath(remotePath string, key resumeKey) string {
 	return partName(remotePath, key.size, key.modTime.UnixNano())
 }
 
-// staleParts lists part files in dir whose names do not match keep.
-//
-// Part files are only left behind by a transfer that died without cleanup (a
-// crash, or a disconnect mid-write). Removing the ones that can no longer be
-// resumed keeps a download directory from silently accumulating them, while the
-// one part file the current transfer is about to resume is preserved.
-func staleParts(entries []string, base string, keep string) []string {
-	var stale []string
-	prefix := base + partMarker
-	for _, name := range entries {
-		if name == keep || !isPartPath(name) {
-			continue
-		}
-		if strings.HasPrefix(name, prefix) {
-			stale = append(stale, name)
-		}
-	}
-	return stale
+// partEntry is one directory entry with the metadata cleanup needs.
+type partEntry struct {
+	path    string
+	modTime time.Time
 }
 
-// localStaleParts finds abandoned part files for one local destination.
-func localStaleParts(localPath string, keep string) []string {
+// removableParts decides which of a directory's part files may be deleted.
+//
+// Two cases are folded together because one directory listing answers both:
+//
+//   - A part for base, the destination this transfer is about to write, other
+//     than keep. Its name encodes a source version that no longer exists, so it
+//     can never be resumed again and goes immediately.
+//   - A part for any other destination. Not this transfer's business, except
+//     that nobody will ever look at it again once its transfer is gone for good,
+//     so it goes once older than partSweepAge.
+//
+// inUse holds the parts of transfers running right now, which are exempt from
+// both cases. Without it, concurrent transfers into one directory delete each
+// other's work in progress: two uploads of different local files to the same
+// remote name produce different part names, so each sees the other's part as an
+// orphan of its own destination.
+func removableParts(entries []partEntry, base string, keep string, inUse map[string]bool, now time.Time) []string {
+	var remove []string
+	prefix := base + artifactMarker
+	for _, entry := range entries {
+		if entry.path == keep || !IsTransferArtifact(entry.path) || inUse[entry.path] {
+			continue
+		}
+		if strings.HasPrefix(entry.path, prefix) {
+			remove = append(remove, entry.path)
+			continue
+		}
+		if now.Sub(entry.modTime) > partSweepAge {
+			remove = append(remove, entry.path)
+		}
+	}
+	return remove
+}
+
+// localRemovableParts finds deletable part files beside one local destination.
+//
+// A listing failure returns nothing: cleanup is housekeeping and must never be
+// the reason a transfer fails.
+func (m *Manager) localRemovableParts(localPath string, keep string) []string {
 	dir := filepath.Dir(localPath)
-	handle, err := os.Open(dir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
-	defer handle.Close()
-	names, err := handle.Readdirnames(-1)
-	if err != nil {
-		return nil
+	candidates := make([]partEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			// Without a mod time the age rule cannot be applied. A zero time
+			// would read as ancient and delete it, so skip the entry instead.
+			continue
+		}
+		candidates = append(candidates, partEntry{path: filepath.Join(dir, entry.Name()), modTime: info.ModTime()})
 	}
-	full := make([]string, 0, len(names))
-	for _, name := range names {
-		full = append(full, filepath.Join(dir, name))
-	}
-	return staleParts(full, localPath, keep)
+	return removableParts(candidates, localPath, keep, m.partsInUse(), time.Now())
 }
 
 // remoteBase returns the directory of a remote path, using remote (slash)
@@ -139,23 +303,21 @@ func remoteBase(remotePath string) string {
 	return path.Dir(remotePath)
 }
 
-// remoteStaleParts finds abandoned part files for one remote destination.
-//
-// Listing a directory costs a round trip, so this runs once per transfer rather
-// than per chunk. A listing failure returns nothing: cleanup is housekeeping and
-// must never be the reason an upload fails.
-func (m *Manager) remoteStaleParts(client *sftp.Client, remotePath string, keep string) []string {
-	entries, err := client.ReadDir(remoteBase(remotePath))
+// remoteRemovableParts finds deletable part files beside one remote
+// destination. Listing a directory costs a round trip, so this runs once per
+// transfer rather than per chunk.
+func (m *Manager) remoteRemovableParts(client *sftp.Client, remotePath string, keep string) []string {
+	dir := remoteBase(remotePath)
+	entries, err := client.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
-	dir := remoteBase(remotePath)
-	full := make([]string, 0, len(entries))
+	candidates := make([]partEntry, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
-		full = append(full, path.Join(dir, entry.Name()))
+		candidates = append(candidates, partEntry{path: path.Join(dir, entry.Name()), modTime: entry.ModTime()})
 	}
-	return staleParts(full, remotePath, keep)
+	return removableParts(candidates, remotePath, keep, m.partsInUse(), time.Now())
 }

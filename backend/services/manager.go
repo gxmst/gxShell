@@ -117,6 +117,11 @@ func (m *Manager) ListServices(sessionID string) ([]types.ServiceInfo, error) {
 	// snapshot is much cheaper than running systemctl show once per service and
 	// gives the UI meaningful current CPU/RSS values. BusyBox/minimal hosts may
 	// not support the unit column; resource data is intentionally best-effort.
+	//
+	// ResourceStats marks the units this snapshot actually accounted for. Without
+	// it a host whose ps has no unit column is indistinguishable from one where
+	// every service genuinely uses no CPU, and the panel would confidently show
+	// "CPU 0.0% · 0 MB" for everything.
 	if usageOut, err := m.ssh.Exec(sessionID, "LC_ALL=C ps -eo unit=,pcpu=,rss= --no-headers", 20*time.Second); err == nil {
 		mergeResourceUsage(services, parseResourceUsage(usageOut))
 	}
@@ -148,8 +153,19 @@ func parseResourceUsage(out string) map[string]serviceResourceUsage {
 	return usage
 }
 
+// mergeResourceUsage attaches one ps snapshot to the unit list.
+//
+// An empty snapshot means ps produced nothing usable (no unit column on this
+// host, or output this parser did not recognise), so no unit gets stats and the
+// UI shows them as unmeasured. A non-empty snapshot that simply lacks a given
+// unit is different: that unit is accounted for and has no running processes, so
+// zero is a real measurement.
 func mergeResourceUsage(services []types.ServiceInfo, usage map[string]serviceResourceUsage) {
+	if len(usage) == 0 {
+		return
+	}
 	for i := range services {
+		services[i].ResourceStats = true
 		if current, ok := usage[services[i].Name]; ok {
 			services[i].CPUPercent = current.cpuPercent
 			services[i].MemoryBytes = current.memoryBytes

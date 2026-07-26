@@ -1,6 +1,10 @@
 package websites
 
-import "testing"
+import (
+	"encoding/base64"
+	"strings"
+	"testing"
+)
 
 func TestSitePathConfinement(t *testing.T) {
 	path, err := sitePath("nginx", "sites", "example.com")
@@ -35,5 +39,37 @@ DocumentRoot /srv/example
 </VirtualHost>`)
 	if len(apache.ServerNames) != 3 || apache.Root != "/srv/example" || apache.Listen[0] != "*:80" {
 		t.Fatalf("apache = %+v", apache)
+	}
+}
+
+// Status runs unprivileged, so a non-root session can find site configs it
+// cannot read. Those must be counted rather than silently dropped: otherwise the
+// panel shows "no sites" on a host that is in fact serving several.
+func TestParseStatusCountsUnreadableSites(t *testing.T) {
+	enc := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+	out := strings.Join([]string{
+		"BACKEND\tnginx\tsites",
+		"SITE\tnginx\tsites\t1\t" + enc("readable.com") + "\t" + enc("server {\n listen 80;\n}"),
+		"UNREADABLE\tnginx\t" + enc("secret.com"),
+		"UNREADABLE\tnginx\t" + enc("other.com"),
+	}, "\n")
+
+	status, err := parseStatus(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(status.Sites) != 1 || status.Sites[0].Name != "readable.com" {
+		t.Fatalf("sites = %+v", status.Sites)
+	}
+	if status.Unreadable != 2 {
+		t.Errorf("Unreadable = %d, want 2", status.Unreadable)
+	}
+	// An ordinary listing must not report a permission problem that isn't there.
+	clean, err := parseStatus("BACKEND\tnginx\tsites")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clean.Unreadable != 0 {
+		t.Errorf("Unreadable = %d on a clean listing, want 0", clean.Unreadable)
 	}
 }

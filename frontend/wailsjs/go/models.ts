@@ -892,7 +892,8 @@ export namespace types {
 	    enabled: string;
 	    cpuPercent: number;
 	    memoryBytes: number;
-	
+	    resourceStats: boolean;
+
 	    static createFrom(source: any = {}) {
 	        return new ServiceInfo(source);
 	    }
@@ -907,6 +908,7 @@ export namespace types {
 	        this.enabled = source["enabled"];
 	        this.cpuPercent = source["cpuPercent"];
 	        this.memoryBytes = source["memoryBytes"];
+	        this.resourceStats = source["resourceStats"];
 	    }
 	}
 	export class SessionInfo {
@@ -1017,15 +1019,17 @@ export namespace types {
 	export class WebsiteStatus {
 	    backends: string[];
 	    sites: WebsiteInfo[];
-	
+	    unreadable: number;
+
 	    static createFrom(source: any = {}) {
 	        return new WebsiteStatus(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.backends = source["backends"];
 	        this.sites = this.convertValues(source["sites"], WebsiteInfo);
+	        this.unreadable = source["unreadable"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

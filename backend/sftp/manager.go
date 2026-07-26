@@ -69,6 +69,13 @@ type transferJob struct {
 	once      sync.Once
 	cancelled atomic.Bool
 
+	// partPath is the temp file this job is currently writing, published so
+	// concurrent transfers into the same directory do not clean it up as an
+	// orphan. Empty until the job has decided on a name. Guarded by the
+	// Manager's transferMu rather than a field mutex, because it is only ever
+	// written by the owning job and read while walking the job map.
+	partPath string
+
 	interruptMu sync.Mutex
 	interrupt   func()
 	interruptID uint64
@@ -318,6 +325,30 @@ func (m *Manager) beginTransfer(sessionID, transferPath, direction string) *tran
 	return job
 }
 
+// claimPart publishes the temp file a job is about to write, so part cleanup in
+// a concurrent transfer treats it as live rather than abandoned. Call it before
+// opening the file: the window between opening and claiming is exactly the race
+// this closes.
+func (m *Manager) claimPart(job *transferJob, partPath string) {
+	m.transferMu.Lock()
+	job.partPath = partPath
+	m.transferMu.Unlock()
+}
+
+// partsInUse is the set of temp files live transfers are writing. Callers use it
+// to exempt those paths from cleanup.
+func (m *Manager) partsInUse() map[string]bool {
+	m.transferMu.Lock()
+	defer m.transferMu.Unlock()
+	inUse := make(map[string]bool, len(m.transfers))
+	for _, job := range m.transfers {
+		if job.partPath != "" {
+			inUse[job.partPath] = true
+		}
+	}
+	return inUse
+}
+
 func (m *Manager) emitTransfer(job *transferJob, status string, done, total int64, err error) {
 	if m.emit == nil {
 		return
@@ -458,6 +489,13 @@ func (m *Manager) ListRemoteDir(sessionID string, remotePath string) ([]types.Re
 	}
 	files := make([]types.RemoteFile, 0, len(entries))
 	for _, entry := range entries {
+		// gxShell's own in-progress and abandoned transfer files are plumbing, not
+		// the user's data. A part file now outlives a failed transfer so it can be
+		// resumed, so without this the browser shows names nobody asked for and
+		// invites deleting one out from under a running transfer.
+		if IsTransferArtifact(entry.Name()) {
+			continue
+		}
 		files = append(files, types.RemoteFile{
 			Name:        entry.Name(),
 			Path:        path.Join(remotePath, entry.Name()),
@@ -515,7 +553,8 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) (err error
 	// so editing the file locally invalidates the partial rather than appending
 	// new bytes onto old ones.
 	tmpPath := remotePartPath(remotePath, key)
-	for _, orphan := range m.remoteStaleParts(client, remotePath, tmpPath) {
+	m.claimPart(job, tmpPath)
+	for _, orphan := range m.remoteRemovableParts(client, remotePath, tmpPath) {
 		_ = client.Remove(orphan)
 	}
 
@@ -565,9 +604,17 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) (err error
 	progress := throttled(func(n int64) {
 		m.emitTransfer(job, "progress", offset+n, totalSize, nil)
 	})
-	// ReadFrom lets the sftp client pipeline concurrent write packets (see
-	// acquireSlow); a manual read/write loop would fall back to one packet per
-	// round trip. Like WriteTo, it starts from the handle's current offset.
+	// ReadFrom writes from the handle's current offset, so the seek above is what
+	// makes a resumed upload append.
+	//
+	// It writes sequentially, one packet per round trip: pkg/sftp only switches
+	// to concurrent offset-addressed writes when the reader advertises a length,
+	// and progressReader deliberately does not (see resume.go's
+	// contiguous-prefix invariant — that mode can leave a part file longer than
+	// its last contiguous byte, which is precisely what resuming at the part's
+	// length must be able to trust). Downloads get the concurrency for free
+	// because WriteTo orders its writes; matching it here would mean giving up
+	// length-based resume for content verification.
 	var copied int64
 	copied, err = dst.ReadFrom(&progressReader{ctx: job.ctx, r: src, fn: progress})
 	done = offset + copied
@@ -630,7 +677,7 @@ func (m *Manager) CopyRemoteFile(ctx context.Context, sourceSessionID, sourcePat
 		return result, fmt.Errorf("remote copy currently supports files only")
 	}
 
-	tmpPath := destinationPath + ".gxshell-copy-" + randomSuffix() + ".part"
+	tmpPath := destinationPath + artifactMarker + "copy-" + randomSuffix() + partSuffix
 	destination, err := destinationClient.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
 	if err != nil {
 		return result, err
@@ -728,9 +775,11 @@ func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) (err err
 	// The part file's name encodes the source's size and mtime, so a metadata
 	// change invalidates the old partial and starts a clean transfer.
 	partPath := localPartPath(localPath, key)
+	m.claimPart(job, partPath)
 	// Part files from abandoned transfers of this same destination can no longer
-	// be resumed once the source metadata changes; drop them rather than accumulate.
-	for _, orphan := range localStaleParts(localPath, partPath) {
+	// be resumed once the source metadata changes; drop them rather than
+	// accumulate, and sweep long-abandoned parts for other destinations too.
+	for _, orphan := range m.localRemovableParts(localPath, partPath) {
 		_ = os.Remove(orphan)
 	}
 
@@ -937,7 +986,7 @@ func replaceRemoteTemp(client *sftp.Client, tmpPath, remotePath string) error {
 }
 
 func transferPartPath(localPath, jobID string) string {
-	return localPath + ".gxshell-" + jobID + ".part"
+	return localPath + artifactMarker + jobID + partSuffix
 }
 
 // replaceLocalTemp promotes a completed .part file. os.Rename is atomic when
@@ -951,7 +1000,7 @@ func replaceLocalTemp(tmpPath, localPath string) error {
 		return err
 	}
 
-	backupPath := localPath + ".gxshell-" + randomSuffix() + ".bak"
+	backupPath := localPath + artifactMarker + randomSuffix() + backupSuffix
 	if err := os.Rename(localPath, backupPath); err != nil {
 		return fmt.Errorf("prepare existing download target: %w", err)
 	}
@@ -1127,7 +1176,13 @@ func (m *Manager) downloadFileOnly(client *sftp.Client, job *transferJob, remote
 		}
 	}()
 
+	// A directory download names its parts after the job rather than the source
+	// version: it never resumes (the whole tree is walked again), so there is
+	// nothing to match across attempts, and a per-job name keeps the files of a
+	// tree being fetched twice from colliding. Claiming it still matters, so a
+	// single-file transfer sweeping the same directory leaves it alone.
 	partPath := transferPartPath(localPath, job.id)
+	m.claimPart(job, partPath)
 	dst, err := os.OpenFile(partPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		return 0, err

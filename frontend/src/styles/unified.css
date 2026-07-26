@@ -530,6 +530,28 @@
   font-size: var(--text-sm);
 }
 
+/* An inline advisory above a list that is showing real rows but is known to be
+   incomplete — e.g. site configs the current user cannot read. Deliberately
+   quieter than a toast: it is a standing condition of the session, not an event,
+   and it has to survive every refresh without nagging. */
+.panel-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--warn) 34%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--warn) 9%, transparent);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.panel-note svg {
+  flex-shrink: 0;
+  color: var(--warn);
+}
+
 /* Files use the continuous workspace surface defined in sftp.css. */
 
 /* Feature-specific lists adopt shared surfaces -------------------------- */

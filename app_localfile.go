@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"gxShell/backend/localfs"
+	sftpmanager "gxShell/backend/sftp"
 	"gxShell/backend/types"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -27,8 +28,25 @@ const (
 )
 
 // ListLocalDir lists files in a local directory.
+//
+// gxShell's own transfer temp files are filtered out for the same reason the
+// remote listing drops them: a part file now survives a failed download so it
+// can be resumed, and showing it invites the user to delete or open plumbing.
+// The filter lives here rather than in localfs so that leaf package does not
+// have to depend on the SFTP manager.
 func (a *App) ListLocalDir(dir string) ([]types.LocalFile, error) {
-	return localfs.ListDir(dir)
+	files, err := localfs.ListDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]types.LocalFile, 0, len(files))
+	for _, file := range files {
+		if sftpmanager.IsTransferArtifact(file.Name) {
+			continue
+		}
+		visible = append(visible, file)
+	}
+	return visible, nil
 }
 
 // LocalHomeDir returns the user's home directory path.

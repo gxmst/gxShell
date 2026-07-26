@@ -29,11 +29,22 @@ func NewManager(ssh websiteSSH) *Manager {
 var siteNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 func (m *Manager) Status(sessionID string) (types.WebsiteStatus, error) {
+	// Status deliberately runs unprivileged: listing sites is a read, and asking
+	// for sudo just to populate a panel would train the user to approve it. The
+	// consequence is that a non-root session may be able to list
+	// /etc/nginx/sites-available but not read the files in it, which used to
+	// surface as "backend detected, zero sites" with no hint that permission was
+	// the reason. UNREADABLE lets the UI tell those two states apart.
 	const script = `
 enc() { printf '%s' "$1" | base64 | tr -d '\n'; }
 emit_site() {
   backend=$1; mode=$2; enabled=$3; name=$4; file=$5
-  content=$(base64 < "$file" | tr -d '\n') || return
+  # -r rather than an empty-output check: a genuinely empty config file is
+  # readable and should be reported as a site with no content, not as an error.
+  if [ ! -r "$file" ] || ! content=$(base64 < "$file" 2>/dev/null | tr -d '\n'); then
+    printf 'UNREADABLE\t%s\t%s\n' "$backend" "$(enc "$name")"
+    return
+  fi
   printf 'SITE\t%s\t%s\t%s\t%s\t%s\n' "$backend" "$mode" "$enabled" "$(enc "$name")" "$content"
 }
 if command -v nginx >/dev/null 2>&1; then
@@ -217,7 +228,7 @@ if [ ! -f "$actual" ] && [ -f %s ]; then actual=%s; fi
 if [ -f "$actual" ]; then cp -p "$actual" "$backup"; existed=1; fi`, shellQuote(path), shellQuote(path+".disabled"), shellQuote(path+".disabled"))
 		}
 	}
-	restore := fmt.Sprintf(`[ "$existed" = 1 ] && cp -p "$backup" "$actual" || true`)
+	restore := `[ "$existed" = 1 ] && cp -p "$backup" "$actual" || true`
 	if backend == "nginx" && mode == "sites" {
 		link := "/etc/nginx/sites-enabled/" + name
 		backupRestore += fmt.Sprintf("\nwas_enabled=0; [ -e %s ] && was_enabled=1 || true", shellQuote(link))
@@ -260,6 +271,13 @@ func parseStatus(out string) (types.WebsiteStatus, error) {
 				backendSeen[key] = true
 				status.Backends = append(status.Backends, key)
 			}
+			continue
+		}
+		// A site whose config could not be read is counted but not listed: the
+		// panel cannot show or edit something it never received, and the count is
+		// what lets it explain why the list looks short.
+		if len(fields) == 3 && fields[0] == "UNREADABLE" {
+			status.Unreadable++
 			continue
 		}
 		if len(fields) != 6 || fields[0] != "SITE" {

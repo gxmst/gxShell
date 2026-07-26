@@ -310,6 +310,11 @@ type ServiceInfo struct {
 	Enabled     string  `json:"enabled"`     // enabled|disabled|static|masked|"" when unknown
 	CPUPercent  float64 `json:"cpuPercent"`  // aggregate CPU percentage of processes in this unit
 	MemoryBytes int64   `json:"memoryBytes"` // aggregate resident memory of processes in this unit
+	// ResourceStats reports whether CPUPercent/MemoryBytes were measured at all.
+	// Resource collection needs a ps that knows the systemd unit column, which
+	// minimal hosts lack; without this flag "not measured" and "measured zero"
+	// both arrive as 0.
+	ResourceStats bool `json:"resourceStats"`
 }
 
 type CronJob struct {
@@ -332,6 +337,10 @@ type WebsiteInfo struct {
 type WebsiteStatus struct {
 	Backends []string      `json:"backends"`
 	Sites    []WebsiteInfo `json:"sites"`
+	// Unreadable counts site configs that exist but could not be read, which on
+	// a non-root session means the listing is incomplete rather than empty.
+	// Status runs unprivileged by design, so this is expected, not an error.
+	Unreadable int `json:"unreadable"`
 }
 
 type FirewallRule struct {

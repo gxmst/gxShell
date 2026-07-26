@@ -23,3 +23,10 @@ frontend/package.json.md5
 
 # Vite build temp files
 frontend/vite.config.ts.timestamp-*.mjs
+
+# Ad-hoc scratch scripts and pasted screenshots. These accumulate at the repo
+# root while debugging unrelated things and are never part of a commit. The
+# leading slash keeps this to the root: icons and doc assets live in
+# build/, docs/ and frontend/src/assets/ and must stay tracked.
+/tmp_*
+/*.png
