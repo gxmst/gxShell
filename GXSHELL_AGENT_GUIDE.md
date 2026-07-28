@@ -52,7 +52,7 @@ For a script:
 Get-Content .\request.sh -Raw | .\gxshell-cli.exe exec-stdin 3 --shell bash --secret API_KEY=anyrouter-api-key --json
 ```
 
-gxShell resolves the reference only after local approval, injects the value through SSH stdin, hides it from approval text and command audit, and replaces exact occurrences in captured output. Named-secret execution is synchronous only; `--follow` and `--detach` are rejected.
+gxShell resolves the reference only after the normal local approval gate (or an active per-profile trust window), injects the value through SSH stdin, hides it from approval text and command audit, and replaces exact occurrences in captured output. Named-secret execution is synchronous only; `--follow` and `--detach` are rejected. Full trust is not a secret sandbox: transformed or encoded values may evade exact-value redaction.
 
 This protects against accidental disclosure, including `echo $API_KEY` and ordinary error output. It cannot make a general shell safe against a malicious command that transforms or encodes a secret before exfiltration. Approve secret-bearing commands only when their destination and purpose are clear. If a task only needs to test whether a secret works, do that without printing it.
 

@@ -42,6 +42,94 @@
   padding: 16px;
 }
 
+/* Session recordings are terminal event streams, not video. Give xterm a
+   stable measurable stage before it opens, then let its fit addon track this
+   box as the window changes size. */
+.cast-player {
+  display: grid;
+  grid-template-rows: 42px minmax(260px, 1fr) 46px;
+  width: min(980px, calc(100vw - 40px));
+  height: min(720px, calc(100vh - 40px));
+  min-height: 380px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-lg);
+}
+
+.cast-player-header,
+.cast-player-controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cast-player-controls {
+  border-top: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.cast-player-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cast-player-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px;
+  background: var(--terminal, #0b1018);
+}
+
+.cast-player-term,
+.cast-player-term .terminal {
+  width: 100%;
+  height: 100%;
+}
+
+.cast-player-error {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  max-width: min(520px, calc(100% - 40px));
+  transform: translate(-50%, -50%);
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--bad) 42%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-raised) 92%, transparent);
+  color: var(--bad);
+  font-size: 12px;
+  text-align: center;
+}
+
+.cast-time {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cast-speed {
+  min-width: 34px;
+  height: 26px;
+  border-radius: var(--radius-xs);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
 /* ── Command palette (Ctrl+K) ───────────────────────── */
 
 .modal-backdrop-palette {
@@ -686,6 +774,30 @@
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 8px;
+}
+
+.profile-cli-trust {
+  display: grid;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--bad) 45%, var(--border));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--bad) 8%, var(--panel-raised));
+}
+
+.profile-cli-trust-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--bad);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.profile-cli-trust-hint {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
 }
 
 .profile-modal-tunnel-header {

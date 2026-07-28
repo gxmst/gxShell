@@ -105,6 +105,9 @@ type App struct {
 	// seams for tests to exercise the batching logic without a GUI.
 	cliApprovalDelay  time.Duration
 	cliConfirmBatchFn func(serverName string, commands []string) bool
+	// cliTrustConfirmFn is a test seam for the native warning shown when a
+	// profile gains or extends time-limited full trust.
+	cliTrustConfirmFn func(types.Profile) bool
 	cliJobsMu         sync.Mutex
 	cliJobs           map[string]*cliJob
 	cliTunnelsMu      sync.Mutex
@@ -129,7 +132,7 @@ type App struct {
 	// kiRequests holds pending keyboard-interactive prompts awaiting the user's
 	// answers from the frontend dialog. See app_auth.go.
 	kiRequests *kiRegistry
-	// pendingOpenFile holds a startup/second-instance text file that has been
+	// pendingOpenFile holds a startup/second-instance document that has been
 	// authorized but may have been emitted before the frontend registered its
 	// file:open listener. The frontend pulls it once on mount via GetStartupFile
 	// so a first launch that lost the pushed event still opens the file.
@@ -305,21 +308,21 @@ func (a *App) domReady(ctx context.Context) {
 	runtime.WindowCenter(ctx)
 
 	runtime.OnFileDrop(ctx, func(_ int, _ int, paths []string) {
-		textPaths := make([]string, 0, len(paths))
+		documentPaths := make([]string, 0, len(paths))
 		for _, path := range paths {
-			if isSupportedTextPath(path) {
-				textPaths = append(textPaths, path)
+			if isSupportedDocumentPath(path) {
+				documentPaths = append(documentPaths, path)
 			}
 		}
-		if len(textPaths) == 0 {
+		if len(documentPaths) == 0 {
 			return
 		}
-		if !a.confirmOpenDroppedTextFiles(textPaths) {
-			a.log.Info("User cancelled dropped text-file open")
+		if !a.confirmOpenDroppedTextFiles(documentPaths) {
+			a.log.Info("User cancelled dropped document open")
 			return
 		}
-		a.log.InfoFields("Files dropped, opening after confirm", logger.LogFields{"count": len(textPaths)})
-		for _, path := range textPaths {
+		a.log.InfoFields("Documents dropped, opening after confirm", logger.LogFields{"count": len(documentPaths)})
+		for _, path := range documentPaths {
 			if allowed := a.allowFile(path); allowed != "" {
 				a.log.InfoFields("Emitting file:open", logger.LogFields{"fileName": filepath.Base(allowed)})
 				runtime.EventsEmit(ctx, "file:open", allowed)
@@ -330,7 +333,7 @@ func (a *App) domReady(ctx context.Context) {
 	})
 
 	if a.startupFilePath != "" {
-		if !isSupportedTextPath(a.startupFilePath) {
+		if !isSupportedDocumentPath(a.startupFilePath) {
 			a.log.ErrorFields("Ignoring unsupported startup file", logger.LogFields{
 				"fileName": filepath.Base(a.startupFilePath),
 			})
@@ -354,7 +357,7 @@ func (a *App) domReady(ctx context.Context) {
 	}
 }
 
-// setPendingOpenFile stores an authorized text file awaiting a frontend that may
+// setPendingOpenFile stores an authorized document awaiting a frontend that may
 // not have registered its file:open listener yet.
 func (a *App) setPendingOpenFile(path string) {
 	a.pendingOpenMu.Lock()
@@ -362,8 +365,8 @@ func (a *App) setPendingOpenFile(path string) {
 	a.pendingOpenMu.Unlock()
 }
 
-// GetStartupFile returns and clears any pending startup/second-instance text
-// file. The frontend calls this once after it has registered its file:open
+// GetStartupFile returns and clears any pending startup document. The frontend
+// calls this once after it has registered its external file-open listener,
 // listener, which closes the race where the pushed file:open event fired before
 // the listener existed (first launch opened the app but not the document).
 func (a *App) GetStartupFile() string {
@@ -414,7 +417,7 @@ func (a *App) shutdown(ctx context.Context) {
 // instance is already running (for example by double-clicking a .md file). The
 // single-instance lock forwards the new process's arguments here instead of
 // opening a second window. We bring the existing window to the front and, if an
-// argument is a supported text file, open it in a tab via the same trusted path used
+// argument is a supported document, open it in a tab via the same trusted path used
 // for startup files.
 func (a *App) handleSecondInstanceLaunch(args []string) {
 	ctx := a.ctx.Get()
@@ -425,7 +428,7 @@ func (a *App) handleSecondInstanceLaunch(args []string) {
 	runtime.WindowUnminimise(ctx)
 
 	for _, arg := range args {
-		if !isSupportedTextPath(arg) {
+		if !isSupportedDocumentPath(arg) {
 			continue
 		}
 		// The path came from an OS "open with"/double-click, so it is a genuine
@@ -435,7 +438,10 @@ func (a *App) handleSecondInstanceLaunch(args []string) {
 			continue
 		}
 		a.log.InfoFields("Second instance opened file", logger.LogFields{"fileName": filepath.Base(allowed)})
-		runtime.EventsEmit(ctx, "file:open", allowed)
+		// Keep Explorer/Open With launches separate from drag-and-drop so the
+		// frontend can enter its document-focused layout without collapsing the
+		// sidebar for every in-app file open.
+		runtime.EventsEmit(ctx, "file:open-external", allowed)
 	}
 }
 
@@ -448,7 +454,7 @@ func (a *App) confirmOpenDroppedTextFiles(paths []string) bool {
 	defer a.nativeDialogMu.Unlock()
 	message := ""
 	if len(paths) == 1 {
-		message = fmt.Sprintf("Open this dropped text file?\n\n%s", paths[0])
+		message = fmt.Sprintf("Open this dropped document?\n\n%s", paths[0])
 	} else {
 		shown := paths
 		suffix := ""
@@ -456,18 +462,18 @@ func (a *App) confirmOpenDroppedTextFiles(paths []string) bool {
 			shown = paths[:5]
 			suffix = fmt.Sprintf("\n...and %d more", len(paths)-len(shown))
 		}
-		message = fmt.Sprintf("Open these %d dropped text files?\n\n%s%s", len(paths), strings.Join(shown, "\n"), suffix)
+		message = fmt.Sprintf("Open these %d dropped documents?\n\n%s%s", len(paths), strings.Join(shown, "\n"), suffix)
 	}
 	res, err := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
 		Type:          runtime.QuestionDialog,
-		Title:         "Open text file",
+		Title:         "Open document",
 		Message:       truncate(message, 1200),
 		Buttons:       []string{"Open", "Cancel"},
 		DefaultButton: "Cancel",
 		CancelButton:  "Cancel",
 	})
 	if err != nil {
-		a.log.ErrorFields("Text-file drop confirm dialog failed", logger.LogFields{"error": err.Error()})
+		a.log.ErrorFields("Document drop confirm dialog failed", logger.LogFields{"error": err.Error()})
 		return false
 	}
 	a.log.InfoFields("Dialog result", logger.LogFields{"result": res})

@@ -68,7 +68,7 @@ to inputs and to open dialogs.
 - Older plaintext profile secrets are migrated on startup.
 - AI tool calls are registered by the backend, expire after a short TTL, are single-use, and require a native confirmation dialog before command execution or remote file reads. Multiple pending AI tools can be approved together and independent commands run in parallel after approval.
 - Dangerous commands and sensitive remote paths are blocked for AI tools.
-- The external `gxshell-cli` interface can be disabled globally, requires a local bearer token when enabled, exposes only opted-in profile aliases (never hosts, users, ports, profile IDs, or jump-host details), blocks dangerous commands and sensitive paths with diagnostic reason/detail fields, and requires native confirmation for anything that is not a simple read-only command. Nearby requests for the same alias are batched into one native prompt.
+- The external `gxshell-cli` interface can be disabled globally, requires a local bearer token when enabled, exposes only opted-in profile aliases (never hosts, users, ports, profile IDs, or jump-host details), and blocks dangerous commands and sensitive paths with diagnostic reason/detail fields. It requires native confirmation for anything that is not a simple read-only command by default; individual profiles can receive 1/4/8/24-hour full-trust windows for unattended commands. Remote copies require trust at both endpoints, while secret changes and tunnels always prompt. Hard blocks remain a limited last line of defence, not a sandbox.
 - CLI commands run through gxShell-managed SSH sessions. Existing sessions may be reused, but each command uses a separate short-lived SSH exec channel rather than typing into the interactive terminal.
 - Logs redact common secret fields and avoid persisting AI message content previews.
 - Registered named secrets are stored in the OS credential store (or encrypted fallback), injected only at the execution boundary, and removed from captured output by exact-value redaction.
@@ -289,7 +289,7 @@ gxShell 是一个基于 Wails v2、Go 和 React 构建的 Windows 桌面 SSH 工
 - 旧版本明文 profile 密钥会在启动时迁移。
 - AI 工具调用由后端登记，短时间后过期，只能使用一次，并且在执行命令或读取远程文件前需要原生确认。多个待处理 AI 工具可以一起批准，批准后的独立命令可并行执行。
 - AI 工具会阻止危险命令和敏感远程路径。
-- 外部 `gxshell-cli` 接口可全局关闭；启用时需要本地 bearer token，只暴露已授权的 profile alias，不暴露主机、用户名、端口、profile ID 或跳板机细节；会阻止危险命令和敏感路径，并返回诊断用的原因/详情字段；除简单只读命令外都需要原生确认。针对同一 alias 的邻近请求会合并到一个原生确认窗口中。
+- 外部 `gxshell-cli` 接口可全局关闭；启用时需要本地 bearer token，只暴露已授权的 profile alias，不暴露主机、用户名、端口、profile ID 或跳板机细节；会阻止危险命令和敏感路径，并返回诊断用的原因/详情字段。默认情况下，除简单只读命令外都需要原生确认；单个 Profile 可开启 1/4/8/24 小时的限时完全信任。远程复制要求两端都在信任期，secret 变更和隧道始终确认。硬拦截只是有限的最后防线，不是沙箱。
 - CLI 命令通过 gxShell 管理的 SSH 会话执行。已有会话可能被复用，但每个命令会使用独立的短生命周期 SSH exec channel，而不是输入到交互式终端中。
 - 日志会脱敏常见密钥字段，并避免持久化 AI 消息内容预览。
 - 已登记的命名秘密存储在系统凭据库（或加密 fallback）中，只在执行边界注入，并按真实值从捕获输出中脱敏。

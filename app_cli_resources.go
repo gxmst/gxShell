@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"gxShell/backend/logger"
 	"gxShell/backend/types"
 )
 
@@ -66,9 +67,15 @@ func (a *App) handleCliCopy(w http.ResponseWriter, r *http.Request) {
 	sourceAlias := cliProfileName(sourceProfile)
 	destinationAlias := cliProfileName(destinationProfile)
 	approval := fmt.Sprintf("Copy remote file %s:%s to %s:%s (atomic destination write and SHA-256 verification)", sourceAlias, req.SourcePath, destinationAlias, req.DestinationPath)
-	if !a.confirmCliExecution(sourceAlias+" -> "+destinationAlias, approval) {
+	decision := a.authorizeCliCopy(sourceProfile, destinationProfile, approval)
+	if !decision.Allowed {
 		writeCliError(w, http.StatusForbidden, "blocked", "user declined remote file copy")
 		return
+	}
+	if a.log != nil {
+		a.log.InfoFields("CLI copying remote file", logger.LogFields{
+			"source": sourceAlias, "destination": destinationAlias, "approval": decision.Source,
+		})
 	}
 
 	sourceSession, _, err := a.cliSessionForProfile(sourceProfile.ID)

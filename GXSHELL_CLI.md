@@ -12,10 +12,10 @@
 - A profile must have `Allow CLI access` enabled before it appears in `gxshell-cli list`.
 - The CLI lists aliases only. It does not return hostnames, IP addresses, usernames, ports, profile IDs, or jump-host details.
 - Simple read-only commands (`ls`, `cat`, `df`, `uptime`, and similar inspection tools) run without a prompt.
-- Any other command triggers a native confirmation dialog in gxShell before it runs. Requests for the same alias that arrive within a short window are batched into one approval prompt.
+- By default, any other command triggers a native confirmation dialog in gxShell before it runs. Requests for the same alias that arrive within a short window are batched into one approval prompt. A profile may be granted full trust for 1, 4, 8, or 24 hours; there is no permanent switch. While active it skips command prompts without disabling hard safety blocks.
 - Dangerous commands and sensitive paths are blocked before confirmation. Blocked responses include a reason, category, and diagnostic detail such as the matched command fragment or sensitive path pattern.
-- Remote file copies always require native confirmation and apply sensitive-path checks to both endpoints.
-- CLI-created SSH tunnels always require native confirmation and can bind only to a loopback address. They are temporary and are never saved into a profile.
+- Remote file copies require native confirmation by default and apply sensitive-path checks to both endpoints. They skip confirmation only while both endpoint profiles are trusted.
+- CLI-created SSH tunnels and named-secret creation/deletion always require native confirmation. Tunnels bind only to a loopback address, are temporary, and are never saved into a profile.
 
 Localhost is not treated as a complete security boundary. The token and confirmation dialog are the real guardrails.
 
@@ -58,7 +58,7 @@ AI agents must treat CLI tunnels as temporary resources. Record the returned tun
 For an external caller (including an AI agent), every `exec` ends in one of three outcomes:
 
 - **Runs immediately, no prompt** - only when the command is a single read-only command on a fixed allowlist (`ls`, `cat`, `head`, `tail`, `df`, `du`, `uptime`, `ps`, `free`, `grep`, `stat`, `whoami`, and similar inspection tools), with only simple literal arguments.
-- **Asks for native confirmation** - everything else. This includes any command that writes or changes state, and any command containing shell operators or expansion syntax such as a pipe, redirect, chaining (`;`, `&&`), command substitution (`$(...)`, backticks), quotes, backslash escapes, variables, tilde expansion, or globs. Even `cat x | grep y` prompts because the allowlist only matches one simple command. If several matching CLI requests arrive for the same alias within about one second, gxShell shows one batched prompt.
+- **Asks for native confirmation by default** - everything else. This includes any command that writes or changes state, and any command containing shell operators or expansion syntax such as a pipe, redirect, chaining (`;`, `&&`), command substitution (`$(...)`, backticks), quotes, backslash escapes, variables, tilde expansion, or globs. Even `cat x | grep y` prompts because the allowlist only matches one simple command. If several matching CLI requests arrive for the same alias within about one second, gxShell shows one batched prompt. Active time-limited trust on that profile skips this confirmation tier while preserving the two hard-block tiers above it.
 - **Blocked outright, before any prompt or connection** - dangerous commands (for example destructive `rm`, `mkfs`, `shutdown`) and sensitive paths (for example `/etc/shadow`, SSH private keys).
 
 `exec` defaults to a 2-minute remote command timeout and about 1 MB of output. Use `--timeout` to raise the command timeout up to 30 minutes. A new SSH connection can also spend time in the profile's connection timeout before the command starts. Long-running or very chatty interactive work should still be run inside the GUI terminal.
@@ -142,7 +142,7 @@ Get-Content .\script.sh -Raw | .\gxshell-cli.exe exec-stdin prod-web --shell bas
 .\gxshell-cli.exe status
 ```
 
-Simple read-only commands run immediately. Any other `exec` request asks for approval in gxShell before it runs.
+Simple read-only commands run immediately. By default, any other `exec` request asks for approval in gxShell before it runs. A server profile can be trusted for a bounded 1/4/8/24-hour window for unattended automation. Commands skip interactive approval during that window; remote copies do so only when both endpoints are trusted. Secret changes and tunnels always prompt. gxShell still hard-blocks catastrophic commands and sensitive credential paths.
 
 Put `--timeout` before `exec` or after the quoted remote command, not inside the remote command string. If it is inside the quoted command, the remote shell receives it as part of the command.
 
@@ -160,7 +160,7 @@ Get-Content .\api-key.txt -Raw | .\gxshell-cli.exe secret set anyrouter-api-key
 
 The value is stored through gxShell's OS credential-store/encrypted-fallback subsystem. During synchronous execution gxShell resolves `secret://anyrouter-api-key`, injects it through SSH stdin, keeps it out of approval/audit text, and removes exact occurrences from captured output. `--follow` and `--detach` cannot be combined with named secrets because streaming chunks could cross a redaction boundary.
 
-This prevents accidental plaintext disclosure but cannot make a general-purpose shell safe against deliberate encoding or transformation of a secret. Review the destination and purpose in the native confirmation dialog. Rotate any credential that was exposed before it was registered.
+This prevents accidental plaintext disclosure but cannot make a general-purpose shell safe against deliberate encoding or transformation of a secret. With normal approvals, review the destination and purpose in the native confirmation dialog; during a full-trust window, that responsibility is delegated to the external automation. A trusted command can encode and exfiltrate an already registered secret despite exact-value output redaction: hard blocks are not a secret sandbox. Rotate any credential that was exposed before it was registered.
 
 `--follow` and `--detach` create a trackable command job. Follow mode polls ordered stdout/stderr chunks until completion; detach mode returns the job ID immediately. `job status`, `job logs`, and `job cancel` work while the GUI process remains running. Finished jobs and their captured output are retained in memory for 30 minutes, then pruned. Output capture remains capped at about 1 MB per stream. Closing gxShell cancels running CLI jobs.
 

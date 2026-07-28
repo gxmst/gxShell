@@ -25,6 +25,7 @@ const (
 	maxTextFileSize         = 5 * 1024 * 1024
 	maxMarkdownFileSize     = maxTextFileSize
 	maxMarkdownResourceSize = 8 * 1024 * 1024
+	maxPDFFileSize          = 50 * 1024 * 1024
 )
 
 // ListLocalDir lists files in a local directory.
@@ -76,6 +77,9 @@ func (a *App) ReadLocalFile(filePath string) (string, error) {
 		return "", fmt.Errorf("invalid file path: %w", err)
 	}
 	absPath = filepath.Clean(absPath)
+	if !isSupportedTextPath(absPath) {
+		return "", fmt.Errorf("file is not a supported text file")
+	}
 	if !a.isFileAllowed(absPath) {
 		return "", fmt.Errorf("access denied: file was not opened by the user")
 	}
@@ -100,6 +104,41 @@ func (a *App) ReadLocalFile(filePath string) (string, error) {
 	return string(data), nil
 }
 
+// ReadLocalPDFBase64 returns an explicitly opened local PDF for a read-only
+// Blob URL consumed by WebView2's built-in PDF viewer. PDF bytes never pass
+// through the text editor or its write path.
+func (a *App) ReadLocalPDFBase64(filePath string) (string, error) {
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		return "", fmt.Errorf("invalid file path: %w", err)
+	}
+	absPath = filepath.Clean(absPath)
+	if !isPDFPath(absPath) {
+		return "", fmt.Errorf("file is not a PDF")
+	}
+	if !a.isFileAllowed(absPath) {
+		return "", fmt.Errorf("access denied: file was not opened by the user")
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return "", fmt.Errorf("file not found: %w", err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("path is a directory, not a file")
+	}
+	if info.Size() > maxPDFFileSize {
+		return "", fmt.Errorf("PDF is too large (max 50MB)")
+	}
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read PDF: %w", err)
+	}
+	if len(data) < 5 || string(data[:5]) != "%PDF-" {
+		return "", fmt.Errorf("file does not contain a valid PDF header")
+	}
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
 // WriteLocalFile writes content to a local file, preserving its existing permissions.
 func (a *App) WriteLocalFile(filePath string, content string) error {
 	absPath, err := filepath.Abs(filePath)
@@ -107,6 +146,9 @@ func (a *App) WriteLocalFile(filePath string, content string) error {
 		return fmt.Errorf("invalid file path: %w", err)
 	}
 	absPath = filepath.Clean(absPath)
+	if !isSupportedTextPath(absPath) {
+		return fmt.Errorf("file is not a supported text file")
+	}
 	// Writing is only permitted to a path the user already opened. We never
 	// auto-allow on write, so the renderer cannot overwrite an arbitrary file.
 	if !a.isFileAllowed(absPath) {
@@ -189,7 +231,7 @@ func replaceLocalFile(tmpPath, target string) error {
 	return nil
 }
 
-// OpenRecentTextFile re-authorizes a previously seen text path after a native
+// OpenRecentTextFile re-authorizes a previously seen document path after a native
 // confirmation. Recent paths are stored renderer-side, so this keeps the same
 // user-consent boundary as a fresh file-open.
 func (a *App) OpenRecentTextFile(filePath string) (string, error) {
@@ -198,8 +240,8 @@ func (a *App) OpenRecentTextFile(filePath string) (string, error) {
 		return "", fmt.Errorf("invalid file path: %w", err)
 	}
 	absPath = filepath.Clean(absPath)
-	if !isSupportedTextPath(absPath) {
-		return "", fmt.Errorf("file is not a supported text file")
+	if !isSupportedDocumentPath(absPath) {
+		return "", fmt.Errorf("file is not a supported document")
 	}
 	info, err := os.Stat(absPath)
 	if err != nil {
@@ -213,8 +255,8 @@ func (a *App) OpenRecentTextFile(filePath string) (string, error) {
 		defer a.nativeDialogMu.Unlock()
 		res, err := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
 			Type:          runtime.QuestionDialog,
-			Title:         "Open recent text file",
-			Message:       truncate(fmt.Sprintf("Open this recent text file?\n\n%s", absPath), 1200),
+			Title:         "Open recent document",
+			Message:       truncate(fmt.Sprintf("Open this recent document?\n\n%s", absPath), 1200),
 			Buttons:       []string{"Open", "Cancel"},
 			DefaultButton: "Cancel",
 			CancelButton:  "Cancel",
@@ -245,7 +287,7 @@ func (a *App) RestoreTextFiles(paths []string) []string {
 		}
 		absPath = filepath.Clean(absPath)
 		key := strings.ToLower(absPath)
-		if seen[key] || !isSupportedTextPath(absPath) {
+		if seen[key] || !isSupportedDocumentPath(absPath) {
 			continue
 		}
 		info, err := os.Stat(absPath)
@@ -309,11 +351,13 @@ func (a *App) ReadLocalMarkdownResourceDataURL(markdownPath string, href string)
 	return markdownDataURL(target, data), nil
 }
 
-// SelectTextFile opens a file dialog to select a supported text file.
+// SelectTextFile opens a file dialog to select a supported text document or PDF.
 func (a *App) SelectTextFile() (string, error) {
 	path, err := runtime.OpenFileDialog(a.ctx.Get(), runtime.OpenDialogOptions{
-		Title: "Select text file",
+		Title: "Select document",
 		Filters: []runtime.FileFilter{
+			{DisplayName: "Documents", Pattern: supportedDocumentFileDialogPattern()},
+			{DisplayName: "PDF Files (*.pdf)", Pattern: "*.pdf"},
 			{DisplayName: "Text Files", Pattern: supportedTextFileDialogPattern()},
 			{DisplayName: "Markdown Files (*.md;*.markdown)", Pattern: "*.md;*.markdown"},
 			{DisplayName: "Log/Text Files (*.log;*.txt)", Pattern: "*.log;*.txt"},
@@ -323,8 +367,8 @@ func (a *App) SelectTextFile() (string, error) {
 	if err != nil || path == "" {
 		return path, err
 	}
-	if !isSupportedTextPath(path) {
-		return "", fmt.Errorf("selected file is not a supported text file")
+	if !isSupportedDocumentPath(path) {
+		return "", fmt.Errorf("selected file is not a supported document")
 	}
 	return a.allowFile(path), nil
 }
@@ -348,17 +392,17 @@ func (a *App) SelectMarkdownFile() (string, error) {
 	return a.allowFile(path), nil
 }
 
-// ListTextFilesInDir lists supported text files in the same directory as the given file.
+// ListTextFilesInDir lists supported documents in the same directory as the given file.
 // The returned siblings are authorized for reading, matching the viewer's behavior
-// of letting the user step between text files in the opened folder.
+// of letting the user step between documents in the opened folder.
 func (a *App) ListTextFilesInDir(filePath string) ([]string, error) {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("invalid file path: %w", err)
 	}
 	absPath = filepath.Clean(absPath)
-	if !isSupportedTextPath(absPath) {
-		return nil, fmt.Errorf("file is not a supported text file")
+	if !isSupportedDocumentPath(absPath) {
+		return nil, fmt.Errorf("file is not a supported document")
 	}
 	if !a.isFileAllowed(absPath) {
 		return nil, fmt.Errorf("access denied: file was not opened by the user")
@@ -379,7 +423,7 @@ func (a *App) ListTextFilesInDir(filePath string) ([]string, error) {
 
 	var textFiles []string
 	for _, entry := range entries {
-		if !entry.IsDir() && isSupportedTextPath(entry.Name()) {
+		if !entry.IsDir() && isSupportedDocumentPath(entry.Name()) {
 			full := filepath.Join(dir, entry.Name())
 			a.allowFile(full)
 			textFiles = append(textFiles, full)
@@ -434,6 +478,22 @@ func isMarkdownPath(path string) bool {
 
 func isSupportedTextPath(path string) bool {
 	return supportedTextFileExts()[strings.ToLower(filepath.Ext(path))]
+}
+
+func isPDFPath(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".pdf")
+}
+
+func isSupportedDocumentPath(path string) bool {
+	return isSupportedTextPath(path) || isPDFPath(path)
+}
+
+func supportedDocumentFileDialogPattern() string {
+	return supportedTextFileDialogPattern() + ";*.pdf"
+}
+
+func supportedDocumentFileExtensionList() []string {
+	return append(supportedTextFileExtensionList(), ".pdf")
 }
 
 func supportedTextFileDialogPattern() string {

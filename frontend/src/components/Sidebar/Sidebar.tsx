@@ -12,6 +12,7 @@ import { MonitorPanel } from "../MonitorPanel/MonitorPanel";
 import { NetworkPathCard } from "../NetworkPathCard/NetworkPathCard";
 import { MemoryCard } from "../MemoryCard/MemoryCard";
 import { MonitorDetailCard, type MonitorDetailKind } from "../MonitorDetailCard/MonitorDetailCard";
+import { CliTrustIndicator } from "../CliTrustIndicator/CliTrustIndicator";
 
 type FloatKey = "path" | "memory" | MonitorDetailKind;
 type PrimaryNav = "connections" | "files" | "tools";
@@ -72,6 +73,8 @@ export function Sidebar(props: {
   onEditProfile: (profile: types.Profile) => void;
   onConnectProfile: (profile: types.Profile) => void;
   onToggleFavorite: (profile: types.Profile) => void;
+  revokingCliTrustID?: string;
+  onRevokeCliTrust?: (profileID: string) => void;
   onDeleteProfile: (id: string) => void;
   onImportProfiles: () => void;
   onImportOpenSSH: () => void;
@@ -306,7 +309,17 @@ export function Sidebar(props: {
                     <span className="server-avatar" title={session ? `${statusLabel} · ${session.count} ${lang === "zh-CN" ? "个会话" : (session.count === 1 ? "session" : "sessions")}${session.error ? ` · ${session.error}` : ""}` : statusLabel}><Server size={13} /><span className={clsx("status-dot", stateClass(session?.state || "disconnected"))} /></span>
                     <div className="server-row-text">
                       <div className="server-title-line">
-                        <div className="server-title">{profile.name || profile.host}</div>
+                        <div className="server-title-group">
+                          <div className="server-title">{profile.name || profile.host}</div>
+                          {props.onRevokeCliTrust && (
+                            <CliTrustIndicator
+                              profile={profile}
+                              locale={lang}
+                              revoking={props.revokingCliTrustID === profile.id}
+                              onRevoke={props.onRevokeCliTrust}
+                            />
+                          )}
+                        </div>
                         {!!session?.count && <span className="server-session-count" title={statusLabel}>{session.count}</span>}
                         {automation && <span className={clsx("automation-badge", `automation-${automation.source}`, automation.phase === "started" && "automation-running", automation.phase === "failed" && "automation-failed")}>{automation.source.toUpperCase()}</span>}
                       </div>

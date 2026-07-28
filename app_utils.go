@@ -117,12 +117,18 @@ func (a *App) DeleteCommand(id string) error {
 
 // GetSettings returns application settings.
 func (a *App) GetSettings() (types.AppSettings, error) {
-	return a.store.GetSettings()
+	settings, err := a.store.GetSettings()
+	// The removed permanent trust switch is intentionally never surfaced as
+	// active, even when an older settings.json still contains true.
+	settings.CliAutoApprove = false
+	return settings, err
 }
 
 // UpdateSettings updates application settings.
 func (a *App) UpdateSettings(settings types.AppSettings) (types.AppSettings, error) {
 	previous, previousErr := a.store.GetSettings()
+	// Never persist or revive the deprecated permanent trust switch.
+	settings.CliAutoApprove = false
 	if settings.ConnectionTimeout <= 0 {
 		settings.ConnectionTimeout = 15
 	}

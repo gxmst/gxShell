@@ -356,15 +356,36 @@ export function ServicePanel(props: {
       if (!props.active?.id) return;
       setActionLoading(unit);
       try {
-        await ServiceAction(props.active.id, unit, action, force);
-        onNotifyRef.current(
-          t(lang, "svcActionOk", {
-            name: unit,
-            action: t(lang, ACTION_LABEL[action]),
-          }),
-          "success",
-        );
-        await refresh();
+        const result = await ServiceAction(props.active.id, unit, action, force);
+        if (result.loadState || result.activeState || result.unitFileState) {
+          setServices((previous) => previous.map((service) => service.name === unit
+            ? new types.ServiceInfo({
+                ...service,
+                loadState: result.loadState || service.loadState,
+                activeState: result.activeState || service.activeState,
+                subState: result.subState || service.subState,
+                enabled: result.unitFileState || service.enabled,
+              })
+            : service));
+        }
+        const observed = action === "enable" || action === "disable"
+          ? result.unitFileState || "unknown"
+          : `${result.activeState || "unknown"}${result.subState ? `(${result.subState})` : ""}`;
+        if (result.verified) {
+          onNotifyRef.current(
+            lang === "zh-CN"
+              ? `${unit} 已执行${t(lang, ACTION_LABEL[action])}，当前 ${observed}`
+              : `${unit}: ${t(lang, ACTION_LABEL[action])} completed; current state ${observed}`,
+            "success",
+          );
+        } else {
+          onNotifyRef.current(
+            lang === "zh-CN"
+              ? `命令已执行，但未能确认 ${unit} 达到目标状态：${result.verification || observed}`
+              : `Command completed, but ${unit} did not verify: ${result.verification || observed}`,
+            "error",
+          );
+        }
       } catch (err) {
         const msg = String(err);
         // The backend refuses stop/disable on SSH/network-critical units unless
@@ -382,7 +403,7 @@ export function ServicePanel(props: {
         setActionLoading(null);
       }
     },
-    [props.active?.id, refresh, lang],
+    [props.active?.id, lang],
   );
 
   // stop / restart / disable are two-step: first click arms the button

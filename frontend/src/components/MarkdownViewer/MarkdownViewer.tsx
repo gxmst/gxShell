@@ -20,6 +20,7 @@ import yaml from 'highlight.js/lib/languages/yaml';
 import { Columns2, ListTree, Pencil, RefreshCw, Save, WrapText, X, ChevronUp, ChevronDown } from 'lucide-react';
 import {
   ReadLocalFile,
+  ReadLocalPDFBase64,
   ReadLocalMarkdownResourceDataURL,
   ReadRemoteTextFile,
   ReadRemoteMarkdownResourceDataURL,
@@ -30,7 +31,7 @@ import {
 } from '../../../wailsjs/go/main/App';
 import type { MarkdownOpenTarget, MarkdownSource } from '../../types';
 import { writeClipboardText } from '../../utils/clipboard';
-import { isMarkdownPath } from '../../utils/textFiles';
+import { isMarkdownPath, isPdfPath } from '../../utils/textFiles';
 import { t } from '../../i18n';
 import '../../styles/markdown-viewer.css';
 
@@ -258,6 +259,7 @@ export default function MarkdownViewer({
   onDirtyChange,
 }: MarkdownViewerProps) {
   const [content, setContent] = useState('');
+  const [pdfURL, setPdfURL] = useState('');
   const lang = locale || 'en';
   const [draft, setDraft] = useState('');
   const [previewDraft, setPreviewDraft] = useState('');
@@ -321,6 +323,7 @@ export default function MarkdownViewer({
 
   const displayPath = source === 'remote' ? remotePath : filePath;
   const markdownMode = isMarkdownPath(displayPath || '');
+  const pdfMode = source === 'local' && isPdfPath(displayPath || '');
   const previewDoc = useMemo(() => (markdownMode ? buildMarkdown(content) : EMPTY_RENDERED_MARKDOWN), [content, markdownMode]);
   const draftDoc = useMemo(
     () => (markdownMode && editing && splitPreview && active ? buildMarkdown(previewDraft) : EMPTY_RENDERED_MARKDOWN),
@@ -341,6 +344,21 @@ export default function MarkdownViewer({
   const loadFile = useCallback(async () => {
     try {
       setLoading(true);
+      if (pdfMode) {
+        const encoded = await ReadLocalPDFBase64(filePath || '');
+        const binary = window.atob(encoded);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const nextURL = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+        setPdfURL((previous) => {
+          if (previous) URL.revokeObjectURL(previous);
+          return nextURL;
+        });
+        setContent('');
+        setDraft('');
+        setError('');
+        return;
+      }
       const text = source === 'remote'
         ? await ReadRemoteTextFile(sessionId || '', remotePath || '')
         : await ReadLocalFile(filePath || '');
@@ -352,7 +370,11 @@ export default function MarkdownViewer({
     } finally {
       setLoading(false);
     }
-  }, [source, filePath, remotePath, sessionId]);
+  }, [source, filePath, remotePath, sessionId, pdfMode]);
+
+  useEffect(() => () => {
+    if (pdfURL) URL.revokeObjectURL(pdfURL);
+  }, [pdfURL]);
 
   useEffect(() => {
     setEditing(false);
@@ -570,13 +592,26 @@ export default function MarkdownViewer({
         e.preventDefault();
         e.stopPropagation();
         openSearch();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && !editing && !pdfMode) {
+        const target = e.target;
+        const nativeSelectionTarget = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable);
+        const root = contentRootRef.current;
+        if (!nativeSelectionTarget && root) {
+          const selection = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(root);
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+          e.preventDefault();
+          e.stopPropagation();
+        }
       } else if (e.key === 'Escape' && searchOpen) {
         closeSearch();
       }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [active, searchOpen, openSearch, closeSearch]);
+  }, [active, editing, pdfMode, searchOpen, openSearch, closeSearch]);
 
   const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -767,7 +802,7 @@ export default function MarkdownViewer({
       onWheelCapture={noteActivity}
     >
       <div className="markdown-viewer-float" data-activity={floatActivity}>
-        <input
+        {!pdfMode && <input
           type="range"
           className="markdown-viewer-zoom"
           min={MIN_ZOOM}
@@ -776,22 +811,22 @@ export default function MarkdownViewer({
           value={zoom}
           title={`Zoom ${Math.round(zoom * 100)}%`}
           onChange={(e) => setZoom(Number(e.target.value))}
-        />
-        <button
+        />}
+        {!pdfMode && <button
           onClick={() => setTocOpen((v) => !v)}
           className={clsx('markdown-viewer-fbtn', tocOpen && canShowToc && 'active')}
           disabled={!canShowToc}
           title={t(lang, "outline")}
         >
           <ListTree size={15} />
-        </button>
-        <button
+        </button>}
+        {!pdfMode && <button
           onClick={() => setWrapCode((v) => !v)}
           className={clsx('markdown-viewer-fbtn', wrapCode && 'active')}
           title={markdownMode ? t(lang, "wrapCode") : t(lang, "wrapText")}
         >
           <WrapText size={15} />
-        </button>
+        </button>}
         {markdownMode && editing && (
           <button
             onClick={() => setSplitPreview((v) => !v)}
@@ -801,7 +836,16 @@ export default function MarkdownViewer({
             <Columns2 size={15} />
           </button>
         )}
-        {editing ? (
+        {pdfMode ? (
+          <>
+            <button onClick={loadFile} className="markdown-viewer-fbtn" title="Refresh">
+              <RefreshCw size={15} />
+            </button>
+            <button onClick={onClose} className="markdown-viewer-fbtn" title="Close">
+              <X size={15} />
+            </button>
+          </>
+        ) : editing ? (
           <>
             <button onClick={save} className="markdown-viewer-fbtn" disabled={saving} title="Save (Ctrl+S)">
               <Save size={15} />
@@ -825,7 +869,7 @@ export default function MarkdownViewer({
         )}
       </div>
 
-      {searchOpen && (
+      {!pdfMode && searchOpen && (
         <div className="markdown-search-bar">
           <input
             ref={searchInputRef}
@@ -877,7 +921,11 @@ export default function MarkdownViewer({
           </aside>
         )}
 
-        {editing ? (
+        {pdfMode ? (
+          <div className="pdf-viewer-content">
+            {pdfURL && <iframe className="pdf-viewer-frame" src={pdfURL} title={displayPath || 'PDF document'} />}
+          </div>
+        ) : editing ? (
           <div className={clsx('markdown-viewer-edit-shell', splitPreview && 'markdown-viewer-edit-split')}>
             <textarea
               ref={textareaRef}
@@ -906,6 +954,7 @@ export default function MarkdownViewer({
             {markdownMode ? (
               <div
                 ref={contentRootRef as React.RefObject<HTMLDivElement>}
+                tabIndex={0}
                 className={clsx('ai-markdown', 'md-document', wrapCode && 'md-wrap-code')}
                 style={{ zoom: zoom }}
                 onClick={onContentClick}
@@ -914,6 +963,7 @@ export default function MarkdownViewer({
             ) : (
               <pre
                 ref={contentRootRef as React.RefObject<HTMLPreElement>}
+                tabIndex={0}
                 className={clsx('text-document', wrapCode && 'text-document-wrap')}
                 style={{ zoom: zoom }}
               >

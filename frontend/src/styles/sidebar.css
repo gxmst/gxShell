@@ -712,9 +712,39 @@
   gap: 6px;
 }
 
-.server-title-line .server-title {
+.server-title-group {
+  display: flex;
   min-width: 0;
   flex: 1;
+  align-items: center;
+  gap: 4px;
+}
+
+.server-title-group .server-title {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.server-cli-trust-indicator {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  color: var(--bad);
+  background: transparent;
+}
+
+.server-cli-trust-indicator:hover {
+  background: color-mix(in srgb, var(--bad) 13%, transparent);
+}
+
+.server-cli-trust-indicator:disabled {
+  opacity: .45;
 }
 
 .automation-badge {

@@ -1,6 +1,9 @@
 package main
 
-import "gxShell/backend/types"
+import (
+	"gxShell/backend/logger"
+	"gxShell/backend/types"
+)
 
 // ListContainers returns Docker containers on the remote host.
 func (a *App) ListContainers(sessionID string, all bool) ([]types.ContainerInfo, error) {
@@ -24,20 +27,28 @@ func (a *App) StopContainerLogs(streamID string) {
 
 // RestartContainer restarts a Docker container.
 func (a *App) RestartContainer(sessionID, containerID string) error {
-	return a.docker.RestartContainer(sessionID, containerID)
+	return a.auditSimpleGUIChange("container.restart", containerID, sessionID, nil, func() error {
+		return a.docker.RestartContainer(sessionID, containerID)
+	})
 }
 
 // StopContainer stops a running Docker container.
 func (a *App) StopContainer(sessionID, containerID string) error {
-	return a.docker.StopContainer(sessionID, containerID)
+	return a.auditSimpleGUIChange("container.stop", containerID, sessionID, nil, func() error {
+		return a.docker.StopContainer(sessionID, containerID)
+	})
 }
 
 // StartContainer starts a stopped Docker container.
 func (a *App) StartContainer(sessionID, containerID string) error {
-	return a.docker.StartContainer(sessionID, containerID)
+	return a.auditSimpleGUIChange("container.start", containerID, sessionID, nil, func() error {
+		return a.docker.StartContainer(sessionID, containerID)
+	})
 }
 
 // RemoveContainer removes a Docker container.
 func (a *App) RemoveContainer(sessionID, containerID string, force bool) error {
-	return a.docker.RemoveContainer(sessionID, containerID, force)
+	return a.auditSimpleGUIChange("container.remove", containerID, sessionID, logger.LogFields{"force": force}, func() error {
+		return a.docker.RemoveContainer(sessionID, containerID, force)
+	})
 }

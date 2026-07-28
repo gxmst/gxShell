@@ -228,6 +228,7 @@ export namespace types {
 	    smartHighlight: boolean;
 	    confirmOnDisconnect: boolean;
 	    cliServerEnabled: boolean;
+	    cliAutoApprove?: boolean;
 	    updateCheckEnabled: boolean;
 	    updateSkippedVersion?: string;
 	    ai: AiConfig;
@@ -251,6 +252,7 @@ export namespace types {
 	        this.smartHighlight = source["smartHighlight"];
 	        this.confirmOnDisconnect = source["confirmOnDisconnect"];
 	        this.cliServerEnabled = source["cliServerEnabled"];
+	        this.cliAutoApprove = source["cliAutoApprove"];
 	        this.updateCheckEnabled = source["updateCheckEnabled"];
 	        this.updateSkippedVersion = source["updateSkippedVersion"];
 	        this.ai = this.convertValues(source["ai"], AiConfig);
@@ -424,6 +426,42 @@ export namespace types {
 		    return a;
 		}
 	}
+	export class FirewallActionResult {
+	    status: FirewallStatus;
+	    verified: boolean;
+	    verification?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new FirewallActionResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.status = this.convertValues(source["status"], FirewallStatus);
+	        this.verified = source["verified"];
+	        this.verification = source["verification"];
+	    }
+
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+
 	export class LocalFile {
 	    name: string;
 	    path: string;
@@ -738,6 +776,8 @@ export namespace types {
 	    favorite: boolean;
 	    cliEnabled: boolean;
 	    cliAlias?: string;
+	    // RFC3339 wall-clock deadline serialized by Go time.Time.
+	    cliTrustUntil?: string;
 	    aiEnabled?: boolean;
 	    aiAlias?: string;
 	    tunnels: TunnelRule[];
@@ -775,6 +815,7 @@ export namespace types {
 	        this.favorite = source["favorite"];
 	        this.cliEnabled = source["cliEnabled"];
 	        this.cliAlias = source["cliAlias"];
+	        this.cliTrustUntil = source["cliTrustUntil"];
 	        this.aiEnabled = source["aiEnabled"];
 	        this.aiAlias = source["aiAlias"];
 	        this.tunnels = this.convertValues(source["tunnels"], TunnelRule);
@@ -882,6 +923,36 @@ export namespace types {
 		    }
 		    return a;
 		}
+	}
+	export class ServiceActionResult {
+	    unit: string;
+	    action: string;
+	    loadState: string;
+	    activeState: string;
+	    subState: string;
+	    unitFileState: string;
+	    result: string;
+	    execMainStatus: number;
+	    verified: boolean;
+	    verification?: string;
+
+	    static createFrom(source: any = {}) {
+	        return new ServiceActionResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.unit = source["unit"];
+	        this.action = source["action"];
+	        this.loadState = source["loadState"];
+	        this.activeState = source["activeState"];
+	        this.subState = source["subState"];
+	        this.unitFileState = source["unitFileState"];
+	        this.result = source["result"];
+	        this.execMainStatus = source["execMainStatus"];
+	        this.verified = source["verified"];
+	        this.verification = source["verification"];
+	    }
 	}
 	export class ServiceInfo {
 	    name: string;
@@ -1135,4 +1206,3 @@ export namespace version {
 	}
 
 }
-

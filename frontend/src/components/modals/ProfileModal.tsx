@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, MoreHorizontal, Plus, Save, Server, Trash2, X } from "lucide-react";
+import { AlertTriangle, Copy, MoreHorizontal, Plus, Save, Server, Trash2, X } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
 import { ModalShell, Label } from "./ModalShell";
@@ -15,6 +15,7 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
   const lang = props.language;
   const [draft, setDraft] = useState(new types.Profile(props.profile));
   const [error, setError] = useState("");
+  const [openedAt] = useState(Date.now);
   // The two multi-line fields keep their raw text here. Deriving the textarea
   // value from the stored array instead would filter blank lines on every
   // keystroke, so pressing Enter would re-render the same string and the user
@@ -22,6 +23,18 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
   const [envText, setEnvText] = useState((props.profile.environment || []).join("\n"));
   const [loginText, setLoginText] = useState((props.profile.loginCommands || []).join("\n"));
   const update = (patch: any) => { setError(""); setDraft(new types.Profile({ ...draft, ...patch })); };
+  const trustDeadline = Date.parse(String(draft.cliTrustUntil || ""));
+  const trustActive = Boolean(draft.cliEnabled && Number.isFinite(trustDeadline) && trustDeadline > openedAt);
+  const setTrustDuration = (value: string) => {
+    if (value === "off") {
+      update({ cliTrustUntil: undefined });
+      return;
+    }
+    const hours = Number(value);
+    if (Number.isFinite(hours) && hours > 0) {
+      update({ cliTrustUntil: new Date(Date.now() + hours * 60 * 60 * 1000).toISOString() });
+    }
+  };
 
   const addTunnel = () => {
     const rule = types.TunnelRule.createFrom({
@@ -79,8 +92,22 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
         {draft.authType === "agent" && <div className="col-span-2 text-[10px] text-muted leading-snug">{t(lang, "authAgentHint")}</div>}
         <Label text={t(lang, "proxyJump")}><select className="input compact-input" value={draft.proxyJumpId || ""} onChange={(e) => update({ proxyJumpId: e.target.value })}><option value="">— {t(lang, "none")} —</option>{(props.profiles || []).filter((p) => p.id !== draft.id && !p.proxyJumpId).map((p) => <option key={p.id} value={p.id}>{p.name} ({p.host})</option>)}</select></Label>
         <label className="check col-span-2"><input type="checkbox" checked={draft.favorite} onChange={(e) => update({ favorite: e.target.checked })} /> {t(lang, "favorite")}</label>
-        <label className="check col-span-2"><input type="checkbox" checked={draft.cliEnabled || false} onChange={(e) => update({ cliEnabled: e.target.checked })} /> {t(lang, "cliServerAccess")}</label>
+        <label className="check col-span-2"><input type="checkbox" checked={draft.cliEnabled || false} onChange={(e) => update({ cliEnabled: e.target.checked, ...(!e.target.checked ? { cliTrustUntil: undefined } : {}) })} /> {t(lang, "cliServerAccess")}</label>
         {draft.cliEnabled && <Label text={t(lang, "cliServerAlias")}><input className="input compact-input" value={draft.cliAlias || ""} onChange={(e) => update({ cliAlias: e.target.value })} placeholder={draft.name || "prod-web"} /></Label>}
+        {draft.cliEnabled && (
+          <div className="profile-cli-trust col-span-2">
+            <div className="profile-cli-trust-heading"><AlertTriangle size={13} /> {t(lang, "cliTrustTitle")}</div>
+            <select className="input compact-input" value={trustActive ? "active" : "off"} onChange={(event) => setTrustDuration(event.target.value)}>
+              {trustActive && <option value="active" disabled>{t(lang, "cliTrustActiveUntil", { time: new Date(trustDeadline).toLocaleString() })}</option>}
+              <option value="off">{t(lang, "cliTrustOff")}</option>
+              <option value="1">{t(lang, "cliTrustOneHour")}</option>
+              <option value="4">{t(lang, "cliTrustFourHours")}</option>
+              <option value="8">{t(lang, "cliTrustEightHours")}</option>
+              <option value="24">{t(lang, "cliTrustDay")}</option>
+            </select>
+            <div className="profile-cli-trust-hint">{t(lang, "cliTrustHint")}</div>
+          </div>
+        )}
         <label className="check col-span-2"><input type="checkbox" checked={draft.rememberPassword || false} onChange={(e) => update({ rememberPassword: e.target.checked })} /> {t(lang, "savePassword")}</label>
         <label className="check col-span-2"><input type="checkbox" checked={draft.autoReconnect || false} onChange={(e) => update({ autoReconnect: e.target.checked })} /> {t(lang, "autoReconnect")}</label>
         <Label text={t(lang, "description")}><textarea className="input compact-input min-h-[56px]" value={draft.description} onChange={(e) => update({ description: e.target.value })} /></Label>

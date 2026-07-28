@@ -52,6 +52,8 @@ func (a *App) ExportProfiles(includeSecrets bool) (string, error) {
 		return "", err
 	}
 	for i := range profiles {
+		// A trust deadline is local consent, not portable profile configuration.
+		profiles[i].CliTrustUntil = time.Time{}
 		if includeSecrets && profiles[i].RememberPassword {
 			if err := a.loadProfileSecrets(&profiles[i]); err != nil {
 				return "", fmt.Errorf("load credentials for %s: %w", profiles[i].Name, err)
@@ -275,6 +277,9 @@ func (a *App) mergeImportedProfiles(candidates []profileImportCandidate) (map[st
 
 	for _, candidate := range candidates {
 		profile := candidate.Profile
+		// Imported files must never grant or extend prompt-free CLI access. This
+		// also intentionally revokes trust when an existing profile is replaced.
+		profile.CliTrustUntil = time.Time{}
 		oldID := strings.TrimSpace(profile.ID)
 		profile.Host = strings.TrimSpace(profile.Host)
 		profile.Username = strings.TrimSpace(profile.Username)

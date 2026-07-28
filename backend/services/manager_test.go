@@ -216,6 +216,29 @@ func TestServiceActionValidation(t *testing.T) {
 	}
 }
 
+func TestVerifyServiceActionResultUsesActionSpecificState(t *testing.T) {
+	tests := []struct {
+		name   string
+		result types.ServiceActionResult
+		want   bool
+	}{
+		{"restart running", types.ServiceActionResult{Action: "restart", ActiveState: "active", SubState: "running"}, true},
+		{"restart failed", types.ServiceActionResult{Action: "restart", ActiveState: "failed", SubState: "failed", Result: "exit-code", ExecMainStatus: 1}, false},
+		{"oneshot completed", types.ServiceActionResult{Action: "start", ActiveState: "inactive", SubState: "dead", Result: "success", ExecMainStatus: 0}, true},
+		{"enabled", types.ServiceActionResult{Action: "enable", UnitFileState: "enabled"}, true},
+		{"enable mismatch", types.ServiceActionResult{Action: "enable", UnitFileState: "disabled"}, false},
+		{"stopped", types.ServiceActionResult{Action: "stop", ActiveState: "inactive", SubState: "dead"}, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, _ := verifyServiceActionResult(test.result)
+			if got != test.want {
+				t.Fatalf("verified=%t, want %t", got, test.want)
+			}
+		})
+	}
+}
+
 func TestLogStreamReplacementAndExactStop(t *testing.T) {
 	m := NewManager(nil)
 	var firstCancelled atomic.Int32

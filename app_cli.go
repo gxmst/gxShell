@@ -34,6 +34,17 @@ const (
 
 var cliHeredocPattern = regexp.MustCompile(`(?:^|[;&|]\s*|\s)<<-?\s*["']?[A-Za-z_][A-Za-z0-9_]*["']?`)
 
+type cliApprovalDecision struct {
+	Allowed bool
+	Source  string
+}
+
+const (
+	cliApprovalNotRequired = "not-required"
+	cliApprovalUser        = "user"
+	cliApprovalTimedTrust  = "timed-trust"
+)
+
 // startCliServer starts an authenticated localhost HTTP server for CLI access.
 // Profiles must opt in with CliEnabled before the CLI can see or execute them.
 func (a *App) startCliServer() {
@@ -191,6 +202,7 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		stdin = &script
 	}
 
+	approvalSource := cliApprovalNotRequired
 	if block, ok := guardCommandReport(guardText, req.Script == "", func() bool {
 		display := execCommand
 		if req.Script != "" {
@@ -201,11 +213,14 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		if len(secretNames) > 0 {
 			display += "\nNamed secrets: " + strings.Join(secretNames, ", ") + " (values hidden)"
 		}
-		return a.confirmCliExecution(serverName, display)
+		decision := a.authorizeCliProfileExecution(profile, display)
+		approvalSource = decision.Source
+		return decision.Allowed
 	}); !ok {
 		fields := logger.CommandAuditFields(guardText)
 		fields["server"] = serverName
 		fields["profileID"] = profile.ID
+		fields["approval"] = approvalSource
 		fields["reason"] = block.Message()
 		a.log.ErrorFields("CLI command blocked", fields)
 		writeCliJSON(w, http.StatusForbidden, map[string]any{
@@ -224,6 +239,7 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	fields := logger.CommandAuditFields(guardText)
 	fields["server"] = serverName
 	fields["profileID"] = profile.ID
+	fields["approval"] = approvalSource
 	a.log.InfoFields("CLI executing command", fields)
 
 	sessionID, reusedConnection, err := a.cliSessionForProfile(profile.ID)
@@ -656,6 +672,62 @@ func (a *App) confirmCliExecution(serverName, command string) bool {
 	a.cliApprovalMu.Unlock()
 
 	return <-req.result
+}
+
+// authorizeCliProfileExecution applies time-limited trust only to remote
+// commands for the concrete profile selected by the request.
+func (a *App) authorizeCliProfileExecution(profile types.Profile, command string) cliApprovalDecision {
+	if a.cliProfilesTrustedNow([]string{profile.ID}, time.Now()) {
+		return cliApprovalDecision{Allowed: true, Source: cliApprovalTimedTrust}
+	}
+	return cliApprovalDecision{
+		Allowed: a.confirmCliExecution(cliProfileName(profile), command),
+		Source:  cliApprovalUser,
+	}
+}
+
+// authorizeCliCopy requires both endpoints to be inside their trust windows.
+func (a *App) authorizeCliCopy(source, destination types.Profile, description string) cliApprovalDecision {
+	now := time.Now()
+	if a.cliProfilesTrustedNow([]string{source.ID, destination.ID}, now) {
+		return cliApprovalDecision{Allowed: true, Source: cliApprovalTimedTrust}
+	}
+	serverName := cliProfileName(source) + " -> " + cliProfileName(destination)
+	return cliApprovalDecision{
+		Allowed: a.confirmCliExecution(serverName, description),
+		Source:  cliApprovalUser,
+	}
+}
+
+// cliProfilesTrustedNow re-reads profiles at the authorization boundary. A UI
+// emergency revoke that commits before this short read therefore takes effect
+// immediately; storage failures fail closed into native approval.
+func (a *App) cliProfilesTrustedNow(profileIDs []string, now time.Time) bool {
+	if a.store == nil || len(profileIDs) == 0 {
+		return false
+	}
+	a.profilesMu.Lock()
+	profiles, err := a.store.ListProfiles()
+	a.profilesMu.Unlock()
+	if err != nil {
+		if a.log != nil {
+			a.log.ErrorFields("CLI trust state could not be read", logger.LogFields{"error": err.Error()})
+		}
+		return false
+	}
+	wanted := make(map[string]bool, len(profileIDs))
+	for _, id := range profileIDs {
+		if id == "" {
+			return false
+		}
+		wanted[id] = true
+	}
+	for _, profile := range profiles {
+		if wanted[profile.ID] && cliProfileTrustActive(profile, now) {
+			delete(wanted, profile.ID)
+		}
+	}
+	return len(wanted) == 0
 }
 
 func (a *App) flushCliApprovalBatch(key string) {

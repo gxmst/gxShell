@@ -6,6 +6,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"gxShell/backend/config"
+	"gxShell/backend/types"
 )
 
 // The CLI approval gate coalesces concurrent exec requests for the same server
@@ -164,5 +167,82 @@ func TestCliApprovalSequentialBatchesReopen(t *testing.T) {
 
 	if got := atomic.LoadInt32(&batchCalls); got != 2 {
 		t.Fatalf("sequential requests produced %d batches, want 2", got)
+	}
+}
+
+func TestCliTimedTrustSkipsDialog(t *testing.T) {
+	store, err := config.NewStoreAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	app.store = store
+	profile := types.Profile{
+		ID:            "prod",
+		CliEnabled:    true,
+		CliAlias:      "prod-web",
+		CliTrustUntil: time.Now().Add(time.Hour),
+	}
+	if err := store.SaveProfiles([]types.Profile{profile}); err != nil {
+		t.Fatal(err)
+	}
+	decision := app.authorizeCliProfileExecution(profile, "systemctl restart nginx")
+	if !decision.Allowed || decision.Source != cliApprovalTimedTrust {
+		t.Fatal("trusted CLI request was not auto-approved")
+	}
+
+	profile.CliTrustUntil = time.Now().Add(-time.Second)
+	if err := store.SaveProfiles([]types.Profile{profile}); err != nil {
+		t.Fatal(err)
+	}
+	decision = app.authorizeCliProfileExecution(profile, "systemctl restart nginx")
+	if decision.Allowed || decision.Source != cliApprovalUser {
+		t.Fatal("expired trust did not fall back to fail-closed user approval")
+	}
+}
+
+func TestCliTimedTrustCopyRequiresBothProfiles(t *testing.T) {
+	store, err := config.NewStoreAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	app.store = store
+	future := time.Now().Add(time.Hour)
+	source := types.Profile{ID: "source", CliEnabled: true, CliAlias: "source", CliTrustUntil: future}
+	destination := types.Profile{ID: "destination", CliEnabled: true, CliAlias: "destination", CliTrustUntil: future}
+	if err := store.SaveProfiles([]types.Profile{source, destination}); err != nil {
+		t.Fatal(err)
+	}
+	decision := app.authorizeCliCopy(source, destination, "copy")
+	if !decision.Allowed || decision.Source != cliApprovalTimedTrust {
+		t.Fatal("two trusted copy endpoints did not bypass approval")
+	}
+	destination.CliTrustUntil = time.Now().Add(-time.Second)
+	if err := store.SaveProfiles([]types.Profile{source, destination}); err != nil {
+		t.Fatal(err)
+	}
+	decision = app.authorizeCliCopy(source, destination, "copy")
+	if decision.Allowed || decision.Source != cliApprovalUser {
+		t.Fatal("copy with one expired endpoint did not require user approval")
+	}
+}
+
+func TestCliTimedTrustStillHonorsHardBlocks(t *testing.T) {
+	for _, command := range []string{"rm -rf /", "shutdown now", "cat /etc/shadow"} {
+		confirmCalled := false
+		block, ok := guardCommandReport(command, false, func() bool {
+			confirmCalled = true
+			return true
+		})
+		if ok {
+			t.Errorf("%q passed the hard safety guard", command)
+		}
+		if confirmCalled {
+			t.Errorf("%q reached auto-approval before the hard safety guard", command)
+		}
+		if block.Kind == "" {
+			t.Errorf("%q returned no structured block reason", command)
+		}
 	}
 }

@@ -35,6 +35,11 @@ type Profile struct {
 	// always requires a per-command native confirmation regardless of this value.
 	CliEnabled bool   `json:"cliEnabled"`
 	CliAlias   string `json:"cliAlias,omitempty"`
+	// CliTrustUntil grants this profile time-limited, prompt-free access to
+	// external gxshell-cli command execution and remote copies. The wall-clock
+	// deadline intentionally expires while the machine is asleep. A zero or
+	// past value means normal approval rules apply.
+	CliTrustUntil time.Time `json:"cliTrustUntil,omitempty"`
 	// Deprecated: legacyAIEnabled/legacyAIAlias hold values written by versions
 	// that named this flag "aiEnabled"/"aiAlias". They are migrated into
 	// CliEnabled/CliAlias on startup (see App.migrateCliProfileFlags) and then
@@ -82,6 +87,10 @@ type AppSettings struct {
 	// When false the server does not listen at all, so no local process can use
 	// the CLI interface regardless of per-profile opt-in. Defaults to true.
 	CliServerEnabled bool `json:"cliServerEnabled"`
+	// Deprecated: CliAutoApprove was a global, permanent full-trust switch.
+	// It is deliberately never migrated into per-profile CliTrustUntil because
+	// that would silently preserve a weaker safety policy after upgrading.
+	CliAutoApprove bool `json:"cliAutoApprove,omitempty"`
 	// UpdateCheckEnabled controls the startup check against the public release
 	// feed. It is the app's only unprompted outbound request, so it gets its own
 	// switch: someone running gxShell on an isolated network should be able to
@@ -317,6 +326,22 @@ type ServiceInfo struct {
 	ResourceStats bool `json:"resourceStats"`
 }
 
+// ServiceActionResult separates command acceptance from the state observed
+// immediately afterward. Verified is false when the action command ran but the
+// requested state could not be confirmed.
+type ServiceActionResult struct {
+	Unit           string `json:"unit"`
+	Action         string `json:"action"`
+	LoadState      string `json:"loadState"`
+	ActiveState    string `json:"activeState"`
+	SubState       string `json:"subState"`
+	UnitFileState  string `json:"unitFileState"`
+	Result         string `json:"result"`
+	ExecMainStatus int    `json:"execMainStatus"`
+	Verified       bool   `json:"verified"`
+	Verification   string `json:"verification,omitempty"`
+}
+
 type CronJob struct {
 	ID       string `json:"id"`
 	Schedule string `json:"schedule"`
@@ -359,6 +384,15 @@ type FirewallStatus struct {
 	DefaultPolicy string         `json:"defaultPolicy"` // ufw: e.g. "deny (incoming), allow (outgoing)"; firewalld: default zone name
 	SSHPort       int            `json:"sshPort"`       // the port of THIS session's SSH connection (for lockout warnings in the UI)
 	Rules         []FirewallRule `json:"rules"`
+}
+
+// FirewallActionResult reports the complete state read back after a mutation.
+// A successful mutation with a failed or mismatched readback is returned with
+// Verified=false instead of being presented as an unconditional success.
+type FirewallActionResult struct {
+	Status       FirewallStatus `json:"status"`
+	Verified     bool           `json:"verified"`
+	Verification string         `json:"verification,omitempty"`
 }
 
 type ContainerInfo struct {

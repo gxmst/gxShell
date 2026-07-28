@@ -108,6 +108,9 @@ func normalizeProfile(profile *types.Profile) {
 		profile.Tags = []string{}
 	}
 	profile.CliAlias = strings.TrimSpace(profile.CliAlias)
+	if !profile.CliEnabled {
+		profile.CliTrustUntil = time.Time{}
+	}
 }
 
 func validateProfileCliSettings(profile types.Profile, profiles []types.Profile) error {
@@ -118,6 +121,9 @@ func validateProfileCliSettings(profile types.Profile, profiles []types.Profile)
 	if alias == "" {
 		return errors.New("CLI alias is required when access is enabled")
 	}
+	if profile.CliTrustUntil.After(time.Now().Add(24*time.Hour + time.Minute)) {
+		return errors.New("CLI full trust cannot be granted for more than 24 hours")
+	}
 	for _, existing := range profiles {
 		if existing.ID == profile.ID || !existing.CliEnabled {
 			continue
@@ -127,6 +133,17 @@ func validateProfileCliSettings(profile types.Profile, profiles []types.Profile)
 		}
 	}
 	return nil
+}
+
+func cliProfileTrustActive(profile types.Profile, now time.Time) bool {
+	return profile.CliEnabled && !profile.CliTrustUntil.IsZero() && profile.CliTrustUntil.After(now)
+}
+
+func cliTrustNeedsConfirmation(previous, next types.Profile, now time.Time) bool {
+	if !cliProfileTrustActive(next, now) {
+		return false
+	}
+	return !cliProfileTrustActive(previous, now) || next.CliTrustUntil.After(previous.CliTrustUntil)
 }
 
 // sanitizeProfiles removes sensitive data from a list of profiles.

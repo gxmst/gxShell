@@ -298,6 +298,10 @@ export function ReadLocalMarkdownResourceDataURL(arg1, arg2) {
   return window['go']['main']['App']['ReadLocalMarkdownResourceDataURL'](arg1, arg2);
 }
 
+export function ReadLocalPDFBase64(arg1) {
+  return window['go']['main']['App']['ReadLocalPDFBase64'](arg1);
+}
+
 export function ReadLogFile(arg1) {
   return window['go']['main']['App']['ReadLogFile'](arg1);
 }
@@ -380,6 +384,10 @@ export function RestartTunnels(arg1) {
 
 export function RestoreTextFiles(arg1) {
   return window['go']['main']['App']['RestoreTextFiles'](arg1);
+}
+
+export function RevokeCliTrust(arg1) {
+  return window['go']['main']['App']['RevokeCliTrust'](arg1);
 }
 
 export function RunCronJob(arg1, arg2) {

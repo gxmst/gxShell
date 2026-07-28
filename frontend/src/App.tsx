@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { types } from "../wailsjs/go/models";
-import { AnswerKeyboardInteractive, CreateCommand, DeleteCommand, ExportProfiles, GetStartupFile, ImportOpenSSHConfig, ImportProfiles, IsRecording, ListCommands, OpenDataDir, ReadLogFile, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/main/App";
+import { AnswerKeyboardInteractive, CreateCommand, DeleteCommand, ExportProfiles, GetStartupFile, ImportOpenSSHConfig, ImportProfiles, IsRecording, ListCommands, OpenDataDir, ReadLogFile, RevokeCliTrust, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/main/App";
 import { emptyProfile } from "./constants";
 import type { AutomationActivityEvent, AutomationActivityRecord, AutomationIndicator, Drawer, SplitPane, Tab } from "./types";
 import { normalizeAppTheme } from "./utils/format";
@@ -32,7 +32,7 @@ import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastStack } from "./components/ToastStack";
 import { TransfersProvider } from "./hooks/useTransfers";
 import { BrowserOpenURL, EventsOn, OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
-import { isSupportedTextPath } from "./utils/textFiles";
+import { isSupportedDocumentPath } from "./utils/textFiles";
 import { shellQuote } from "./utils/shellQuote";
 import { t } from "./i18n";
 import { formatAutomationTerminalEvent } from "./utils/automation";
@@ -43,6 +43,7 @@ function App() {
   const updateCheck = useUpdateCheck();
   const [drawer, setDrawer] = usePersistedState<Drawer>("gx:drawer", "monitor");
   const [profileModal, setProfileModal] = useState<types.Profile | null>(null);
+  const [revokingCliTrustID, setRevokingCliTrustID] = useState("");
   const [quickConnectOpen, setQuickConnectOpen] = useState(false);
   const [commandModal, setCommandModal] = useState<types.CommandTemplate | null>(null);
   const [commandVars, setCommandVars] = useState<{ commandName: string; template: string; placeholders: string[]; send: (command: string) => void } | null>(null);
@@ -232,10 +233,20 @@ function App() {
     }, false);
 
     const unsubFileOpen = EventsOn("file:open", (filePath: string) => {
-      if (isSupportedTextPath(filePath)) {
+      if (isSupportedDocumentPath(filePath)) {
         openMarkdownFile(filePath);
       }
     });
+
+    // Explorer's context-menu/Open With path is distinct from drag-and-drop.
+    // Document-focused launches start with the sidebar tucked away, while an
+    // in-app open or a dropped document preserves the user's current layout.
+    const openExternalDocument = (filePath: string) => {
+      if (!isSupportedDocumentPath(filePath)) return;
+      setSidebarCollapsed(true);
+      openMarkdownFile(filePath);
+    };
+    const unsubExternalFileOpen = EventsOn("file:open-external", openExternalDocument);
 
     const unsubRecordingError = EventsOn("recording:error", (payload: { error?: string }) => {
       notify(payload?.error || "Failed to finalize recording", "error");
@@ -264,9 +275,7 @@ function App() {
     // right after the listener is registered, recovers that file. Both paths are
     // idempotent because openMarkdownFile de-duplicates by tab.
     GetStartupFile().then((filePath) => {
-      if (filePath && isSupportedTextPath(filePath)) {
-        openMarkdownFile(filePath);
-      }
+      if (filePath) openExternalDocument(filePath);
     }).catch(() => undefined);
 
     // 托盘菜单事件监听
@@ -284,6 +293,7 @@ function App() {
 
     return () => {
       if (unsubFileOpen) unsubFileOpen();
+      if (unsubExternalFileOpen) unsubExternalFileOpen();
       if (unsubRecordingError) unsubRecordingError();
       if (unsubCliServerError) unsubCliServerError();
       if (unsubTrayNewConnection) unsubTrayNewConnection();
@@ -293,7 +303,7 @@ function App() {
       if (unsubKiClosed) unsubKiClosed();
       OnFileDropOff();
     };
-  }, [openMarkdownFile, handleOpenMarkdown, setDrawer, notify]);
+  }, [openMarkdownFile, handleOpenMarkdown, setDrawer, setSidebarCollapsed, notify]);
 
   const handleTearOff = useCallback((tab: Tab) => {
     setFloatingTabIds((prev) => prev.includes(tab.id) ? prev : [...prev, tab.id]);
@@ -666,6 +676,19 @@ function App() {
           onToggleFavorite={async (profile) => {
             try { await profileState.saveProfile(new types.Profile({ ...profile, favorite: !profile.favorite })); }
             catch (err) { notify(String(err), "error"); }
+          }}
+          revokingCliTrustID={revokingCliTrustID}
+          onRevokeCliTrust={async (profileID) => {
+            setRevokingCliTrustID(profileID);
+            try {
+              await RevokeCliTrust(profileID);
+              await profileState.reload();
+              notify(t(profileState.settings?.language || "en", "cliTrustRevoked"), "success");
+            } catch (err) {
+              notify(String(err), "error");
+            } finally {
+              setRevokingCliTrustID("");
+            }
           }}
           onDeleteProfile={async (id) => { await profileState.deleteProfile(id); }}
           onImportProfiles={() => importProfiles(false)}

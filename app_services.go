@@ -1,6 +1,9 @@
 package main
 
-import "gxShell/backend/types"
+import (
+	"gxShell/backend/logger"
+	"gxShell/backend/types"
+)
 
 // ListServices returns systemd services on the remote host with their
 // enablement state merged in.
@@ -10,8 +13,11 @@ func (a *App) ListServices(sessionID string) ([]types.ServiceInfo, error) {
 
 // ServiceAction runs a systemctl action (start|stop|restart|enable|disable)
 // on a unit. Stopping/disabling SSH- or network-critical units requires force.
-func (a *App) ServiceAction(sessionID string, unit string, action string, force bool) error {
-	return a.services.ServiceAction(sessionID, unit, action, force)
+func (a *App) ServiceAction(sessionID string, unit string, action string, force bool) (types.ServiceActionResult, error) {
+	audit := a.beginChangeAudit("service."+action, unit, sessionID, logger.LogFields{"force": force})
+	result, err := a.services.ServiceActionVerified(sessionID, unit, action, force)
+	audit.finish(err, err == nil && result.Verified, result.Verification)
+	return result, err
 }
 
 // ServiceLogs retrieves recent journal entries for a unit.
