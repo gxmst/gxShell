@@ -282,6 +282,21 @@
   scrollbar-color: transparent transparent;
 }
 
+/* Settings owns the only scrollport for its cards. Keeping the host itself
+   non-scrolling prevents a clipped flex child from creating two competing
+   scroll positions and leaves every control reachable inside the panel. */
+.tool-body-full.settings-host {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tool-body-full.settings-host > .settings-page {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
 .tool-body-full:hover,
 .tool-body-full:focus-within {
   scrollbar-color: var(--scrollbar-thumb) transparent;

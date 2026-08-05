@@ -98,6 +98,40 @@ type RemoteCopyResult struct {
 	SHA256 string `json:"sha256"`
 }
 
+// ErrOverwriteRequired is returned when a transfer would replace an existing
+// regular file without an explicit overwrite decision. Callers should use
+// IsOverwriteRequired (or errors.Is with this sentinel) instead of matching the
+// human-readable error text.
+var ErrOverwriteRequired = errors.New("overwrite required")
+
+// OverwriteRequiredError identifies the destination that prevented a
+// no-overwrite transfer from being promoted.
+type OverwriteRequiredError struct {
+	Path   string
+	Remote bool
+}
+
+func (e *OverwriteRequiredError) Error() string {
+	if e == nil {
+		return ErrOverwriteRequired.Error()
+	}
+	label := "download destination"
+	if e.Remote {
+		label = "remote destination"
+	}
+	return fmt.Sprintf("%s already exists: %s", label, e.Path)
+}
+
+func (e *OverwriteRequiredError) Unwrap() error {
+	return ErrOverwriteRequired
+}
+
+// IsOverwriteRequired reports whether err is a destination conflict that can
+// be resolved by retrying with an explicit overwrite policy.
+func IsOverwriteRequired(err error) bool {
+	return errors.Is(err, ErrOverwriteRequired)
+}
+
 func NewManager(sessions SSHClientProvider, emit func(event string, data any)) *Manager {
 	m := &Manager{
 		sessions:  sessions,
@@ -515,7 +549,37 @@ func (m *Manager) ListRemoteDir(sessionID string, remotePath string) ([]types.Re
 	return files, nil
 }
 
-func (m *Manager) UploadFile(sessionID, localPath, remotePath string) (err error) {
+// RemoteFileExists checks whether a remote path is an existing regular file.
+// A missing path returns false without error; directories and other special
+// entries are rejected because file transfers must never replace them.
+func (m *Manager) RemoteFileExists(sessionID, remotePath string) (bool, error) {
+	remotePath = cleanRemotePath(remotePath)
+	client, release, err := m.acquire(sessionID)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	info, err := client.Lstat(remotePath)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		m.invalidateOnConnErr(sessionID, err)
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return true, fmt.Errorf("remote destination is not a regular file: %s", remotePath)
+	}
+	return true, nil
+}
+
+func (m *Manager) UploadFile(sessionID, localPath, remotePath string) error {
+	return m.UploadFileWithPolicy(sessionID, localPath, remotePath, false)
+}
+
+// UploadFileWithPolicy uploads a file and atomically applies the caller's
+// overwrite decision when the completed temporary file is promoted.
+func (m *Manager) UploadFileWithPolicy(sessionID, localPath, remotePath string, overwrite bool) (err error) {
 	remotePath = cleanRemotePath(remotePath)
 	job := m.beginTransfer(sessionID, remotePath, "upload")
 	var done, totalSize int64
@@ -637,7 +701,7 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) (err error
 	if err = checkTransferContext(job.ctx); err != nil {
 		return err
 	}
-	if err = replaceRemoteTemp(client, tmpPath, remotePath); err != nil {
+	if err = replaceRemoteTemp(client, tmpPath, remotePath, overwrite); err != nil {
 		return err
 	}
 	return nil
@@ -731,14 +795,20 @@ func (m *Manager) CopyRemoteFile(ctx context.Context, sourceSessionID, sourcePat
 		return result, fmt.Errorf("remote copy checksum verification failed")
 	}
 	result.SHA256 = hex.EncodeToString(sourceSum)
-	if err = replaceRemoteTemp(destinationClient, tmpPath, destinationPath); err != nil {
+	if err = replaceRemoteTemp(destinationClient, tmpPath, destinationPath, true); err != nil {
 		return result, err
 	}
 	removeTemp = false
 	return result, nil
 }
 
-func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) (err error) {
+func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) error {
+	return m.DownloadFileWithPolicy(sessionID, remotePath, localPath, false)
+}
+
+// DownloadFileWithPolicy downloads a file and atomically applies the caller's
+// overwrite decision when the completed part file is promoted.
+func (m *Manager) DownloadFileWithPolicy(sessionID, remotePath, localPath string, overwrite bool) (err error) {
 	remotePath = cleanRemotePath(remotePath)
 	job := m.beginTransfer(sessionID, remotePath, "download")
 	var done, totalSize int64
@@ -860,7 +930,7 @@ func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) (err err
 	if err = checkTransferContext(job.ctx); err != nil {
 		return err
 	}
-	if err = replaceLocalTemp(partPath, localPath); err != nil {
+	if err = replaceLocalTemp(partPath, localPath, overwrite); err != nil {
 		return err
 	}
 	return nil
@@ -973,10 +1043,68 @@ func writeRemoteFileAt(client *sftp.Client, remotePath string, data []byte, mode
 	return nil
 }
 
+// promoteRemoteNoReplace installs a fully written sibling temp file without
+// replacing an existing destination. SFTP Rename is not a no-replace
+// primitive: many servers overwrite the destination, so the hardlink extension
+// is required for the atomic no-overwrite operation. If the server does not
+// support it, fail closed rather than silently weakening the policy.
+func promoteRemoteNoReplace(client *sftp.Client, tmpPath, remotePath string) error {
+	if err := client.Link(tmpPath, remotePath); err != nil {
+		return err
+	}
+	if err := client.Remove(tmpPath); err != nil {
+		// The final link is already installed. Keep the successful transfer result
+		// rather than reporting a false failure; the orphaned temp file is hidden
+		// from listings and can be cleaned up on a later transfer sweep.
+		return nil
+	}
+	return nil
+}
+
 // replaceRemoteTemp promotes a fully written sibling temp file without first
 // deleting the destination. If the server cannot overwrite with plain Rename
 // and does not support posix-rename, the existing file is left intact.
-func replaceRemoteTemp(client *sftp.Client, tmpPath, remotePath string) error {
+func replaceRemoteTemp(client *sftp.Client, tmpPath, remotePath string, overwrite bool) error {
+	info, statErr := client.Lstat(remotePath)
+	if os.IsNotExist(statErr) {
+		if overwrite {
+			// Even an overwrite-approved transfer had no target at promotion time.
+			// Plain Rename is sufficient here because replacing a destination that
+			// appears after this check is explicitly allowed.
+			return client.Rename(tmpPath, remotePath)
+		}
+		if err := promoteRemoteNoReplace(client, tmpPath, remotePath); err != nil {
+			// A destination created before the link is the same policy conflict as
+			// one observed before the transfer. Re-check so the CLI can return a
+			// stable overwrite_required outcome instead of a server-specific error.
+			if raced, raceErr := client.Lstat(remotePath); raceErr == nil && raced.Mode().IsRegular() {
+				return &OverwriteRequiredError{Path: remotePath, Remote: true}
+			}
+			return fmt.Errorf("promote remote file without replacing a new destination: %w", err)
+		}
+		return nil
+	}
+	if statErr == nil {
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("remote destination is not a regular file: %s", remotePath)
+		}
+		if !overwrite {
+			return &OverwriteRequiredError{Path: remotePath, Remote: true}
+		}
+	} else if !os.IsNotExist(statErr) {
+		// Do not attempt a no-overwrite rename when the destination could not be
+		// inspected. A permission or transport error must fail closed rather than
+		// relying on server-specific rename semantics.
+		return fmt.Errorf("inspect remote destination: %w", statErr)
+	}
+
+	// The no-overwrite case with an existing regular target returned above.
+	// Keep the guard explicit so future changes cannot accidentally fall through
+	// to the overwrite path without a policy decision.
+	if !overwrite {
+		return &OverwriteRequiredError{Path: remotePath, Remote: true}
+	}
+
 	if err := client.PosixRename(tmpPath, remotePath); err != nil {
 		if fallbackErr := client.Rename(tmpPath, remotePath); fallbackErr != nil {
 			return fmt.Errorf("replace remote file: posix rename failed (%v); fallback rename failed without deleting original: %w", err, fallbackErr)
@@ -989,24 +1117,75 @@ func transferPartPath(localPath, jobID string) string {
 	return localPath + artifactMarker + jobID + partSuffix
 }
 
-// replaceLocalTemp promotes a completed .part file. os.Rename is atomic when
-// the platform supports replacing the destination. On platforms where it does
-// not (notably Windows), move the old destination aside and restore it if the
-// promotion fails, so a failed download never leaves a truncated target.
-func replaceLocalTemp(tmpPath, localPath string) error {
-	if err := os.Rename(tmpPath, localPath); err == nil {
-		return nil
-	} else if _, statErr := os.Stat(localPath); statErr != nil {
+func promoteLocalNoReplace(sourcePath, targetPath string) error {
+	if err := os.Link(sourcePath, targetPath); err != nil {
 		return err
 	}
+	_ = os.Remove(sourcePath)
+	return nil
+}
 
+func checkLocalNoReplaceSupport(sourcePath, targetPath string) error {
+	probePath := targetPath + artifactMarker + randomSuffix() + ".link-check"
+	if err := os.Link(sourcePath, probePath); err != nil {
+		return err
+	}
+	if err := os.Remove(probePath); err != nil {
+		return fmt.Errorf("remove link check %s: %w", probePath, err)
+	}
+	return nil
+}
+
+// replaceLocalTemp promotes a completed .part file. Existing regular files are
+// moved aside first, then a hard link atomically installs the completed bytes
+// only if the destination is still absent. This preserves both sides if another
+// process creates a new destination during promotion.
+func replaceLocalTemp(tmpPath, localPath string, overwrite bool) error {
+	info, statErr := os.Lstat(localPath)
+	if os.IsNotExist(statErr) {
+		if err := promoteLocalNoReplace(tmpPath, localPath); err != nil {
+			if !overwrite {
+				if raced, raceErr := os.Lstat(localPath); raceErr == nil && raced.Mode().IsRegular() {
+					return &OverwriteRequiredError{Path: localPath}
+				}
+			}
+			return fmt.Errorf("promote completed download without replacing a new destination: %w", err)
+		}
+		return nil
+	}
+	if statErr != nil {
+		return fmt.Errorf("inspect download destination: %w", statErr)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("download destination is not a regular file: %s", localPath)
+	}
+	if !overwrite {
+		return &OverwriteRequiredError{Path: localPath}
+	}
+	// Confirm the filesystem supports the atomic promotion primitive before
+	// moving the user's original file out of the way.
+	if err := checkLocalNoReplaceSupport(tmpPath, localPath); err != nil {
+		return fmt.Errorf("download filesystem does not support safe replacement: %w", err)
+	}
+
+	// Moving the old regular file aside gives every platform a rollback path and
+	// lets promotion use the same atomic no-replace operation as the
+	// non-conflict case.
 	backupPath := localPath + artifactMarker + randomSuffix() + backupSuffix
 	if err := os.Rename(localPath, backupPath); err != nil {
 		return fmt.Errorf("prepare existing download target: %w", err)
 	}
-	if err := os.Rename(tmpPath, localPath); err != nil {
-		if restoreErr := os.Rename(backupPath, localPath); restoreErr != nil {
-			return fmt.Errorf("promote completed download: %v; restore original: %w", err, restoreErr)
+	backupInfo, backupStatErr := os.Lstat(backupPath)
+	if backupStatErr != nil || !backupInfo.Mode().IsRegular() {
+		restoreErr := os.Rename(backupPath, localPath)
+		if backupStatErr != nil {
+			return fmt.Errorf("verify existing download target: %v; restore original: %v", backupStatErr, restoreErr)
+		}
+		return fmt.Errorf("download destination changed to a non-regular file; restore original: %v", restoreErr)
+	}
+	if err := promoteLocalNoReplace(tmpPath, localPath); err != nil {
+		if restoreErr := promoteLocalNoReplace(backupPath, localPath); restoreErr != nil {
+			return fmt.Errorf("promote completed download: %v; restore original from %s: %w", err, backupPath, restoreErr)
 		}
 		return fmt.Errorf("promote completed download: %w", err)
 	}
@@ -1219,7 +1398,7 @@ func (m *Manager) downloadFileOnly(client *sftp.Client, job *transferJob, remote
 	if err = checkTransferContext(job.ctx); err != nil {
 		return written, err
 	}
-	if err = replaceLocalTemp(partPath, localPath); err != nil {
+	if err = replaceLocalTemp(partPath, localPath, true); err != nil {
 		return written, err
 	}
 	return written, nil
@@ -1245,10 +1424,19 @@ func (m *Manager) invalidateOnTransferErr(sessionID string, err error) {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return
 	}
+	// A destination conflict is a policy outcome on a healthy connection, not
+	// evidence that the SSH/SFTP transport needs to be recycled.
+	if errors.Is(err, ErrOverwriteRequired) {
+		return
+	}
 	// Local open/write/rename failures do not say anything about the cached
 	// SFTP transport and must not disconnect concurrent remote operations.
 	var pathErr *os.PathError
 	if errors.As(err, &pathErr) {
+		return
+	}
+	var linkErr *os.LinkError
+	if errors.As(err, &linkErr) {
 		return
 	}
 	m.invalidateOnConnErr(sessionID, err)

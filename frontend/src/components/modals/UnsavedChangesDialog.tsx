@@ -6,12 +6,15 @@ import { t } from "../../i18n";
 export function UnsavedChangesDialog({
   title,
   locale,
+  body,
   onSave,
   onDiscard,
   onCancel,
 }: {
   title: string;
   locale: string;
+  /** Overrides the default document-oriented wording. */
+  body?: string;
   onSave: () => Promise<boolean>;
   onDiscard: () => void;
   onCancel: () => void;
@@ -27,7 +30,7 @@ export function UnsavedChangesDialog({
     try {
       const ok = await onSave();
       if (!ok) {
-        setError(zh ? "保存失败，文件仍保持打开。" : "Save failed. The file remains open.");
+        setError(zh ? "保存失败，修改仍保留。" : "Save failed. Your changes are still here.");
         setSaving(false);
       }
     } catch (err) {
@@ -44,7 +47,7 @@ export function UnsavedChangesDialog({
         description={title}
       />
       <div className="dialog-body-copy">
-        {zh ? "此文档有尚未保存的修改。" : "This document has unsaved changes."}
+        {body || (zh ? "此文档有尚未保存的修改。" : "This document has unsaved changes.")}
       </div>
       {error && <div className="profile-modal-error">{error}</div>}
       <div className="dialog-footer">

@@ -33,7 +33,7 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 - Session recording of terminal output to asciinema `.cast` files, with a built-in player (play, pause, restart, variable speed) and a recordings panel to play, delete, or reveal saved recordings. Recording taps terminal output only, not stdin; shell-echoed commands can appear in recordings, while password prompts with echo disabled are not captured.
 - Reusable command templates with `<name>` variable placeholders. Running a template with placeholders prompts for each value with a live preview before the command is sent, to the active terminal or broadcast to all sessions.
 - AI assistant for OpenAI-compatible APIs, with streaming responses, model listing, token usage, terminal context, and explicit native confirmation before remote tool execution.
-- External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands, track jobs, copy remote files, and open temporary loopback SSH tunnels on opted-in profiles through the running app, without exposing saved SSH credentials. Script execution uses an explicit shell and SSH stdin. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
+- External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands, track jobs, transfer local files, copy remote files, and open temporary loopback SSH tunnels on opted-in profiles through the running app, without exposing saved SSH credentials. Script execution uses an explicit shell and SSH stdin. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
 - Model-independent agent guidance, structured execution outcomes, enforced stdin/file handling for multiline scripts, and named `secret://` references for using credentials without placing plaintext values in model prompts, process arguments, confirmations, or command audits.
 - Local and remote text/Markdown viewer/editor with sanitized Markdown rendering, plain-text viewing for logs and other text formats, file-open support, drag-and-drop opening, recent files, sibling and relative-link navigation, relative image previews for Markdown, table of contents, code highlighting, Mermaid diagrams, in-document search, zoom, edit, save, split preview, and refresh.
 - Windows tray menu for showing the app, creating a connection, opening a text file, settings, and quit.
@@ -200,7 +200,7 @@ go build -o gxshell-cli.exe .\cmd\gxshell-cli
 5. Create a GitHub release with the built executables as assets:
 
 ```powershell
-gh release create v1.5.0 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.5.0" --notes-file .\release-notes.md
+gh release create v1.5.1 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.5.1" --notes-file .\release-notes.md
 ```
 
 Use release notes that describe behavior and fixes only. Do not include local paths, tokens, API keys, server addresses, private hostnames, or log output.
@@ -419,7 +419,7 @@ go build -o gxshell-cli.exe .\cmd\gxshell-cli
 5. 创建 GitHub release，并把构建出的可执行文件作为资产上传：
 
 ```powershell
-gh release create v1.5.0 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.5.0" --notes-file .\release-notes.md
+gh release create v1.5.1 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.5.1" --notes-file .\release-notes.md
 ```
 
 Release notes 只应描述行为和修复。不要包含本地路径、token、API key、服务器地址、私有主机名或日志输出。

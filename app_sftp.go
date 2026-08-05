@@ -21,9 +21,20 @@ func (a *App) UploadFile(sessionID, localPath, remotePath string) error {
 	return a.sftp.UploadFile(sessionID, localPath, remotePath)
 }
 
+// UploadFileWithPolicy applies the overwrite decision at final promotion so a
+// destination created after the UI listing cannot be replaced accidentally.
+func (a *App) UploadFileWithPolicy(sessionID, localPath, remotePath string, overwrite bool) error {
+	return a.sftp.UploadFileWithPolicy(sessionID, localPath, remotePath, overwrite)
+}
+
 // DownloadFile downloads a remote file to the local filesystem via SFTP.
 func (a *App) DownloadFile(sessionID, remotePath, localPath string) error {
 	return a.sftp.DownloadFile(sessionID, remotePath, localPath)
+}
+
+// DownloadFileWithPolicy applies the overwrite decision at final promotion.
+func (a *App) DownloadFileWithPolicy(sessionID, remotePath, localPath string, overwrite bool) error {
+	return a.sftp.DownloadFileWithPolicy(sessionID, remotePath, localPath, overwrite)
 }
 
 // ReadRemoteTextFile reads a remote text file through the active SFTP session.

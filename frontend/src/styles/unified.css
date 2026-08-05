@@ -77,6 +77,7 @@
 
 .drawer-hero {
   position: relative;
+  z-index: 2;
   display: flex;
   min-width: 0;
   align-items: center;
@@ -153,6 +154,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  pointer-events: auto;
 }
 
 .drawer-hero-btn,
@@ -160,6 +162,7 @@
   display: inline-flex;
   width: 27px;
   height: 27px;
+  flex: 0 0 27px;
   align-items: center;
   justify-content: center;
   border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
@@ -933,6 +936,23 @@
 
 .profile-modal-footer {
   justify-content: space-between;
+  /* The server form is taller than the modal, and .modal is the scroll
+     container, so a static footer put Save below the fold — reachable only by
+     scrolling to the very bottom. Pinning it to the bottom edge keeps the
+     primary action in reach at any scroll depth. The negative margin plus
+     padding lets the background span the modal's full padding box so rows
+     scroll under it cleanly rather than beside it. */
+  position: sticky;
+  bottom: -22px;
+  z-index: 4;
+  margin: 17px -22px -22px;
+  padding: 13px 22px 22px;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--panel-raised) 88%, transparent),
+    var(--panel-raised) 38%
+  );
+  backdrop-filter: blur(8px);
 }
 
 .check {
@@ -991,7 +1011,9 @@
     var(--terminal);
 }
 
-.app-shell .markdown-viewer-float,
+/* The toolbar is in normal flow now, so it is deliberately absent here — it
+   takes its border and background from markdown-viewer.css rather than the
+   raised-panel treatment these floating surfaces get. */
 .app-shell .markdown-search-bar,
 .app-shell .markdown-viewer-outline {
   border-color: color-mix(in srgb, var(--border-strong) 84%, transparent);

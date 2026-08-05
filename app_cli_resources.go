@@ -5,10 +5,14 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
+	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"gxShell/backend/logger"
+	sftpmanager "gxShell/backend/sftp"
 	"gxShell/backend/types"
 )
 
@@ -17,6 +21,244 @@ type cliTunnelRecord struct {
 	Alias     string
 	SessionID string
 	Rule      types.TunnelRule
+}
+
+type cliTransferRequest struct {
+	Operation  string `json:"operation"`
+	Server     string `json:"server"`
+	LocalPath  string `json:"localPath"`
+	RemotePath string `json:"remotePath"`
+	Overwrite  bool   `json:"overwrite,omitempty"`
+	Mkdir      bool   `json:"mkdir,omitempty"`
+}
+
+// handleCliTransfer moves one local regular file through the GUI's native SFTP
+// client. The operation deliberately does not use profile trust windows:
+// every local path is shown in a native approval dialog before any connection
+// or remote write is started.
+func (a *App) handleCliTransfer(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeCliError(w, http.StatusMethodNotAllowed, "validation", "method not allowed")
+		return
+	}
+	var req cliTransferRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, cliMaxRequestSize))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeCliError(w, http.StatusBadRequest, "validation", "invalid request body: "+err.Error())
+		return
+	}
+	req.Operation = strings.ToLower(strings.TrimSpace(req.Operation))
+	req.Server = strings.TrimSpace(req.Server)
+	req.RemotePath = strings.TrimSpace(req.RemotePath)
+	if req.Operation != "push" && req.Operation != "pull" {
+		writeCliError(w, http.StatusBadRequest, "validation", "operation must be push or pull")
+		return
+	}
+	if req.Server == "" || req.RemotePath == "" || strings.ContainsRune(req.RemotePath, '\x00') {
+		writeCliError(w, http.StatusBadRequest, "validation", "server and remotePath are required")
+		return
+	}
+	cleanRemote := path.Clean(req.RemotePath)
+	if cleanRemote == "." || cleanRemote == "/" {
+		writeCliError(w, http.StatusBadRequest, "validation", "remotePath must name a file")
+		return
+	}
+	if req.Mkdir && req.Operation != "push" {
+		writeCliError(w, http.StatusBadRequest, "validation", "mkdir is only valid for push")
+		return
+	}
+	localPath, err := normalizeCliTransferLocalPath(req.LocalPath, req.Operation == "push")
+	if err != nil {
+		writeCliError(w, http.StatusBadRequest, "validation", err.Error())
+		return
+	}
+	if block, blocked := checkCliTransferSensitivePath(req.RemotePath); blocked {
+		writeCliJSON(w, http.StatusForbidden, map[string]any{
+			"error": "BLOCKED: " + block.Message(), "errorKind": "blocked", "blocked": true,
+			"blockedBy": block.Kind, "reason": block.Reason, "detail": block.Detail,
+			"outcome": "blocked",
+		})
+		return
+	}
+
+	profile, err := a.findCliProfile(req.Server)
+	if err != nil {
+		writeCliError(w, http.StatusNotFound, "daemon", err.Error())
+		return
+	}
+	alias := cliProfileName(profile)
+	destination := alias + ":" + req.RemotePath
+	source := localPath
+	if req.Operation == "pull" {
+		source, destination = destination, localPath
+	}
+	description := fmt.Sprintf("Transfer local file %s to %s (atomic, no overwrite by default)", localPath, destination)
+	if req.Operation == "pull" {
+		description = fmt.Sprintf("Transfer remote file %s to local file %s (atomic, no overwrite by default)", source, destination)
+	}
+	if req.Overwrite {
+		description += "; allow replacing an existing destination"
+	}
+	if req.Mkdir {
+		description += "; create missing remote parent directories"
+	}
+	// Unlike remote command execution and remote-to-remote copy, a local file
+	// transfer must always go through the native approval dialog, even when the
+	// profile has an active CLI trust window.
+	if !a.confirmCliExecution(alias, description) {
+		writeCliJSON(w, http.StatusForbidden, map[string]any{
+			"error": "user declined local file transfer", "errorKind": "blocked",
+			"blocked": true, "blockedBy": "user-approval", "outcome": "blocked",
+		})
+		return
+	}
+	if a.sftp == nil || a.ssh == nil {
+		writeCliError(w, http.StatusBadGateway, "daemon", "SFTP is unavailable")
+		return
+	}
+	sessionID, _, err := a.cliSessionForProfile(profile.ID)
+	if err != nil {
+		writeCliError(w, http.StatusBadGateway, "connect", "failed to connect: "+err.Error())
+		return
+	}
+	a.announceCliSession(sessionID)
+
+	overwritten := false
+	var bytes int64
+	if req.Operation == "push" {
+		info, statErr := os.Stat(localPath)
+		if statErr != nil || !info.Mode().IsRegular() {
+			if statErr != nil {
+				writeCliError(w, http.StatusBadRequest, "validation", "local source is no longer available: "+statErr.Error())
+			} else {
+				writeCliError(w, http.StatusBadRequest, "validation", "local source is not a regular file")
+			}
+			return
+		}
+		bytes = info.Size()
+		if req.Mkdir {
+			parent := path.Dir(cleanRemote)
+			if parent != "." && parent != "/" {
+				if err := a.sftp.CreateRemoteDir(sessionID, parent); err != nil {
+					writeCliError(w, http.StatusBadGateway, "sftp", "create remote parent directory: "+err.Error())
+					return
+				}
+			}
+		}
+		exists, statErr := a.sftp.RemoteFileExists(sessionID, req.RemotePath)
+		if statErr != nil {
+			writeCliError(w, http.StatusBadGateway, "sftp", statErr.Error())
+			return
+		}
+		if exists {
+			overwritten = req.Overwrite
+			if !req.Overwrite {
+				writeCliTransferConflict(w, destination, true)
+				return
+			}
+		}
+		err = a.sftp.UploadFileWithPolicy(sessionID, localPath, req.RemotePath, req.Overwrite)
+	} else {
+		if info, statErr := os.Lstat(localPath); statErr == nil {
+			if !info.Mode().IsRegular() {
+				writeCliError(w, http.StatusBadRequest, "validation", "local destination is not a regular file")
+				return
+			}
+			overwritten = true
+			if !req.Overwrite {
+				writeCliTransferConflict(w, destination, false)
+				return
+			}
+		} else if !os.IsNotExist(statErr) {
+			writeCliError(w, http.StatusBadRequest, "validation", "inspect local destination: "+statErr.Error())
+			return
+		}
+		err = a.sftp.DownloadFileWithPolicy(sessionID, req.RemotePath, localPath, req.Overwrite)
+		if err == nil {
+			if info, statErr := os.Stat(localPath); statErr == nil {
+				bytes = info.Size()
+			}
+		}
+	}
+	if err != nil {
+		if sftpmanager.IsOverwriteRequired(err) {
+			writeCliTransferConflict(w, destination, req.Operation == "push")
+			return
+		}
+		writeCliError(w, http.StatusBadGateway, "sftp", err.Error())
+		return
+	}
+	writeCliJSON(w, http.StatusOK, map[string]any{
+		"outcome": "succeeded", "operation": req.Operation, "server": alias,
+		"source": source, "destination": destination, "bytes": bytes,
+		"overwritten": overwritten, "atomic": true,
+	})
+}
+
+// checkCliTransferSensitivePath applies the command guard to both absolute and
+// relative remote spellings. SFTP accepts paths relative to the server's
+// working directory, so a relative `etc/shadow` or `../etc/shadow` must not be
+// allowed to bypass the absolute-path blocklist.
+func checkCliTransferSensitivePath(remotePath string) (commandBlock, bool) {
+	if block, blocked := checkSensitivePathBlock(remotePath); blocked {
+		return block, true
+	}
+	cleaned := path.Clean(remotePath)
+	if cleaned == "." || strings.HasPrefix(cleaned, "/") || strings.HasPrefix(cleaned, "~") {
+		return commandBlock{}, false
+	}
+	return checkSensitivePathBlock("/" + cleaned)
+}
+
+func normalizeCliTransferLocalPath(value string, source bool) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsRune(value, '\x00') {
+		return "", fmt.Errorf("local path is required")
+	}
+	abs, err := filepath.Abs(value)
+	if err != nil {
+		return "", fmt.Errorf("invalid local path: %w", err)
+	}
+	abs = filepath.Clean(abs)
+	if source {
+		info, statErr := os.Stat(abs)
+		if statErr != nil {
+			return "", fmt.Errorf("local source is not available: %w", statErr)
+		}
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("local source must be a regular file")
+		}
+		return abs, nil
+	}
+	if info, statErr := os.Lstat(abs); statErr == nil {
+		if !info.Mode().IsRegular() {
+			return "", fmt.Errorf("local destination must be a regular file")
+		}
+	} else if !os.IsNotExist(statErr) {
+		return "", fmt.Errorf("inspect local destination: %w", statErr)
+	}
+	parentInfo, parentErr := os.Stat(filepath.Dir(abs))
+	if parentErr != nil {
+		return "", fmt.Errorf("local destination directory is not available: %w", parentErr)
+	}
+	if !parentInfo.IsDir() {
+		return "", fmt.Errorf("local destination parent is not a directory")
+	}
+	return abs, nil
+}
+
+func writeCliTransferConflict(w http.ResponseWriter, destination string, remote bool) {
+	detail := "destination already exists"
+	if remote {
+		detail = "remote destination already exists"
+	}
+	writeCliJSON(w, http.StatusConflict, map[string]any{
+		"error": "destination exists; pass --overwrite to replace it", "errorKind": "overwrite_required",
+		"outcome": "blocked", "blocked": true, "blockedBy": "overwrite-policy",
+		"reason": "destination already exists", "detail": detail + ": " + destination,
+		"overwriteRequired": true,
+	})
 }
 
 func (a *App) handleCliCopy(w http.ResponseWriter, r *http.Request) {

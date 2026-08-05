@@ -90,7 +90,8 @@ export function Sidebar(props: {
   onEditCommand: (command: types.CommandTemplate) => void;
   onDeleteCommand: (id: string) => void;
   onNewCommand: () => void;
-  onSaveSettings: (settings: types.AppSettings) => void;
+  onSaveSettings: (settings: types.AppSettings) => void | Promise<void>;
+  onSettingsDirtyChange?: (dirty: boolean, save: () => Promise<boolean>) => void;
   onOpenData: () => void;
   onOpenLog: (name: string) => void;
   getTerminalLines: (id: string, lineCount: number) => string;
@@ -371,7 +372,7 @@ export function Sidebar(props: {
           </>
         )}
 
-        {activePrimary !== "connections" && props.drawer !== "ai" && <div className="tool-body-full" key={`${activePrimary}-${props.drawer}-${fileMode}`}><Suspense fallback={<DrawerFallback />}>
+        {activePrimary !== "connections" && props.drawer !== "ai" && <div className={clsx("tool-body-full", props.drawer === "settings" && "settings-host")} key={`${activePrimary}-${props.drawer}-${fileMode}`}><Suspense fallback={<DrawerFallback />}>
           {props.drawer === "sftp" && (
             <div className="file-workspace">
               <div className="file-workspace-bar">
@@ -472,7 +473,7 @@ export function Sidebar(props: {
               </div>
             </>
           )}
-          {props.drawer === "settings" && props.settings && <SettingsPanel settings={props.settings} language={lang} onSave={props.onSaveSettings} onOpenData={props.onOpenData} dataDir={props.appInfo.dataDir || ""} onNotify={props.onNotify} />}
+          {props.drawer === "settings" && props.settings && <SettingsPanel settings={props.settings} language={lang} onSave={props.onSaveSettings} onOpenData={props.onOpenData} dataDir={props.appInfo.dataDir || ""} onNotify={props.onNotify} onDirtyChange={props.onSettingsDirtyChange} />}
         </Suspense></div>}
         {aiMounted && (
           <div className="tool-body-full ai-persistent-host" style={{ display: props.drawer === "ai" ? undefined : "none" }}>

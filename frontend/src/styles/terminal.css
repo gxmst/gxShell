@@ -103,6 +103,11 @@
 .tabbar {
   display: flex;
   min-width: 0;
+  position: relative;
+  /* The new-session menu drops into the terminal stage. A positioned
+     stacking layer keeps that menu above the later `.terminal-stage` sibling,
+     whose paint order otherwise intercepts the menu items. */
+  z-index: 20;
   align-items: flex-end;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 68%, transparent);
   background: linear-gradient(180deg,
@@ -282,6 +287,7 @@
   border: 1px solid var(--border-strong);
   box-shadow: var(--shadow-lg);
   z-index: 50;
+  pointer-events: auto;
   overflow: hidden;
   animation: dropdown-in var(--dur) var(--ease-out) both;
   backdrop-filter: blur(10px);

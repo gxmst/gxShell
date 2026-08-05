@@ -1,11 +1,25 @@
+/* The hero holds the Save button, so it must stay reachable at any scroll
+   depth. `position: sticky` alone could not do that here: the sidebar gives
+   .settings-page a fixed `height` (see sidebar.css), which becomes the sticky
+   element's containing block, so the hero unstuck and scrolled away as soon as
+   the sections grew past one viewport. Making the page a flex column and
+   letting only .settings-sections scroll pins the hero for real. */
 .settings-page {
-  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  container: settings / inline-size;
+  /* No min-height here. The sidebar sets `height: calc(100% - 9px)` on this
+     element, and a `min-height: 100%` would beat it and push the box taller
+     than its parent — clipping the last card off the bottom. The old layout
+     could afford min-height because the outer .tool-body-full did the
+     scrolling; now .settings-sections does. */
+  height: 100%;
+  min-height: 0;
   padding: 1px 2px 10px;
 }
 
 .settings-hero {
-  position: sticky;
-  top: -1px;
+  flex: 0 0 auto;
   z-index: 8;
   display: flex;
   align-items: center;
@@ -62,14 +76,53 @@
   box-shadow: none;
 }
 
+/* A settings edit only takes effect on save, so the pending state has to be
+   visible without hunting for it: the subtitle says so in words and the button
+   carries a soft pulsing ring. */
+.settings-save-dirty {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+              0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+  animation: settings-save-pulse 2.4s var(--ease) infinite;
+}
+
+@keyframes settings-save-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent), 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent); }
+  50%      { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 75%, transparent), 0 0 0 7px color-mix(in srgb, var(--accent) 5%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-save-dirty { animation: none; }
+}
+
+.settings-dirty-note {
+  color: var(--warn, var(--accent));
+  font-weight: 640;
+}
+
 .settings-sections {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 9px;
+  /* Room for the scrollbar so cards do not shift when it appears. */
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.settings-sections:hover,
+.settings-sections:focus-within {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 .settings-card {
   position: relative;
+  /* The sections container is a vertical flex scroller. Cards are complete
+     documents, not flexible rows: allowing them to shrink makes
+     `overflow:hidden` clip their controls before the user can scroll to them. */
+  flex: 0 0 auto;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--border) 92%, transparent);
   border-radius: var(--radius-md);
@@ -345,7 +398,7 @@
   background: color-mix(in srgb, var(--terminal) 32%, transparent);
 }
 
-@media (max-width: 300px) {
+@container settings (max-width: 300px) {
   .theme-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .settings-grid { grid-template-columns: 1fr; }
   .settings-field-wide { grid-column: auto; }

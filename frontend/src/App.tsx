@@ -42,6 +42,21 @@ function App() {
   const profileState = useProfiles(notify);
   const updateCheck = useUpdateCheck();
   const [drawer, setDrawer] = usePersistedState<Drawer>("gx:drawer", "monitor");
+  // Preferences only take effect on save, and leaving the drawer unmounts the
+  // panel along with its draft. Everything that navigates the drawer goes
+  // through requestDrawer below so the edits get a chance to be kept.
+  const settingsDirtyRef = useRef<{ dirty: boolean; save: () => Promise<boolean> }>({ dirty: false, save: async () => true });
+  const [settingsPrompt, setSettingsPrompt] = useState<{ next: Drawer } | null>(null);
+  const handleSettingsDirtyChange = useCallback((dirty: boolean, save: () => Promise<boolean>) => {
+    settingsDirtyRef.current = { dirty, save };
+  }, []);
+  const requestDrawer = useCallback((next: Drawer) => {
+    if (next !== "settings" && settingsDirtyRef.current.dirty) {
+      setSettingsPrompt({ next });
+      return;
+    }
+    setDrawer(next);
+  }, [setDrawer]);
   const [profileModal, setProfileModal] = useState<types.Profile | null>(null);
   const [revokingCliTrustID, setRevokingCliTrustID] = useState("");
   const [quickConnectOpen, setQuickConnectOpen] = useState(false);
@@ -189,7 +204,7 @@ function App() {
       if (!tab || tab.local || tab.type === "markdown") return;
       const dir = path.replace(/\/+$/, "").replace(/\/[^/]*$/, "") || "/";
       sessions.setActiveTab(sessionId);
-      setDrawer("sftp");
+      requestDrawer("sftp");
       sftp.refreshSftp(dir, sessionId);
     },
   };
@@ -215,7 +230,7 @@ function App() {
     profiles: profileState.profiles,
     setTabs: sessions.setTabs,
     setActiveTab: sessions.setActiveTab,
-    setDrawer,
+    setDrawer: requestDrawer,
     notify,
     language: profileState.settings?.language || "en",
   });
@@ -417,7 +432,7 @@ function App() {
 
   useEffect(() => {
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (Object.keys(dirtyDocumentsRef.current).length === 0) return;
+      if (Object.keys(dirtyDocumentsRef.current).length === 0 && !settingsDirtyRef.current.dirty) return;
       event.preventDefault();
       event.returnValue = "";
     };
@@ -559,9 +574,9 @@ function App() {
       .map((cmd) => ({ type: "command", title: cmd.name, subtitle: cmd.command, action: () => ac && SendCommandToTerminal(ac.id, cmd.command) }));
     const areaResults = (["monitor", "sftp", "commands", "settings"] as Drawer[])
       .filter((item) => item.includes(q))
-      .map((item) => ({ type: "area", title: item, subtitle: "Open left panel", action: () => setDrawer(item) }));
+      .map((item) => ({ type: "area", title: item, subtitle: "Open left panel", action: () => requestDrawer(item) }));
     return [...serverResults, ...commandResults, ...areaResults];
-  }, [globalQuery, sessions.active]);
+  }, [globalQuery, sessions.active, requestDrawer]);
 
   const themeName = normalizeAppTheme(profileState.settings?.themeName);
 
@@ -653,7 +668,8 @@ function App() {
           collapsed={sidebarCollapsed}
           setCollapsed={setSidebarCollapsed}
           setCtxMenu={setCtxMenu}
-          drawer={drawer}          setDrawer={setDrawer}
+          drawer={drawer}          setDrawer={requestDrawer}
+          onSettingsDirtyChange={handleSettingsDirtyChange}
           profiles={profileState.profiles}
           commands={profileState.commands}
           settings={profileState.settings}
@@ -705,7 +721,12 @@ function App() {
           onEditCommand={(cmd) => setCommandModal(cmd)}
           onDeleteCommand={async (id) => { await DeleteCommand(id); profileState.setCommands(await ListCommands()); }}
           onNewCommand={() => setCommandModal(new types.CommandTemplate({ id: "", name: "", command: "", category: "Custom", description: "", tags: [] }))}
-          onSaveSettings={async (next) => { await profileState.saveSettings(next); notify(t(profileState.settings?.language || "en", "settingsSaved"), "success"); }}
+          onSaveSettings={async (next) => {
+            // Failures propagate: SettingsPanel awaits this to decide whether
+            // the unsaved-changes prompt may close, and it owns the error toast.
+            await profileState.saveSettings(next);
+            notify(t(profileState.settings?.language || "en", "settingsSaved"), "success");
+          }}
           onOpenData={OpenDataDir}
           onOpenLog={async (name) => {
             try {
@@ -781,6 +802,28 @@ function App() {
       {commandVars && <CommandVarsDialog commandName={commandVars.commandName} template={commandVars.template} placeholders={commandVars.placeholders} locale={profileState.settings?.language || "en"} onClose={() => setCommandVars(null)} onSubmit={(resolved) => { const send = commandVars.send; setCommandVars(null); send(resolved); }} />}
       {sessions.secretRequest && <SecretModal request={sessions.secretRequest} language={profileState.settings?.language || "en"} onClose={() => sessions.setSecretRequest(null)} onSubmit={async (password, passphrase) => { const request = sessions.secretRequest; if (!request) return; await sessions.submitSecret(request, password, passphrase); sessions.setSecretRequest(null); }} />}
       {activeKiRequest && <KeyboardInteractiveDialog key={activeKiRequest.requestId} request={activeKiRequest} language={profileState.settings?.language || "en"} onSubmit={(answers) => answerKiRequest(activeKiRequest, answers, false)} onCancel={() => answerKiRequest(activeKiRequest, [], true)} />}
+      {settingsPrompt && <UnsavedChangesDialog
+        title={t(profileState.settings?.language || "en", "unsavedSettingsTitle")}
+        body={t(profileState.settings?.language || "en", "unsavedSettingsBody")}
+        locale={profileState.settings?.language || "en"}
+        onCancel={() => setSettingsPrompt(null)}
+        onDiscard={() => {
+          const next = settingsPrompt.next;
+          settingsDirtyRef.current = { dirty: false, save: async () => true };
+          setSettingsPrompt(null);
+          setDrawer(next);
+        }}
+        onSave={async () => {
+          const ok = await settingsDirtyRef.current.save();
+          if (ok) {
+            const next = settingsPrompt.next;
+            settingsDirtyRef.current = { dirty: false, save: async () => true };
+            setSettingsPrompt(null);
+            setDrawer(next);
+          }
+          return ok;
+        }}
+      />}
       {unsavedPrompt && <UnsavedChangesDialog
         title={unsavedPrompt.tab.title}
         locale={profileState.settings?.language || "en"}

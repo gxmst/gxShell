@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Copy, MoreHorizontal, Plus, Save, Server, Trash2, X } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { ModalShell, Label } from "./ModalShell";
 
 // The post-connect textareas hold one entry per line, but the profile stores an
@@ -22,7 +23,25 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
   // could never start a new line.
   const [envText, setEnvText] = useState((props.profile.environment || []).join("\n"));
   const [loginText, setLoginText] = useState((props.profile.loginCommands || []).join("\n"));
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const confirmDiscardRef = useRef(confirmDiscard);
+  confirmDiscardRef.current = confirmDiscard;
   const update = (patch: any) => { setError(""); setDraft(new types.Profile({ ...draft, ...patch })); };
+  // The modal closes on Esc and on a backdrop click as well as the X, so the
+  // guard lives in one handler that all three routes call.
+  const dirty = useMemo(
+    () => JSON.stringify(draft) !== JSON.stringify(new types.Profile(props.profile)),
+    [draft, props.profile],
+  );
+  const { onClose } = props;
+  const requestClose = useCallback(() => {
+    if (dirty) {
+      confirmDiscardRef.current = true;
+      setConfirmDiscard(true);
+      return;
+    }
+    onClose();
+  }, [dirty, onClose]);
   const trustDeadline = Date.parse(String(draft.cliTrustUntil || ""));
   const trustActive = Boolean(draft.cliEnabled && Number.isFinite(trustDeadline) && trustDeadline > openedAt);
   const setTrustDuration = (value: string) => {
@@ -71,11 +90,31 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
     if (draft.port < 1 || draft.port > 65535) { setError(t(lang, "portRange")); return; }
     props.onSave(draft);
   };
+
+  // Ctrl+S saves, matching the document editor and the preferences panel.
+  // Capture phase so it wins over anything listening on the window. The handler
+  // is read through a ref so the listener is bound once for the modal's life
+  // rather than being torn down and re-added on every keystroke.
+  const saveRef = useRef(handleSave);
+  saveRef.current = handleSave;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+        event.preventDefault();
+        event.stopPropagation();
+        // The nested discard dialog is the active modal. Do not let the
+        // obscured profile form handle its shortcut underneath it.
+        if (!confirmDiscardRef.current) saveRef.current();
+      }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
   return (
-    <ModalShell onClose={props.onClose}>
+    <ModalShell onClose={requestClose}>
       <div className="profile-modal-header">
-        <div className="profile-modal-heading"><span className="dialog-header-icon"><Server size={16} /></span><span><h2 className="profile-modal-title">{draft.id ? t(lang, "editServer") : t(lang, "newServer")}</h2><small>{lang === "zh-CN" ? "连接、认证和自动化选项" : "Connection, authentication and automation"}</small></span></div>
-        <button className="icon-btn compact-icon" onClick={props.onClose}><X size={14} /></button>
+        <div className="profile-modal-heading"><span className="dialog-header-icon"><Server size={16} /></span><span><h2 className="profile-modal-title">{draft.id ? t(lang, "editServer") : t(lang, "newServer")}</h2><small>{dirty ? t(lang, "unsavedChangesHint") : (lang === "zh-CN" ? "连接、认证和自动化选项" : "Connection, authentication and automation")}</small></span></div>
+        <button className="icon-btn compact-icon" onClick={requestClose}><X size={14} /></button>
       </div>
       <div className="profile-modal-grid">
         <Label text={t(lang, "name")}><input className="input compact-input" value={draft.name} onChange={(e) => update({ name: e.target.value })} /></Label>
@@ -168,8 +207,18 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
       {error && <div className="profile-modal-error">{error}</div>}
       <div className="profile-modal-footer">
         <div>{draft.id && <><button className="btn-danger" onClick={() => props.onDelete(draft.id)}><Trash2 size={13} /> {t(lang, "delete")}</button><button className="btn-secondary ml-2" onClick={() => props.onDuplicate(draft.id)}><Copy size={13} /> {t(lang, "duplicate")}</button></>}</div>
-        <button className="btn-primary" onClick={handleSave}><Save size={13} /> {t(lang, "save")}</button>
+        <button className="btn-primary" onClick={handleSave} title="Ctrl+S"><Save size={13} /> {dirty ? t(lang, "saveChanges") : t(lang, "save")}</button>
       </div>
+      {confirmDiscard && (
+        <ConfirmDialog
+          locale={lang}
+          title={t(lang, "discardEdits")}
+          body={t(lang, "unsavedChangesHint")}
+          confirmText={lang === "zh-CN" ? "不保存" : "Discard"}
+          onClose={() => { confirmDiscardRef.current = false; setConfirmDiscard(false); }}
+          onConfirm={() => { confirmDiscardRef.current = false; setConfirmDiscard(false); props.onClose(); }}
+        />
+      )}
     </ModalShell>
   );
 }

@@ -6,6 +6,7 @@ import "@xterm/xterm/css/xterm.css";
 import { types } from "../../../wailsjs/go/models";
 import { ReadRecording } from "../../../wailsjs/go/main/App";
 import { getTerminalTheme } from "../../utils/format";
+import { normalizeFontSize, normalizeLineHeight } from "../../utils/terminalSettings";
 import { t } from "../../i18n";
 import { parseCast, type CastEvent } from "./castParser";
 
@@ -153,8 +154,8 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
         allowProposedApi: true,
         convertEol: true,
         fontFamily: settings?.terminal.fontFamily || "JetBrains Mono, Cascadia Code, Consolas, monospace",
-        fontSize: settings?.terminal.fontSize || 13.5,
-        lineHeight: settings?.terminal.lineHeight || 1.35,
+        fontSize: normalizeFontSize(settings?.terminal.fontSize),
+        lineHeight: normalizeLineHeight(settings?.terminal.lineHeight),
         cols: header.width,
         rows: header.height,
         scrollback: 5000,
@@ -228,8 +229,8 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
     if (!term || !settings) return;
     term.options.theme = getTerminalTheme(settings);
     term.options.fontFamily = settings.terminal.fontFamily;
-    term.options.fontSize = settings.terminal.fontSize;
-    term.options.lineHeight = settings.terminal.lineHeight;
+    term.options.fontSize = normalizeFontSize(settings.terminal.fontSize);
+    term.options.lineHeight = normalizeLineHeight(settings.terminal.lineHeight);
   }, [settings, ready]);
 
   const fmt = (s: number) => {

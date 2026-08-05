@@ -58,6 +58,8 @@ export function Disconnect(arg1:string):Promise<void>;
 
 export function DownloadFile(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function DownloadFileWithPolicy(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
+
 export function DownloadFolder(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function DuplicateProfile(arg1:string):Promise<types.Profile>;
@@ -271,6 +273,8 @@ export function UpdateProfile(arg1:types.Profile):Promise<types.Profile>;
 export function UpdateSettings(arg1:types.AppSettings):Promise<types.AppSettings>;
 
 export function UploadFile(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function UploadFileWithPolicy(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
 
 export function WriteLocalFile(arg1:string,arg2:string):Promise<void>;
 

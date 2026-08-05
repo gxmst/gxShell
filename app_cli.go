@@ -60,6 +60,7 @@ func (a *App) startCliServer() {
 	mux.HandleFunc("/cli/secrets", a.requireCliAuth(token, a.handleCliSecrets))
 	mux.HandleFunc("/cli/jobs", a.requireCliAuth(token, a.handleCliJobs))
 	mux.HandleFunc("/cli/copy", a.requireCliAuth(token, a.handleCliCopy))
+	mux.HandleFunc("/cli/transfer", a.requireCliAuth(token, a.handleCliTransfer))
 	mux.HandleFunc("/cli/tunnels", a.requireCliAuth(token, a.handleCliTunnels))
 	mux.HandleFunc("/cli/list", a.requireCliAuth(token, a.handleCliList))
 	mux.HandleFunc("/cli/status", a.requireCliAuth(token, a.handleCliStatus))

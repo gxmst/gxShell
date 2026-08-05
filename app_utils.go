@@ -127,6 +127,7 @@ func (a *App) GetSettings() (types.AppSettings, error) {
 // UpdateSettings updates application settings.
 func (a *App) UpdateSettings(settings types.AppSettings) (types.AppSettings, error) {
 	previous, previousErr := a.store.GetSettings()
+	settings = config.NormalizeSettings(settings)
 	// Never persist or revive the deprecated permanent trust switch.
 	settings.CliAutoApprove = false
 	if settings.ConnectionTimeout <= 0 {

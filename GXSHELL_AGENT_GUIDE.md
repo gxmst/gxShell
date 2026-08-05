@@ -63,3 +63,14 @@ Delete a reference when it is no longer needed:
 ```
 
 If a real key ever appears in a model conversation, process argument, terminal capture, or log, rotate it. Redaction does not revoke an exposed credential.
+
+## Transfer local files
+
+Use the dedicated transfer command when a local artifact must move to or from a CLI-enabled server. It supports one regular file at a time and does not interpret directories or globs:
+
+```powershell
+.\gxshell-cli.exe transfer push .\build\app.tar.gz prod-web:/srv/app/app.tar.gz --mkdir --json
+.\gxshell-cli.exe transfer pull prod-web:/srv/app/app.tar.gz .\downloads\app.tar.gz --json
+```
+
+`upload` and `download` are aliases for `transfer push` and `transfer pull`. The GUI always shows a native approval dialog for these operations; an active CLI trust window never suppresses it. Existing destinations are protected by default. Add `--overwrite` only after checking that replacing the destination is intended. A conflict is authoritative when the JSON contains `outcome: "blocked"`, `blockedBy: "overwrite-policy"`, and `errorKind: "overwrite_required"`; the CLI exits with code 2. Upload-only `--mkdir` creates missing remote parent directories. Transfers use gxShell's atomic SFTP promotion and resumable partial files; do not construct an `scp` or shell command to emulate them.

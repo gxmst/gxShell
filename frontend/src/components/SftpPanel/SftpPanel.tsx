@@ -25,16 +25,17 @@ import { types } from "../../../wailsjs/go/models";
 import {
   CreateRemoteDir,
   DeleteRemoteFile,
-  DownloadFile,
+  DownloadFileWithPolicy,
   DownloadFolder,
   ListRemoteDir,
   RenameRemoteFile,
   SelectDownloadPath,
   SelectUploadFile,
-  UploadFile,
+  UploadFileWithPolicy,
 } from "../../../wailsjs/go/main/App";
 import type { Tab, Toast } from "../../types";
 import type { AppContextMenu } from "../../hooks/useTerminal";
+import { writeClipboardText } from "../../utils/clipboard";
 import { formatFileSize } from "../../utils/format";
 import { joinRemotePath, parentRemotePath, pathSegments } from "../../utils/shellQuote";
 import { isSupportedTextPath } from "../../utils/textFiles";
@@ -49,6 +50,7 @@ type DialogState =
   | { type: "mkdir" }
   | { type: "rename"; file: types.RemoteFile }
   | { type: "delete"; file: types.RemoteFile }
+  | { type: "overwrite-upload"; sessionId: string; remoteDir: string; localPath: string; name: string; target: string }
   | null;
 
 type PathSuggest = { path: string; name: string; source: "cwd" | "parent" | "segment" };
@@ -195,6 +197,10 @@ export function SftpPanel(props: {
   const [suggestBusy, setSuggestBusy] = useState(false);
   const [suggestBusySessionId, setSuggestBusySessionId] = useState(activeSessionId);
   const [dialog, setDialog] = useState<DialogState>(null);
+  const transferContextRef = useRef({ sessionId: active?.id || "", remoteDir: path });
+  const remoteFilesRef = useRef(files);
+  transferContextRef.current = { sessionId: active?.id || "", remoteDir: path };
+  remoteFilesRef.current = files;
   const [panel, setPanel] = useState<"manager" | "explorer" | null>(null);
   const [filter, setFilter] = useState("");
   const [selectedPathState, setSelectedPathState] = useState({ sessionId: activeSessionId, value: "" });
@@ -355,12 +361,24 @@ export function SftpPanel(props: {
 
   const upload = async () => {
     if (!active) return;
+    const context = { sessionId: active.id, remoteDir: path };
     try {
       const local = await SelectUploadFile();
       if (!local) return;
+      if (transferContextRef.current.sessionId !== context.sessionId || transferContextRef.current.remoteDir !== context.remoteDir) return;
       const name = local.split(/[\\/]/).pop() || "upload.bin";
-      await UploadFile(active.id, local, joinRemotePath(path, name));
-      onRefresh(path);
+      const target = joinRemotePath(context.remoteDir, name);
+      const existing = remoteFilesRef.current.find((file) => file.name === name);
+      if (existing?.isDir) {
+        onNotify(t(lang, "overwriteDirectoryBody", { names: name }), "error");
+        return;
+      }
+      if (existing) {
+        setDialog({ type: "overwrite-upload", ...context, localPath: local, name, target });
+        return;
+      }
+      await UploadFileWithPolicy(context.sessionId, local, target, false);
+      if (transferContextRef.current.sessionId === context.sessionId && transferContextRef.current.remoteDir === context.remoteDir) onRefresh(context.remoteDir);
       setPanel("manager");
     } catch (err) {
       onNotify(String(err), "error");
@@ -369,10 +387,12 @@ export function SftpPanel(props: {
 
   const download = async (file: types.RemoteFile) => {
     if (!active) return;
+    const context = { sessionId: active.id, remoteDir: path };
     try {
       const target = await SelectDownloadPath(file.name);
       if (!target) return;
-      await DownloadFile(active.id, file.path, target);
+      if (transferContextRef.current.sessionId !== context.sessionId || transferContextRef.current.remoteDir !== context.remoteDir) return;
+      await DownloadFileWithPolicy(context.sessionId, file.path, target, true);
       onNotify(t(lang, "downloadFinished"), "success");
       setPanel("manager");
     } catch (err) {
@@ -382,10 +402,12 @@ export function SftpPanel(props: {
 
   const downloadFolder = async (file: types.RemoteFile) => {
     if (!active) return;
+    const context = { sessionId: active.id, remoteDir: path };
     try {
       const target = await SelectDownloadPath(file.name + ".d");
       if (!target) return;
-      await DownloadFolder(active.id, file.path, target);
+      if (transferContextRef.current.sessionId !== context.sessionId || transferContextRef.current.remoteDir !== context.remoteDir) return;
+      await DownloadFolder(context.sessionId, file.path, target);
       onNotify(t(lang, "folderDownloadFinished"), "success");
       setPanel("manager");
     } catch (err) {
@@ -426,7 +448,7 @@ export function SftpPanel(props: {
       {
         label: t(lang, "copyPath"),
         action: () => {
-          navigator.clipboard?.writeText(file.path)
+          writeClipboardText(file.path)
             .then(() => onNotify(t(lang, "copyToClipboard"), "success"))
             .catch(() => onNotify(t(lang, "copyFailed"), "error"));
         },
@@ -692,6 +714,30 @@ export function SftpPanel(props: {
               await DeleteRemoteFile(active.id, dialog.file.path);
               setDialog(null);
               onRefresh(path);
+            } catch (err) {
+              onNotify(String(err), "error");
+            }
+          }}
+        />
+      )}
+      {dialog?.type === "overwrite-upload" && (
+        <ConfirmDialog
+          locale={locale}
+          title={t(lang, "overwriteTitle")}
+          body={t(lang, "overwriteBody", { names: dialog.name })}
+          confirmText={t(lang, "overwriteConfirm")}
+          onClose={() => setDialog(null)}
+          onConfirm={async () => {
+            const pending = dialog;
+            if (transferContextRef.current.sessionId !== pending.sessionId || transferContextRef.current.remoteDir !== pending.remoteDir) {
+              setDialog(null);
+              return;
+            }
+            try {
+              await UploadFileWithPolicy(pending.sessionId, pending.localPath, pending.target, true);
+              setDialog(null);
+              if (transferContextRef.current.sessionId === pending.sessionId && transferContextRef.current.remoteDir === pending.remoteDir) onRefresh(pending.remoteDir);
+              setPanel("manager");
             } catch (err) {
               onNotify(String(err), "error");
             }

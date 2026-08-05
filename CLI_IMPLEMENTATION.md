@@ -21,8 +21,9 @@ Important safety choices:
 - `exec-file` and `exec-stdin` require an allowlisted `--shell`; the daemon starts `<shell> -s` and writes the normalized body through SSH stdin instead of embedding it in a command string.
 - `--follow` and `--detach` use an in-memory job registry. Output callbacks append ordered stdout/stderr events, cancellation closes the exec channel, and finished jobs are retained for 30 minutes.
 - Cross-server `copy` uses both cached SFTP clients, a sibling destination temp file, a second-pass SHA-256 verification, and atomic replacement. Directories are intentionally not supported by the first CLI version.
+- `transfer push`/`pull` (with `upload`/`download` aliases) moves one local regular file through the GUI-owned SFTP manager. It always uses native approval, supports explicit `--overwrite`, upload-only `--mkdir`, resumable parts, and atomic promotion. Overwrite conflicts use the typed `sftpmanager.OverwriteRequiredError` and return `errorKind: "overwrite_required"` with CLI exit code 2.
 - Temporary CLI local/SOCKS tunnels reuse `backend/tunnel`, always require native approval, reject non-loopback binds, are not persisted to profiles, and close on explicit removal, SSH disconnect, or application shutdown. Named-secret creation/deletion also always requires approval.
-- `gxshell-cli` supports `--json`, `--timeout`, `--shell`, `--follow`, `--detach`, `exec-file`, `exec-stdin`, `job`, `copy`, `tunnel`, and `doctor`. The localhost request body limit is about 2 MB.
+- `gxshell-cli` supports `--json`, `--timeout`, `--shell`, `--follow`, `--detach`, `exec-file`, `exec-stdin`, `job`, `copy`, `transfer`, `tunnel`, and `doctor`. The localhost request body limit is about 2 MB.
 - `gxshell-cli doctor` reports the executable path, working directory, config/token path, PATH visibility, and local daemon reachability to reduce setup confusion when the binary is invoked from different shells or folders.
 - The CLI command-line binary is separate from the Wails desktop binary and is built with `go build -o gxshell-cli.exe .\cmd\gxshell-cli`.
 

@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo, lazy, Suspense } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import hljs from 'highlight.js/lib/core';
@@ -30,10 +30,16 @@ import {
   WriteRemoteTextFile,
 } from '../../../wailsjs/go/main/App';
 import type { MarkdownOpenTarget, MarkdownSource } from '../../types';
-import { writeClipboardText } from '../../utils/clipboard';
+import { isWindowsPlatform, toClipboardText, writeClipboardText } from '../../utils/clipboard';
+import { applyEol, detectEol, eolLabel, toLf, type Eol } from '../../utils/eol';
 import { isMarkdownPath, isPdfPath } from '../../utils/textFiles';
+import type { EditorStats, SourceEditorHandle } from './SourceEditor';
 import { t } from '../../i18n';
 import '../../styles/markdown-viewer.css';
+
+// CodeMirror only loads when a document is actually edited, keeping it out of
+// the startup bundle for the read-only viewing path.
+const SourceEditor = lazy(() => import('./SourceEditor'));
 
 hljs.registerLanguage('bash', bash);
 hljs.registerLanguage('sh', bash);
@@ -276,20 +282,26 @@ export default function MarkdownViewer({
   const saveRef = useRef<() => Promise<boolean>>(async () => false);
   const dirtyCallbackRef = useRef(onDirtyChange);
   dirtyCallbackRef.current = onDirtyChange;
+  // The file's own line ending. `content`/`draft` are always LF because that is
+  // the only form the editor works in; this is re-applied on save so editing a
+  // CRLF file does not silently rewrite every line in it. `loadedEol` is what
+  // was on disk, so switching the indicator counts as an unsaved change.
+  const [eol, setEol] = useState<Eol>('lf');
+  const [loadedEol, setLoadedEol] = useState<Eol>('lf');
+  const draftRef = useRef(draft);
+  const eolRef = useRef(eol);
+  const saveInFlightRef = useRef<Promise<boolean> | null>(null);
+  draftRef.current = draft;
+  eolRef.current = eol;
 
+  const [editorStats, setEditorStats] = useState<EditorStats>({ line: 1, column: 1, chars: 0, words: 0, selected: 0 });
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [matchCount, setMatchCount] = useState(0);
   const [current, setCurrent] = useState(0);
 
-  // Idle-fade tier for the floating control bar. It starts fully visible on
-  // any interaction, dims to 'idle' after a short pause, then to 'faded' so it
-  // stops obscuring the top-right of the document while reading. Hover/focus
-  // reveal it via CSS regardless of tier (see .markdown-viewer-float).
-  const [floatActivity, setFloatActivity] = useState<'active' | 'idle' | 'faded'>('active');
-  const floatTimersRef = useRef<{ idle?: number; faded?: number }>({});
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<SourceEditorHandle | null>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const splitPreviewRef = useRef<HTMLDivElement>(null);
   const contentRootRef = useRef<HTMLElement>(null);
@@ -297,31 +309,13 @@ export default function MarkdownViewer({
   const rangesRef = useRef<Range[]>([]);
   const editMatchesRef = useRef<{ start: number; end: number }[]>([]);
   const pendingScrollRatioRef = useRef<number | null>(null);
+  const pendingEditorRevealRef = useRef<{ start: number; end: number } | null>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
 
-  // Register an interaction: reveal the float bar, then re-arm the dim/fade
-  // timers. Called on pointer moves, scrolls and key presses over the viewer.
-  const noteActivity = useCallback(() => {
-    setFloatActivity('active');
-    const timers = floatTimersRef.current;
-    if (timers.idle) window.clearTimeout(timers.idle);
-    if (timers.faded) window.clearTimeout(timers.faded);
-    timers.idle = window.setTimeout(() => setFloatActivity('idle'), 2500);
-    timers.faded = window.setTimeout(() => setFloatActivity('faded'), 6000);
-  }, []);
-
-  // Arm the initial fade and clean up timers on unmount.
-  useEffect(() => {
-    noteActivity();
-    return () => {
-      const timers = floatTimersRef.current;
-      if (timers.idle) window.clearTimeout(timers.idle);
-      if (timers.faded) window.clearTimeout(timers.faded);
-    };
-  }, [noteActivity]);
 
   const displayPath = source === 'remote' ? remotePath : filePath;
+  const fileName = (displayPath || '').split(/[\\/]/).pop() || '';
   const markdownMode = isMarkdownPath(displayPath || '');
   const pdfMode = source === 'local' && isPdfPath(displayPath || '');
   const previewDoc = useMemo(() => (markdownMode ? buildMarkdown(content) : EMPTY_RENDERED_MARKDOWN), [content, markdownMode]);
@@ -355,6 +349,7 @@ export default function MarkdownViewer({
           return nextURL;
         });
         setContent('');
+        draftRef.current = '';
         setDraft('');
         setError('');
         return;
@@ -362,8 +357,18 @@ export default function MarkdownViewer({
       const text = source === 'remote'
         ? await ReadRemoteTextFile(sessionId || '', remotePath || '')
         : await ReadLocalFile(filePath || '');
-      setContent(text);
-      setDraft(text);
+      // A single-line file has no detectable ending. Use the local platform
+      // default for local files; remote hosts are unknown, so keep the portable
+      // LF default and let the status control change it explicitly if needed.
+      const fallbackEol: Eol = source === 'local' && isWindowsPlatform() ? 'crlf' : 'lf';
+      const detected = detectEol(text, fallbackEol);
+      eolRef.current = detected;
+      setEol(detected);
+      setLoadedEol(detected);
+      const normalized = toLf(text);
+      setContent(normalized);
+      draftRef.current = normalized;
+      setDraft(normalized);
       setError('');
     } catch (err: any) {
       setError(err.toString());
@@ -382,7 +387,7 @@ export default function MarkdownViewer({
     loadFile();
   }, [loadFile]);
 
-  const dirty = editing && draft !== content;
+  const dirty = editing && (draft !== content || eol !== loadedEol);
 
   useEffect(() => {
     if (!editing || !splitPreview || !active) return;
@@ -398,7 +403,11 @@ export default function MarkdownViewer({
   }, [active, editing, splitPreview]);
 
   const captureScrollRatio = () => {
-    const el = editing ? textareaRef.current : previewRef.current;
+    if (editing) {
+      pendingScrollRatioRef.current = editorRef.current?.scrollRatio() ?? 0;
+      return;
+    }
+    const el = previewRef.current;
     if (!el) return;
     const max = el.scrollHeight - el.clientHeight;
     pendingScrollRatioRef.current = max > 0 ? el.scrollTop / max : 0;
@@ -407,18 +416,44 @@ export default function MarkdownViewer({
   useLayoutEffect(() => {
     const ratio = pendingScrollRatioRef.current;
     if (ratio == null) return;
-    pendingScrollRatioRef.current = null;
-    const el = editing ? textareaRef.current : previewRef.current;
-    if (!el) return;
     if (editing) {
-      el.focus({ preventScroll: true });
+      // The editor is lazy-loaded, so its handle may not exist on this pass.
+      // Leave the pending ratio in place and let the mount effect apply it.
+      const handle = editorRef.current;
+      if (!handle) return;
+      pendingScrollRatioRef.current = null;
+      handle.setScrollRatio(ratio);
+      return;
     }
+    pendingScrollRatioRef.current = null;
+    const el = previewRef.current;
+    if (!el) return;
     const max = el.scrollHeight - el.clientHeight;
     el.scrollTop = max > 0 ? ratio * max : 0;
   }, [editing]);
 
+  // Applies a scroll ratio that was captured before the editor finished
+  // loading. Passed as the editor's ref callback so it runs on mount.
+  const attachEditor = useCallback((handle: SourceEditorHandle | null) => {
+    editorRef.current = handle;
+    if (!handle) return;
+    const ratio = pendingScrollRatioRef.current;
+    if (ratio != null) {
+      pendingScrollRatioRef.current = null;
+      handle.setScrollRatio(ratio);
+    }
+    // Reveal after restoring the old scroll ratio so the current match wins
+    // and ends up centered once the lazy editor has actually mounted.
+    const reveal = pendingEditorRevealRef.current;
+    if (reveal) {
+      handle.revealRange(reveal.start, reveal.end);
+      pendingEditorRevealRef.current = null;
+    }
+  }, []);
+
   const startEdit = () => {
     captureScrollRatio();
+    draftRef.current = content;
     setDraft(content);
     setEditing(true);
   };
@@ -426,31 +461,59 @@ export default function MarkdownViewer({
   const cancelEdit = () => {
     if (dirty && !window.confirm(t(lang, 'discardChanges'))) return;
     captureScrollRatio();
+    draftRef.current = content;
     setDraft(content);
+    eolRef.current = loadedEol;
+    setEol(loadedEol);
     setEditing(false);
     setSplitPreview(false);
   };
 
-  const save = async () => {
-    try {
-      setSaving(true);
-      if (source === 'remote') {
-        await WriteRemoteTextFile(sessionId || '', remotePath || '', draft);
-      } else {
-        await WriteLocalFile(filePath || '', draft);
+  const save = () => {
+    // React state does not update synchronously, so `saving` alone cannot stop
+    // two Ctrl+S/click events from starting writes in the same render frame.
+    // Every caller joins the one in-flight operation instead.
+    if (saveInFlightRef.current) return saveInFlightRef.current;
+
+    const snapshot = { draft: draftRef.current, eol: eolRef.current };
+    // Schedule the body after the ref assignment below. Besides making the
+    // same-frame de-duplication explicit, this also guarantees a synchronous
+    // backend throw cannot run `finally` before the operation is registered.
+    const operation = Promise.resolve().then(async (): Promise<boolean> => {
+      try {
+        setSaving(true);
+        // Restore the selected line ending on the snapshot written to disk.
+        // Edits made while this await is pending stay in draftRef/eolRef.
+        const payload = applyEol(snapshot.draft, snapshot.eol);
+        if (source === 'remote') {
+          await WriteRemoteTextFile(sessionId || '', remotePath || '', payload);
+        } else {
+          await WriteLocalFile(filePath || '', payload);
+        }
+
+        const savedCurrentDraft = draftRef.current === snapshot.draft && eolRef.current === snapshot.eol;
+        setContent(snapshot.draft);
+        setLoadedEol(snapshot.eol);
+        if (savedCurrentDraft) {
+          captureScrollRatio();
+          setEditing(false);
+          setSplitPreview(false);
+        }
+        onNotify?.(t(lang, 'fileSaved'), 'success');
+        // The unsaved-changes dialog may close the tab only when the bytes just
+        // written still represent the current draft and EOL selection.
+        return savedCurrentDraft;
+      } catch (err: any) {
+        onNotify?.(err.toString(), 'error');
+        return false;
+      } finally {
+        saveInFlightRef.current = null;
+        setSaving(false);
       }
-      captureScrollRatio();
-      setContent(draft);
-      setEditing(false);
-      setSplitPreview(false);
-      onNotify?.(t(lang, 'fileSaved'), 'success');
-      return true;
-    } catch (err: any) {
-      onNotify?.(err.toString(), 'error');
-      return false;
-    } finally {
-      setSaving(false);
-    }
+    });
+
+    saveInFlightRef.current = operation;
+    return operation;
   };
   saveRef.current = save;
 
@@ -477,6 +540,7 @@ export default function MarkdownViewer({
     setCurrent(0);
     rangesRef.current = [];
     editMatchesRef.current = [];
+    pendingEditorRevealRef.current = null;
     clearHighlights();
   }, []);
 
@@ -500,6 +564,7 @@ export default function MarkdownViewer({
     if (!q) {
       setMatchCount(0);
       setCurrent(0);
+      pendingEditorRevealRef.current = null;
       return;
     }
 
@@ -517,6 +582,7 @@ export default function MarkdownViewer({
       editMatchesRef.current = found;
       setMatchCount(found.length);
       setCurrent(found.length ? 0 : -1);
+      if (!found.length) pendingEditorRevealRef.current = null;
       return;
     }
 
@@ -555,16 +621,21 @@ export default function MarkdownViewer({
 
     if (editing) {
       const m = editMatchesRef.current[current];
-      const ta = textareaRef.current;
-      if (!m || !ta) return;
-      ta.focus({ preventScroll: true });
-      ta.setSelectionRange(m.start, m.end);
-      const before = draft.slice(0, m.start);
-      const line = before.split('\n').length - 1;
-      const lineHeight = parseFloat(getComputedStyle(ta).lineHeight) || 20;
-      ta.scrollTop = Math.max(0, line * lineHeight - ta.clientHeight / 2);
+      if (!m) {
+        pendingEditorRevealRef.current = null;
+        return;
+      }
+      // CodeMirror owns scrolling and selection, so hand it the range and let
+      // it center the match rather than computing a scrollTop from line height.
+      pendingEditorRevealRef.current = m;
+      if (editorRef.current) {
+        editorRef.current.revealRange(m.start, m.end);
+        pendingEditorRevealRef.current = null;
+      }
       return;
     }
+
+    pendingEditorRevealRef.current = null;
 
     const reg = (CSS as any).highlights;
     const ranges = rangesRef.current;
@@ -624,23 +695,37 @@ export default function MarkdownViewer({
     }
   };
 
-  const onEditorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      save();
-    }
-  };
+  // Copying a plain-text document: take over the clipboard write instead of
+  // leaving it to Chromium's serializer.
+  //
+  // Chromium attaches an HTML flavor to every DOM-selection copy. Rich-text
+  // receivers prefer that flavor, and several of them (chat composers, some web
+  // editors) collapse the whitespace inside the copied <pre> — which is how a
+  // copied log arrives as one run-together line. For a .txt/.log/.conf the user
+  // never wants the HTML flavor, so write text/plain alone and make the paste
+  // deterministic everywhere, using CRLF only for Win32 receivers.
+  //
+  // The rendered Markdown view deliberately does NOT use this: pasting a
+  // formatted document into Word or a mail client is a feature there, and
+  // Chromium's own text/plain flavor is already CRLF-correct on Windows.
+  const onCopyPlainText = useCallback((e: React.ClipboardEvent) => {
+    const selected = window.getSelection()?.toString() ?? '';
+    if (!selected) return;
+    e.clipboardData.setData('text/plain', toClipboardText(selected));
+    e.preventDefault();
+  }, []);
 
-  const syncSplitPreviewScroll = () => {
+  // The editor's own copy is handled inside SourceEditor by CodeMirror's
+  // clipboardOutputFilter, which applies the same CRLF conversion.
+
+  const syncSplitPreviewScroll = useCallback(() => {
     if (!splitPreview) return;
-    const sourceEl = textareaRef.current;
     const targetEl = splitPreviewRef.current;
-    if (!sourceEl || !targetEl) return;
-    const maxSource = sourceEl.scrollHeight - sourceEl.clientHeight;
+    const handle = editorRef.current;
+    if (!targetEl || !handle) return;
     const maxTarget = targetEl.scrollHeight - targetEl.clientHeight;
-    const ratio = maxSource > 0 ? sourceEl.scrollTop / maxSource : 0;
-    targetEl.scrollTop = maxTarget > 0 ? ratio * maxTarget : 0;
-  };
+    targetEl.scrollTop = maxTarget > 0 ? handle.scrollRatio() * maxTarget : 0;
+  }, [splitPreview]);
 
   const onContentClick = useCallback(async (e: React.MouseEvent<HTMLDivElement>) => {
     if (!active || !markdownMode) return;
@@ -794,14 +879,17 @@ export default function MarkdownViewer({
   if (error) return <div className="markdown-viewer-error">{error}</div>;
 
   return (
-    <div
-      className="markdown-viewer"
-      onPointerMove={noteActivity}
-      onPointerDown={noteActivity}
-      onKeyDown={noteActivity}
-      onWheelCapture={noteActivity}
-    >
-      <div className="markdown-viewer-float" data-activity={floatActivity}>
+    <div className="markdown-viewer">
+      {/* A real toolbar in normal flow, not an overlay. It previously floated
+          over the top-right of the document with a three-tier idle fade: that
+          covered text, stayed clickable while nearly invisible, and sat in the
+          same corner the user reaches for. Owning a row of its own costs ~34px
+          and removes all three problems. */}
+      <div className="markdown-viewer-toolbar">
+        <span className="markdown-viewer-toolbar-name" title={displayPath || ''}>
+          {fileName}
+        </span>
+        <span className="markdown-viewer-toolbar-spacer" />
         {!pdfMode && <input
           type="range"
           className="markdown-viewer-zoom"
@@ -814,7 +902,7 @@ export default function MarkdownViewer({
         />}
         {!pdfMode && <button
           onClick={() => setTocOpen((v) => !v)}
-          className={clsx('markdown-viewer-fbtn', tocOpen && canShowToc && 'active')}
+          className={clsx('markdown-viewer-tbtn', tocOpen && canShowToc && 'active')}
           disabled={!canShowToc}
           title={t(lang, "outline")}
         >
@@ -822,7 +910,7 @@ export default function MarkdownViewer({
         </button>}
         {!pdfMode && <button
           onClick={() => setWrapCode((v) => !v)}
-          className={clsx('markdown-viewer-fbtn', wrapCode && 'active')}
+          className={clsx('markdown-viewer-tbtn', wrapCode && 'active')}
           title={markdownMode ? t(lang, "wrapCode") : t(lang, "wrapText")}
         >
           <WrapText size={15} />
@@ -830,7 +918,7 @@ export default function MarkdownViewer({
         {markdownMode && editing && (
           <button
             onClick={() => setSplitPreview((v) => !v)}
-            className={clsx('markdown-viewer-fbtn', splitPreview && 'active')}
+            className={clsx('markdown-viewer-tbtn', splitPreview && 'active')}
             title="Split preview"
           >
             <Columns2 size={15} />
@@ -838,31 +926,31 @@ export default function MarkdownViewer({
         )}
         {pdfMode ? (
           <>
-            <button onClick={loadFile} className="markdown-viewer-fbtn" title="Refresh">
+            <button onClick={loadFile} className="markdown-viewer-tbtn" title="Refresh">
               <RefreshCw size={15} />
             </button>
-            <button onClick={onClose} className="markdown-viewer-fbtn" title="Close">
+            <button onClick={onClose} className="markdown-viewer-tbtn" title="Close">
               <X size={15} />
             </button>
           </>
         ) : editing ? (
           <>
-            <button onClick={save} className="markdown-viewer-fbtn" disabled={saving} title="Save (Ctrl+S)">
+            <button onClick={save} className="markdown-viewer-tbtn" disabled={saving} title="Save (Ctrl+S)">
               <Save size={15} />
             </button>
-            <button onClick={cancelEdit} className="markdown-viewer-fbtn" title="Cancel">
+            <button onClick={cancelEdit} className="markdown-viewer-tbtn" title="Cancel">
               <X size={15} />
             </button>
           </>
         ) : (
           <>
-            <button onClick={startEdit} className="markdown-viewer-fbtn" title="Edit">
+            <button onClick={startEdit} className="markdown-viewer-tbtn" title="Edit">
               <Pencil size={15} />
             </button>
-            <button onClick={loadFile} className="markdown-viewer-fbtn" title="Refresh">
+            <button onClick={loadFile} className="markdown-viewer-tbtn" title="Refresh">
               <RefreshCw size={15} />
             </button>
-            <button onClick={onClose} className="markdown-viewer-fbtn" title="Close">
+            <button onClick={onClose} className="markdown-viewer-tbtn" title="Close">
               <X size={15} />
             </button>
           </>
@@ -883,13 +971,13 @@ export default function MarkdownViewer({
           <span className="markdown-search-count">
             {matchCount ? `${current + 1}/${matchCount}` : (query ? '0/0' : '')}
           </span>
-          <button className="markdown-viewer-fbtn" onClick={goPrev} disabled={!matchCount} title="Previous (Shift+Enter)">
+          <button className="markdown-viewer-tbtn" onClick={goPrev} disabled={!matchCount} title="Previous (Shift+Enter)">
             <ChevronUp size={15} />
           </button>
-          <button className="markdown-viewer-fbtn" onClick={goNext} disabled={!matchCount} title="Next (Enter)">
+          <button className="markdown-viewer-tbtn" onClick={goNext} disabled={!matchCount} title="Next (Enter)">
             <ChevronDown size={15} />
           </button>
-          <button className="markdown-viewer-fbtn" onClick={closeSearch} title={t(lang, "closeEsc")}>
+          <button className="markdown-viewer-tbtn" onClick={closeSearch} title={t(lang, "closeEsc")}>
             <X size={15} />
           </button>
         </div>
@@ -927,16 +1015,24 @@ export default function MarkdownViewer({
           </div>
         ) : editing ? (
           <div className={clsx('markdown-viewer-edit-shell', splitPreview && 'markdown-viewer-edit-split')}>
-            <textarea
-              ref={textareaRef}
-              className="markdown-viewer-editor"
-              style={{ zoom: zoom }}
-              value={draft}
-              spellCheck={false}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={onEditorKeyDown}
-              onScroll={syncSplitPreviewScroll}
-            />
+            <Suspense fallback={<div className="markdown-viewer-loading">{t(lang, 'loading')}</div>}>
+              <SourceEditor
+                handleRef={attachEditor}
+                value={draft}
+                onChange={(next) => {
+                  draftRef.current = next;
+                  setDraft(next);
+                }}
+                onSave={save}
+                onStats={setEditorStats}
+                onScroll={syncSplitPreviewScroll}
+                // The base font size is scaled by the same zoom slider the
+                // preview uses, so both modes track one control.
+                fontSize={Math.round(14 * zoom)}
+                wrap={wrapCode}
+                markdownMode={markdownMode}
+              />
+            </Suspense>
             {markdownMode && splitPreview && (
               <div className="markdown-viewer-content markdown-viewer-split-content" ref={splitPreviewRef}>
                 <div
@@ -966,6 +1062,7 @@ export default function MarkdownViewer({
                 tabIndex={0}
                 className={clsx('text-document', wrapCode && 'text-document-wrap')}
                 style={{ zoom: zoom }}
+                onCopy={onCopyPlainText}
               >
                 {content}
               </pre>
@@ -973,6 +1070,39 @@ export default function MarkdownViewer({
           </div>
         )}
       </div>
+
+      {editing && (
+        <div className="source-editor-status">
+          <span className="source-editor-status-item">
+            {t(lang, 'statusLineCol', { line: String(editorStats.line), col: String(editorStats.column) })}
+          </span>
+          <span className="source-editor-status-item">
+            {t(lang, 'statusWords', { words: String(editorStats.words), chars: String(editorStats.chars) })}
+          </span>
+          {editorStats.selected > 0 && (
+            <span className="source-editor-status-item">
+              {t(lang, 'statusSelected', { count: String(editorStats.selected) })}
+            </span>
+          )}
+          <span className="source-editor-status-spacer" />
+          {dirty && <span className="source-editor-status-item source-editor-status-dirty">{t(lang, 'statusUnsaved')}</span>}
+          {/* Clicking the indicator converts the file's line endings. It is the
+              only place the choice is visible, and converting is a real edit,
+              so it marks the document dirty rather than writing immediately. */}
+          <button
+            type="button"
+            className="source-editor-status-btn"
+            title={t(lang, 'statusEolHint')}
+            onClick={() => setEol((prev) => {
+              const next = prev === 'crlf' ? 'lf' : 'crlf';
+              eolRef.current = next;
+              return next;
+            })}
+          >
+            {eolLabel(eol)}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

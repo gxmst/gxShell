@@ -90,6 +90,12 @@ func main() {
 			fatalErrorKind(nextOpts, 1, "validation", err.Error())
 		}
 		copyRemote(source, destination, nextOpts)
+	case "transfer":
+		handleTransferCommand(args[1:], opts)
+	case "upload":
+		handleTransferAlias("push", args[1:], opts)
+	case "download":
+		handleTransferAlias("pull", args[1:], opts)
 	case "secret":
 		handleSecretCommand(args[1:], opts)
 	case "job":
@@ -363,6 +369,118 @@ func copyRemote(source, destination string, opts cliOptions) {
 	}
 	fmt.Printf("Copied %s -> %s\n", stringField(result, "source"), stringField(result, "destination"))
 	fmt.Printf("Bytes: %d\nSHA-256: %s\n", int64Field(result, "bytes"), stringField(result, "sha256"))
+}
+
+type transferFlags struct {
+	overwrite bool
+	mkdir     bool
+}
+
+func handleTransferCommand(args []string, opts cliOptions) {
+	args, opts, flags, err := parseTransferFlags(args, opts)
+	if err != nil {
+		fatalErrorKind(opts, 1, "validation", err.Error())
+	}
+	if len(args) == 0 {
+		fatalErrorKind(opts, 1, "validation", "transfer requires push or pull")
+	}
+	operation := strings.ToLower(args[0])
+	switch operation {
+	case "push", "upload":
+		operation = "push"
+	case "pull", "download":
+		operation = "pull"
+	default:
+		fatalErrorKind(opts, 1, "validation", "transfer operation must be push or pull")
+	}
+	transferFile(operation, args[1:], opts, flags)
+}
+
+func handleTransferAlias(operation string, args []string, opts cliOptions) {
+	args, opts, flags, err := parseTransferFlags(args, opts)
+	if err != nil {
+		fatalErrorKind(opts, 1, "validation", err.Error())
+	}
+	transferFile(operation, args, opts, flags)
+}
+
+func transferFile(operation string, args []string, opts cliOptions, flags transferFlags) {
+	if len(args) != 2 {
+		fatalErrorKind(opts, 1, "validation", fmt.Sprintf("transfer %s requires <local-file> <server>:<remote-path> or the reverse", operation))
+	}
+	var localPath, remoteSpec string
+	if operation == "push" {
+		localPath, remoteSpec = args[0], args[1]
+	} else {
+		remoteSpec, localPath = args[0], args[1]
+	}
+	server, remotePath, err := parseRemoteSpec(remoteSpec)
+	if err != nil {
+		fatalErrorKind(opts, 1, "validation", "remote target: "+err.Error())
+	}
+	result := requestJSON("POST", "/cli/transfer", map[string]any{
+		"operation":  operation,
+		"server":     server,
+		"localPath":  localPath,
+		"remotePath": remotePath,
+		"overwrite":  flags.overwrite,
+		"mkdir":      flags.mkdir,
+	}, opts)
+	if errMsg := stringField(result, "error"); errMsg != "" {
+		failTransferResult(result, opts)
+	}
+	if opts.json {
+		printJSON(result)
+		return
+	}
+	fmt.Printf("Transferred %s -> %s\n", stringField(result, "source"), stringField(result, "destination"))
+	fmt.Printf("Bytes: %d\n", int64Field(result, "bytes"))
+	if overwritten, ok := boolField(result, "overwritten"); ok && overwritten {
+		fmt.Println("Overwritten: yes")
+	}
+}
+
+func failTransferResult(result map[string]any, opts cliOptions) {
+	code := 1
+	blocked, _ := boolField(result, "blocked")
+	if stringField(result, "errorKind") == "overwrite_required" || stringField(result, "blockedBy") == "overwrite-policy" || blocked {
+		code = 2
+	}
+	if opts.json {
+		printJSON(result)
+	} else if blocked {
+		message := blockedMessage(result)
+		if message == "" {
+			message = stringField(result, "error")
+		}
+		fmt.Println("BLOCKED:", message)
+		if detail := stringField(result, "detail"); detail != "" {
+			fmt.Println("Detail:", detail)
+		}
+	} else {
+		fmt.Println("Error:", stringField(result, "error"))
+	}
+	os.Exit(code)
+}
+
+func parseTransferFlags(args []string, opts cliOptions) ([]string, cliOptions, transferFlags, error) {
+	var flags transferFlags
+	positional := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--json":
+			opts.json = true
+		case "--overwrite":
+			flags.overwrite = true
+		case "--mkdir":
+			flags.mkdir = true
+		case "--timeout", "--shell", "--follow", "--detach", "--secret":
+			return args, opts, flags, fmt.Errorf("%s is not valid for transfer", args[i])
+		default:
+			positional = append(positional, args[i])
+		}
+	}
+	return positional, opts, flags, nil
 }
 
 func parseRemoteSpec(value string) (string, string, error) {
@@ -1241,6 +1359,11 @@ COMMANDS:
   secret delete <alias>         Delete a named secret
   copy <server:path> <server:path>
                                Copy one remote file atomically and verify SHA-256
+  transfer push <local> <server:path>
+                               Upload one local file through approved SFTP
+  transfer pull <server:path> <local>
+                               Download one remote file through approved SFTP
+  upload / download             Aliases for transfer push / pull
   job status <id>              Show a detached/followed job state
   job logs <id> [--follow]     Read or follow ordered job output
   job cancel <id>              Cancel a running job
@@ -1283,6 +1406,9 @@ EXAMPLES:
   Get-Content api-key.txt -Raw | gxshell-cli secret set anyrouter-api-key
   gxshell-cli exec prod-web 'curl -H "Authorization: Bearer $API_KEY" https://example/api' --secret API_KEY=anyrouter-api-key --json
   gxshell-cli copy 2:/tmp/config.tar 3:/tmp/config.tar
+  gxshell-cli transfer push .\build\app.tar.gz prod-web:/srv/app/app.tar.gz --mkdir
+  gxshell-cli transfer pull prod-web:/srv/app/app.tar.gz .\downloads\app.tar.gz
+  gxshell-cli transfer push .\build\app.tar.gz prod-web:/srv/app/app.tar.gz --overwrite --json
   gxshell-cli tunnel open 2 127.0.0.1:8080 127.0.0.1:80
   gxshell-cli tunnel socks 2 1080
   gxshell-cli tunnel close tun-0123456789abcdef

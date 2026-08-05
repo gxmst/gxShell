@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -215,11 +216,44 @@ func (s *Store) GetSettings() (types.AppSettings, error) {
 	if err != nil {
 		return DefaultSettings(), err
 	}
-	return settings, nil
+	return NormalizeSettings(settings), nil
 }
 
 func (s *Store) SaveSettings(settings types.AppSettings) error {
-	return s.writeJSON("settings.json", settings)
+	return s.writeJSON("settings.json", NormalizeSettings(settings))
+}
+
+const (
+	minTerminalFontSize        = 9
+	maxTerminalFontSize        = 30
+	minTerminalLineHeight      = 1
+	maxTerminalLineHeight      = 2.5
+	minTerminalScrollbackLines = 500
+	maxTerminalScrollbackLines = 200000
+)
+
+// NormalizeSettings keeps persisted or hand-edited configuration inside the
+// contracts required by runtime consumers. xterm throws for invalid line
+// heights and cursor styles, while an extreme scrollback value can make a new
+// terminal unusable or consume excessive memory.
+func NormalizeSettings(settings types.AppSettings) types.AppSettings {
+	defaults := DefaultSettings()
+	if settings.Terminal.FontSize < minTerminalFontSize || settings.Terminal.FontSize > maxTerminalFontSize {
+		settings.Terminal.FontSize = defaults.Terminal.FontSize
+	}
+	lineHeight := settings.Terminal.LineHeight
+	if math.IsNaN(lineHeight) || math.IsInf(lineHeight, 0) || lineHeight < minTerminalLineHeight || lineHeight > maxTerminalLineHeight {
+		settings.Terminal.LineHeight = defaults.Terminal.LineHeight
+	}
+	if settings.Terminal.ScrollbackLines < minTerminalScrollbackLines || settings.Terminal.ScrollbackLines > maxTerminalScrollbackLines {
+		settings.Terminal.ScrollbackLines = defaults.Terminal.ScrollbackLines
+	}
+	switch settings.Terminal.CursorStyle {
+	case "block", "underline", "bar":
+	default:
+		settings.Terminal.CursorStyle = defaults.Terminal.CursorStyle
+	}
+	return settings
 }
 
 // MigrateSettingsDefaults backfills fields that older settings.json files did
@@ -241,7 +275,22 @@ func (s *Store) MigrateSettingsDefaults() {
 	_, hasCliServerEnabled := raw["cliServerEnabled"]
 	_, hasSmartHighlight := raw["smartHighlight"]
 	_, hasUpdateCheckEnabled := raw["updateCheckEnabled"]
-	if hasCliServerEnabled && hasSmartHighlight && hasUpdateCheckEnabled {
+	var rawTerminal map[string]json.RawMessage
+	if terminal, ok := raw["terminal"]; ok {
+		_ = json.Unmarshal(terminal, &rawTerminal)
+	}
+	requiredTerminalFields := []string{
+		"fontFamily", "fontSize", "lineHeight", "cursorStyle", "cursorBlink",
+		"themeName", "backgroundOpacity", "scrollbackLines",
+	}
+	hasTerminalDefaults := len(rawTerminal) > 0
+	for _, key := range requiredTerminalFields {
+		if _, ok := rawTerminal[key]; !ok {
+			hasTerminalDefaults = false
+			break
+		}
+	}
+	if hasCliServerEnabled && hasSmartHighlight && hasUpdateCheckEnabled && hasTerminalDefaults {
 		return
 	}
 	// Start from DefaultSettings and overlay the on-disk file so any field the

@@ -6,7 +6,9 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { types } from "../../wailsjs/go/models";
 import { ResizeTerminal, WriteToTerminal, LogCommand } from "../../wailsjs/go/main/App";
+import { writeClipboardText } from "../utils/clipboard";
 import { getTerminalTheme } from "../utils/format";
+import { normalizeFontSize, normalizeLineHeight, normalizeScrollbackLines } from "../utils/terminalSettings";
 import { highlight, type HighlightLevel } from "../utils/highlight";
 import { createLinkProvider, type TerminalLinkAppHandlers } from "../utils/terminalLinks";
 import type { SplitPane } from "../types";
@@ -187,12 +189,12 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         cursorBlink: s.terminal.cursorBlink,
         cursorStyle: (s.terminal.cursorStyle || "block") as "block" | "underline" | "bar",
         fontFamily: s.terminal.fontFamily || "JetBrains Mono, Cascadia Code, Fira Code, Maple Mono, Consolas, monospace",
-        fontSize: s.terminal.fontSize || 13.5,
+        fontSize: normalizeFontSize(s.terminal.fontSize),
         fontWeight: 400,
-        lineHeight: s.terminal.lineHeight || 1.35,
+        lineHeight: normalizeLineHeight(s.terminal.lineHeight),
         minimumContrastRatio: 1,
         drawBoldTextInBrightColors: false,
-        scrollback: s.terminal.scrollbackLines || 5000,
+        scrollback: normalizeScrollbackLines(s.terminal.scrollbackLines),
         smoothScrollDuration: 0,
         theme: getTerminalTheme(s)
       });
@@ -269,7 +271,10 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
           items.push({
             label: t(lang, "copy"),
             action: () => {
-              navigator.clipboard.writeText(selection)
+              // writeClipboardText, not navigator.clipboard directly: xterm
+              // hands back rows joined with LF and Win32 paste targets need
+              // CRLF (see utils/clipboard.ts).
+              writeClipboardText(selection)
                 .then(() => notifyRef.current(t(lang, "copyToClipboard"), "success"))
                 .catch(() => notifyRef.current(t(lang, "copyFailed"), "error"));
             },
@@ -294,7 +299,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         } else if (selection) {
           // Backward-compatible fallback while the host app is still wiring the
           // visual menu: retain the former one-click copy behavior.
-          navigator.clipboard.writeText(selection).catch(() => undefined);
+          writeClipboardText(selection).catch(() => undefined);
         }
       });
 
@@ -572,8 +577,13 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       const term = terminals.current[id];
       term.options.theme = theme;
       term.options.fontFamily = settings.terminal.fontFamily;
-      term.options.fontSize = settings.terminal.fontSize;
-      term.options.lineHeight = settings.terminal.lineHeight;
+      term.options.fontSize = normalizeFontSize(settings.terminal.fontSize);
+      term.options.lineHeight = normalizeLineHeight(settings.terminal.lineHeight);
+      // Cursor options do not affect the grid, so they need no refit. Scrollback
+      // is deliberately absent: changing it reallocates the buffer and would
+      // discard existing history, so it stays a new-terminal setting.
+      term.options.cursorStyle = (settings.terminal.cursorStyle || "block") as "block" | "underline" | "bar";
+      term.options.cursorBlink = settings.terminal.cursorBlink;
       refitTerminal(id);
     });
   }, [settings, refitTerminal]);

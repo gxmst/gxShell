@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Activity, Database, Download, FileText, HardDrive, Palette, RefreshCw, Save, Settings2, ShieldCheck, TerminalSquare } from "lucide-react";
 import { CheckForUpdate, ExportHistory, GetVersion, IsTextContextMenuRegistered, RegisterTextContextMenu, UnregisterTextContextMenu } from "../../../wailsjs/go/main/App";
 import { BrowserOpenURL } from "../../../wailsjs/runtime/runtime";
 import { types, version as versionModel } from "../../../wailsjs/go/models";
 import { appThemes, fontPresets, terminalThemes } from "../../constants";
 import { normalizeAppTheme } from "../../utils/format";
+import { normalizeFontSize, normalizeLineHeight, normalizeScrollbackLines } from "../../utils/terminalSettings";
 import { t } from "../../i18n";
 import { KnownHostsManager } from "./KnownHostsManager";
 
@@ -55,7 +56,7 @@ function SettingsToggle({ checked, label, hint, onChange }: { checked: boolean; 
   );
 }
 
-export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir, onNotify }: { settings: types.AppSettings; language: string; onSave: (settings: types.AppSettings) => void; onOpenData: () => void; dataDir: string; onNotify?: (text: string, tone?: "info" | "error" | "success") => void }) {
+export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir, onNotify, onDirtyChange }: { settings: types.AppSettings; language: string; onSave: (settings: types.AppSettings) => void | Promise<void>; onOpenData: () => void; dataDir: string; onNotify?: (text: string, tone?: "info" | "error" | "success") => void; onDirtyChange?: (dirty: boolean, save: () => Promise<boolean>) => void }) {
   const lang = language;
   const zh = lang === "zh-CN";
   const [draft, setDraft] = useState(new types.AppSettings(settings));
@@ -81,7 +82,53 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
     GetVersion().then(setAppVersion).catch(() => setAppVersion(""));
   }, []);
 
-  const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(settings), [draft, settings]);
+  const normalizedDraft = useMemo(() => {
+    const fontSize = normalizeFontSize(draft.terminal.fontSize);
+    const lineHeight = normalizeLineHeight(draft.terminal.lineHeight);
+    const scrollbackLines = normalizeScrollbackLines(draft.terminal.scrollbackLines);
+    if (fontSize === draft.terminal.fontSize && lineHeight === draft.terminal.lineHeight && scrollbackLines === draft.terminal.scrollbackLines) return draft;
+    return new types.AppSettings({ ...draft, terminal: { ...draft.terminal, fontSize, lineHeight, scrollbackLines } });
+  }, [draft]);
+  const dirty = useMemo(
+    () => JSON.stringify(new types.AppSettings(draft)) !== JSON.stringify(new types.AppSettings(settings)),
+    [draft, settings],
+  );
+
+  // Resolves to whether the write actually landed, so the unsaved-changes
+  // prompt can keep itself open on failure instead of discarding the edits.
+  const commit = useCallback(async () => {
+    if (!dirty) return true;
+    try {
+      await onSave(normalizedDraft);
+      return true;
+    } catch (err) {
+      onNotify?.(String(err), "error");
+      return false;
+    }
+  }, [dirty, normalizedDraft, onSave, onNotify]);
+
+  // Publish the dirty state upward so closing or switching the drawer can stop
+  // and ask instead of silently dropping the edits. The save closure is passed
+  // along with it so the host does not need its own copy of the draft.
+  const commitRef = useRef(commit);
+  commitRef.current = commit;
+  const dirtyCallbackRef = useRef(onDirtyChange);
+  dirtyCallbackRef.current = onDirtyChange;
+  useEffect(() => {
+    dirtyCallbackRef.current?.(dirty, () => commitRef.current());
+  }, [dirty]);
+  // Clearing on unmount keeps a stale "unsaved settings" guard from blocking
+  // navigation after the panel is gone.
+  useEffect(() => () => dirtyCallbackRef.current?.(false, async () => true), []);
+
+  // Ctrl+S is the reflex for a form with a Save button. Bound on the panel
+  // subtree rather than the window so it cannot shadow a terminal's Ctrl+S.
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      void commit();
+    }
+  };
 
   const toggleMdMenu = async (checked: boolean) => {
     try {
@@ -120,14 +167,20 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
   };
 
   return (
-    <div className="settings-page">
+    <div className="settings-page" onKeyDown={onKeyDown}>
       <header className="settings-hero">
         <div className="settings-hero-icon"><Settings2 size={18} /></div>
         <div className="min-w-0 flex-1">
           <div className="settings-hero-title">{zh ? "偏好设置" : "Preferences"}</div>
-          <div className="settings-hero-subtitle">{zh ? "调整外观、终端行为和本地集成" : "Tune appearance, terminal behavior and local integrations"}</div>
+          <div className="settings-hero-subtitle">
+            {dirty
+              ? <span className="settings-dirty-note">{t(lang, "unsavedChangesHint")}</span>
+              : (zh ? "调整外观、终端行为和本地集成" : "Tune appearance, terminal behavior and local integrations")}
+          </div>
         </div>
-        <button className="btn-primary settings-save" disabled={!dirty} onClick={() => onSave(draft)}><Save size={13} /> {t(lang, "save")}</button>
+        <button className={dirty ? "btn-primary settings-save settings-save-dirty" : "btn-primary settings-save"} disabled={!dirty} onClick={() => void commit()} title="Ctrl+S">
+          <Save size={13} /> {dirty ? t(lang, "saveChanges") : t(lang, "save")}
+        </button>
       </header>
 
       <div className="settings-sections">
@@ -157,7 +210,44 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
         <SettingsSection icon={<TerminalSquare size={15} />} title={zh ? "终端" : "Terminal"} description={zh ? "字体、颜色和输出显示方式" : "Typography, colors and output rendering"}>
           <div className="settings-grid">
             <SettingsField label={t(lang, "termTheme")}><select className="input compact-input" value={draft.terminal.themeName} onChange={(event) => updateTerm({ themeName: event.target.value })}>{Object.keys(terminalThemes).map((theme) => <option key={theme}>{theme}</option>)}</select></SettingsField>
-            <SettingsField label={t(lang, "size")}><input className="input compact-input" type="number" min={9} max={30} value={draft.terminal.fontSize} onChange={(event) => updateTerm({ fontSize: Number(event.target.value) })} /></SettingsField>
+            <SettingsField label={t(lang, "size")}><input className="input compact-input" type="number" min={9} max={30} value={draft.terminal.fontSize} onChange={(event) => { const value = event.currentTarget.valueAsNumber; if (Number.isFinite(value)) updateTerm({ fontSize: value }); }} onBlur={() => updateTerm({ fontSize: normalizeFontSize(draft.terminal.fontSize) })} /></SettingsField>
+            <SettingsField label={t(lang, "lineHeightLabel")}>
+              <input
+                className="input compact-input"
+                type="number"
+                min={1}
+                max={2.5}
+                step={0.05}
+                value={draft.terminal.lineHeight}
+                onChange={(event) => {
+                  const value = event.currentTarget.valueAsNumber;
+                  if (Number.isFinite(value)) updateTerm({ lineHeight: value });
+                }}
+                onBlur={() => updateTerm({ lineHeight: normalizeLineHeight(draft.terminal.lineHeight) })}
+              />
+            </SettingsField>
+            <SettingsField label={t(lang, "cursorStyleLabel")}>
+              <select className="input compact-input" value={draft.terminal.cursorStyle || "block"} onChange={(event) => updateTerm({ cursorStyle: event.target.value })}>
+                <option value="block">{t(lang, "cursorBlock")}</option>
+                <option value="bar">{t(lang, "cursorBar")}</option>
+                <option value="underline">{t(lang, "cursorUnderline")}</option>
+              </select>
+            </SettingsField>
+            <SettingsField label={t(lang, "scrollbackLabel")} hint={t(lang, "scrollbackHint")} wide>
+              <input
+                className="input compact-input"
+                type="number"
+                min={500}
+                max={200000}
+                step={500}
+                value={draft.terminal.scrollbackLines}
+                onChange={(event) => {
+                  const value = event.currentTarget.valueAsNumber;
+                  if (Number.isFinite(value)) updateTerm({ scrollbackLines: value });
+                }}
+                onBlur={() => updateTerm({ scrollbackLines: normalizeScrollbackLines(draft.terminal.scrollbackLines) })}
+              />
+            </SettingsField>
             <SettingsField label={t(lang, "font")} wide><select className="input compact-input" value={draft.terminal.fontFamily} onChange={(event) => updateTerm({ fontFamily: event.target.value })}>{fontPresets.map((font) => <option key={font} value={font}>{font.split(",")[0].trim()}</option>)}</select></SettingsField>
             <SettingsField label={t(lang, "highlighting")} wide><select className="input compact-input" value={draft.highlightLevel || "off"} onChange={(event) => update({ highlightLevel: event.target.value })}><option value="off">{t(lang, "highlightOff")}</option><option value="basic">{t(lang, "highlightBasic")}</option><option value="full">{t(lang, "highlightFull")}</option></select></SettingsField>
             <SettingsField
@@ -175,6 +265,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
               <input className="input compact-input" value={draft.terminal.localStartDirectory || ""} placeholder="~" onChange={(event) => updateTerm({ localStartDirectory: event.target.value })} />
             </SettingsField>
           </div>
+          <SettingsToggle checked={draft.terminal.cursorBlink} onChange={(checked) => updateTerm({ cursorBlink: checked })} label={t(lang, "cursorBlinkLabel")} />
           <SettingsToggle checked={draft.smartHighlight !== false} onChange={(checked) => update({ smartHighlight: checked })} label={t(lang, "clickableLinks")} hint={t(lang, "clickableLinksHint")} />
         </SettingsSection>
 

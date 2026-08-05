@@ -1,0 +1,75 @@
+/* Host element for the CodeMirror 6 document editor. The editor supplies its
+   own colors through EditorView.theme (bound to the app's theme variables), so
+   this only owns the box. */
+.source-editor {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.source-editor .cm-editor {
+  height: 100%;
+}
+
+.source-editor .cm-editor.cm-focused {
+  outline: none;
+}
+
+/* Match the app's thin, reveal-on-hover scrollbar treatment. */
+.source-editor .cm-scroller {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.source-editor:hover .cm-scroller,
+.source-editor:focus-within .cm-scroller {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+/* Status bar under the editor: cursor position, counts and line ending. */
+.source-editor-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.source-editor-status-spacer {
+  flex: 1 1 auto;
+}
+
+.source-editor-status-item {
+  white-space: nowrap;
+}
+
+.source-editor-status-btn {
+  padding: 1px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.source-editor-status-btn:hover {
+  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+}
+
+.source-editor-status-dirty {
+  color: var(--warn);
+  font-weight: 640;
+}

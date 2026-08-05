@@ -96,6 +96,27 @@ func TestAllowedShellAndRemoteSpec(t *testing.T) {
 	}
 }
 
+func TestTransferFlagsAndAliasesParse(t *testing.T) {
+	args, opts, flags, err := parseTransferFlags([]string{"push", "artifact.tar", "prod:/srv/artifact.tar", "--overwrite", "--mkdir", "--json"}, cliOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(args, []string{"push", "artifact.tar", "prod:/srv/artifact.tar"}) || !flags.overwrite || !flags.mkdir || !opts.json {
+		t.Fatalf("args=%#v opts=%#v flags=%#v", args, opts, flags)
+	}
+
+	args, opts, flags, err = parseTransferFlags([]string{"--json", "--overwrite", "prod:/srv/artifact.tar", "artifact.tar"}, cliOptions{})
+	if err != nil || !opts.json || !flags.overwrite || flags.mkdir || !reflect.DeepEqual(args, []string{"prod:/srv/artifact.tar", "artifact.tar"}) {
+		t.Fatalf("reverse args=%#v opts=%#v flags=%#v err=%v", args, opts, flags, err)
+	}
+}
+
+func TestTransferFlagsRejectExecOnlyOptions(t *testing.T) {
+	if _, _, _, err := parseTransferFlags([]string{"push", "a", "prod:/b", "--follow"}, cliOptions{}); err == nil {
+		t.Fatal("transfer accepted --follow")
+	}
+}
+
 func TestParseTimeoutValidatesRange(t *testing.T) {
 	if _, err := parseTimeout("500ms"); err == nil {
 		t.Fatal("500ms timeout should be rejected")
