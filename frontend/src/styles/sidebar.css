@@ -473,7 +473,18 @@
   border-top: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
 }
 
-.text-file-section-grow { flex: 1; padding-bottom: 8px; }
+.text-file-section-current,
+.text-file-section-grow {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.text-file-section-current .text-file-list,
+.text-file-section-grow .text-file-list {
+  min-height: 0;
+}
+
+.text-file-section-grow { padding-bottom: 8px; }
 
 .text-file-section-title {
   display: flex;
@@ -501,7 +512,8 @@
 }
 
 .text-file-list-scroll {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
 }
 

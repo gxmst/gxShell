@@ -413,9 +413,9 @@ export function Sidebar(props: {
                     </div>
 
                     {!!props.markdownSiblings?.length && (
-                      <section className="text-file-section">
+                      <section className="text-file-section text-file-section-current">
                         <div className="text-file-section-title">{lang === "zh-CN" ? "当前目录" : "Current folder"}<span>{props.markdownSiblings.length}</span></div>
-                        <div className="text-file-list">
+                        <div className="text-file-list text-file-list-scroll">
                           {props.markdownSiblings.map((file) => {
                             const isActive = props.active?.type === "markdown" && (props.active.filePath === file || props.active.remotePath === file);
                             return (
