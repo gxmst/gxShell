@@ -185,6 +185,10 @@ export function WebsitePanel(props: {
 
   const sites = status?.sites || [];
   const backends = status?.backends || [];
+  // Site listing runs unprivileged, so on a non-root session the configs may be
+  // unreadable. Saying so is the difference between "this host has no sites" and
+  // "gxShell could not read them".
+  const unreadable = status?.unreadable || 0;
 
   return (
     <div className="panel-page admin-panel">
@@ -214,7 +218,15 @@ export function WebsitePanel(props: {
 
       <div className="panel-list">
         {!loading && backends.length === 0 && <div className="panel-empty"><Server size={20} /><span>{t(lang, "siteNoBackend")}</span></div>}
-        {!loading && backends.length > 0 && sites.length === 0 && <div className="panel-empty"><Globe2 size={20} /><span>{t(lang, "siteEmpty")}</span></div>}
+        {!loading && backends.length > 0 && sites.length === 0 && (
+          <div className="panel-empty">
+            <Globe2 size={20} />
+            <span>{unreadable > 0 ? t(lang, "siteAllUnreadable", { n: String(unreadable) }) : t(lang, "siteEmpty")}</span>
+          </div>
+        )}
+        {!loading && unreadable > 0 && sites.length > 0 && (
+          <div className="panel-note"><AlertTriangle size={11} /><span>{t(lang, "siteSomeUnreadable", { n: String(unreadable) })}</span></div>
+        )}
         {sites.map((site) => {
           const key = `${site.backend}:${site.mode}:${site.name}`;
           const isBusy = busy === key;

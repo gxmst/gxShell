@@ -35,6 +35,11 @@ type Profile struct {
 	// always requires a per-command native confirmation regardless of this value.
 	CliEnabled bool   `json:"cliEnabled"`
 	CliAlias   string `json:"cliAlias,omitempty"`
+	// CliTrustUntil grants this profile time-limited, prompt-free access to
+	// external gxshell-cli command execution and remote copies. The wall-clock
+	// deadline intentionally expires while the machine is asleep. A zero or
+	// past value means normal approval rules apply.
+	CliTrustUntil time.Time `json:"cliTrustUntil,omitempty"`
 	// Deprecated: legacyAIEnabled/legacyAIAlias hold values written by versions
 	// that named this flag "aiEnabled"/"aiAlias". They are migrated into
 	// CliEnabled/CliAlias on startup (see App.migrateCliProfileFlags) and then
@@ -78,10 +83,17 @@ type AppSettings struct {
 	SavePasswords       bool             `json:"savePasswords"`
 	SmartHighlight      bool             `json:"smartHighlight"`
 	ConfirmOnDisconnect bool             `json:"confirmOnDisconnect"`
+	// RestoreWorkspace reconnects profiles that were still open when the app
+	// last exited. It is opt-in because reconnecting is an external side effect.
+	RestoreWorkspace bool `json:"restoreWorkspace"`
 	// CliServerEnabled controls whether the local gxshell-cli HTTP server runs.
 	// When false the server does not listen at all, so no local process can use
 	// the CLI interface regardless of per-profile opt-in. Defaults to true.
 	CliServerEnabled bool `json:"cliServerEnabled"`
+	// Deprecated: CliAutoApprove was a global, permanent full-trust switch.
+	// It is deliberately never migrated into per-profile CliTrustUntil because
+	// that would silently preserve a weaker safety policy after upgrading.
+	CliAutoApprove bool `json:"cliAutoApprove,omitempty"`
 	// UpdateCheckEnabled controls the startup check against the public release
 	// feed. It is the app's only unprompted outbound request, so it gets its own
 	// switch: someone running gxShell on an isolated network should be able to
@@ -310,6 +322,27 @@ type ServiceInfo struct {
 	Enabled     string  `json:"enabled"`     // enabled|disabled|static|masked|"" when unknown
 	CPUPercent  float64 `json:"cpuPercent"`  // aggregate CPU percentage of processes in this unit
 	MemoryBytes int64   `json:"memoryBytes"` // aggregate resident memory of processes in this unit
+	// ResourceStats reports whether CPUPercent/MemoryBytes were measured at all.
+	// Resource collection needs a ps that knows the systemd unit column, which
+	// minimal hosts lack; without this flag "not measured" and "measured zero"
+	// both arrive as 0.
+	ResourceStats bool `json:"resourceStats"`
+}
+
+// ServiceActionResult separates command acceptance from the state observed
+// immediately afterward. Verified is false when the action command ran but the
+// requested state could not be confirmed.
+type ServiceActionResult struct {
+	Unit           string `json:"unit"`
+	Action         string `json:"action"`
+	LoadState      string `json:"loadState"`
+	ActiveState    string `json:"activeState"`
+	SubState       string `json:"subState"`
+	UnitFileState  string `json:"unitFileState"`
+	Result         string `json:"result"`
+	ExecMainStatus int    `json:"execMainStatus"`
+	Verified       bool   `json:"verified"`
+	Verification   string `json:"verification,omitempty"`
 }
 
 type CronJob struct {
@@ -332,6 +365,10 @@ type WebsiteInfo struct {
 type WebsiteStatus struct {
 	Backends []string      `json:"backends"`
 	Sites    []WebsiteInfo `json:"sites"`
+	// Unreadable counts site configs that exist but could not be read, which on
+	// a non-root session means the listing is incomplete rather than empty.
+	// Status runs unprivileged by design, so this is expected, not an error.
+	Unreadable int `json:"unreadable"`
 }
 
 type FirewallRule struct {
@@ -350,6 +387,15 @@ type FirewallStatus struct {
 	DefaultPolicy string         `json:"defaultPolicy"` // ufw: e.g. "deny (incoming), allow (outgoing)"; firewalld: default zone name
 	SSHPort       int            `json:"sshPort"`       // the port of THIS session's SSH connection (for lockout warnings in the UI)
 	Rules         []FirewallRule `json:"rules"`
+}
+
+// FirewallActionResult reports the complete state read back after a mutation.
+// A successful mutation with a failed or mismatched readback is returned with
+// Verified=false instead of being presented as an unconditional success.
+type FirewallActionResult struct {
+	Status       FirewallStatus `json:"status"`
+	Verified     bool           `json:"verified"`
+	Verification string         `json:"verification,omitempty"`
 }
 
 type ContainerInfo struct {

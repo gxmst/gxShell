@@ -31,7 +31,7 @@ func (a *App) IsTextContextMenuRegistered() bool {
 	if err != nil {
 		return false
 	}
-	for _, ext := range supportedTextFileExtensionList() {
+	for _, ext := range supportedDocumentFileExtensionList() {
 		if !registryCommandMatches(textContextMenuKey(ext)+`\command`, mdCommandValue(exe)) {
 			return false
 		}
@@ -48,13 +48,13 @@ func (a *App) RegisterTextContextMenu() error {
 		return fmt.Errorf("resolve executable: %w", err)
 	}
 
-	for _, ext := range supportedTextFileExtensionList() {
+	for _, ext := range supportedDocumentFileExtensionList() {
 		if err := writeContextMenuVerb(textContextMenuKey(ext), exe, ""); err != nil {
 			return fmt.Errorf("register %s menu: %w", ext, err)
 		}
 	}
 	// This generic entry uses AppliesTo so classic Explorer menus can still show
-	// gxShell for supported text files whose association is unusual.
+	// gxShell for supported documents whose association is unusual.
 	if err := writeContextMenuVerb(anyFileContextMenuKey, exe, textFileAppliesToExpression()); err != nil {
 		return fmt.Errorf("register generic text-file menu: %w", err)
 	}
@@ -70,7 +70,7 @@ func (a *App) RegisterTextContextMenu() error {
 // UnregisterTextContextMenu removes the right-click entries. It is a no-op when
 // an entry does not exist, so it is safe to call unconditionally.
 func (a *App) UnregisterTextContextMenu() error {
-	for _, ext := range supportedTextFileExtensionList() {
+	for _, ext := range supportedDocumentFileExtensionList() {
 		if err := deleteContextMenuVerb(textContextMenuKey(ext)); err != nil {
 			return fmt.Errorf("delete %s menu: %w", ext, err)
 		}
@@ -167,7 +167,7 @@ func writeOpenWithApplicationRegistration(exe string) error {
 	if err != nil {
 		return err
 	}
-	for _, ext := range supportedTextFileExtensionList() {
+	for _, ext := range supportedDocumentFileExtensionList() {
 		_ = supportedTypesKey.SetStringValue(ext, "")
 	}
 	supportedTypesKey.Close()
@@ -202,8 +202,8 @@ func deleteOpenWithApplicationRegistration() error {
 }
 
 func textFileAppliesToExpression() string {
-	parts := make([]string, 0, len(supportedTextFileExtensionList()))
-	for _, ext := range supportedTextFileExtensionList() {
+	parts := make([]string, 0, len(supportedDocumentFileExtensionList()))
+	for _, ext := range supportedDocumentFileExtensionList() {
 		parts = append(parts, `System.FileExtension:="`+ext+`"`)
 	}
 	return strings.Join(parts, " OR ")

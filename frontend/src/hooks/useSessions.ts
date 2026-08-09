@@ -10,7 +10,8 @@ type UseSessionsOptions = {
   notify: (text: string, tone?: "info" | "error" | "success") => void;
   reload: () => Promise<void>;
   disposeTerminal: (id: string) => void;
-  confirmOnDisconnect?: boolean;
+  restoreWorkspace?: boolean;
+  language?: string;
   beforeCloseTab?: (tab: Tab) => boolean | Promise<boolean>;
 };
 
@@ -26,13 +27,24 @@ const readWorkspaceProfiles = (): { ids: string[]; activeProfileId: string } => 
   }
 };
 
+export async function restoreProfilesInBatches(
+  profiles: types.Profile[],
+  connect: (profile: types.Profile) => void | Promise<void>,
+  batchSize = 3,
+) {
+  const size = Math.max(1, Math.floor(batchSize));
+  for (let index = 0; index < profiles.length; index += size) {
+    await Promise.all(profiles.slice(index, index + size).map((profile) => connect(profile)));
+  }
+}
+
 export function useSessions(options: UseSessionsOptions) {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTab, setActiveTab] = useState("");
   const [secretRequest, setSecretRequest] = useState<SecretRequest | null>(null);
   const workspaceProfiles = useRef(readWorkspaceProfiles());
   const workspaceRestoreStarted = useRef(false);
-  const [workspaceRestoreReady, setWorkspaceRestoreReady] = useState(workspaceProfiles.current.ids.length === 0);
+  const [workspaceRestoreReady, setWorkspaceRestoreReady] = useState(false);
   const [sessionsHydrated, setSessionsHydrated] = useState(false);
 
   const active = useMemo(() => tabs.find((tab) => tab.id === activeTab), [tabs, activeTab]);
@@ -250,10 +262,16 @@ export function useSessions(options: UseSessionsOptions) {
   }, [openSession]);
 
   useEffect(() => {
-    if (!sessionsHydrated || workspaceRestoreStarted.current || workspaceProfiles.current.ids.length === 0) return;
-    // Wait for the async profile library load before deciding that a persisted
-    // profile disappeared. A genuinely empty library has nothing to restore.
-    if (options.profiles.length === 0) return;
+    if (!sessionsHydrated || workspaceRestoreStarted.current || options.restoreWorkspace === undefined) return;
+    if (!options.restoreWorkspace) {
+      workspaceRestoreStarted.current = true;
+      try {
+        localStorage.removeItem("gx:workspaceProfiles");
+        localStorage.removeItem("gx:workspaceActiveProfile");
+      } catch {}
+      setWorkspaceRestoreReady(true);
+      return;
+    }
     workspaceRestoreStarted.current = true;
     const wanted = new Set(workspaceProfiles.current.ids);
     const matched = options.profiles.filter((profile) => wanted.has(profile.id));
@@ -263,10 +281,14 @@ export function useSessions(options: UseSessionsOptions) {
     const pending = matched.filter((profile) => !alreadyLive.has(profile.id));
     const restorable = pending.filter((profile) => !needsSecret(profile));
     const skipped = pending.length - restorable.length;
+    const zh = options.language === "zh-CN";
     if (skipped > 0) {
-      notifyRef.current(`${skipped} workspace connection${skipped === 1 ? "" : "s"} need credentials and were not restored`, "info");
+      notifyRef.current(zh ? `${skipped} 个工作区连接需要重新输入凭据，未自动恢复` : `${skipped} workspace connection${skipped === 1 ? "" : "s"} need credentials and were not restored`, "info");
     }
-    Promise.all(restorable.map((profile) => connectProfile(profile))).finally(() => {
+    if (restorable.length > 0) {
+      notifyRef.current(zh ? `正在恢复 ${restorable.length} 个工作区连接` : `Restoring ${restorable.length} workspace connection${restorable.length === 1 ? "" : "s"}`, "info");
+    }
+    restoreProfilesInBatches(restorable, connectProfile).finally(() => {
       setWorkspaceRestoreReady(true);
       const activeProfileId = workspaceProfiles.current.activeProfileId;
       if (activeProfileId) {
@@ -276,10 +298,10 @@ export function useSessions(options: UseSessionsOptions) {
         }, 0);
       }
     });
-  }, [connectProfile, options.profiles, sessionsHydrated]);
+  }, [connectProfile, options.language, options.profiles, options.restoreWorkspace, sessionsHydrated]);
 
   useEffect(() => {
-    if (!workspaceRestoreReady) return;
+    if (!workspaceRestoreReady || options.restoreWorkspace !== true) return;
     const savedProfiles = new Set(options.profiles.map((profile) => profile.id));
     const ids = Array.from(new Set(tabs
       .filter((tab) => tab.type !== "markdown" && !tab.local && savedProfiles.has(tab.profileId) && (tab.state === "connected" || tab.state === "connecting"))
@@ -289,7 +311,7 @@ export function useSessions(options: UseSessionsOptions) {
       localStorage.setItem("gx:workspaceProfiles", JSON.stringify(ids));
       localStorage.setItem("gx:workspaceActiveProfile", savedProfiles.has(activeProfileId) ? activeProfileId : "");
     } catch {}
-  }, [activeTab, options.profiles, tabs, workspaceRestoreReady]);
+  }, [activeTab, options.profiles, options.restoreWorkspace, tabs, workspaceRestoreReady]);
 
   const connectProfileWithSecrets = useCallback(async (profile: types.Profile, password: string, passphrase: string) => {
     const existing = tabsRef.current.find((tab) => tab.profileId === profile.id && (tab.state === "connecting" || tab.state === "connected"));
@@ -508,10 +530,6 @@ export function useSessions(options: UseSessionsOptions) {
     if (!skipConfirm && tab && options.beforeCloseTab && !(await options.beforeCloseTab(tab))) {
       return;
     }
-    if (!skipConfirm && options.confirmOnDisconnect && tab?.state === "connected" && !tab?.local && !isMarkdown) {
-      const shouldClose = window.confirm("Are you sure you want to disconnect?");
-      if (!shouldClose) return;
-    }
     // Mark this id as intentionally closing so the resulting
     // terminal:disconnected event does not schedule an auto-reconnect, and
     // cancel any reconnect already pending for it.
@@ -539,7 +557,7 @@ export function useSessions(options: UseSessionsOptions) {
       }
       return next;
     });
-  }, [options.confirmOnDisconnect, options.beforeCloseTab, tabs]);
+  }, [options.beforeCloseTab, tabs]);
 
   return {
     tabs,

@@ -7,6 +7,8 @@ export const supportedTextExtensions = [
   ".ps1", ".bat", ".cmd", ".sql", ".service",
 ];
 
+export const supportedDocumentExtensions = [...supportedTextExtensions, ".pdf"];
+
 export function extensionOf(filePath: string) {
   const name = filePath.split(/[\\/]/).pop() || "";
   const idx = name.lastIndexOf(".");
@@ -18,6 +20,14 @@ export function isMarkdownPath(filePath: string) {
   return ext === ".md" || ext === ".markdown";
 }
 
+export function isPdfPath(filePath: string) {
+  return extensionOf(filePath) === ".pdf";
+}
+
 export function isSupportedTextPath(filePath: string) {
   return supportedTextExtensions.includes(extensionOf(filePath));
+}
+
+export function isSupportedDocumentPath(filePath: string) {
+  return supportedDocumentExtensions.includes(extensionOf(filePath));
 }

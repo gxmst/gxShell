@@ -11,7 +11,7 @@ export function UpdateDialog({ result, locale = "en", onSkip, onClose }: { resul
   if (!latest) return null;
 
   return (
-    <ModalShell onClose={onClose} compact>
+    <ModalShell onClose={onClose} compact ariaLabel={t(locale, "updateTitle")}>
       <DialogHeader icon={<Download size={15} />} title={t(locale, "updateTitle")} />
       <div className="dialog-body-copy">
         {t(locale, "updateAvailable", { version: latest.version })}

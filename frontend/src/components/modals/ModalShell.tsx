@@ -11,12 +11,14 @@ export function ModalShell({
   onClose,
   compact,
   palette,
+  ariaLabel,
 }: {
   children: React.ReactNode;
   onClose: () => void;
   compact?: boolean;
   /** Command-palette layout: top-centered, no default modal padding. */
   palette?: boolean;
+  ariaLabel?: string;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
@@ -95,6 +97,7 @@ export function ModalShell({
         )}
         role="dialog"
         aria-modal="true"
+        aria-label={ariaLabel}
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
       >

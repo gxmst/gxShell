@@ -1,13 +1,35 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { ArrowDown, ArrowUp, File, Folder, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, File, Folder, RefreshCw, X } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
-import { ListLocalDir, LocalHomeDir, ListRemoteDir, UploadFile, DownloadFile } from "../../../wailsjs/go/main/App";
+import { DownloadFileWithPolicy, ListLocalDir, LocalHomeDir, ListRemoteDir, UploadFileWithPolicy } from "../../../wailsjs/go/main/App";
 import { useTransfers } from "../../hooks/useTransfers";
+import { isWindowsPlatform } from "../../utils/clipboard";
 import { formatFileSize } from "../../utils/format";
+import { excludeTransferNames, findTransferConflicts } from "../../utils/transferConflict";
 import { runQueue } from "../../utils/transferQueue";
 import { t } from "../../i18n";
 import { FloatingCard } from "../FloatingCard/FloatingCard";
+import { DialogHeader, ModalShell } from "./ModalShell";
+
+type TransferContext = {
+  sessionId: string;
+  localPath: string;
+  remotePath: string;
+};
+
+type PendingConflict = {
+  direction: "upload" | "download";
+  context: TransferContext;
+  files: (types.LocalFile | types.RemoteFile)[];
+  replaceable: string[];
+  directories: string[];
+  caseInsensitive: boolean;
+};
+
+const transferNameKey = (name: string, caseInsensitive: boolean) => (
+  caseInsensitive ? name.toLowerCase() : name
+);
 
 export function TransferModal({ active, locale, initialLeft, initialTop, onClose }: { active?: { id: string }; locale: string; initialLeft?: number; initialTop?: number; onClose: () => void }) {
   const lang = locale;
@@ -20,6 +42,7 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
   const [selectedRemote, setSelectedRemote] = useState<Set<string>>(new Set());
   const [lastLocalIdx, setLastLocalIdx] = useState(-1);
   const [lastRemoteIdx, setLastRemoteIdx] = useState(-1);
+  const [conflict, setConflict] = useState<PendingConflict | null>(null);
   const { transfers, history, cancelTransfer } = useTransfers();
   const remoteSeq = useRef(0);
   const remoteSessionRef = useRef(activeSessionId);
@@ -31,6 +54,16 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
   const remotePath = remoteMatches ? remoteView.path : "/";
   const remoteFiles = remoteMatches ? remoteView.files : [];
   const remoteBusy = remoteMatches && remoteView.busy;
+  const localPathRef = useRef(localPath);
+  const remotePathRef = useRef(remotePath);
+  localPathRef.current = localPath;
+  remotePathRef.current = remotePath;
+
+  const contextIsCurrent = (context: TransferContext) => (
+    remoteSessionRef.current === context.sessionId
+    && localPathRef.current === context.localPath
+    && remotePathRef.current === context.remotePath
+  );
 
   useEffect(() => {
     LocalHomeDir().then((dir) => {
@@ -46,6 +79,10 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
     setRemoteView({ sessionId: activeSessionId, path: "/", files: [], busy: false });
     if (activeSessionId) void loadRemoteDir("/");
   }, [activeSessionId]);
+
+  useEffect(() => {
+    setConflict(null);
+  }, [activeSessionId, localPath, remotePath]);
 
   const loadLocalDir = async (dir: string) => {
     setLocalBusy(true);
@@ -120,38 +157,119 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
     setLastRemoteIdx(idx);
   };
 
-  const uploadSelected = async () => {
-    if (!active || selectedLocal.size === 0) return;
-    const sessionId = active.id;
-    const files = localFiles.filter((f) => selectedLocal.has(f.path) && !f.isDir);
+  const runUpload = async (files: types.LocalFile[], context: TransferContext, overwriteNames: readonly string[]) => {
+    if (!context.sessionId || files.length === 0) return;
+    const sessionId = context.sessionId;
+    const overwriteSet = new Set(overwriteNames);
     // A few at a time rather than strictly serially: each file's round trip used
     // to leave the connection idle. The signal stops queueing new files if the
     // session changes underneath us, which the old loop did with its own check.
     const signal = { get cancelled() { return remoteSessionRef.current !== sessionId; } };
     await runQueue(files, async (file) => {
-      const remoteTarget = remotePath.replace(/\/$/, "") + "/" + file.name;
-      await UploadFile(sessionId, file.path, remoteTarget);
+      const remoteTarget = context.remotePath.replace(/\/$/, "") + "/" + file.name;
+      await UploadFileWithPolicy(sessionId, file.path, remoteTarget, overwriteSet.has(file.name));
     }, { signal });
-    if (remoteSessionRef.current !== sessionId) return;
+    if (!contextIsCurrent(context)) return;
     // Per-file failures are not reported here: every transfer already emits a
     // terminal sftp:progress event, which the history panel below renders with
     // the file name and error. The old serial loop swallowed them for the same
     // reason.
-    loadRemoteDir(remotePath);
+    loadRemoteDir(context.remotePath);
   };
 
-  const downloadSelected = async () => {
-    if (!active || selectedRemote.size === 0) return;
-    const sessionId = active.id;
-    const files = remoteFiles.filter((f) => selectedRemote.has(f.path) && !f.isDir);
+  const runDownload = async (
+    files: types.RemoteFile[],
+    context: TransferContext,
+    overwriteNames: readonly string[],
+    caseInsensitive: boolean,
+  ) => {
+    if (!context.sessionId || files.length === 0) return;
+    const sessionId = context.sessionId;
+    const overwriteSet = new Set(overwriteNames.map((name) => transferNameKey(name, caseInsensitive)));
     const signal = { get cancelled() { return remoteSessionRef.current !== sessionId; } };
     await runQueue(files, async (file) => {
-      const localTarget = localPath.replace(/\/$/, "") + "/" + file.name;
-      await DownloadFile(sessionId, file.path, localTarget);
+      const localTarget = context.localPath.replace(/\/$/, "") + "/" + file.name;
+      const overwrite = overwriteSet.has(transferNameKey(file.name, caseInsensitive));
+      await DownloadFileWithPolicy(sessionId, file.path, localTarget, overwrite);
     }, { signal });
-    if (remoteSessionRef.current !== sessionId) return;
-    loadLocalDir(localPath);
+    if (!contextIsCurrent(context)) return;
+    loadLocalDir(context.localPath);
   };
+
+  // Both directory listings are already in state, so a same-name collision is
+  // detectable without asking the backend. Transfers used to start immediately
+  // and silently replace whatever sat at the destination.
+  const startTransfer = (direction: "upload" | "download") => {
+    const context = { sessionId: activeSessionId, localPath, remotePath };
+    if (direction === "upload") {
+      const files = localFiles.filter((f) => selectedLocal.has(f.path) && !f.isDir);
+      if (files.length === 0) return;
+      const { replaceable, directories } = findTransferConflicts(files, remoteFiles);
+      if (replaceable.length > 0 || directories.length > 0) {
+        setConflict({ direction, context, files, replaceable, directories, caseInsensitive: false });
+        return;
+      }
+      void runUpload(files, context, []);
+      return;
+    }
+    const files = remoteFiles.filter((f) => selectedRemote.has(f.path) && !f.isDir);
+    if (files.length === 0) return;
+    const caseInsensitive = isWindowsPlatform();
+    const { replaceable, directories } = findTransferConflicts(files, localFiles, caseInsensitive);
+    if (replaceable.length > 0 || directories.length > 0) {
+      setConflict({ direction, context, files, replaceable, directories, caseInsensitive });
+      return;
+    }
+    void runDownload(files, context, [], caseInsensitive);
+  };
+
+  const resolveConflict = (mode: "overwrite" | "skip") => {
+    const pending = conflict;
+    setConflict(null);
+    if (!pending || !contextIsCurrent(pending.context)) return;
+    const excluded = mode === "overwrite"
+      ? pending.directories
+      : [...pending.replaceable, ...pending.directories];
+    const overwriteNames = mode === "overwrite" ? pending.replaceable : [];
+    if (pending.direction === "upload") {
+      const files = pending.files as types.LocalFile[];
+      void runUpload(excludeTransferNames(files, excluded), pending.context, overwriteNames);
+    } else {
+      const files = pending.files as types.RemoteFile[];
+      void runDownload(
+        excludeTransferNames(files, excluded, pending.caseInsensitive),
+        pending.context,
+        overwriteNames,
+        pending.caseInsensitive,
+      );
+    }
+  };
+
+  // The collision prompt. Three outcomes rather than the usual two, so this
+  // does not reuse ConfirmDialog: cancel keeps the selection untouched, skip
+  // transfers only non-clashing files, and overwrite still rejects folders.
+  const conflictDialog = conflict && (
+    <ModalShell onClose={() => setConflict(null)} compact ariaLabel={t(lang, "overwriteTitle")}>
+      <DialogHeader icon={<AlertTriangle size={15} />} title={t(lang, "overwriteTitle")} />
+      {conflict.replaceable.length > 0 && (
+        <div className="dialog-body-copy">
+          {t(lang, "overwriteBody", { names: conflict.replaceable.join(", ") })}
+        </div>
+      )}
+      {conflict.directories.length > 0 && (
+        <div className="dialog-body-copy">
+          {t(lang, "overwriteDirectoryBody", { names: conflict.directories.join(", ") })}
+        </div>
+      )}
+      <div className="dialog-footer">
+        <button className="btn-secondary" onClick={() => setConflict(null)}>{t(lang, "cancel")}</button>
+        <button className="btn-secondary" onClick={() => resolveConflict("skip")}>{t(lang, "overwriteSkip")}</button>
+        {conflict.replaceable.length > 0 && (
+          <button className="btn-danger" onClick={() => resolveConflict("overwrite")}>{t(lang, "overwriteConfirm")}</button>
+        )}
+      </div>
+    </ModalShell>
+  );
 
   const activeTransfers = Object.entries(transfers).filter(([, transfer]) => transfer.sessionId === activeSessionId);
   const recentHistory = history.filter((item) => item.sessionId === activeSessionId).slice(0, 20);
@@ -189,10 +307,10 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
         </div>
 
         <div className="transfer-actions-col">
-          <button className="transfer-action-btn" onClick={uploadSelected} disabled={selectedLocal.size === 0} title={t(lang, "upload")}>
+          <button className="transfer-action-btn" onClick={() => startTransfer("upload")} disabled={selectedLocal.size === 0} title={t(lang, "upload")}>
             <ArrowUp size={16} />
           </button>
-          <button className="transfer-action-btn" onClick={downloadSelected} disabled={selectedRemote.size === 0} title={t(lang, "download")}>
+          <button className="transfer-action-btn" onClick={() => startTransfer("download")} disabled={selectedRemote.size === 0} title={t(lang, "download")}>
             <ArrowDown size={16} />
           </button>
         </div>
@@ -263,6 +381,7 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
           ))}
         </div>
       )}
+      {conflictDialog}
     </FloatingCard>
   );
 }

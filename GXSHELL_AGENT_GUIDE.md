@@ -52,7 +52,7 @@ For a script:
 Get-Content .\request.sh -Raw | .\gxshell-cli.exe exec-stdin 3 --shell bash --secret API_KEY=anyrouter-api-key --json
 ```
 
-gxShell resolves the reference only after local approval, injects the value through SSH stdin, hides it from approval text and command audit, and replaces exact occurrences in captured output. Named-secret execution is synchronous only; `--follow` and `--detach` are rejected.
+gxShell resolves the reference only after the normal local approval gate (or an active per-profile trust window), injects the value through SSH stdin, hides it from approval text and command audit, and replaces exact occurrences in captured output. Named-secret execution is synchronous only; `--follow` and `--detach` are rejected. Full trust is not a secret sandbox: transformed or encoded values may evade exact-value redaction.
 
 This protects against accidental disclosure, including `echo $API_KEY` and ordinary error output. It cannot make a general shell safe against a malicious command that transforms or encodes a secret before exfiltration. Approve secret-bearing commands only when their destination and purpose are clear. If a task only needs to test whether a secret works, do that without printing it.
 
@@ -63,3 +63,14 @@ Delete a reference when it is no longer needed:
 ```
 
 If a real key ever appears in a model conversation, process argument, terminal capture, or log, rotate it. Redaction does not revoke an exposed credential.
+
+## Transfer local files
+
+Use the dedicated transfer command when a local artifact must move to or from a CLI-enabled server. It supports one regular file at a time and does not interpret directories or globs:
+
+```powershell
+.\gxshell-cli.exe transfer push .\build\app.tar.gz prod-web:/srv/app/app.tar.gz --mkdir --json
+.\gxshell-cli.exe transfer pull prod-web:/srv/app/app.tar.gz .\downloads\app.tar.gz --json
+```
+
+`upload` and `download` are aliases for `transfer push` and `transfer pull`. The GUI always shows a native approval dialog for these operations; an active CLI trust window never suppresses it. Existing destinations are protected by default. Add `--overwrite` only after checking that replacing the destination is intended. A conflict is authoritative when the JSON contains `outcome: "blocked"`, `blockedBy: "overwrite-policy"`, and `errorKind: "overwrite_required"`; the CLI exits with code 2. Upload-only `--mkdir` creates missing remote parent directories. Transfers use gxShell's atomic SFTP promotion and resumable partial files; do not construct an `scp` or shell command to emulate them.

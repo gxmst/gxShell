@@ -2,10 +2,20 @@ import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { ArrowDown, ArrowUp, File, Folder, RefreshCw } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
-import { ListLocalDir, LocalHomeDir, ListRemoteDir, UploadFile, DownloadFile } from "../../../wailsjs/go/main/App";
+import { DownloadFileWithPolicy, ListLocalDir, LocalHomeDir, ListRemoteDir, UploadFileWithPolicy } from "../../../wailsjs/go/main/App";
 import type { Tab, Toast } from "../../types";
 import { formatFileSize } from "../../utils/format";
 import { t } from "../../i18n";
+import { ConfirmDialog } from "../modals/ConfirmDialog";
+
+type PendingConflict = {
+  direction: "upload" | "download";
+  file: types.LocalFile | types.RemoteFile;
+  sessionId: string;
+  localDir: string;
+  remoteDir: string;
+  target: string;
+};
 
 export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; locale?: string; onNotify: (text: string, tone?: Toast["tone"]) => void }) {
   const lang = locale || "en";
@@ -16,6 +26,7 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
   const [remoteView, setRemoteView] = useState<{ sessionId: string; path: string; files: types.RemoteFile[]; busy: boolean }>({ sessionId: "", path: "/", files: [], busy: false });
   const [selectedLocal, setSelectedLocal] = useState<string | null>(null);
   const [selectedRemote, setSelectedRemote] = useState<string | null>(null);
+  const [pendingConflict, setPendingConflict] = useState<PendingConflict | null>(null);
   const remoteSeq = useRef(0);
   const remoteSessionRef = useRef(activeSessionId);
   if (remoteSessionRef.current !== activeSessionId) {
@@ -37,9 +48,17 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
   useEffect(() => {
     remoteSeq.current += 1;
     setSelectedRemote(null);
+    setPendingConflict(null);
     setRemoteView({ sessionId: activeSessionId, path: "/", files: [], busy: false });
     if (activeSessionId) void loadRemoteDir("/");
   }, [activeSessionId]);
+
+  useEffect(() => {
+    if (!pendingConflict) return;
+    if (pendingConflict.sessionId !== activeSessionId || pendingConflict.localDir !== localPath || pendingConflict.remoteDir !== remotePath) {
+      setPendingConflict(null);
+    }
+  }, [activeSessionId, localPath, remotePath, pendingConflict]);
 
   const loadLocalDir = async (dir: string) => {
     setLocalBusy(true);
@@ -76,14 +95,23 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
     }
   };
 
-  const uploadSelected = async () => {
-    if (!active || !selectedLocal) return;
+  const uploadSelected = async (overwrite = false, pending: PendingConflict | null = null) => {
+    if (!active || (!pending && !selectedLocal)) return;
     const sessionId = active.id;
-    const file = localFiles.find((f) => f.path === selectedLocal);
-    if (!file || file.isDir) return;
+    const file = (pending?.file as types.LocalFile | undefined) || localFiles.find((f) => f.path === selectedLocal);
+    if (!file || file.isDir || !("path" in file)) return;
     try {
-      const remoteTarget = remotePath.replace(/\/$/, "") + "/" + file.name;
-      await UploadFile(sessionId, file.path, remoteTarget);
+      const remoteTarget = pending?.target || remotePath.replace(/\/$/, "") + "/" + file.name;
+      const existing = remoteFiles.find((entry) => entry.name === file.name);
+      if (!overwrite && existing?.isDir) {
+        onNotify(t(lang, "overwriteDirectoryBody", { names: file.name }), "error");
+        return;
+      }
+      if (!overwrite && existing) {
+        setPendingConflict({ direction: "upload", file, sessionId, localDir: localPath, remoteDir: remotePath, target: remoteTarget });
+        return;
+      }
+      await UploadFileWithPolicy(sessionId, file.path, remoteTarget, overwrite);
       if (remoteSessionRef.current !== sessionId) return;
       onNotify(`${file.name} uploaded`, "success");
       loadRemoteDir(remotePath);
@@ -92,13 +120,22 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
     }
   };
 
-  const downloadSelected = async () => {
-    if (!active || !selectedRemote) return;
-    const file = remoteFiles.find((f) => f.path === selectedRemote);
-    if (!file || file.isDir) return;
+  const downloadSelected = async (overwrite = false, pending: PendingConflict | null = null) => {
+    if (!active || (!pending && !selectedRemote)) return;
+    const file = (pending?.file as types.RemoteFile | undefined) || remoteFiles.find((f) => f.path === selectedRemote);
+    if (!file || file.isDir || !("path" in file)) return;
     try {
-      const localTarget = localPath.replace(/\/$/, "") + "/" + file.name;
-      await DownloadFile(active.id, file.path, localTarget);
+      const localTarget = pending?.target || localPath.replace(/\/$/, "") + "/" + file.name;
+      const existing = localFiles.find((entry) => entry.name === file.name);
+      if (!overwrite && existing?.isDir) {
+        onNotify(t(lang, "overwriteDirectoryBody", { names: file.name }), "error");
+        return;
+      }
+      if (!overwrite && existing) {
+        setPendingConflict({ direction: "download", file, sessionId: active.id, localDir: localPath, remoteDir: remotePath, target: localTarget });
+        return;
+      }
+      await DownloadFileWithPolicy(active.id, file.path, localTarget, overwrite);
       onNotify(`${file.name} downloaded`, "success");
       loadLocalDir(localPath);
     } catch (err) {
@@ -136,13 +173,33 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
       </div>
 
       <div className="sftp-dual-actions">
-        <button className="sftp-dual-transfer-btn" onClick={uploadSelected} disabled={!selectedLocal} title={t(lang, "upload")}>
+        <button className="sftp-dual-transfer-btn" onClick={() => void uploadSelected()} disabled={!selectedLocal} title={t(lang, "upload")}>
           <ArrowUp size={12} />
         </button>
-        <button className="sftp-dual-transfer-btn" onClick={downloadSelected} disabled={!selectedRemote} title={t(lang, "download")}>
+        <button className="sftp-dual-transfer-btn" onClick={() => void downloadSelected()} disabled={!selectedRemote} title={t(lang, "download")}>
           <ArrowDown size={12} />
         </button>
       </div>
+
+      {pendingConflict && (
+        <ConfirmDialog
+          locale={lang}
+          title={t(lang, "overwriteTitle")}
+          body={t(lang, "overwriteBody", { names: pendingConflict.file.name })}
+          confirmText={t(lang, "overwriteConfirm")}
+          onClose={() => setPendingConflict(null)}
+          onConfirm={() => {
+            const pending = pendingConflict;
+            if (pending.sessionId !== activeSessionId || pending.localDir !== localPath || pending.remoteDir !== remotePath) {
+              setPendingConflict(null);
+              return;
+            }
+            setPendingConflict(null);
+            if (pending.direction === "upload") void uploadSelected(true, pending);
+            else void downloadSelected(true, pending);
+          }}
+        />
+      )}
 
       <div className="sftp-dual-panel">
         <div className="sftp-dual-header">

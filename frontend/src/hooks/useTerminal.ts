@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, type MutableRefObject } from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, type IDecoration } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { types } from "../../wailsjs/go/models";
 import { ResizeTerminal, WriteToTerminal, LogCommand } from "../../wailsjs/go/main/App";
+import { writeClipboardText } from "../utils/clipboard";
 import { getTerminalTheme } from "../utils/format";
-import { highlight, type HighlightLevel } from "../utils/highlight";
+import { normalizeFontSize, normalizeLineHeight, normalizeScrollbackLines } from "../utils/terminalSettings";
+import { findHighlightMatches, type HighlightLevel } from "../utils/highlight";
 import { createLinkProvider, type TerminalLinkAppHandlers } from "../utils/terminalLinks";
 import type { SplitPane } from "../types";
 import { t } from "../i18n";
@@ -20,6 +22,7 @@ const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 const MAX_PENDING_OUTPUT_BYTES = 256 * 1024;
 const MAX_COMMAND_BUFFER_CHARS = 8192;
 const RESIZE_SETTLE_MS = 80;
+const MAX_HIGHLIGHT_DECORATIONS = 800;
 
 // The WebGL→canvas degradation toast fires from onContextLoss, which can
 // trigger repeatedly when many terminals force context recycling. Shown at
@@ -32,7 +35,25 @@ export type AppContextMenu = {
   items: Array<{ label: string; action: () => void; danger?: boolean }>;
 };
 
-export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null, broadcastRef?: MutableRefObject<{ enabled: boolean; targets: string[] }>, linkHandlersRef?: MutableRefObject<TerminalLinkAppHandlers>, setContextMenu?: (menu: AppContextMenu | null) => void) {
+type BufferCellSpan = { start: number; end: number; x: number; width: number };
+
+function readBufferCells(term: Terminal, row: number): { text: string; spans: BufferCellSpan[] } | null {
+  const line = term.buffer.active.getLine(row);
+  if (!line) return null;
+  let text = "";
+  const spans: BufferCellSpan[] = [];
+  for (let x = 0; x < term.cols; x += 1) {
+    const cell = line.getCell(x);
+    if (!cell || cell.getWidth() === 0) continue;
+    const value = cell.getChars() || " ";
+    const start = text.length;
+    text += value;
+    spans.push({ start, end: text.length, x, width: Math.max(1, cell.getWidth()) });
+  }
+  return { text: text.trimEnd(), spans };
+}
+
+export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null, broadcastRef?: MutableRefObject<{ enabled: boolean; targets: string[] }>, linkHandlersRef?: MutableRefObject<TerminalLinkAppHandlers>, setContextMenu?: (menu: AppContextMenu | null) => void, onSearchResults?: (id: string, index: number, count: number) => void) {
   const terminals = useRef<Record<string, Terminal>>({});
   const fits = useRef<Record<string, FitAddon>>({});
   const searches = useRef<Record<string, SearchAddon>>({});
@@ -58,10 +79,10 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const throughputRef = useRef<Record<string, number>>({});
   const refitTimers = useRef<Record<string, number>>({});
   const linkProviders = useRef<Record<string, { dispose: () => void }>>({});
-  // searchResultsRef is set by the search UI (via registerSearchResults) so it
-  // receives live match counts from SearchAddon's onDidChangeResults for the
-  // terminal being searched: (sessionId, resultIndex, resultCount).
-  const searchResultsRef = useRef<((id: string, index: number, count: number) => void) | null>(null);
+  const highlightDecorations = useRef<Record<string, IDecoration[]>>({});
+  const pendingHighlightFrames = useRef<Record<string, number>>({});
+  const searchResultsRef = useRef(onSearchResults);
+  searchResultsRef.current = onSearchResults;
 
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
@@ -115,11 +136,67 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   settingsRef.current = settings;
   const settingsReady = !!settings;
 
-  const applyHighlight = useCallback((sessionId: string, data: string) => {
-    const level = highlightLevelRef.current;
-    if (level === "off") return data;
-    return highlight(data, level);
+  const clearHighlightDecorations = useCallback((sessionId: string) => {
+    highlightDecorations.current[sessionId]?.forEach((item) => item.dispose());
+    delete highlightDecorations.current[sessionId];
   }, []);
+
+  const refreshDisplayHighlights = useCallback((sessionId: string, term: Terminal) => {
+    const level = highlightLevelRef.current;
+    const buffer = term.buffer.active;
+    if (level === "off") {
+      clearHighlightDecorations(sessionId);
+      return;
+    }
+    // Decorations are unsupported in the alternate buffer. Skipping it also
+    // keeps full-screen programs such as vim, top and tmux completely untouched.
+    if (buffer.type !== "normal") return;
+
+    const firstRow = buffer.viewportY;
+    const lastRow = Math.min(buffer.length - 1, firstRow + term.rows - 1);
+    const retained = (highlightDecorations.current[sessionId] || []).filter((item) => {
+      const line = item.marker.line;
+      if (line >= firstRow && line <= lastRow) {
+        item.dispose();
+        return false;
+      }
+      return line >= 0;
+    });
+
+    const cursorRow = buffer.baseY + buffer.cursorY;
+    for (let row = firstRow; row <= lastRow; row += 1) {
+      const content = readBufferCells(term, row);
+      if (!content?.text) continue;
+      const matches = findHighlightMatches(content.text, level);
+      for (const match of matches) {
+        const covered = content.spans.filter((span) => match.start < span.end && match.end > span.start);
+        if (!covered.length) continue;
+        const first = covered[0];
+        const last = covered[covered.length - 1];
+        const marker = term.registerMarker(row - cursorRow);
+        const decoration = term.registerDecoration({
+          marker,
+          x: first.x,
+          width: Math.max(1, last.x + last.width - first.x),
+          foregroundColor: match.color,
+          layer: "top",
+        });
+        if (decoration) retained.push(decoration);
+        else marker.dispose();
+      }
+    }
+
+    while (retained.length > MAX_HIGHLIGHT_DECORATIONS) retained.shift()?.dispose();
+    highlightDecorations.current[sessionId] = retained;
+  }, [clearHighlightDecorations]);
+
+  const scheduleDisplayHighlights = useCallback((sessionId: string, term: Terminal) => {
+    if (pendingHighlightFrames.current[sessionId]) return;
+    pendingHighlightFrames.current[sessionId] = window.requestAnimationFrame(() => {
+      delete pendingHighlightFrames.current[sessionId];
+      if (terminals.current[sessionId] === term) refreshDisplayHighlights(sessionId, term);
+    });
+  }, [refreshDisplayHighlights]);
 
   // Reset throughput counters every second; auto-disable highlight under sustained load
   useEffect(() => {
@@ -187,12 +264,12 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         cursorBlink: s.terminal.cursorBlink,
         cursorStyle: (s.terminal.cursorStyle || "block") as "block" | "underline" | "bar",
         fontFamily: s.terminal.fontFamily || "JetBrains Mono, Cascadia Code, Fira Code, Maple Mono, Consolas, monospace",
-        fontSize: s.terminal.fontSize || 13.5,
+        fontSize: normalizeFontSize(s.terminal.fontSize),
         fontWeight: 400,
-        lineHeight: s.terminal.lineHeight || 1.35,
+        lineHeight: normalizeLineHeight(s.terminal.lineHeight),
         minimumContrastRatio: 1,
         drawBoldTextInBrightColors: false,
-        scrollback: s.terminal.scrollbackLines || 5000,
+        scrollback: normalizeScrollbackLines(s.terminal.scrollbackLines),
         smoothScrollDuration: 0,
         theme: getTerminalTheme(s)
       });
@@ -216,6 +293,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         });
       } catch {}
       term.open(host);
+      term.onScroll(() => scheduleDisplayHighlights(activeTab, term));
 
       // Clickable URLs and remote file paths, detected in the xterm display
       // layer so the SSH output stream is never rewritten. The provider reads
@@ -269,7 +347,10 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
           items.push({
             label: t(lang, "copy"),
             action: () => {
-              navigator.clipboard.writeText(selection)
+              // writeClipboardText, not navigator.clipboard directly: xterm
+              // hands back rows joined with LF and Win32 paste targets need
+              // CRLF (see utils/clipboard.ts).
+              writeClipboardText(selection)
                 .then(() => notifyRef.current(t(lang, "copyToClipboard"), "success"))
                 .catch(() => notifyRef.current(t(lang, "copyFailed"), "error"));
             },
@@ -294,7 +375,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         } else if (selection) {
           // Backward-compatible fallback while the host app is still wiring the
           // visual menu: retain the former one-click copy behavior.
-          navigator.clipboard.writeText(selection).catch(() => undefined);
+          writeClipboardText(selection).catch(() => undefined);
         }
       });
 
@@ -328,10 +409,13 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       });
 
       const buffered = bufferedOutput.current[activeTab] || [];
-      if (bufferedOutputDropped.current[activeTab]) {
-        term.write("\r\n\x1b[33m[gxShell: earlier buffered output was truncated]\x1b[39m\r\n");
+      const truncationNotice = bufferedOutputDropped.current[activeTab]
+        ? "\r\n\x1b[33m[gxShell: earlier buffered output was truncated]\x1b[39m\r\n"
+        : "";
+      const initialOutput = truncationNotice + buffered.join("");
+      if (initialOutput) {
+        term.write(initialOutput, () => scheduleDisplayHighlights(activeTab, term));
       }
-      buffered.forEach((chunk) => term.write(chunk));
       delete bufferedOutput.current[activeTab];
       delete bufferedOutputSizes.current[activeTab];
       delete bufferedOutputDropped.current[activeTab];
@@ -365,7 +449,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       delete cmdBufferMap[activeTab];
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, activeIsTerminal, enqueueTerminalInput, settingsReady]);
+  }, [activeTab, activeIsTerminal, enqueueTerminalInput, settingsReady, scheduleDisplayHighlights]);
 
   useEffect(() => {
     if (!splitPane) return;
@@ -440,10 +524,12 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     const rate = throughputRef.current[sessionId] || 0;
     const shouldHighlight = rate < 32768;
     const combined = chunks.join("");
-    terminals.current[sessionId]?.write(
-      shouldHighlight ? applyHighlight(sessionId, combined) : combined
-    );
-  }, [applyHighlight]);
+    const term = terminals.current[sessionId];
+    if (!term) return;
+    // The SSH byte stream is always written verbatim. Optional highlighting is
+    // applied afterwards to rendered cells, never by injecting ANSI sequences.
+    term.write(combined, shouldHighlight ? () => scheduleDisplayHighlights(sessionId, term) : undefined);
+  }, [scheduleDisplayHighlights]);
 
   const writeOutput = useCallback((sessionId: string, data: string) => {
     const term = terminals.current[sessionId];
@@ -493,6 +579,8 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     delete cleanupFns.current[id];
     linkProviders.current[id]?.dispose();
     delete linkProviders.current[id];
+    clearHighlightDecorations(id);
+    if (pendingHighlightFrames.current[id]) window.cancelAnimationFrame(pendingHighlightFrames.current[id]);
     webgl.current[id]?.dispose();
     terminals.current[id]?.dispose();
     if (pendingFitFrames.current[id]) window.cancelAnimationFrame(pendingFitFrames.current[id]);
@@ -512,6 +600,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     delete refitTimers.current[id];
     delete pendingFitFrames.current[id];
     delete pendingWriteFrames.current[id];
+    delete pendingHighlightFrames.current[id];
     delete pendingInput.current[id];
     delete pendingInputSizes.current[id];
     delete pendingInputTimers.current[id];
@@ -521,7 +610,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     delete lastHostSize.current[id];
     delete terminalHosts.current[id];
     delete throughputRef.current[id];
-  }, []);
+  }, [clearHighlightDecorations]);
 
   const findNext = useCallback((id: string, query: string) => {
     if (!id || !query) return;
@@ -572,11 +661,18 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       const term = terminals.current[id];
       term.options.theme = theme;
       term.options.fontFamily = settings.terminal.fontFamily;
-      term.options.fontSize = settings.terminal.fontSize;
-      term.options.lineHeight = settings.terminal.lineHeight;
+      term.options.fontSize = normalizeFontSize(settings.terminal.fontSize);
+      term.options.lineHeight = normalizeLineHeight(settings.terminal.lineHeight);
+      // Cursor options do not affect the grid, so they need no refit. Scrollback
+      // is deliberately absent: changing it reallocates the buffer and would
+      // discard existing history, so it stays a new-terminal setting.
+      term.options.cursorStyle = (settings.terminal.cursorStyle || "block") as "block" | "underline" | "bar";
+      term.options.cursorBlink = settings.terminal.cursorBlink;
       refitTerminal(id);
+      if (settings.highlightLevel === "off") clearHighlightDecorations(id);
+      else scheduleDisplayHighlights(id, term);
     });
-  }, [settings, refitTerminal]);
+  }, [settings, refitTerminal, clearHighlightDecorations, scheduleDisplayHighlights]);
 
   const reattachTerminal = useCallback((id: string, newHost: HTMLDivElement) => {
     const term = terminals.current[id];

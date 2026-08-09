@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -123,6 +124,32 @@ func TestUploadOpenFailureDoesNotLeaveJobRunning(t *testing.T) {
 	}
 }
 
+func TestOverwriteConflictDoesNotInvalidateCachedClient(t *testing.T) {
+	m := &Manager{
+		cache:    map[string]*cachedClient{"session-1": {refs: 1}},
+		createMu: map[string]*sync.Mutex{"session-1": {}},
+	}
+
+	m.invalidateOnTransferErr("session-1", &OverwriteRequiredError{Path: "/tmp/existing"})
+
+	if _, ok := m.cache["session-1"]; !ok {
+		t.Fatal("overwrite conflict invalidated a healthy cached client")
+	}
+}
+
+func TestLocalLinkFailureDoesNotInvalidateCachedClient(t *testing.T) {
+	m := &Manager{
+		cache:    map[string]*cachedClient{"session-1": {refs: 1}},
+		createMu: map[string]*sync.Mutex{"session-1": {}},
+	}
+
+	m.invalidateOnTransferErr("session-1", &os.LinkError{Op: "link", Old: "part", New: "target", Err: errors.New("not supported")})
+
+	if _, ok := m.cache["session-1"]; !ok {
+		t.Fatal("local hard-link failure invalidated a healthy cached client")
+	}
+}
+
 func TestReplaceLocalTempReplacesCompletedTarget(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "download.txt")
@@ -133,7 +160,7 @@ func TestReplaceLocalTempReplacesCompletedTarget(t *testing.T) {
 	if err := os.WriteFile(part, []byte("complete"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := replaceLocalTemp(part, target); err != nil {
+	if err := replaceLocalTemp(part, target, true); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(target)
@@ -145,6 +172,146 @@ func TestReplaceLocalTempReplacesCompletedTarget(t *testing.T) {
 	}
 	if _, err := os.Stat(part); !os.IsNotExist(err) {
 		t.Fatalf("part file still exists: %v", err)
+	}
+}
+
+func TestReplaceLocalTempNoOverwritePreservesTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "download.txt")
+	part := transferPartPath(target, "job-no-overwrite")
+	if err := os.WriteFile(target, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(part, []byte("complete"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := replaceLocalTemp(part, target, false); err == nil {
+		t.Fatal("no-overwrite promotion replaced an existing target")
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "original" {
+		t.Fatalf("target = %q, want original", got)
+	}
+	if _, err := os.Stat(part); err != nil {
+		t.Fatalf("part file was not preserved after conflict: %v", err)
+	}
+}
+
+func TestReplaceLocalTempConflictIsTyped(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "download.txt")
+	part := transferPartPath(target, "job-typed-conflict")
+	if err := os.WriteFile(target, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(part, []byte("complete"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	err := replaceLocalTemp(part, target, false)
+	if !IsOverwriteRequired(err) {
+		t.Fatalf("error = %v, want overwrite-required", err)
+	}
+	var typed *OverwriteRequiredError
+	if !errors.As(err, &typed) || typed.Path != target || typed.Remote {
+		t.Fatalf("typed error = %#v", typed)
+	}
+}
+
+func TestReplaceLocalTempNoOverwritePromotesNewTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "download.txt")
+	part := transferPartPath(target, "job-new-target")
+	if err := os.WriteFile(part, []byte("complete"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := replaceLocalTemp(part, target, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "complete" {
+		t.Fatalf("target = %q, want complete", got)
+	}
+	if _, err := os.Stat(part); !os.IsNotExist(err) {
+		t.Fatalf("part file still exists: %v", err)
+	}
+}
+
+func TestPromoteLocalNoReplaceNeverReplacesExistingTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "download.txt")
+	part := transferPartPath(target, "job-raced-target")
+	if err := os.WriteFile(target, []byte("created by another process"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(part, []byte("completed download"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := promoteLocalNoReplace(part, target); err == nil {
+		t.Fatal("no-replace promotion replaced an existing target")
+	}
+	gotTarget, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotTarget) != "created by another process" {
+		t.Fatalf("target = %q, want raced target preserved", gotTarget)
+	}
+	gotPart, err := os.ReadFile(part)
+	if err != nil {
+		t.Fatalf("part was lost after no-replace conflict: %v", err)
+	}
+	if string(gotPart) != "completed download" {
+		t.Fatalf("part = %q, want completed download", gotPart)
+	}
+}
+
+func TestReplaceLocalTempRejectsDirectoryTarget(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "download.txt")
+	part := transferPartPath(target, "job-directory-target")
+	if err := os.Mkdir(target, 0700); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(target, "keep.txt")
+	if err := os.WriteFile(sentinel, []byte("keep me"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(part, []byte("complete"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := replaceLocalTemp(part, target, true); err == nil {
+		t.Fatal("directory target was replaced")
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.IsDir() {
+		t.Fatal("directory target no longer exists")
+	}
+	gotSentinel, err := os.ReadFile(sentinel)
+	if err != nil {
+		t.Fatalf("sentinel inside destination directory was lost: %v", err)
+	}
+	if string(gotSentinel) != "keep me" {
+		t.Fatalf("sentinel = %q, want keep me", gotSentinel)
+	}
+	gotPart, err := os.ReadFile(part)
+	if err != nil {
+		t.Fatalf("completed part was lost after rejecting directory target: %v", err)
+	}
+	if string(gotPart) != "complete" {
+		t.Fatalf("part = %q, want complete", gotPart)
 	}
 }
 

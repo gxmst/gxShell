@@ -33,7 +33,7 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 - Session recording of terminal output to asciinema `.cast` files, with a built-in player (play, pause, restart, variable speed) and a recordings panel to play, delete, or reveal saved recordings. Recording taps terminal output only, not stdin; shell-echoed commands can appear in recordings, while password prompts with echo disabled are not captured.
 - Reusable command templates with `<name>` variable placeholders. Running a template with placeholders prompts for each value with a live preview before the command is sent, to the active terminal or broadcast to all sessions.
 - AI assistant for OpenAI-compatible APIs, with streaming responses, model listing, token usage, terminal context, and explicit native confirmation before remote tool execution.
-- External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands, track jobs, copy remote files, and open temporary loopback SSH tunnels on opted-in profiles through the running app, without exposing saved SSH credentials. Script execution uses an explicit shell and SSH stdin. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
+- External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands, track jobs, transfer local files, copy remote files, and open temporary loopback SSH tunnels on opted-in profiles through the running app, without exposing saved SSH credentials. Script execution uses an explicit shell and SSH stdin. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
 - Model-independent agent guidance, structured execution outcomes, enforced stdin/file handling for multiline scripts, and named `secret://` references for using credentials without placing plaintext values in model prompts, process arguments, confirmations, or command audits.
 - Local and remote text/Markdown viewer/editor with sanitized Markdown rendering, plain-text viewing for logs and other text formats, file-open support, drag-and-drop opening, recent files, sibling and relative-link navigation, relative image previews for Markdown, table of contents, code highlighting, Mermaid diagrams, in-document search, zoom, edit, save, split preview, and refresh.
 - Windows tray menu for showing the app, creating a connection, opening a text file, settings, and quit.
@@ -68,7 +68,7 @@ to inputs and to open dialogs.
 - Older plaintext profile secrets are migrated on startup.
 - AI tool calls are registered by the backend, expire after a short TTL, are single-use, and require a native confirmation dialog before command execution or remote file reads. Multiple pending AI tools can be approved together and independent commands run in parallel after approval.
 - Dangerous commands and sensitive remote paths are blocked for AI tools.
-- The external `gxshell-cli` interface can be disabled globally, requires a local bearer token when enabled, exposes only opted-in profile aliases (never hosts, users, ports, profile IDs, or jump-host details), blocks dangerous commands and sensitive paths with diagnostic reason/detail fields, and requires native confirmation for anything that is not a simple read-only command. Nearby requests for the same alias are batched into one native prompt.
+- The external `gxshell-cli` interface can be disabled globally, requires a local bearer token when enabled, exposes only opted-in profile aliases (never hosts, users, ports, profile IDs, or jump-host details), and blocks dangerous commands and sensitive paths with diagnostic reason/detail fields. It requires native confirmation for anything that is not a simple read-only command by default; individual profiles can receive 1/4/8/24-hour full-trust windows for unattended commands. Remote copies require trust at both endpoints, while secret changes and tunnels always prompt. Hard blocks remain a limited last line of defence, not a sandbox.
 - CLI commands run through gxShell-managed SSH sessions. Existing sessions may be reused, but each command uses a separate short-lived SSH exec channel rather than typing into the interactive terminal.
 - Logs redact common secret fields and avoid persisting AI message content previews.
 - Registered named secrets are stored in the OS credential store (or encrypted fallback), injected only at the execution boundary, and removed from captured output by exact-value redaction.
@@ -200,7 +200,7 @@ go build -o gxshell-cli.exe .\cmd\gxshell-cli
 5. Create a GitHub release with the built executables as assets:
 
 ```powershell
-gh release create v1.5.0 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.5.0" --notes-file .\release-notes.md
+gh release create v1.5.1 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.5.1" --notes-file .\release-notes.md
 ```
 
 Use release notes that describe behavior and fixes only. Do not include local paths, tokens, API keys, server addresses, private hostnames, or log output.
@@ -289,7 +289,7 @@ gxShell 是一个基于 Wails v2、Go 和 React 构建的 Windows 桌面 SSH 工
 - 旧版本明文 profile 密钥会在启动时迁移。
 - AI 工具调用由后端登记，短时间后过期，只能使用一次，并且在执行命令或读取远程文件前需要原生确认。多个待处理 AI 工具可以一起批准，批准后的独立命令可并行执行。
 - AI 工具会阻止危险命令和敏感远程路径。
-- 外部 `gxshell-cli` 接口可全局关闭；启用时需要本地 bearer token，只暴露已授权的 profile alias，不暴露主机、用户名、端口、profile ID 或跳板机细节；会阻止危险命令和敏感路径，并返回诊断用的原因/详情字段；除简单只读命令外都需要原生确认。针对同一 alias 的邻近请求会合并到一个原生确认窗口中。
+- 外部 `gxshell-cli` 接口可全局关闭；启用时需要本地 bearer token，只暴露已授权的 profile alias，不暴露主机、用户名、端口、profile ID 或跳板机细节；会阻止危险命令和敏感路径，并返回诊断用的原因/详情字段。默认情况下，除简单只读命令外都需要原生确认；单个 Profile 可开启 1/4/8/24 小时的限时完全信任。远程复制要求两端都在信任期，secret 变更和隧道始终确认。硬拦截只是有限的最后防线，不是沙箱。
 - CLI 命令通过 gxShell 管理的 SSH 会话执行。已有会话可能被复用，但每个命令会使用独立的短生命周期 SSH exec channel，而不是输入到交互式终端中。
 - 日志会脱敏常见密钥字段，并避免持久化 AI 消息内容预览。
 - 已登记的命名秘密存储在系统凭据库（或加密 fallback）中，只在执行边界注入，并按真实值从捕获输出中脱敏。
@@ -419,7 +419,7 @@ go build -o gxshell-cli.exe .\cmd\gxshell-cli
 5. 创建 GitHub release，并把构建出的可执行文件作为资产上传：
 
 ```powershell
-gh release create v1.5.0 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.5.0" --notes-file .\release-notes.md
+gh release create v1.5.1 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.5.1" --notes-file .\release-notes.md
 ```
 
 Release notes 只应描述行为和修复。不要包含本地路径、token、API key、服务器地址、私有主机名或日志输出。

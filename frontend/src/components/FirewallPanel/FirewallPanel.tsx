@@ -199,33 +199,38 @@ export function FirewallPanel(props: {
     }
     setToggling(true);
     try {
-      await SetFirewallEnabled(props.active.id, true, false);
+      const result = await SetFirewallEnabled(props.active.id, true, false);
+      if (result.status?.backend) setStatus(result.status);
       onNotifyRef.current(
-        t(lang, "fwEnabledNotice", { port: String(status.sshPort) }),
-        "success",
+        result.verified
+          ? t(lang, "fwEnabledNotice", { port: String(result.status.sshPort || status.sshPort) })
+          : (lang === "zh-CN" ? `启用命令已执行，但回读未确认：${result.verification}` : `Enable command completed but did not verify: ${result.verification}`),
+        result.verified ? "success" : "error",
       );
-      await refresh();
     } catch (err) {
       onNotifyRef.current(String(err), "error");
     } finally {
       setToggling(false);
     }
-  }, [props.active?.id, status, refresh, lang]);
+  }, [props.active?.id, status, lang]);
 
   const confirmDisable = useCallback(async () => {
     if (!props.active?.id) return;
     setDialog(null);
     setToggling(true);
     try {
-      await SetFirewallEnabled(props.active.id, false, true);
-      onNotifyRef.current(t(lang, "fwDisabledNotice"), "success");
-      await refresh();
+      const result = await SetFirewallEnabled(props.active.id, false, true);
+      if (result.status?.backend) setStatus(result.status);
+      onNotifyRef.current(
+        result.verified ? t(lang, "fwDisabledNotice") : (lang === "zh-CN" ? `停用命令已执行，但回读未确认：${result.verification}` : `Disable command completed but did not verify: ${result.verification}`),
+        result.verified ? "success" : "error",
+      );
     } catch (err) {
       onNotifyRef.current(String(err), "error");
     } finally {
       setToggling(false);
     }
-  }, [props.active?.id, refresh, lang]);
+  }, [props.active?.id, lang]);
 
   const deleteRuleGroup = useCallback(
     async (group: FirewallRuleGroup, force: boolean) => {
@@ -236,16 +241,20 @@ export function FirewallPanel(props: {
         // UFW indices shift after deletion, so remove numbered members from
         // highest to lowest. firewalld rules use index -1 and are raw-addressed.
         const ordered = [...group.rules].sort((a, b) => b.index - a.index);
+        let lastResult: types.FirewallActionResult | null = null;
         for (const rule of ordered) {
-          await DeleteFirewallRule(
+          lastResult = await DeleteFirewallRule(
             props.active.id,
             rule.index,
             rule.raw,
             force,
           );
         }
-        onNotifyRef.current(t(lang, "fwRuleDeleted"), "success");
-        await refresh();
+        if (lastResult?.status?.backend) setStatus(lastResult.status);
+        onNotifyRef.current(
+          lastResult?.verified ? t(lang, "fwRuleDeleted") : (lang === "zh-CN" ? `删除命令已执行，但回读未确认：${lastResult?.verification || "unknown"}` : `Delete command completed but did not verify: ${lastResult?.verification || "unknown"}`),
+          lastResult?.verified ? "success" : "error",
+        );
       } catch (err) {
         const msg = String(err);
         // Backend refuses to drop a rule covering the SSH port without force;
@@ -264,7 +273,7 @@ export function FirewallPanel(props: {
         setBusyRule(null);
       }
     },
-    [props.active?.id, status, refresh, lang],
+    [props.active?.id, status, lang],
   );
 
   // Every delete is two-step (arm, then execute). Rules covering the SSH port
@@ -308,7 +317,7 @@ export function FirewallPanel(props: {
       }
       setSubmitting(true);
       try {
-        await AddFirewallRule(
+        const result = await AddFirewallRule(
           props.active.id,
           form.action,
           port,
@@ -316,9 +325,12 @@ export function FirewallPanel(props: {
           form.source.trim(),
           force,
         );
-        onNotifyRef.current(t(lang, "fwRuleAdded"), "success");
+        if (result.status?.backend) setStatus(result.status);
+        onNotifyRef.current(
+          result.verified ? t(lang, "fwRuleAdded") : (lang === "zh-CN" ? `添加命令已执行，但回读未确认：${result.verification}` : `Add command completed but did not verify: ${result.verification}`),
+          result.verified ? "success" : "error",
+        );
         setForm((prev) => ({ ...prev, port: "", source: "" }));
-        await refresh();
       } catch (err) {
         const msg = String(err);
         if (!force && /force/i.test(msg)) {
@@ -330,7 +342,7 @@ export function FirewallPanel(props: {
         setSubmitting(false);
       }
     },
-    [props.active?.id, status, form, refresh, lang],
+    [props.active?.id, status, form, lang],
   );
 
   if (!props.active?.id) {

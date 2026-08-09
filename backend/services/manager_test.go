@@ -117,6 +117,31 @@ bad.service nope 10`)
 	if services[1].CPUPercent != 0 || services[1].MemoryBytes != 0 {
 		t.Fatalf("missing usage should stay zero: %+v", services[1])
 	}
+	// A unit absent from a usable snapshot is measured-at-zero, not unmeasured:
+	// the snapshot accounted for the host, that unit just has no processes.
+	if !services[0].ResourceStats || !services[1].ResourceStats {
+		t.Errorf("a usable snapshot must mark every unit measured: %+v, %+v", services[0], services[1])
+	}
+}
+
+// A host whose ps cannot report the systemd unit column yields nothing usable.
+// Leaving ResourceStats false is what stops the UI claiming every service is
+// idle at 0.0% / 0 MB.
+func TestMergeResourceUsageLeavesStatsUnsetWhenUnavailable(t *testing.T) {
+	// What BusyBox-style output looks like to the parser: no line has the three
+	// fields it needs, so nothing is accounted for.
+	usage := parseResourceUsage("  PID TTY          TIME CMD\n 1234 ?        00:00:01 sshd")
+	if len(usage) != 0 {
+		t.Fatalf("unrecognised ps output should yield no usage, got %+v", usage)
+	}
+
+	services := []types.ServiceInfo{{Name: "nginx.service"}, {Name: "ssh.service"}}
+	mergeResourceUsage(services, usage)
+	for _, service := range services {
+		if service.ResourceStats {
+			t.Errorf("%s must be reported as unmeasured", service.Name)
+		}
+	}
 }
 
 func TestSanitizeUnit(t *testing.T) {
@@ -188,6 +213,29 @@ func TestServiceActionValidation(t *testing.T) {
 	// Non-destructive actions on critical units need no force gate.
 	if !isCriticalUnit("ssh.service") || isCriticalUnit("nginx.service") {
 		t.Fatal("isCriticalUnit misclassifies units")
+	}
+}
+
+func TestVerifyServiceActionResultUsesActionSpecificState(t *testing.T) {
+	tests := []struct {
+		name   string
+		result types.ServiceActionResult
+		want   bool
+	}{
+		{"restart running", types.ServiceActionResult{Action: "restart", ActiveState: "active", SubState: "running"}, true},
+		{"restart failed", types.ServiceActionResult{Action: "restart", ActiveState: "failed", SubState: "failed", Result: "exit-code", ExecMainStatus: 1}, false},
+		{"oneshot completed", types.ServiceActionResult{Action: "start", ActiveState: "inactive", SubState: "dead", Result: "success", ExecMainStatus: 0}, true},
+		{"enabled", types.ServiceActionResult{Action: "enable", UnitFileState: "enabled"}, true},
+		{"enable mismatch", types.ServiceActionResult{Action: "enable", UnitFileState: "disabled"}, false},
+		{"stopped", types.ServiceActionResult{Action: "stop", ActiveState: "inactive", SubState: "dead"}, true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, _ := verifyServiceActionResult(test.result)
+			if got != test.want {
+				t.Fatalf("verified=%t, want %t", got, test.want)
+			}
+		})
 	}
 }
 

@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Circle, Columns2, FileText, PanelLeft, Plus, Radio, RefreshCw, Rows2, Server, Terminal, X } from "lucide-react";
+import { ChevronDown, Circle, Columns2, FileText, List, PanelLeft, Plus, Radio, RefreshCw, Rows2, Server, Terminal, X } from "lucide-react";
 import type { AutomationIndicator, SplitDirection, Tab } from "../../types";
 import { stateClass } from "../../utils/format";
 import { types } from "../../../wailsjs/go/models";
@@ -20,21 +20,69 @@ export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSi
   const dragStateRef = useRef(dragState);
   dragStateRef.current = dragState;
 
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
+  const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const newMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const tabsMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const tabsScrollRef = useRef<HTMLDivElement>(null);
   const profileByID = useMemo(() => new Map(profiles.map((profile) => [profile.id, profile])), [profiles]);
   const dirtySet = useMemo(() => new Set(dirtyTabIds || []), [dirtyTabIds]);
 
   useEffect(() => {
-    if (!menuOpen) return;
+    if (!newMenuOpen && !tabsMenuOpen) return;
     const close = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
+      if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) {
+        setNewMenuOpen(false);
+        setTabsMenuOpen(false);
       }
     };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      const returnFocus = tabsMenuOpen ? tabsMenuButtonRef.current : newMenuButtonRef.current;
+      setNewMenuOpen(false);
+      setTabsMenuOpen(false);
+      window.requestAnimationFrame(() => returnFocus?.focus());
+    };
     window.addEventListener("click", close);
-    return () => window.removeEventListener("click", close);
-  }, [menuOpen]);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [newMenuOpen, tabsMenuOpen]);
+
+  useEffect(() => {
+    const host = tabsScrollRef.current;
+    if (!host || !activeTab) return;
+    const activeElement = Array.from(host.querySelectorAll<HTMLElement>(".tab[data-tab-id]"))
+      .find((element) => element.dataset.tabId === activeTab);
+    activeElement?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeTab, tabs.length]);
+
+  const activateTabByIndex = useCallback((index: number) => {
+    const tab = tabs[index];
+    if (!tab) return;
+    onActive(tab.id);
+    window.requestAnimationFrame(() => {
+      const host = tabsScrollRef.current;
+      const target = Array.from(host?.querySelectorAll<HTMLButtonElement>(".tab-main") || [])
+        .find((element) => element.closest<HTMLElement>(".tab")?.dataset.tabId === tab.id);
+      target?.focus();
+    });
+  }, [onActive, tabs]);
+
+  const onTabKeyDown = useCallback((event: React.KeyboardEvent, index: number) => {
+    let nextIndex = -1;
+    if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
+    if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = tabs.length - 1;
+    if (nextIndex < 0) return;
+    event.preventDefault();
+    activateTabByIndex(nextIndex);
+  }, [activateTabByIndex, tabs.length]);
 
   const onTabMouseDown = useCallback((e: React.MouseEvent, tab: Tab) => {
     if (e.button !== 0) return;
@@ -98,10 +146,10 @@ export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSi
   return (
     <div className="tabbar" data-dragging={dragState ? "true" : "false"}>
       {sidebarCollapsed && (
-        <button className="tab-action sidebar-reveal" onClick={onToggleSidebar} title={t(lang, "showSidebar")}><PanelLeft size={14} /></button>
+        <button className="tab-action sidebar-reveal" aria-label={t(lang, "showSidebar")} onClick={onToggleSidebar} title={t(lang, "showSidebar")}><PanelLeft size={14} /></button>
       )}
-      <div className="tabs-scroll">
-        {tabs.map((tab) => {
+      <div className="tabs-scroll" ref={tabsScrollRef} role="tablist" aria-label={lang === "zh-CN" ? "打开的标签" : "Open tabs"}>
+        {tabs.map((tab, index) => {
           const profile = profileByID.get(tab.profileId);
           const automation = automationActivity?.[tab.id];
           const full = profile ? `${profile.username}@${profile.host}:${profile.port}` : tab.title;
@@ -109,44 +157,66 @@ export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSi
           const isDragging = dragState?.draggedId === tab.id;
           const isDragOver = dragState?.overId === tab.id;
           return (
-            <button key={tab.id} data-tab-id={tab.id} title={tooltip} className={clsx("tab", activeTab === tab.id && "tab-active", automation && "tab-automation", isDragging && "tab-dragging", isDragOver && "tab-drag-over")} onClick={() => onActive(tab.id)} onMouseDown={(e) => onTabMouseDown(e, tab)}>
-              {tab.type === "markdown" ? <FileText size={12} className="text-accent opacity-70 shrink-0" /> : tab.local ? <Terminal size={12} className="text-accent opacity-70 shrink-0" /> : <span className={clsx("status-dot", stateClass(tab.state))} />}
-              <span className="max-w-[180px] truncate">{tab.title}</span>
-              {dirtySet.has(tab.id) && <span className="tab-dirty-dot" title={lang === "zh-CN" ? "未保存" : "Unsaved"} />}
-              {automation && <span className={clsx("automation-badge tab-automation-badge", `automation-${automation.source}`, automation.phase === "started" && "automation-running", automation.phase === "failed" && "automation-failed")}>{automation.source.toUpperCase()}</span>}
-              <X size={14} onClick={(e) => { e.stopPropagation(); onClose(tab.id); }} />
-            </button>
+            <div key={tab.id} data-tab-id={tab.id} title={tooltip} className={clsx("tab", activeTab === tab.id && "tab-active", automation && "tab-automation", isDragging && "tab-dragging", isDragOver && "tab-drag-over")} onMouseDown={(e) => onTabMouseDown(e, tab)}>
+              <button className="tab-main" role="tab" aria-selected={activeTab === tab.id} aria-label={tab.title} tabIndex={activeTab === tab.id ? 0 : -1} onClick={() => onActive(tab.id)} onKeyDown={(event) => onTabKeyDown(event, index)}>
+                {tab.type === "markdown" ? <FileText size={12} className="text-accent opacity-70 shrink-0" /> : tab.local ? <Terminal size={12} className="text-accent opacity-70 shrink-0" /> : <span className={clsx("status-dot", stateClass(tab.state))} />}
+                <span className="tab-title">{tab.title}</span>
+                {dirtySet.has(tab.id) && <span className="tab-dirty-dot" title={lang === "zh-CN" ? "未保存" : "Unsaved"} />}
+                {automation && <span className={clsx("automation-badge tab-automation-badge", `automation-${automation.source}`, automation.phase === "started" && "automation-running", automation.phase === "failed" && "automation-failed")}>{automation.source.toUpperCase()}</span>}
+              </button>
+              <button className="tab-close" tabIndex={activeTab === tab.id ? 0 : -1} aria-label={`${t(lang, "close")} ${tab.title}`} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onClose(tab.id); }}><X size={13} /></button>
+            </div>
           );
         })}
       </div>
-      <div className="tab-actions">
-        <div className="relative" ref={menuRef}>
-          <button className="tab-action" onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }} title={t(lang, "new")}>
+      <div className="tab-actions" ref={actionsRef}>
+        {tabs.length > 1 && <div className="relative">
+          <button ref={tabsMenuButtonRef} className="tab-action" aria-label={lang === "zh-CN" ? "全部标签" : "All tabs"} aria-haspopup="menu" aria-expanded={tabsMenuOpen} onClick={(event) => { event.stopPropagation(); setNewMenuOpen(false); setTabsMenuOpen((value) => !value); }} title={lang === "zh-CN" ? "全部标签" : "All tabs"}>
+            <List size={14} />
+          </button>
+          {tabsMenuOpen && <div className="tab-action-dropdown tab-overflow-dropdown" role="menu" onClick={(event) => event.stopPropagation()}>
+            <div className="tab-overflow-heading">{lang === "zh-CN" ? `${tabs.length} 个标签` : `${tabs.length} tabs`}</div>
+            <div className="tab-overflow-list">
+              {tabs.map((tab) => (
+                <div key={tab.id} className={clsx("tab-overflow-row", activeTab === tab.id && "active")}>
+                  <button className="tab-overflow-main" role="menuitem" onClick={() => { onActive(tab.id); setTabsMenuOpen(false); }}>
+                    {tab.type === "markdown" ? <FileText size={12} /> : tab.local ? <Terminal size={12} /> : <span className={clsx("status-dot", stateClass(tab.state))} />}
+                    <span>{tab.title}</span>
+                    {dirtySet.has(tab.id) && <span className="tab-dirty-dot" />}
+                  </button>
+                  <button className="tab-overflow-close" aria-label={`${t(lang, "close")} ${tab.title}`} onClick={() => onClose(tab.id)}><X size={12} /></button>
+                </div>
+              ))}
+            </div>
+          </div>}
+        </div>}
+        <div className="relative">
+          <button ref={newMenuButtonRef} className="tab-action" aria-label={t(lang, "new")} aria-haspopup="menu" aria-expanded={newMenuOpen} onClick={(e) => { e.stopPropagation(); setTabsMenuOpen(false); setNewMenuOpen((v) => !v); }} title={t(lang, "new")}>
             <Plus size={14} />
             <ChevronDown size={10} className="opacity-50 ml-px" />
           </button>
-          {menuOpen && (
-            <div className="tab-action-dropdown" onClick={(e) => e.stopPropagation()}>
-              <button className="tab-action-item" onClick={() => { setMenuOpen(false); onNewConnection?.(); }}>
+          {newMenuOpen && (
+            <div className="tab-action-dropdown" role="menu" onClick={(e) => e.stopPropagation()}>
+              <button className="tab-action-item" role="menuitem" onClick={() => { setNewMenuOpen(false); onNewConnection?.(); }}>
                 <Server size={12} />
                 {t(lang, "sshConnection")}
               </button>
-              <button className="tab-action-item" onClick={() => { setMenuOpen(false); onNewLocal?.(); }}>
+              <button className="tab-action-item" role="menuitem" onClick={() => { setNewMenuOpen(false); onNewLocal?.(); }}>
                 <Terminal size={12} />
                 {t(lang, "localTerminal")}
               </button>
-              <button className="tab-action-item" onClick={() => { setMenuOpen(false); onOpenMarkdown?.(); }}>
+              <button className="tab-action-item" role="menuitem" onClick={() => { setNewMenuOpen(false); onOpenMarkdown?.(); }}>
                 <FileText size={12} />
                 {t(lang, "openTextFile")}
               </button>
             </div>
           )}
         </div>
-        <button className="tab-action" disabled={!active || tabs.length < 2} onClick={() => active && onSplitToggle?.(active.id, "horizontal")} title={t(lang, "splitHorizontal")}><Columns2 size={14} /></button>
-        <button className="tab-action" disabled={!active || tabs.length < 2} onClick={() => active && onSplitToggle?.(active.id, "vertical")} title={t(lang, "splitVertical")}><Rows2 size={14} /></button>
-        <button className={clsx("tab-action", broadcastInput && "tab-action-on")} disabled={!broadcastAvailable && !broadcastInput} onClick={() => onToggleBroadcast?.()} title={t(lang, "broadcastToggle")}><Radio size={14} /></button>
-        <button className={clsx("tab-action", recording && "tab-action-rec")} disabled={!active || active.local || active.type === "markdown" || active.state !== "connected"} onClick={() => active && onToggleRecording?.(active.id)} title={t(lang, recording ? "stopRecording" : "startRecording")}><Circle size={14} fill={recording ? "currentColor" : "none"} /></button>
-        <button className="tab-action" disabled={!active || active.local || active.type === "markdown"} onClick={() => active && onReconnect(active)} title={t(lang, "reconnect")}><RefreshCw size={14} /></button>
+        <button className="tab-action" aria-label={t(lang, "splitHorizontal")} disabled={!active || tabs.length < 2} onClick={() => active && onSplitToggle?.(active.id, "horizontal")} title={t(lang, "splitHorizontal")}><Columns2 size={14} /></button>
+        <button className="tab-action" aria-label={t(lang, "splitVertical")} disabled={!active || tabs.length < 2} onClick={() => active && onSplitToggle?.(active.id, "vertical")} title={t(lang, "splitVertical")}><Rows2 size={14} /></button>
+        <button className={clsx("tab-action", broadcastInput && "tab-action-on")} aria-label={t(lang, "broadcastToggle")} disabled={!broadcastAvailable && !broadcastInput} onClick={() => onToggleBroadcast?.()} title={t(lang, "broadcastToggle")}><Radio size={14} /></button>
+        <button className={clsx("tab-action", recording && "tab-action-rec")} aria-label={t(lang, recording ? "stopRecording" : "startRecording")} disabled={!active || active.local || active.type === "markdown" || active.state !== "connected"} onClick={() => active && onToggleRecording?.(active.id)} title={t(lang, recording ? "stopRecording" : "startRecording")}><Circle size={14} fill={recording ? "currentColor" : "none"} /></button>
+        <button className="tab-action" aria-label={t(lang, "reconnect")} disabled={!active || active.local || active.type === "markdown"} onClick={() => active && onReconnect(active)} title={t(lang, "reconnect")}><RefreshCw size={14} /></button>
       </div>
     </div>
   );

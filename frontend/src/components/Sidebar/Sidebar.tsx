@@ -12,6 +12,7 @@ import { MonitorPanel } from "../MonitorPanel/MonitorPanel";
 import { NetworkPathCard } from "../NetworkPathCard/NetworkPathCard";
 import { MemoryCard } from "../MemoryCard/MemoryCard";
 import { MonitorDetailCard, type MonitorDetailKind } from "../MonitorDetailCard/MonitorDetailCard";
+import { CliTrustIndicator } from "../CliTrustIndicator/CliTrustIndicator";
 
 type FloatKey = "path" | "memory" | MonitorDetailKind;
 type PrimaryNav = "connections" | "files" | "tools";
@@ -72,6 +73,8 @@ export function Sidebar(props: {
   onEditProfile: (profile: types.Profile) => void;
   onConnectProfile: (profile: types.Profile) => void;
   onToggleFavorite: (profile: types.Profile) => void;
+  revokingCliTrustID?: string;
+  onRevokeCliTrust?: (profileID: string) => void;
   onDeleteProfile: (id: string) => void;
   onImportProfiles: () => void;
   onImportOpenSSH: () => void;
@@ -87,7 +90,8 @@ export function Sidebar(props: {
   onEditCommand: (command: types.CommandTemplate) => void;
   onDeleteCommand: (id: string) => void;
   onNewCommand: () => void;
-  onSaveSettings: (settings: types.AppSettings) => void;
+  onSaveSettings: (settings: types.AppSettings) => void | Promise<void>;
+  onSettingsDirtyChange?: (dirty: boolean, save: () => Promise<boolean>) => void;
   onOpenData: () => void;
   onOpenLog: (name: string) => void;
   getTerminalLines: (id: string, lineCount: number) => string;
@@ -301,23 +305,33 @@ export function Sidebar(props: {
                       ? (lang === "zh-CN" ? "连接错误" : "Connection error")
                       : (lang === "zh-CN" ? "未连接" : "Not connected");
                 return (
-                <div key={profile.id} className={clsx("server-row group", automation && "server-row-automation")} onDoubleClick={() => props.onConnectProfile(profile)}>
-                  <div className="server-row-main">
+                <div key={profile.id} className={clsx("server-row group", automation && "server-row-automation")}>
+                  <button type="button" className="server-row-main" aria-label={`${t(lang, "connect")} ${profile.name || profile.host}, ${statusLabel}`} onClick={() => props.onConnectProfile(profile)}>
                     <span className="server-avatar" title={session ? `${statusLabel} · ${session.count} ${lang === "zh-CN" ? "个会话" : (session.count === 1 ? "session" : "sessions")}${session.error ? ` · ${session.error}` : ""}` : statusLabel}><Server size={13} /><span className={clsx("status-dot", stateClass(session?.state || "disconnected"))} /></span>
                     <div className="server-row-text">
                       <div className="server-title-line">
-                        <div className="server-title">{profile.name || profile.host}</div>
+                        <div className="server-title-group">
+                          <div className="server-title">{profile.name || profile.host}</div>
+                        </div>
                         {!!session?.count && <span className="server-session-count" title={statusLabel}>{session.count}</span>}
                         {automation && <span className={clsx("automation-badge", `automation-${automation.source}`, automation.phase === "started" && "automation-running", automation.phase === "failed" && "automation-failed")}>{automation.source.toUpperCase()}</span>}
                       </div>
                       <div className="server-subtitle">{profile.username}@{profile.host}:{profile.port}{profile.proxyJumpId && <ArrowUpRight size={10} className="inline ml-1 opacity-50" />}</div>
                     </div>
-                  </div>
+                  </button>
+                  {props.onRevokeCliTrust && (
+                    <CliTrustIndicator
+                      profile={profile}
+                      locale={lang}
+                      revoking={props.revokingCliTrustID === profile.id}
+                      onRevoke={props.onRevokeCliTrust}
+                    />
+                  )}
                   <div className="row-actions">
-                    <button className={clsx("mini-btn", profile.favorite && "favorite-active")} onClick={(event) => { event.stopPropagation(); props.onToggleFavorite(profile); }} title={profile.favorite ? t(lang, "removeFavorite") : t(lang, "addFavorite")}><Star size={12} fill={profile.favorite ? "currentColor" : "none"} /></button>
-                    <button className="mini-btn" onClick={() => props.onConnectProfile(profile)} title={t(lang, "connect")}><Play size={13} /></button>
-                    <button className="mini-btn" onClick={() => props.onEditProfile(profile)} title={t(lang, "editServer")}><Edit3 size={13} /></button>
-                    <button className="mini-btn danger" onClick={(e) => { e.stopPropagation(); props.onDeleteProfile(profile.id); }} title={t(lang, "delete")}><Trash2 size={12} /></button>
+                    <button className={clsx("mini-btn", profile.favorite && "favorite-active")} aria-label={profile.favorite ? t(lang, "removeFavorite") : t(lang, "addFavorite")} onClick={(event) => { event.stopPropagation(); props.onToggleFavorite(profile); }} title={profile.favorite ? t(lang, "removeFavorite") : t(lang, "addFavorite")}><Star size={12} fill={profile.favorite ? "currentColor" : "none"} /></button>
+                    <button className="mini-btn" aria-label={`${t(lang, "connect")} ${profile.name || profile.host}`} onClick={() => props.onConnectProfile(profile)} title={t(lang, "connect")}><Play size={13} /></button>
+                    <button className="mini-btn" aria-label={`${t(lang, "editServer")} ${profile.name || profile.host}`} onClick={() => props.onEditProfile(profile)} title={t(lang, "editServer")}><Edit3 size={13} /></button>
+                    <button className="mini-btn danger" aria-label={`${t(lang, "delete")} ${profile.name || profile.host}`} onClick={(e) => { e.stopPropagation(); props.onDeleteProfile(profile.id); }} title={t(lang, "delete")}><Trash2 size={12} /></button>
                   </div>
                 </div>
                 );
@@ -358,7 +372,7 @@ export function Sidebar(props: {
           </>
         )}
 
-        {activePrimary !== "connections" && props.drawer !== "ai" && <div className="tool-body-full" key={`${activePrimary}-${props.drawer}-${fileMode}`}><Suspense fallback={<DrawerFallback />}>
+        {activePrimary !== "connections" && props.drawer !== "ai" && <div className={clsx("tool-body-full", props.drawer === "settings" && "settings-host")} key={`${activePrimary}-${props.drawer}-${fileMode}`}><Suspense fallback={<DrawerFallback />}>
           {props.drawer === "sftp" && (
             <div className="file-workspace">
               <div className="file-workspace-bar">
@@ -399,9 +413,9 @@ export function Sidebar(props: {
                     </div>
 
                     {!!props.markdownSiblings?.length && (
-                      <section className="text-file-section">
+                      <section className="text-file-section text-file-section-current">
                         <div className="text-file-section-title">{lang === "zh-CN" ? "当前目录" : "Current folder"}<span>{props.markdownSiblings.length}</span></div>
-                        <div className="text-file-list">
+                        <div className="text-file-list text-file-list-scroll">
                           {props.markdownSiblings.map((file) => {
                             const isActive = props.active?.type === "markdown" && (props.active.filePath === file || props.active.remotePath === file);
                             return (
@@ -459,7 +473,7 @@ export function Sidebar(props: {
               </div>
             </>
           )}
-          {props.drawer === "settings" && props.settings && <SettingsPanel settings={props.settings} language={lang} onSave={props.onSaveSettings} onOpenData={props.onOpenData} dataDir={props.appInfo.dataDir || ""} onNotify={props.onNotify} />}
+          {props.drawer === "settings" && props.settings && <SettingsPanel settings={props.settings} language={lang} onSave={props.onSaveSettings} onOpenData={props.onOpenData} dataDir={props.appInfo.dataDir || ""} onNotify={props.onNotify} onDirtyChange={props.onSettingsDirtyChange} />}
         </Suspense></div>}
         {aiMounted && (
           <div className="tool-body-full ai-persistent-host" style={{ display: props.drawer === "ai" ? undefined : "none" }}>

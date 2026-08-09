@@ -86,7 +86,7 @@ export function GlobalSearchModal({
   };
 
   return (
-    <ModalShell onClose={onClose} palette>
+    <ModalShell onClose={onClose} palette ariaLabel={t(locale, "search")}>
       <div className="cmdk" onKeyDown={onKeyDown}>
         <div className="cmdk-search">
           <Search size={18} className="cmdk-search-icon" />
@@ -189,7 +189,7 @@ export function TerminalSearchModal({
     : "";
 
   return (
-    <ModalShell onClose={onClose} palette compact>
+    <ModalShell onClose={onClose} palette compact ariaLabel={t(locale, "findInCurrentTerminal")}>
       <div className="cmdk cmdk-find">
         <div className="cmdk-search">
           <Search size={16} className="cmdk-search-icon" />

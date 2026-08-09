@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -24,6 +25,12 @@ func writeSettingsJSON(t *testing.T, s *Store, raw string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(s.dir, "settings.json"), []byte(raw), 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDefaultSettingsDoesNotRestoreWorkspace(t *testing.T) {
+	if DefaultSettings().RestoreWorkspace {
+		t.Fatal("workspace restore must remain opt-in")
 	}
 }
 
@@ -122,6 +129,40 @@ func TestMigrateSettingsDefaultsPreservesExplicitFalse(t *testing.T) {
 	}
 }
 
+func TestMigrateSettingsDefaultsBackfillsNestedTerminalFields(t *testing.T) {
+	s := newTestStore(t)
+	writeSettingsJSON(t, s, `{
+		"themeName":"Dark",
+		"cliServerEnabled":true,
+		"smartHighlight":true,
+		"updateCheckEnabled":true,
+		"terminal":{"fontSize":16,"cursorBlink":false}
+	}`)
+
+	s.MigrateSettingsDefaults()
+
+	got, err := s.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	def := DefaultSettings()
+	if got.Terminal.FontSize != 16 {
+		t.Fatalf("explicit terminal.fontSize overwritten: got %d", got.Terminal.FontSize)
+	}
+	if got.Terminal.CursorBlink {
+		t.Fatal("explicit terminal.cursorBlink=false overwritten")
+	}
+	if got.Terminal.LineHeight != def.Terminal.LineHeight {
+		t.Fatalf("terminal.lineHeight not backfilled: got %v, want %v", got.Terminal.LineHeight, def.Terminal.LineHeight)
+	}
+	if got.Terminal.CursorStyle != def.Terminal.CursorStyle {
+		t.Fatalf("terminal.cursorStyle not backfilled: got %q, want %q", got.Terminal.CursorStyle, def.Terminal.CursorStyle)
+	}
+	if got.Terminal.ScrollbackLines != def.Terminal.ScrollbackLines {
+		t.Fatalf("terminal.scrollbackLines not backfilled: got %d, want %d", got.Terminal.ScrollbackLines, def.Terminal.ScrollbackLines)
+	}
+}
+
 func readBoolField(t *testing.T, s *Store, key string) (value bool, present bool) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(s.dir, "settings.json"))
@@ -199,6 +240,174 @@ func TestSaveAndGetSettingsRoundTripCliFlag(t *testing.T) {
 	}
 	if got.CliServerEnabled {
 		t.Fatal("CliServerEnabled should persist as false")
+	}
+}
+
+func TestSettingsLineHeightNormalization(t *testing.T) {
+	tests := []struct {
+		name  string
+		value float64
+		want  float64
+	}{
+		{name: "minimum", value: 1, want: 1},
+		{name: "middle", value: 1.75, want: 1.75},
+		{name: "maximum", value: 2.5, want: 2.5},
+		{name: "zero", value: 0, want: 1.25},
+		{name: "below minimum", value: 0.99, want: 1.25},
+		{name: "negative", value: -1, want: 1.25},
+		{name: "above maximum", value: 2.51, want: 1.25},
+		{name: "nan", value: math.NaN(), want: 1.25},
+		{name: "positive infinity", value: math.Inf(1), want: 1.25},
+		{name: "negative infinity", value: math.Inf(-1), want: 1.25},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			settings := DefaultSettings()
+			settings.Terminal.LineHeight = tc.value
+			if err := s.SaveSettings(settings); err != nil {
+				t.Fatal(err)
+			}
+			got, err := s.GetSettings()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Terminal.LineHeight != tc.want {
+				t.Fatalf("lineHeight=%v, want %v", got.Terminal.LineHeight, tc.want)
+			}
+		})
+	}
+}
+
+func TestSettingsFontSizeNormalization(t *testing.T) {
+	tests := []struct {
+		name  string
+		value int
+		want  int
+	}{
+		{name: "minimum", value: 9, want: 9},
+		{name: "middle", value: 16, want: 16},
+		{name: "maximum", value: 30, want: 30},
+		{name: "zero", value: 0, want: 14},
+		{name: "below minimum", value: 8, want: 14},
+		{name: "negative", value: -1, want: 14},
+		{name: "above maximum", value: 31, want: 14},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			settings := DefaultSettings()
+			settings.Terminal.FontSize = tc.value
+			if err := s.SaveSettings(settings); err != nil {
+				t.Fatal(err)
+			}
+			got, err := s.GetSettings()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Terminal.FontSize != tc.want {
+				t.Fatalf("fontSize=%d, want %d", got.Terminal.FontSize, tc.want)
+			}
+		})
+	}
+}
+
+func TestSettingsScrollbackNormalization(t *testing.T) {
+	tests := []struct {
+		name  string
+		value int
+		want  int
+	}{
+		{name: "minimum", value: 500, want: 500},
+		{name: "middle", value: 12000, want: 12000},
+		{name: "maximum", value: 200000, want: 200000},
+		{name: "zero", value: 0, want: 5000},
+		{name: "below minimum", value: 499, want: 5000},
+		{name: "negative", value: -1, want: 5000},
+		{name: "above maximum", value: 200001, want: 5000},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			settings := DefaultSettings()
+			settings.Terminal.ScrollbackLines = tc.value
+			if err := s.SaveSettings(settings); err != nil {
+				t.Fatal(err)
+			}
+			got, err := s.GetSettings()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Terminal.ScrollbackLines != tc.want {
+				t.Fatalf("scrollbackLines=%d, want %d", got.Terminal.ScrollbackLines, tc.want)
+			}
+		})
+	}
+}
+
+func TestSettingsCursorStyleNormalization(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{name: "block", value: "block", want: "block"},
+		{name: "underline", value: "underline", want: "underline"},
+		{name: "bar", value: "bar", want: "bar"},
+		{name: "empty", value: "", want: "block"},
+		{name: "unknown", value: "beam", want: "block"},
+		{name: "wrong case", value: "Bar", want: "block"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestStore(t)
+			settings := DefaultSettings()
+			settings.Terminal.CursorStyle = tc.value
+			if err := s.SaveSettings(settings); err != nil {
+				t.Fatal(err)
+			}
+			got, err := s.GetSettings()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Terminal.CursorStyle != tc.want {
+				t.Fatalf("cursorStyle=%q, want %q", got.Terminal.CursorStyle, tc.want)
+			}
+		})
+	}
+}
+
+func TestGetSettingsNormalizesHandEditedTerminalValues(t *testing.T) {
+	s := newTestStore(t)
+	writeSettingsJSON(t, s, `{
+		"terminal": {
+			"fontSize": 0,
+			"lineHeight": 0.5,
+			"scrollbackLines": 250000,
+			"cursorStyle": "beam"
+		}
+	}`)
+
+	got, err := s.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults := DefaultSettings()
+	if got.Terminal.FontSize != defaults.Terminal.FontSize {
+		t.Fatalf("fontSize=%d, want %d", got.Terminal.FontSize, defaults.Terminal.FontSize)
+	}
+	if got.Terminal.LineHeight != defaults.Terminal.LineHeight {
+		t.Fatalf("lineHeight=%v, want %v", got.Terminal.LineHeight, defaults.Terminal.LineHeight)
+	}
+	if got.Terminal.ScrollbackLines != defaults.Terminal.ScrollbackLines {
+		t.Fatalf("scrollbackLines=%d, want %d", got.Terminal.ScrollbackLines, defaults.Terminal.ScrollbackLines)
+	}
+	if got.Terminal.CursorStyle != defaults.Terminal.CursorStyle {
+		t.Fatalf("cursorStyle=%q, want %q", got.Terminal.CursorStyle, defaults.Terminal.CursorStyle)
 	}
 }
 

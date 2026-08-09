@@ -282,6 +282,21 @@
   scrollbar-color: transparent transparent;
 }
 
+/* Settings owns the only scrollport for its cards. Keeping the host itself
+   non-scrolling prevents a clipped flex child from creating two competing
+   scroll positions and leaves every control reachable inside the panel. */
+.tool-body-full.settings-host {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.tool-body-full.settings-host > .settings-page {
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+}
+
 .tool-body-full:hover,
 .tool-body-full:focus-within {
   scrollbar-color: var(--scrollbar-thumb) transparent;
@@ -458,7 +473,18 @@
   border-top: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
 }
 
-.text-file-section-grow { flex: 1; padding-bottom: 8px; }
+.text-file-section-current,
+.text-file-section-grow {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.text-file-section-current .text-file-list,
+.text-file-section-grow .text-file-list {
+  min-height: 0;
+}
+
+.text-file-section-grow { padding-bottom: 8px; }
 
 .text-file-section-title {
   display: flex;
@@ -486,8 +512,23 @@
 }
 
 .text-file-list-scroll {
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.text-file-list-scroll::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  background-clip: padding-box;
+}
+
+.text-file-list-scroll::-webkit-scrollbar-thumb:hover,
+.text-file-list-scroll::-webkit-scrollbar-thumb:active {
+  background: var(--scrollbar-thumb-strong);
+  background-clip: padding-box;
 }
 
 .text-file-row {
@@ -698,6 +739,15 @@
   flex: 1;
   align-items: center;
   gap: 9px;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.server-row-main:focus-visible {
+  border-radius: var(--radius-xs);
+  outline: 2px solid color-mix(in srgb, var(--accent) 68%, transparent);
+  outline-offset: 2px;
 }
 
 .server-row-text {
@@ -712,9 +762,39 @@
   gap: 6px;
 }
 
-.server-title-line .server-title {
+.server-title-group {
+  display: flex;
   min-width: 0;
   flex: 1;
+  align-items: center;
+  gap: 4px;
+}
+
+.server-title-group .server-title {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.server-cli-trust-indicator {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  color: var(--bad);
+  background: transparent;
+}
+
+.server-cli-trust-indicator:hover {
+  background: color-mix(in srgb, var(--bad) 13%, transparent);
+}
+
+.server-cli-trust-indicator:disabled {
+  opacity: .45;
 }
 
 .automation-badge {

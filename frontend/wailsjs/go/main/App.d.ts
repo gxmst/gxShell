@@ -4,7 +4,7 @@ import {types} from '../models';
 import {version} from '../models';
 import {sshmanager} from '../models';
 
-export function AddFirewallRule(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:boolean):Promise<void>;
+export function AddFirewallRule(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:boolean):Promise<types.FirewallActionResult>;
 
 export function AddTunnelRule(arg1:string,arg2:types.TunnelRule):Promise<types.TunnelStatus>;
 
@@ -44,7 +44,7 @@ export function DeleteCommand(arg1:string):Promise<void>;
 
 export function DeleteCronJob(arg1:string,arg2:string):Promise<void>;
 
-export function DeleteFirewallRule(arg1:string,arg2:number,arg3:string,arg4:boolean):Promise<void>;
+export function DeleteFirewallRule(arg1:string,arg2:number,arg3:string,arg4:boolean):Promise<types.FirewallActionResult>;
 
 export function DeleteProfile(arg1:string):Promise<void>;
 
@@ -57,6 +57,8 @@ export function DeleteWebsite(arg1:string,arg2:string,arg3:string,arg4:string):P
 export function Disconnect(arg1:string):Promise<void>;
 
 export function DownloadFile(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function DownloadFileWithPolicy(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
 
 export function DownloadFolder(arg1:string,arg2:string,arg3:string):Promise<void>;
 
@@ -152,6 +154,8 @@ export function ReadLocalFile(arg1:string):Promise<string>;
 
 export function ReadLocalMarkdownResourceDataURL(arg1:string,arg2:string):Promise<string>;
 
+export function ReadLocalPDFBase64(arg1:string):Promise<string>;
+
 export function ReadLogFile(arg1:string):Promise<string>;
 
 export function ReadLogs(arg1:number):Promise<Array<types.LogEntry>>;
@@ -194,6 +198,8 @@ export function RestartTunnels(arg1:string):Promise<Array<types.TunnelStatus>>;
 
 export function RestoreTextFiles(arg1:Array<string>):Promise<Array<string>>;
 
+export function RevokeCliTrust(arg1:string):Promise<void>;
+
 export function RunCronJob(arg1:string,arg2:string):Promise<string>;
 
 export function SaveAiConfig(arg1:string,arg2:string,arg3:string,arg4:string):Promise<void>;
@@ -216,13 +222,13 @@ export function SendCommandToAll(arg1:string):Promise<void>;
 
 export function SendCommandToTerminal(arg1:string,arg2:string):Promise<void>;
 
-export function ServiceAction(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
+export function ServiceAction(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<types.ServiceActionResult>;
 
 export function ServiceLogs(arg1:string,arg2:string,arg3:number):Promise<string>;
 
 export function SetCronJobEnabled(arg1:string,arg2:string,arg3:boolean):Promise<void>;
 
-export function SetFirewallEnabled(arg1:string,arg2:boolean,arg3:boolean):Promise<void>;
+export function SetFirewallEnabled(arg1:string,arg2:boolean,arg3:boolean):Promise<types.FirewallActionResult>;
 
 export function SetWebsiteEnabled(arg1:string,arg2:string,arg3:string,arg4:string,arg5:boolean):Promise<void>;
 
@@ -267,6 +273,8 @@ export function UpdateProfile(arg1:types.Profile):Promise<types.Profile>;
 export function UpdateSettings(arg1:types.AppSettings):Promise<types.AppSettings>;
 
 export function UploadFile(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function UploadFileWithPolicy(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
 
 export function WriteLocalFile(arg1:string,arg2:string):Promise<void>;
 

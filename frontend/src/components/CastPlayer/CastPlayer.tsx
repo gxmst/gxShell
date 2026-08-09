@@ -6,49 +6,9 @@ import "@xterm/xterm/css/xterm.css";
 import { types } from "../../../wailsjs/go/models";
 import { ReadRecording } from "../../../wailsjs/go/main/App";
 import { getTerminalTheme } from "../../utils/format";
+import { normalizeFontSize, normalizeLineHeight } from "../../utils/terminalSettings";
 import { t } from "../../i18n";
-
-// A parsed .cast v2 event: [relativeSeconds, code, data]. code "o" = output,
-// "r" = resize (data is "COLSxROWS").
-type CastEvent = { time: number; code: string; data: string };
-type CastHeader = { width: number; height: number; title?: string };
-const MAX_CAST_EVENTS = 250_000;
-
-// parseCast reads asciinema v2 JSON Lines: a header object on line 1, then one
-// JSON array per event. Malformed lines are skipped so a truncated recording
-// (e.g. app killed mid-session) still plays what it captured.
-function parseCast(text: string): { header: CastHeader; events: CastEvent[]; truncated: boolean } {
-  const lines = text.split("\n");
-  let header: CastHeader = { width: 80, height: 24 };
-  const events: CastEvent[] = [];
-  let truncated = false;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    if (i === 0) {
-      try {
-        const parsed = JSON.parse(line);
-        header = { width: parsed.width || 80, height: parsed.height || 24, title: parsed.title };
-      } catch {
-        // ignore a bad header; defaults are fine
-      }
-      continue;
-    }
-    try {
-      const arr = JSON.parse(line);
-      if (Array.isArray(arr) && arr.length >= 3) {
-        events.push({ time: Number(arr[0]) || 0, code: String(arr[1]), data: String(arr[2]) });
-        if (events.length >= MAX_CAST_EVENTS) {
-          truncated = true;
-          break;
-        }
-      }
-    } catch {
-      // skip malformed event line
-    }
-  }
-  return { header, events, truncated };
-}
+import { parseCast, type CastEvent } from "./castParser";
 
 const SPEEDS = [1, 2, 4, 8];
 
@@ -70,6 +30,7 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
   const [speed, setSpeed] = useState(1);
   const [elapsed, setElapsed] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [title, setTitle] = useState(name);
 
   speedRef.current = speed;
 
@@ -185,6 +146,7 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
       if (disposed) return;
       const { header, events, truncated } = parseCast(content);
       eventsRef.current = events;
+      setTitle(header.title || name);
       setDuration(events.length ? events[events.length - 1].time : 0);
       const host = hostRef.current;
       if (!host) return;
@@ -192,8 +154,8 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
         allowProposedApi: true,
         convertEol: true,
         fontFamily: settings?.terminal.fontFamily || "JetBrains Mono, Cascadia Code, Consolas, monospace",
-        fontSize: settings?.terminal.fontSize || 13.5,
-        lineHeight: settings?.terminal.lineHeight || 1.35,
+        fontSize: normalizeFontSize(settings?.terminal.fontSize),
+        lineHeight: normalizeLineHeight(settings?.terminal.lineHeight),
         cols: header.width,
         rows: header.height,
         scrollback: 5000,
@@ -203,10 +165,20 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
       });
       const fit = new FitAddon();
       term.loadAddon(fit);
-      term.open(host);
+      try {
+        term.open(host);
+      } catch (openError) {
+        term.dispose();
+        setError(String(openError));
+        return;
+      }
       termRef.current = term;
       fitRef.current = fit;
-      setReady(true);
+      requestAnimationFrame(() => {
+        if (disposed || termRef.current !== term) return;
+        try { fit.fit(); } catch {}
+        setReady(true);
+      });
       if (!events.length) setError(t(locale, "recordingEmpty"));
       else if (truncated) setError(locale === "zh-CN" ? "录制事件过多，内置播放器仅载入前 25 万条。" : "This recording has too many events; the built-in player loaded the first 250,000.");
     }).catch((err) => {
@@ -220,6 +192,28 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    const fit = fitRef.current;
+    if (!host || !fit || !ready) return;
+    let frame = 0;
+    const resize = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        try { fit.fit(); } catch {}
+      });
+    };
+    const observer = new ResizeObserver(resize);
+    observer.observe(host);
+    window.addEventListener('resize', resize);
+    resize();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', resize);
+      window.cancelAnimationFrame(frame);
+    };
+  }, [ready]);
 
   // Auto-play once ready.
   useEffect(() => {
@@ -235,8 +229,8 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
     if (!term || !settings) return;
     term.options.theme = getTerminalTheme(settings);
     term.options.fontFamily = settings.terminal.fontFamily;
-    term.options.fontSize = settings.terminal.fontSize;
-    term.options.lineHeight = settings.terminal.lineHeight;
+    term.options.fontSize = normalizeFontSize(settings.terminal.fontSize);
+    term.options.lineHeight = normalizeLineHeight(settings.terminal.lineHeight);
   }, [settings, ready]);
 
   const fmt = (s: number) => {
@@ -255,7 +249,7 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div className="cast-player" onMouseDown={(e) => e.stopPropagation()}>
         <div className="cast-player-header">
-          <span className="cast-player-title" title={name}>{name}</span>
+          <span className="cast-player-title" title={name}>{title}</span>
           <button className="mini-btn" onClick={onClose} title={t(locale, "close")}><X size={13} /></button>
         </div>
         <div className="cast-player-stage">

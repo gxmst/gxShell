@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"gxShell/backend/types"
 )
@@ -119,6 +120,9 @@ func TestMergeImportedProfilesAddsUpdatesSkipsAndStoresSecret(t *testing.T) {
 			AuthType:         types.AuthPassword,
 			Password:         "imported-secret",
 			RememberPassword: true,
+			CliEnabled:       true,
+			CliAlias:         "new-server",
+			CliTrustUntil:    time.Now().Add(12 * time.Hour),
 		}},
 	})
 	if err != nil {
@@ -142,6 +146,9 @@ func TestMergeImportedProfilesAddsUpdatesSkipsAndStoresSecret(t *testing.T) {
 	}
 	if imported.ID == "" || !imported.RememberPassword || imported.Password != "" {
 		t.Fatalf("unexpected imported profile metadata: %+v", imported)
+	}
+	if !imported.CliTrustUntil.IsZero() {
+		t.Fatalf("imported profile retained unsafe trust deadline: %s", imported.CliTrustUntil)
 	}
 	password, err := app.secrets.GetPassword(imported.ID)
 	if err != nil {

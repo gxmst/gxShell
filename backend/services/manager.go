@@ -117,6 +117,11 @@ func (m *Manager) ListServices(sessionID string) ([]types.ServiceInfo, error) {
 	// snapshot is much cheaper than running systemctl show once per service and
 	// gives the UI meaningful current CPU/RSS values. BusyBox/minimal hosts may
 	// not support the unit column; resource data is intentionally best-effort.
+	//
+	// ResourceStats marks the units this snapshot actually accounted for. Without
+	// it a host whose ps has no unit column is indistinguishable from one where
+	// every service genuinely uses no CPU, and the panel would confidently show
+	// "CPU 0.0% · 0 MB" for everything.
 	if usageOut, err := m.ssh.Exec(sessionID, "LC_ALL=C ps -eo unit=,pcpu=,rss= --no-headers", 20*time.Second); err == nil {
 		mergeResourceUsage(services, parseResourceUsage(usageOut))
 	}
@@ -148,8 +153,19 @@ func parseResourceUsage(out string) map[string]serviceResourceUsage {
 	return usage
 }
 
+// mergeResourceUsage attaches one ps snapshot to the unit list.
+//
+// An empty snapshot means ps produced nothing usable (no unit column on this
+// host, or output this parser did not recognise), so no unit gets stats and the
+// UI shows them as unmeasured. A non-empty snapshot that simply lacks a given
+// unit is different: that unit is accounted for and has no running processes, so
+// zero is a real measurement.
 func mergeResourceUsage(services []types.ServiceInfo, usage map[string]serviceResourceUsage) {
+	if len(usage) == 0 {
+		return
+	}
 	for i := range services {
+		services[i].ResourceStats = true
 		if current, ok := usage[services[i].Name]; ok {
 			services[i].CPUPercent = current.cpuPercent
 			services[i].MemoryBytes = current.memoryBytes
@@ -222,22 +238,114 @@ func mergeEnabled(services []types.ServiceInfo, states map[string]string) {
 }
 
 func (m *Manager) ServiceAction(sessionID, unit, action string, force bool) error {
+	_, err := m.executeServiceAction(sessionID, unit, action, force)
+	return err
+}
+
+func (m *Manager) executeServiceAction(sessionID, unit, action string, force bool) (string, error) {
 	if err := sanitizeUnit(unit); err != nil {
-		return err
+		return "", err
 	}
 	switch action {
 	case "start", "stop", "restart", "enable", "disable":
 	default:
-		return fmt.Errorf("invalid service action: %s", action)
+		return "", fmt.Errorf("invalid service action: %s", action)
 	}
 	if (action == "stop" || action == "disable") && !force && isCriticalUnit(unit) {
-		return fmt.Errorf("refusing to %s %s: this may cut off SSH access or networking on the remote host (use force to override)", action, unit)
+		return "", fmt.Errorf("refusing to %s %s: this may cut off SSH access or networking on the remote host (use force to override)", action, unit)
 	}
 	out, err := m.execRoot(sessionID, fmt.Sprintf("systemctl %s %s", action, unit), 30*time.Second)
 	if err != nil {
-		return cmdError(fmt.Sprintf("systemctl %s %s failed", action, unit), err, out)
+		return out, cmdError(fmt.Sprintf("systemctl %s %s failed", action, unit), err, out)
 	}
-	return nil
+	return out, nil
+}
+
+// ServiceActionVerified executes one action, then performs a bounded targeted
+// readback instead of refreshing the complete service/process inventory.
+func (m *Manager) ServiceActionVerified(sessionID, unit, action string, force bool) (types.ServiceActionResult, error) {
+	result := types.ServiceActionResult{Unit: unit, Action: action}
+	if _, err := m.executeServiceAction(sessionID, unit, action, force); err != nil {
+		return result, err
+	}
+	if action == "start" || action == "restart" || action == "stop" {
+		time.Sleep(250 * time.Millisecond)
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		observed, err := m.readServiceActionState(sessionID, unit)
+		if err != nil {
+			result.Verification = "action completed but state readback failed: " + err.Error()
+			return result, nil
+		}
+		result = observed
+		result.Action = action
+		if result.ActiveState != "activating" && result.ActiveState != "deactivating" && result.ActiveState != "reloading" {
+			break
+		}
+		time.Sleep(time.Duration(attempt+1) * 250 * time.Millisecond)
+	}
+	result.Verified, result.Verification = verifyServiceActionResult(result)
+	return result, nil
+}
+
+func (m *Manager) readServiceActionState(sessionID, unit string) (types.ServiceActionResult, error) {
+	cmd := fmt.Sprintf("systemctl show %s --no-pager --property=LoadState,ActiveState,SubState,UnitFileState,Result,ExecMainStatus", unit)
+	out, err := m.ssh.Exec(sessionID, cmd, 15*time.Second)
+	if err != nil {
+		return types.ServiceActionResult{Unit: unit}, cmdError("systemctl state readback failed", err, out)
+	}
+	result := types.ServiceActionResult{Unit: unit, ExecMainStatus: -1}
+	for _, line := range strings.Split(out, "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "LoadState":
+			result.LoadState = value
+		case "ActiveState":
+			result.ActiveState = value
+		case "SubState":
+			result.SubState = value
+		case "UnitFileState":
+			result.UnitFileState = value
+		case "Result":
+			result.Result = value
+		case "ExecMainStatus":
+			if parsed, parseErr := strconv.Atoi(value); parseErr == nil {
+				result.ExecMainStatus = parsed
+			}
+		}
+	}
+	if result.LoadState == "" && result.ActiveState == "" && result.UnitFileState == "" {
+		return result, fmt.Errorf("systemctl returned no recognizable state")
+	}
+	return result, nil
+}
+
+func verifyServiceActionResult(result types.ServiceActionResult) (bool, string) {
+	state := result.ActiveState + "(" + result.SubState + ")"
+	switch result.Action {
+	case "enable":
+		verified := result.UnitFileState == "enabled" || result.UnitFileState == "enabled-runtime" || result.UnitFileState == "linked" || result.UnitFileState == "linked-runtime"
+		return verified, "unit file state is " + result.UnitFileState
+	case "disable":
+		verified := result.UnitFileState == "disabled"
+		return verified, "unit file state is " + result.UnitFileState
+	case "stop":
+		verified := result.ActiveState == "inactive"
+		return verified, "observed " + state
+	case "start", "restart":
+		if result.ActiveState == "active" {
+			return true, "observed " + state
+		}
+		if result.ActiveState == "inactive" && (result.Result == "success" || result.Result == "") && result.ExecMainStatus == 0 {
+			return true, "unit completed successfully and is now " + state
+		}
+		return false, "observed " + state + ", result=" + result.Result
+	default:
+		return false, "unknown action"
+	}
 }
 
 func (m *Manager) ServiceLogs(sessionID, unit string, lines int) (string, error) {
