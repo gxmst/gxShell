@@ -31,7 +31,7 @@ export function KeyboardInteractiveDialog({ request, language, onSubmit, onCance
   const submit = () => onSubmit(answers);
 
   return (
-    <ModalShell onClose={onCancel} compact>
+    <ModalShell onClose={onCancel} compact ariaLabel={request.name || t(lang, "kiTitle")}>
       <div className="space-y-3">
         <DialogHeader icon={<KeyRound size={15} />} title={request.name || t(lang, "kiTitle")} description={request.instruction || undefined} />
         {request.prompts.map((prompt, idx) => (

@@ -276,6 +276,12 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
           </div>
           <SettingsToggle checked={draft.monitorEnabled} onChange={(checked) => update({ monitorEnabled: checked })} label={t(lang, "enableMonitor")} />
           <SettingsToggle checked={draft.confirmOnDisconnect || false} onChange={(checked) => update({ confirmOnDisconnect: checked })} label={t(lang, "confirmClose")} />
+          <SettingsToggle
+            checked={draft.restoreWorkspace || false}
+            onChange={(checked) => update({ restoreWorkspace: checked })}
+            label={zh ? "恢复上次工作区" : "Restore last workspace"}
+            hint={zh ? "启动时重新连接上次仍打开的服务器；最多同时恢复 3 个连接。" : "Reconnect servers that were still open at exit, with at most 3 concurrent restores."}
+          />
           <SettingsToggle checked={draft.cliServerEnabled ?? true} onChange={(checked) => update({ cliServerEnabled: checked })} label={t(lang, "cliServerEnabled")} hint={t(lang, "cliServerEnabledHint")} />
         </SettingsSection>
 

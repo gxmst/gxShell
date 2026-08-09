@@ -249,7 +249,7 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
   // does not reuse ConfirmDialog: cancel keeps the selection untouched, skip
   // transfers only non-clashing files, and overwrite still rejects folders.
   const conflictDialog = conflict && (
-    <ModalShell onClose={() => setConflict(null)} compact>
+    <ModalShell onClose={() => setConflict(null)} compact ariaLabel={t(lang, "overwriteTitle")}>
       <DialogHeader icon={<AlertTriangle size={15} />} title={t(lang, "overwriteTitle")} />
       {conflict.replaceable.length > 0 && (
         <div className="dialog-body-copy">

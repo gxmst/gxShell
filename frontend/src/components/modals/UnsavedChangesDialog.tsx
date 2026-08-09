@@ -40,7 +40,7 @@ export function UnsavedChangesDialog({
   };
 
   return (
-    <ModalShell onClose={() => { if (!saving) onCancel(); }} compact>
+    <ModalShell onClose={() => { if (!saving) onCancel(); }} compact ariaLabel={zh ? "保存更改？" : "Save changes?"}>
       <DialogHeader
         icon={<FileWarning size={15} />}
         title={zh ? "保存更改？" : "Save changes?"}
@@ -49,7 +49,7 @@ export function UnsavedChangesDialog({
       <div className="dialog-body-copy">
         {body || (zh ? "此文档有尚未保存的修改。" : "This document has unsaved changes.")}
       </div>
-      {error && <div className="profile-modal-error">{error}</div>}
+      {error && <div className="profile-modal-error" role="alert">{error}</div>}
       <div className="dialog-footer">
         <button className="btn-secondary" disabled={saving} onClick={onCancel}>{t(locale, "cancel")}</button>
         <button className="btn-danger" disabled={saving} onClick={onDiscard}>{zh ? "不保存" : "Discard"}</button>

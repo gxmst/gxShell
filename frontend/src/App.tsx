@@ -27,8 +27,8 @@ import { UnsavedChangesDialog } from "./components/modals/UnsavedChangesDialog";
 import { KeyboardInteractiveDialog, type KiRequest } from "./components/modals/KeyboardInteractiveDialog";
 import { GlobalSearchModal, TerminalSearchModal } from "./components/modals/SearchModals";
 import { UpdateDialog } from "./components/modals/UpdateDialog";
+import { ConfirmDialog } from "./components/modals/ConfirmDialog";
 import { ProgressBar } from "./components/ProgressBar/ProgressBar";
-import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastStack } from "./components/ToastStack";
 import { TransfersProvider } from "./hooks/useTransfers";
 import { BrowserOpenURL, EventsOn, OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
@@ -61,11 +61,14 @@ function App() {
   const [revokingCliTrustID, setRevokingCliTrustID] = useState("");
   const [quickConnectOpen, setQuickConnectOpen] = useState(false);
   const [commandModal, setCommandModal] = useState<types.CommandTemplate | null>(null);
+  const [deleteProfileRequest, setDeleteProfileRequest] = useState<{ id: string; name: string; closeEditor: boolean } | null>(null);
+  const [deleteCommandRequest, setDeleteCommandRequest] = useState<{ id: string; name: string } | null>(null);
   const [commandVars, setCommandVars] = useState<{ commandName: string; template: string; placeholders: string[]; send: (command: string) => void } | null>(null);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [globalQuery, setGlobalQuery] = useState("");
   const [terminalSearchOpen, setTerminalSearchOpen] = useState(false);
   const [terminalSearch, setTerminalSearch] = useState("");
+  const [terminalSearchResult, setTerminalSearchResult] = useState<{ id: string; index: number; count: number } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("gx:sidebarCollapsed", false);
   const [logViewer, setLogViewer] = useState<{ name: string; content: string } | null>(null);
   const [floatingTabIds, setFloatingTabIds] = usePersistedState<string[]>("gx:floatingTabIds", []);
@@ -84,13 +87,21 @@ function App() {
   const dirtyDocumentsRef = useRef<Record<string, { save: () => Promise<boolean> }>>({});
   const [dirtyTabIds, setDirtyTabIds] = useState<string[]>([]);
   const [unsavedPrompt, setUnsavedPrompt] = useState<{ tab: Tab; resolve: (close: boolean) => void } | null>(null);
+  const [disconnectPrompt, setDisconnectPrompt] = useState<{ tab: Tab; resolve: (close: boolean) => void } | null>(null);
 
   const beforeCloseTab = useCallback((tab: Tab): boolean | Promise<boolean> => {
-    if (!dirtyDocumentsRef.current[tab.id]) return true;
-    return new Promise<boolean>((resolve) => {
-      setUnsavedPrompt({ tab, resolve });
-    });
-  }, []);
+    if (dirtyDocumentsRef.current[tab.id]) {
+      return new Promise<boolean>((resolve) => {
+        setUnsavedPrompt({ tab, resolve });
+      });
+    }
+    if (profileState.settings?.confirmOnDisconnect && tab.state === "connected" && !tab.local && tab.type !== "markdown") {
+      return new Promise<boolean>((resolve) => {
+        setDisconnectPrompt({ tab, resolve });
+      });
+    }
+    return true;
+  }, [profileState.settings?.confirmOnDisconnect]);
 
   const handleMarkdownDirtyChange = useCallback((id: string, dirty: boolean, save: () => Promise<boolean>) => {
     if (dirty) dirtyDocumentsRef.current[id] = { save };
@@ -115,7 +126,8 @@ function App() {
     notify,
     reload: profileState.reload,
     disposeTerminal: (id) => terminalBridge.current.disposeTerminal(id),
-    confirmOnDisconnect: profileState.settings?.confirmOnDisconnect,
+    restoreWorkspace: profileState.settings?.restoreWorkspace,
+    language: profileState.settings?.language,
     beforeCloseTab,
   });
   const tabsRef = useRef(sessions.tabs);
@@ -210,7 +222,10 @@ function App() {
   };
 
   const activeIsTerminal = !!sessions.active && sessions.active.type !== "markdown";
-  const activeTerminal = useTerminal(sessions.activeTab, activeIsTerminal, profileState.settings, notify, sidebarCollapsed, splitPane, broadcastRef, linkHandlersRef, setCtxMenu);
+  const handleTerminalSearchResults = useCallback((id: string, index: number, count: number) => {
+    setTerminalSearchResult({ id, index, count });
+  }, []);
+  const activeTerminal = useTerminal(sessions.activeTab, activeIsTerminal, profileState.settings, notify, sidebarCollapsed, splitPane, broadcastRef, linkHandlersRef, setCtxMenu, handleTerminalSearchResults);
   const { writeOutput, disposeTerminal, findNext, findPrev, focusTerminal, refitTerminal, reattachTerminal } = activeTerminal;
   terminalBridge.current.disposeTerminal = disposeTerminal;
 
@@ -513,6 +528,7 @@ function App() {
       notify(t(profileState.settings?.language || "en", "profileSaved"), "success");
     } catch (err) {
       notify(String(err), "error");
+      throw err;
     }
   };
 
@@ -548,6 +564,7 @@ function App() {
       profileState.setCommands(await ListCommands());
     } catch (err) {
       notify(String(err), "error");
+      throw err;
     }
   };
 
@@ -555,28 +572,6 @@ function App() {
   profilesRef.current = profileState.profiles;
   const commandsRef = useRef(profileState.commands);
   commandsRef.current = profileState.commands;
-  const activeRef = useRef(sessions.active);
-  activeRef.current = sessions.active;
-
-  const globalResults = useMemo(() => {
-    const q = globalQuery.trim().toLowerCase();
-    if (!q) return [];
-    const pr = profilesRef.current;
-    const cm = commandsRef.current;
-    const ac = activeRef.current;
-    const serverResults = pr
-      .filter((profile) => [profile.name, profile.host, profile.username, profile.group].some((value) => (value || "").toLowerCase().includes(q)))
-      .slice(0, 6)
-      .map((profile) => ({ type: "server", title: profile.name || profile.host, subtitle: `${profile.username}@${profile.host}`, action: () => sessions.connectProfile(profile) }));
-    const commandResults = cm
-      .filter((cmd) => [cmd.name, cmd.command, cmd.category].some((value) => (value || "").toLowerCase().includes(q)))
-      .slice(0, 6)
-      .map((cmd) => ({ type: "command", title: cmd.name, subtitle: cmd.command, action: () => ac && SendCommandToTerminal(ac.id, cmd.command) }));
-    const areaResults = (["monitor", "sftp", "commands", "settings"] as Drawer[])
-      .filter((item) => item.includes(q))
-      .map((item) => ({ type: "area", title: item, subtitle: "Open left panel", action: () => requestDrawer(item) }));
-    return [...serverResults, ...commandResults, ...areaResults];
-  }, [globalQuery, sessions.active, requestDrawer]);
 
   const themeName = normalizeAppTheme(profileState.settings?.themeName);
 
@@ -596,7 +591,10 @@ function App() {
   const runOnActive = useCallback((cmd: types.CommandTemplate) => {
     runCommandTemplate(cmd, async (command) => {
       const target = sessions.active;
-      if (!target || target.type === "markdown" || target.state !== "connected") return;
+      if (!target || target.type === "markdown" || target.state !== "connected") {
+        notify(profileState.settings?.language === "zh-CN" ? "请先选择一个已连接的终端" : "Select a connected terminal first", "error");
+        return;
+      }
       try {
         await SendCommandToTerminal(target.id, command);
         notify(`${cmd.name} → ${target.title}`, "success");
@@ -605,7 +603,7 @@ function App() {
         notify(String(err), "error");
       }
     });
-  }, [runCommandTemplate, sessions.active, focusTerminal, notify]);
+  }, [runCommandTemplate, sessions.active, focusTerminal, notify, profileState.settings?.language]);
 
   const runInSession = useCallback((cmd: types.CommandTemplate, sessionId: string) => {
     runCommandTemplate(cmd, async (command) => {
@@ -658,9 +656,62 @@ function App() {
     setKiRequests((prev) => prev.filter((item) => item.requestId !== request.requestId));
     AnswerKeyboardInteractive(request.requestId, answers, cancelled).catch(() => {});
   }, []);
+  const searchConnectLocal = sessions.connectLocal;
+  const searchConnectProfile = sessions.connectProfile;
+  const searchSetActiveTab = sessions.setActiveTab;
+  const searchTabs = sessions.tabs;
+
+  const globalResults = useMemo(() => {
+    const q = globalQuery.trim().toLowerCase();
+    const lang = profileState.settings?.language || "en";
+    const zh = lang === "zh-CN";
+    const includesQuery = (...values: Array<string | undefined>) => !q || values.some((value) => (value || "").toLowerCase().includes(q));
+    const actionResults = [
+      { type: "action", title: t(lang, "newConnection"), subtitle: zh ? "创建并保存 SSH 连接" : "Create and save an SSH connection", keywords: "new connection server ssh 新建 连接 服务器", action: () => setProfileModal(emptyProfile()) },
+      { type: "action", title: t(lang, "quickConnect"), subtitle: t(lang, "quickConnectHint"), keywords: "quick connect temporary 快速 临时 连接", action: () => setQuickConnectOpen(true) },
+      { type: "action", title: t(lang, "localTerminal"), subtitle: zh ? "打开本机命令行" : "Open a local shell", keywords: "local terminal shell 本地 终端", action: () => { searchConnectLocal().catch((err) => notify(String(err), "error")); } },
+      { type: "action", title: t(lang, "openTextFile"), subtitle: zh ? "查看或编辑本地文本文件" : "View or edit a local text file", keywords: "open text markdown file 打开 文本 文件", action: handleOpenMarkdown },
+    ].filter((item) => includesQuery(item.title, item.subtitle, item.keywords));
+
+    const serverResults = profilesRef.current
+      .filter((profile) => includesQuery(profile.name, profile.host, profile.username, profile.group, ...(profile.tags || [])))
+      .sort((a, b) => Number(b.favorite) - Number(a.favorite) || String(b.lastConnectedAt || "").localeCompare(String(a.lastConnectedAt || "")))
+      .slice(0, q ? 6 : 4)
+      .map((profile) => ({ type: "server", title: profile.name || profile.host, subtitle: `${profile.username}@${profile.host}`, action: () => searchConnectProfile(profile) }));
+
+    const tabResults = searchTabs
+      .filter((tab) => includesQuery(tab.title, tab.local ? "local terminal 本地终端" : "terminal session 终端 会话"))
+      .slice(0, q ? 6 : 4)
+      .map((tab) => ({ type: "terminal", title: tab.title, subtitle: zh ? "切换到已打开的标签" : "Switch to open tab", action: () => searchSetActiveTab(tab.id) }));
+
+    const commandResults = q ? commandsRef.current
+      .filter((cmd) => includesQuery(cmd.name, cmd.command, cmd.category, cmd.description, ...(cmd.tags || [])))
+      .slice(0, 6)
+      .map((cmd) => ({ type: "command", title: cmd.name, subtitle: cmd.command, action: () => runOnActive(cmd) })) : [];
+
+    const drawerMeta: Array<{ drawer: Drawer; title: string; keywords: string }> = [
+      { drawer: "monitor", title: t(lang, "monitor"), keywords: "monitor metrics cpu memory 监控 指标" },
+      { drawer: "sftp", title: "SFTP", keywords: "files remote transfer 文件 远程 传输" },
+      { drawer: "commands", title: t(lang, "cmd"), keywords: "commands templates 命令 模板" },
+      { drawer: "tunnels", title: t(lang, "sshTunnels"), keywords: "tunnel forwarding socks 隧道 转发" },
+      { drawer: "containers", title: t(lang, "containers"), keywords: "docker containers 容器" },
+      { drawer: "services", title: t(lang, "services"), keywords: "systemd service 服务" },
+      { drawer: "firewall", title: t(lang, "firewall"), keywords: "firewall ufw iptables 防火墙" },
+      { drawer: "cron", title: t(lang, "cronJobs"), keywords: "cron schedule jobs 定时 任务" },
+      { drawer: "websites", title: t(lang, "websites"), keywords: "website nginx web 站点 网站" },
+      { drawer: "logs", title: t(lang, "logs"), keywords: "logs history activity 日志 历史" },
+      { drawer: "recordings", title: t(lang, "recordings"), keywords: "recordings cast video 录制 回放" },
+      { drawer: "ai", title: t(lang, "ai"), keywords: "ai assistant model 助手 模型" },
+      { drawer: "settings", title: t(lang, "settings"), keywords: "settings preferences 设置 偏好" },
+    ];
+    const areaResults = q ? drawerMeta
+      .filter((item) => includesQuery(item.title, item.drawer, item.keywords))
+      .map((item) => ({ type: "area", title: item.title, subtitle: zh ? "打开工作区" : "Open workspace", action: () => requestDrawer(item.drawer) })) : [];
+
+    return [...actionResults, ...tabResults, ...serverResults, ...commandResults, ...areaResults].slice(0, q ? 18 : 10);
+  }, [globalQuery, handleOpenMarkdown, notify, profileState.settings?.language, requestDrawer, runOnActive, searchConnectLocal, searchConnectProfile, searchSetActiveTab, searchTabs]);
 
   return (
-    <ErrorBoundary>
     <TransfersProvider>
     <div className="app-shell" onContextMenu={() => setCtxMenu(null)} data-theme={themeName} data-collapsed={sidebarCollapsed ? "true" : "false"} >
       <main className="workspace">
@@ -706,7 +757,10 @@ function App() {
               setRevokingCliTrustID("");
             }
           }}
-          onDeleteProfile={async (id) => { await profileState.deleteProfile(id); }}
+          onDeleteProfile={(id) => {
+            const profile = profileState.profiles.find((item) => item.id === id);
+            if (profile) setDeleteProfileRequest({ id, name: profile.name || profile.host, closeEditor: false });
+          }}
           onImportProfiles={() => importProfiles(false)}
           onImportOpenSSH={() => importProfiles(true)}
           onExportProfiles={exportProfiles}
@@ -719,7 +773,10 @@ function App() {
           onRunCommandInSession={runInSession}
           onRunCommandAll={runOnAll}
           onEditCommand={(cmd) => setCommandModal(cmd)}
-          onDeleteCommand={async (id) => { await DeleteCommand(id); profileState.setCommands(await ListCommands()); }}
+          onDeleteCommand={(id) => {
+            const command = profileState.commands.find((item) => item.id === id);
+            if (command) setDeleteCommandRequest({ id, name: command.name });
+          }}
           onNewCommand={() => setCommandModal(new types.CommandTemplate({ id: "", name: "", command: "", category: "Custom", description: "", tags: [] }))}
           onSaveSettings={async (next) => {
             // Failures propagate: SettingsPanel awaits this to decide whether
@@ -782,23 +839,64 @@ function App() {
         return <FloatingTerminal key={id} tab={tab} terminalHosts={activeTerminal.terminalHosts} onDock={handleDockFloating} onClose={handleCloseFloating} refitTerminal={refitTerminal} reattachTerminal={reattachTerminal} />;
       })}
       {globalSearchOpen && <GlobalSearchModal query={globalQuery} onQuery={setGlobalQuery} results={globalResults} onClose={() => setGlobalSearchOpen(false)} locale={profileState.settings?.language || "en"} />}
-      {terminalSearchOpen && <TerminalSearchModal query={terminalSearch} onQuery={setTerminalSearch} onNext={() => findNext(sessions.activeTab, terminalSearch)} onPrev={() => findPrev(sessions.activeTab, terminalSearch)} onClose={() => setTerminalSearchOpen(false)} locale={profileState.settings?.language || "en"} />}
-      {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={async (id) => { await profileState.deleteProfile(id); setProfileModal(null); }} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify(t(profileState.settings?.language || "en", "profileCopied"), "info"); }} />}
+      {terminalSearchOpen && <TerminalSearchModal
+        query={terminalSearch}
+        onQuery={(value) => {
+          setTerminalSearch(value);
+          if (value) findNext(sessions.activeTab, value);
+          else setTerminalSearchResult(null);
+        }}
+        onNext={() => findNext(sessions.activeTab, terminalSearch)}
+        onPrev={() => findPrev(sessions.activeTab, terminalSearch)}
+        onClose={() => { setTerminalSearchOpen(false); setTerminalSearchResult(null); }}
+        matchIndex={terminalSearchResult?.id === sessions.activeTab ? terminalSearchResult.index : undefined}
+        matchCount={terminalSearchResult?.id === sessions.activeTab ? terminalSearchResult.count : undefined}
+        locale={profileState.settings?.language || "en"}
+      />}
+      {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={(id) => setDeleteProfileRequest({ id, name: profileModal.name || profileModal.host, closeEditor: true })} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify(t(profileState.settings?.language || "en", "profileCopied"), "info"); }} />}
       {quickConnectOpen && <QuickConnectModal
         language={profileState.settings?.language || "en"}
         onClose={() => setQuickConnectOpen(false)}
         onPickKey={SelectPrivateKey}
-        onConnect={async (profile, shouldSave) => {
-          if (!shouldSave) {
-            await sessions.connectQuick(profile);
-            return;
-          }
+        onSave={async (profile) => {
           const saved = await profileState.saveProfile(profile);
-          await sessions.connectProfileWithSecrets(saved, profile.password || "", profile.privateKeyPassphrase || "");
           notify(t(profileState.settings?.language || "en", "profileSaved"), "success");
+          return saved;
+        }}
+        onConnect={async (profile) => {
+          if (profile.id.startsWith("quick-")) await sessions.connectQuick(profile);
+          else await sessions.connectProfileWithSecrets(profile, profile.password || "", profile.privateKeyPassphrase || "");
         }}
       />}
       {commandModal && <CommandModal command={commandModal} language={profileState.settings?.language || "en"} onClose={() => setCommandModal(null)} onSave={saveCommand} />}
+      {deleteProfileRequest && <ConfirmDialog
+        locale={profileState.settings?.language || "en"}
+        title={profileState.settings?.language === "zh-CN" ? "删除服务器配置？" : "Delete server profile?"}
+        body={profileState.settings?.language === "zh-CN"
+          ? `“${deleteProfileRequest.name}”及其保存的凭据将被永久删除；引用它的跳板机设置也会被清除。`
+          : `“${deleteProfileRequest.name}” and its saved credentials will be permanently deleted. ProxyJump references to it will also be cleared.`}
+        confirmText={t(profileState.settings?.language || "en", "delete")}
+        onClose={() => setDeleteProfileRequest(null)}
+        onConfirm={async () => {
+          await profileState.deleteProfile(deleteProfileRequest.id);
+          if (deleteProfileRequest.closeEditor) setProfileModal(null);
+          setDeleteProfileRequest(null);
+          notify(profileState.settings?.language === "zh-CN" ? "服务器配置已删除" : "Server profile deleted", "success");
+        }}
+      />}
+      {deleteCommandRequest && <ConfirmDialog
+        locale={profileState.settings?.language || "en"}
+        title={profileState.settings?.language === "zh-CN" ? "删除命令模板？" : "Delete command template?"}
+        body={profileState.settings?.language === "zh-CN" ? `“${deleteCommandRequest.name}”将被永久删除。` : `“${deleteCommandRequest.name}” will be permanently deleted.`}
+        confirmText={t(profileState.settings?.language || "en", "delete")}
+        onClose={() => setDeleteCommandRequest(null)}
+        onConfirm={async () => {
+          await DeleteCommand(deleteCommandRequest.id);
+          profileState.setCommands(await ListCommands());
+          setDeleteCommandRequest(null);
+          notify(profileState.settings?.language === "zh-CN" ? "命令模板已删除" : "Command template deleted", "success");
+        }}
+      />}
       {commandVars && <CommandVarsDialog commandName={commandVars.commandName} template={commandVars.template} placeholders={commandVars.placeholders} locale={profileState.settings?.language || "en"} onClose={() => setCommandVars(null)} onSubmit={(resolved) => { const send = commandVars.send; setCommandVars(null); send(resolved); }} />}
       {sessions.secretRequest && <SecretModal request={sessions.secretRequest} language={profileState.settings?.language || "en"} onClose={() => sessions.setSecretRequest(null)} onSubmit={async (password, passphrase) => { const request = sessions.secretRequest; if (!request) return; await sessions.submitSecret(request, password, passphrase); sessions.setSecretRequest(null); }} />}
       {activeKiRequest && <KeyboardInteractiveDialog key={activeKiRequest.requestId} request={activeKiRequest} language={profileState.settings?.language || "en"} onSubmit={(answers) => answerKiRequest(activeKiRequest, answers, false)} onCancel={() => answerKiRequest(activeKiRequest, [], true)} />}
@@ -841,6 +939,14 @@ function App() {
           return ok;
         }}
       />}
+      {disconnectPrompt && <ConfirmDialog
+        locale={profileState.settings?.language || "en"}
+        title={profileState.settings?.language === "zh-CN" ? "断开当前连接？" : "Disconnect this session?"}
+        body={profileState.settings?.language === "zh-CN" ? `“${disconnectPrompt.tab.title}”仍处于连接状态。` : `“${disconnectPrompt.tab.title}” is still connected.`}
+        confirmText={profileState.settings?.language === "zh-CN" ? "断开" : "Disconnect"}
+        onClose={() => { disconnectPrompt.resolve(false); setDisconnectPrompt(null); }}
+        onConfirm={() => { disconnectPrompt.resolve(true); setDisconnectPrompt(null); }}
+      />}
       {updateCheck.promptOpen && updateCheck.result && <UpdateDialog
         result={updateCheck.result}
         locale={profileState.settings?.language || "en"}
@@ -860,7 +966,6 @@ function App() {
       )}
     </div>
     </TransfersProvider>
-    </ErrorBoundary>
   );
 }
 

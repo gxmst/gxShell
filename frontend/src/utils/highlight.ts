@@ -1,120 +1,61 @@
-type HighlightRule = { pattern: RegExp; color: number; bold?: boolean };
-
-const ansi = {
-  bold: "\x1b[1m",
-  defaultForeground: "\x1b[39m",
-  normalIntensity: "\x1b[22m",
-};
-
 export type HighlightLevel = "off" | "basic" | "full";
 
+export type HighlightMatch = {
+  start: number;
+  end: number;
+  color: string;
+};
+
+type HighlightRule = {
+  pattern: RegExp;
+  color: string;
+};
+
 const basicRules: HighlightRule[] = [
-  { pattern: /\b(error|fail(ed|ure)?|fatal|panic|refused|denied|invalid|cannot|timed?\s*out)\b/gi, color: 31 },
-  { pattern: /\b(warn(ing)?|deprecated|caution)\b/gi, color: 33 },
-  { pattern: /\b(success(fully)?|ok|done|complete(d)?|finished|ready|running|online|healthy|active)\b/gi, color: 32 },
-  { pattern: /\b(debug|trace|verbose|info|notice)\b/gi, color: 90 },
+  { pattern: /\b(error|fail(ed|ure)?|fatal|panic|refused|denied|invalid|cannot|timed?\s*out)\b/gi, color: "#ff6b6b" },
+  { pattern: /\b(warn(ing)?|deprecated|caution)\b/gi, color: "#f6c760" },
+  { pattern: /\b(success(fully)?|succeed(ed|s|ing)?|ok|done|complete(d)?|finished|ready|running|online|healthy|active)\b/gi, color: "#51d88a" },
+  { pattern: /\b(debug|trace|verbose|info|notice)\b/gi, color: "#94a3b8" },
 ];
 
 const fullRules: HighlightRule[] = [
   ...basicRules,
-  { pattern: /\b([\w.-]+@[\w.-]+)/g, color: 36 },
-  { pattern: /\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d{1,5})?\b/g, color: 34 },
-  { pattern: /\b(https?:\/\/[^\s]+)/g, color: 36 },
-  { pattern: /\b(\/[^\s,:]*\/[^\s,:]*)\b/g, color: 35 },
-  { pattern: /\b(root|admin|sudo|su)\b/g, color: 31, bold: true },
-  { pattern: /\b(true|false|yes|no|on|off|enable[d]?|disable[d]?)\b/gi, color: 34 },
-  { pattern: /\b((\d+\.?\d*)\s*(KB|MB|GB|TB|B|ms|s|%|bps))\b/gi, color: 33 },
-  { pattern: /\b(stop(ped|ping)?|start(ing|ed)?|restart(ing|ed)?|reload(ing|ed)?|terminat(ing|ed)?|kill(ed)?)\b/gi, color: 35 },
-  { pattern: /\b(listen(ing)?|connect(ing|ed)?|disconnect(ed)?|bind(ing)?|open(ed)?|close[d]?)\b/gi, color: 36 },
-  { pattern: /\b(up|down|upgrade|downgrade|install(ing|ed)?|remove[ds]?|delete[ds]?|create[ds]?|modif(ying|ied))\b/gi, color: 34 },
-  { pattern: /"([^"]+)"/g, color: 32 },
-  { pattern: /'([^']+)'/g, color: 33 },
-  { pattern: /\b(daemon|service|process|thread|pid|signal|port|socket|host|client|server|peer|node)\b/gi, color: 36 },
-  { pattern: /\b(cpu|mem(ory)?|disk|io|net(work)?|bandwidth|latency|throughput)\b/gi, color: 35 },
-  { pattern: /\b(nginx|apache|mysql|postgres(ql)?|redis|docker|k8s|kubernetes|ssh|http|ftp|tcp|udp|dns|tls|ssl)\b/gi, color: 34 },
-  { pattern: /(?:^|\s)(#\s.*)/g, color: 90 },
-  { pattern: /\[([^\]]+)\]/g, color: 90 },
+  { pattern: /\b([\w.-]+@[\w.-]+)\b/g, color: "#5de4c7" },
+  { pattern: /\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d{1,5})?\b/g, color: "#64d2ff" },
+  { pattern: /\b(https?:\/\/[^\s]+)/g, color: "#5de4c7" },
+  { pattern: /\b(\/[^\s,:]*\/[^\s,:]*)\b/g, color: "#c792ea" },
+  { pattern: /\b(root|admin|sudo|su)\b/g, color: "#ff6b6b" },
+  { pattern: /\b(true|false|yes|no|on|off|enable[d]?|disable[d]?)\b/gi, color: "#64d2ff" },
+  { pattern: /\b((\d+\.?\d*)\s*(KB|MB|GB|TB|B|ms|s|%|bps))\b/gi, color: "#f6c760" },
+  { pattern: /\b(stop(ped|ping)?|start(ing|ed)?|restart(ing|ed)?|reload(ing|ed)?|terminat(ing|ed)?|kill(ed)?)\b/gi, color: "#c792ea" },
+  { pattern: /\b(listen(ing)?|connect(ing|ed)?|disconnect(ed)?|bind(ing)?|open(ed)?|close[d]?)\b/gi, color: "#5de4c7" },
+  { pattern: /\b(up|down|upgrade|downgrade|install(ing|ed)?|remove[ds]?|delete[ds]?|create[ds]?|modif(ying|ied))\b/gi, color: "#64d2ff" },
+  { pattern: /\b(daemon|service|process|thread|pid|signal|port|socket|host|client|server|peer|node)\b/gi, color: "#5de4c7" },
+  { pattern: /\b(cpu|mem(ory)?|disk|io|net(work)?|bandwidth|latency|throughput)\b/gi, color: "#c792ea" },
+  { pattern: /\b(nginx|apache|mysql|postgres(ql)?|redis|docker|k8s|kubernetes|ssh|http|ftp|tcp|udp|dns|tls|ssl)\b/gi, color: "#64d2ff" },
 ];
 
-const basicQuickCheck = /\b(error|fail|fatal|panic|warn|success|ok|done|ready|running|debug|info)\b/i;
-const fullQuickCheck = /\b(error|fail|fatal|panic|warn|success|ok|done|ready|running|debug|info|root|admin|sudo|nginx|docker|ssh|http)\b|(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/i;
-// Match escape sequences that must pass through untouched. Previously this
-// only recognized CSI codes (ESC[...), so a title-setting OSC sequence
-// (ESC]0;<user>@<host>:<pwd>BEL from the RHEL default PROMPT_COMMAND) was
-// treated as plain text: "user@host" matched the user@host rule and we
-// spliced ESC[36m into the middle of the title. That injected ESC aborts the
-// terminal's OSC parser, leaking "[36m" and the title onto the prompt line.
-// The alternation now also skips OSC (ESC]...BEL/ST), two-byte title/charset
-// forms (ESCk, ESC( ...), and DCS/PM/APC strings.
-const ansiRe = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b[PX^_k][^\x1b]*(?:\x1b\\)?|\x1b\[[0-9;?]*[a-zA-Z]|\x1b[a-zA-Z()#][0-9;]*/g;
-
-type Segment = { text: string; isAnsi: boolean };
-
-function splitAnsiSegments(line: string): Segment[] {
-  const segments: Segment[] = [];
-  let last = 0;
-  ansiRe.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = ansiRe.exec(line)) !== null) {
-    if (match.index > last) {
-      segments.push({ text: line.slice(last, match.index), isAnsi: false });
-    }
-    segments.push({ text: match[0], isAnsi: true });
-    last = match.index + match[0].length;
-  }
-  if (last < line.length) {
-    segments.push({ text: line.slice(last), isAnsi: false });
-  }
-  return segments;
-}
-
-function colorCode(color: number, bold?: boolean) {
-  const b = bold ? "\x1b[1m" : "";
-  return `${b}\x1b[${color}m`;
-}
-
-function restoreCode(bold?: boolean) {
-  return bold ? `${ansi.defaultForeground}${ansi.normalIntensity}` : ansi.defaultForeground;
-}
-
-function highlightLine(line: string, level: HighlightLevel): string {
-  if (level === "off") return line;
-  let trailingCr = false;
-  if (line.endsWith("\r")) {
-    trailingCr = true;
-    line = line.slice(0, -1);
-  }
-  if (line.includes("\r") || line.includes("\b")) return trailingCr ? line + "\r" : line;
+/**
+ * Finds display-only highlight ranges. The returned ranges are applied with
+ * xterm decorations; this function never inserts bytes into terminal output.
+ */
+export function findHighlightMatches(text: string, level: HighlightLevel): HighlightMatch[] {
+  if (level === "off" || !text.trim()) return [];
   const rules = level === "full" ? fullRules : basicRules;
-  const quickCheck = level === "full" ? fullQuickCheck : basicQuickCheck;
-  const stripped = line.replace(ansiRe, "");
-  if (!quickCheck.test(stripped)) return trailingCr ? line + "\r" : line;
-
-  const segments = splitAnsiSegments(line);
-  const applied = new Set<string>();
+  const matches: HighlightMatch[] = [];
 
   for (const rule of rules) {
-    for (let i = 0; i < segments.length; i++) {
-      const seg = segments[i];
-      if (seg.isAnsi) continue;
-      seg.text = seg.text.replace(rule.pattern, (match, ..._args) => {
-        const key = `${match}|${rule.pattern.source}`;
-        if (applied.has(key)) return match;
-        applied.add(key);
-        return `${colorCode(rule.color, rule.bold)}${match}${restoreCode(rule.bold)}`;
-      });
+    rule.pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = rule.pattern.exec(text)) !== null) {
+      const start = match.index;
+      const end = start + match[0].length;
+      if (!matches.some((item) => start < item.end && end > item.start)) {
+        matches.push({ start, end, color: rule.color });
+      }
+      if (match[0].length === 0) rule.pattern.lastIndex += 1;
     }
   }
 
-  const result = segments.map((s) => s.text).join("");
-  return trailingCr ? result + "\r" : result;
-}
-
-export function highlight(data: string, level: HighlightLevel): string {
-  if (level === "off") return data;
-  const lines = data.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    lines[i] = highlightLine(lines[i], level);
-  }
-  return lines.join("\n");
+  return matches.sort((a, b) => a.start - b.start);
 }

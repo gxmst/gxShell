@@ -83,6 +83,9 @@ type AppSettings struct {
 	SavePasswords       bool             `json:"savePasswords"`
 	SmartHighlight      bool             `json:"smartHighlight"`
 	ConfirmOnDisconnect bool             `json:"confirmOnDisconnect"`
+	// RestoreWorkspace reconnects profiles that were still open when the app
+	// last exited. It is opt-in because reconnecting is an external side effect.
+	RestoreWorkspace bool `json:"restoreWorkspace"`
 	// CliServerEnabled controls whether the local gxshell-cli HTTP server runs.
 	// When false the server does not listen at all, so no local process can use
 	// the CLI interface regardless of per-profile opt-in. Defaults to true.

@@ -739,6 +739,15 @@
   flex: 1;
   align-items: center;
   gap: 9px;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.server-row-main:focus-visible {
+  border-radius: var(--radius-xs);
+  outline: 2px solid color-mix(in srgb, var(--accent) 68%, transparent);
+  outline-offset: 2px;
 }
 
 .server-row-text {

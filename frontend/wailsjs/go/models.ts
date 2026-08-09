@@ -227,6 +227,7 @@ export namespace types {
 	    savePasswords: boolean;
 	    smartHighlight: boolean;
 	    confirmOnDisconnect: boolean;
+	    restoreWorkspace: boolean;
 	    cliServerEnabled: boolean;
 	    cliAutoApprove?: boolean;
 	    updateCheckEnabled: boolean;
@@ -251,6 +252,7 @@ export namespace types {
 	        this.savePasswords = source["savePasswords"];
 	        this.smartHighlight = source["smartHighlight"];
 	        this.confirmOnDisconnect = source["confirmOnDisconnect"];
+	        this.restoreWorkspace = source["restoreWorkspace"];
 	        this.cliServerEnabled = source["cliServerEnabled"];
 	        this.cliAutoApprove = source["cliAutoApprove"];
 	        this.updateCheckEnabled = source["updateCheckEnabled"];

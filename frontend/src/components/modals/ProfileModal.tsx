@@ -12,10 +12,12 @@ function splitLines(value: string): string[] {
   return value.split("\n").filter((line) => line.trim() !== "");
 }
 
-export function ProfileModal(props: { profile: types.Profile; profiles: types.Profile[]; language: string; onClose: () => void; onSave: (profile: types.Profile) => void; onPickKey: () => Promise<string>; onDelete: (id: string) => void; onDuplicate: (id: string) => void }) {
+export function ProfileModal(props: { profile: types.Profile; profiles: types.Profile[]; language: string; onClose: () => void; onSave: (profile: types.Profile) => void | Promise<void>; onPickKey: () => Promise<string>; onDelete: (id: string) => void; onDuplicate: (id: string) => void | Promise<void> }) {
   const lang = props.language;
   const [draft, setDraft] = useState(new types.Profile(props.profile));
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const savingRef = useRef(false);
   const [openedAt] = useState(Date.now);
   // The two multi-line fields keep their raw text here. Deriving the textarea
   // value from the stored array instead would filter blank lines on every
@@ -35,6 +37,7 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
   );
   const { onClose } = props;
   const requestClose = useCallback(() => {
+    if (savingRef.current) return;
     if (dirty) {
       confirmDiscardRef.current = true;
       setConfirmDiscard(true);
@@ -78,7 +81,8 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
     update({ tunnels: list });
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (savingRef.current) return;
     if (!draft.host.trim()) { setError(t(lang, "hostRequired")); return; }
     if (!draft.username.trim()) { setError(t(lang, "usernameRequired")); return; }
     if (draft.cliEnabled && !(draft.cliAlias || "").trim()) { setError(t(lang, "cliAliasRequired")); return; }
@@ -88,7 +92,17 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
       if (duplicate) { setError(t(lang, "cliAliasDuplicate")); return; }
     }
     if (draft.port < 1 || draft.port > 65535) { setError(t(lang, "portRange")); return; }
-    props.onSave(draft);
+    savingRef.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await props.onSave(draft);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      savingRef.current = false;
+      setBusy(false);
+    }
   };
 
   // Ctrl+S saves, matching the document editor and the preferences panel.
@@ -111,10 +125,10 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
   return (
-    <ModalShell onClose={requestClose}>
+    <ModalShell onClose={requestClose} ariaLabel={draft.id ? t(lang, "editServer") : t(lang, "newServer")}>
       <div className="profile-modal-header">
         <div className="profile-modal-heading"><span className="dialog-header-icon"><Server size={16} /></span><span><h2 className="profile-modal-title">{draft.id ? t(lang, "editServer") : t(lang, "newServer")}</h2><small>{dirty ? t(lang, "unsavedChangesHint") : (lang === "zh-CN" ? "连接、认证和自动化选项" : "Connection, authentication and automation")}</small></span></div>
-        <button className="icon-btn compact-icon" onClick={requestClose}><X size={14} /></button>
+        <button className="icon-btn compact-icon" disabled={busy} onClick={requestClose} aria-label={t(lang, "close")}><X size={14} /></button>
       </div>
       <div className="profile-modal-grid">
         <Label text={t(lang, "name")}><input className="input compact-input" value={draft.name} onChange={(e) => update({ name: e.target.value })} /></Label>
@@ -204,10 +218,10 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
         <div className="col-span-2 text-[10px] text-muted leading-snug">{t(lang, "loginCommandsHint")}</div>
       </div>
 
-      {error && <div className="profile-modal-error">{error}</div>}
+      {error && <div className="profile-modal-error" role="alert">{error}</div>}
       <div className="profile-modal-footer">
-        <div>{draft.id && <><button className="btn-danger" onClick={() => props.onDelete(draft.id)}><Trash2 size={13} /> {t(lang, "delete")}</button><button className="btn-secondary ml-2" onClick={() => props.onDuplicate(draft.id)}><Copy size={13} /> {t(lang, "duplicate")}</button></>}</div>
-        <button className="btn-primary" onClick={handleSave} title="Ctrl+S"><Save size={13} /> {dirty ? t(lang, "saveChanges") : t(lang, "save")}</button>
+        <div>{draft.id && <><button className="btn-danger" disabled={busy} onClick={() => props.onDelete(draft.id)}><Trash2 size={13} /> {t(lang, "delete")}</button><button className="btn-secondary ml-2" disabled={busy} onClick={() => props.onDuplicate(draft.id)}><Copy size={13} /> {t(lang, "duplicate")}</button></>}</div>
+        <button className="btn-primary" disabled={busy} onClick={handleSave} title="Ctrl+S"><Save size={13} /> {busy ? t(lang, "loading") : (dirty ? t(lang, "saveChanges") : t(lang, "save"))}</button>
       </div>
       {confirmDiscard && (
         <ConfirmDialog

@@ -32,7 +32,7 @@ export function CommandVarsDialog({
   };
 
   return (
-    <ModalShell onClose={onClose} compact>
+    <ModalShell onClose={onClose} compact ariaLabel={commandName || t(locale, "cmd")}>
       <DialogHeader icon={<Braces size={15} />} title={commandName || t(locale, "cmd")} description={t(locale, "commandVarsHint")} />
       <div className="dialog-form compact">
         {placeholders.map((name, i) => (

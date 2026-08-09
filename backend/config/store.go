@@ -341,6 +341,7 @@ func DefaultSettings() types.AppSettings {
 		SavePasswords:      false,
 		SmartHighlight:     true,
 		HighlightLevel:     "off",
+		RestoreWorkspace:   false,
 		CliServerEnabled:   true,
 		UpdateCheckEnabled: true,
 		Terminal: types.TerminalSettings{

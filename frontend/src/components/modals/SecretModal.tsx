@@ -23,7 +23,7 @@ export function SecretModal({ request, language, onSubmit, onClose }: { request:
     }
   };
   return (
-    <ModalShell onClose={() => { if (!submitting) onClose(); }} compact>
+    <ModalShell onClose={() => { if (!submitting) onClose(); }} compact ariaLabel={isPassword ? t(language, "enterPassword") : t(language, "enterPassphrase")}>
       <DialogHeader icon={<KeyRound size={15} />} title={isPassword ? t(language, "enterPassword") : t(language, "enterPassphrase")} description={`${request.profile.username}@${request.profile.host}`} />
       {isPassword ? (
         <Label text={t(language, "password")}>
@@ -35,7 +35,7 @@ export function SecretModal({ request, language, onSubmit, onClose }: { request:
         </Label>
       )}
       <label className="check mt-3"><input type="checkbox" disabled={submitting} checked={show} onChange={(e) => setShow(e.target.checked)} /> {t(language, "showSecret")}</label>
-      {error && <div className="profile-modal-error mt-2">{error}</div>}
+      {error && <div className="profile-modal-error mt-2" role="alert">{error}</div>}
       <div className="dialog-footer">
         <button className="btn-secondary" disabled={submitting} onClick={onClose}>{t(language, "cancel")}</button>
         <button className="btn-primary" disabled={submitting} onClick={submit}>{submitting ? (language === "zh-CN" ? "连接中…" : "Connecting…") : t(language, "connect")}</button>

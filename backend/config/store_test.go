@@ -28,6 +28,12 @@ func writeSettingsJSON(t *testing.T, s *Store, raw string) {
 	}
 }
 
+func TestDefaultSettingsDoesNotRestoreWorkspace(t *testing.T) {
+	if DefaultSettings().RestoreWorkspace {
+		t.Fatal("workspace restore must remain opt-in")
+	}
+}
+
 func readCliServerEnabled(t *testing.T, s *Store) (value bool, present bool) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(s.dir, "settings.json"))
