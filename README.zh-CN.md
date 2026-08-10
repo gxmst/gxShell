@@ -21,10 +21,10 @@ gxShell 是一个 Windows SSH 工作台，把终端会话、SFTP、监控、隧�
 首次启动可能显示 SmartScreen 提示；只有在校验和与 Release 页面一致时，才应点
 “更多信息 → 仍要运行”。
 
-PowerShell 校验示例：
+校验时，用下面的命令与同一个 Release 里的 `SHA256SUMS.txt` 比对：
 
 ```powershell
-Get-FileHash .\gxShell-v1.5.1-windows-amd64.zip -Algorithm SHA256
+Get-FileHash .\gxShell-v<版本>-windows-amd64.zip -Algorithm SHA256
 ```
 
 ## 主要功能

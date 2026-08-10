@@ -23,10 +23,11 @@ Requirements: Windows 10/11 x64 and the Microsoft WebView2 Runtime. The
 unsigned build may show a SmartScreen warning on first launch; use **More
 info → Run anyway** only when the checksum matches the release page.
 
-To verify the package on PowerShell:
+To verify the package, compare its hash against `SHA256SUMS.txt` from the same
+release:
 
 ```powershell
-Get-FileHash .\gxShell-v1.5.1-windows-amd64.zip -Algorithm SHA256
+Get-FileHash .\gxShell-v<version>-windows-amd64.zip -Algorithm SHA256
 ```
 
 ## Highlights

@@ -99,12 +99,21 @@ jobs:
             '  LICENSE',
             '  BUILD-MANIFEST.txt'
           )
-          $manifest | Set-Content (Join-Path $stage 'BUILD-MANIFEST.txt') -Encoding utf8
+          # LF, no BOM, via WriteAllText: Set-Content would write CRLF on
+          # Windows. The manifest is a cosmetic difference, but the checksum
+          # file below must be LF or "sha256sum -c SHA256SUMS.txt" fails on
+          # Linux/macOS/WSL/Git Bash with "No such file or directory" -- it
+          # takes the trailing \r as part of the file name. That command is the
+          # verification step README.md and docs/releasing.md tell users to run.
+          $lf = [System.Text.UTF8Encoding]::new($false)
+          [System.IO.File]::WriteAllText((Join-Path $stage 'BUILD-MANIFEST.txt'), (($manifest -join "`n") + "`n"), $lf)
           $package = "gxShell-v$version-windows-amd64.zip"
           $inputs = @(Get-ChildItem -LiteralPath $stage -File | Select-Object -ExpandProperty FullName)
           Compress-Archive -LiteralPath $inputs -DestinationPath $package -CompressionLevel Optimal
           $hash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $package" | Set-Content SHA256SUMS.txt -Encoding ascii
+          # Absolute path: .NET resolves a relative path against the process
+          # working directory, which does not follow PowerShell's location.
+          [System.IO.File]::WriteAllText((Join-Path $PWD 'SHA256SUMS.txt'), "$hash  $package`n", $lf)
           Write-Output "PACKAGE=$package"
           Get-ChildItem -LiteralPath $stage -File | Select-Object Name,Length
           Get-Item $package,SHA256SUMS.txt | Select-Object Name,Length
@@ -133,24 +142,33 @@ jobs:
               break
             }
           }
-          $changes = ($lines[$start..($end - 1)] -join "`n")
-          $body = @"
-          ## Download
-
-          Download `gxShell-v$version-windows-amd64.zip`. It contains the desktop app, CLI, license, and build manifest.
-
-          ## Changes
-
-          $changes
-
-          ## Verify
-
-          Compare the zip SHA-256 with `SHA256SUMS.txt` before extracting it.
-
-          ## Requirements
-
-          Windows 10/11 x64 and Microsoft WebView2 Runtime. Linux and macOS desktop builds remain experimental CI artifacts.
-          "@
+          # Drop the "## [x.y.z] - date" heading (the release title already says
+          # it) and the trailing "[x.y.z]: <url>" link definition (it points at
+          # this very release).
+          $section = @($lines[($start + 1)..($end - 1)] | Where-Object { $_ -notmatch '^\[[0-9]' })
+          $changes = (($section -join "`n").Trim())
+          $tick = [char]0x60
+          # An array joined with newlines rather than a here-string: a here-string
+          # terminator cannot be indented, and every line here is indented by the
+          # YAML block scalar. Indented body lines would also render as a Markdown
+          # code block on the release page.
+          $body = @(
+            '## Download',
+            '',
+            "Download ${tick}gxShell-v$version-windows-amd64.zip${tick}. It contains the desktop app, CLI, license, and build manifest.",
+            '',
+            '## Changes',
+            '',
+            $changes,
+            '',
+            '## Verify',
+            '',
+            "Compare the zip SHA-256 with ${tick}SHA256SUMS.txt${tick} before extracting it.",
+            '',
+            '## Requirements',
+            '',
+            'Windows 10/11 x64 and Microsoft WebView2 Runtime. Linux and macOS desktop builds remain experimental CI artifacts.'
+          ) -join "`n"
           $notes = Join-Path $env:RUNNER_TEMP 'gxshell-release-notes.md'
           $body | Set-Content $notes -Encoding utf8
           $package = "gxShell-v$version-windows-amd64.zip"

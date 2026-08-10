@@ -59,3 +59,28 @@ The root `main.go` intentionally stays at the repository root because it
 embeds `frontend/dist` and the Windows tray icon using `go:embed`. The app
 implementation lives in `internal/app`; its Wails bindings are maintained in
 `frontend/wailsjs/go/app/`.
+
+## Two rules that are easy to break
+
+**Do not add exported methods to `App` for `main.go`'s benefit.** Wails binds
+every exported method of a bound struct as something the webview can call by
+name, so an exported method is a frontend API whether or not that was the
+intent. Lifecycle plumbing reaches `main.go` through the package-level seam in
+`internal/app/entrypoint.go` for this reason: `handleSecondInstanceLaunch`
+feeds `allowFile`, which is what authorizes a path for
+`ReadLocalFile`/`WriteLocalFile`, so binding it would let a compromised
+renderer read or overwrite any file with a supported text extension. Add new
+frontend APIs deliberately, not as a side effect of package structure.
+
+**`frontend/wailsjs/` is hand-maintained, not generated output.** CI builds
+with `-skipbindings`. Running `wails generate module` reverts local fixes: it
+regresses `Profile.cliTrustUntil` in `models.ts` from `string` back to `any`.
+If you do run it, diff the result and keep the hand-written corrections. When
+adding a backend method, hand-edit `App.d.ts`, `App.js`, and any new type in
+`models.ts`.
+
+## Further reading
+
+- [CLI implementation notes](development/cli-implementation.md)
+- [Windows context menu integration](development/windows-context-menu.md)
+- [Original project brief](history/todo-genesis-prompt.md) (historical)
