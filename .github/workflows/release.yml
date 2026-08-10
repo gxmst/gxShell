@@ -1,0 +1,162 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Verify tag version
+        shell: pwsh
+        run: |
+          $source = Get-Content backend/version/version.go -Raw
+          if ($source -notmatch 'const\s+Version\s*=\s*"([^"]+)"') {
+            throw 'Could not read backend/version/version.go version'
+          }
+          $version = $Matches[1]
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            throw "Tag ${{ github.ref_name }} does not match application version $version"
+          }
+          Write-Output "Releasing gxShell v$version"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint frontend
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Test frontend
+        working-directory: frontend
+        run: npm test
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Go test
+        run: go test ./...
+
+      - name: Go vet
+        run: go vet ./...
+
+      - name: Install matching Wails CLI
+        shell: pwsh
+        run: |
+          $wailsVersion = go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2
+          go install "github.com/wailsapp/wails/v2/cmd/wails@$wailsVersion"
+
+      - name: Build Windows desktop app
+        run: wails build -clean
+
+      - name: Build CLI
+        run: go build -o gxshell-cli.exe ./cmd/gxshell-cli
+
+      - name: Package release
+        shell: pwsh
+        run: |
+          $source = Get-Content backend/version/version.go -Raw
+          $null = $source -match 'const\s+Version\s*=\s*"([^"]+)"'
+          $version = $Matches[1]
+          $stage = Join-Path $env:RUNNER_TEMP 'gxshell-release-stage'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item build/bin/gxShell.exe (Join-Path $stage 'gxShell.exe')
+          Copy-Item gxshell-cli.exe (Join-Path $stage 'gxshell-cli.exe')
+          Copy-Item LICENSE (Join-Path $stage 'LICENSE')
+          $manifest = @(
+            'gxShell release build manifest',
+            "version: $version",
+            "commit: $env:GITHUB_SHA",
+            'platform: windows/amd64',
+            "built_at_utc: $((Get-Date).ToUniversalTime().ToString('o'))",
+            'assets:',
+            '  gxShell.exe',
+            '  gxshell-cli.exe',
+            '  LICENSE',
+            '  BUILD-MANIFEST.txt'
+          )
+          $manifest | Set-Content (Join-Path $stage 'BUILD-MANIFEST.txt') -Encoding utf8
+          $package = "gxShell-v$version-windows-amd64.zip"
+          $inputs = @(Get-ChildItem -LiteralPath $stage -File | Select-Object -ExpandProperty FullName)
+          Compress-Archive -LiteralPath $inputs -DestinationPath $package -CompressionLevel Optimal
+          $hash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $package" | Set-Content SHA256SUMS.txt -Encoding ascii
+          Write-Output "PACKAGE=$package"
+          Get-ChildItem -LiteralPath $stage -File | Select-Object Name,Length
+          Get-Item $package,SHA256SUMS.txt | Select-Object Name,Length
+
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $source = Get-Content backend/version/version.go -Raw
+          $null = $source -match 'const\s+Version\s*=\s*"([^"]+)"'
+          $version = $Matches[1]
+          $lines = @(Get-Content CHANGELOG.md)
+          $start = -1
+          for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match "^## \[$([regex]::Escape($version))\]") {
+              $start = $i
+              break
+            }
+          }
+          if ($start -lt 0) { throw "No CHANGELOG section found for $version" }
+          $end = $lines.Count
+          for ($i = $start + 1; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^## \[') {
+              $end = $i
+              break
+            }
+          }
+          $changes = ($lines[$start..($end - 1)] -join "`n")
+          $body = @"
+          ## Download
+
+          Download `gxShell-v$version-windows-amd64.zip`. It contains the desktop app, CLI, license, and build manifest.
+
+          ## Changes
+
+          $changes
+
+          ## Verify
+
+          Compare the zip SHA-256 with `SHA256SUMS.txt` before extracting it.
+
+          ## Requirements
+
+          Windows 10/11 x64 and Microsoft WebView2 Runtime. Linux and macOS desktop builds remain experimental CI artifacts.
+          "@
+          $notes = Join-Path $env:RUNNER_TEMP 'gxshell-release-notes.md'
+          $body | Set-Content $notes -Encoding utf8
+          $package = "gxShell-v$version-windows-amd64.zip"
+          gh release create "${{ github.ref_name }}" $package SHA256SUMS.txt `
+            --repo "${{ github.repository }}" `
+            --title "gxShell v$version" `
+            --notes-file $notes `
+            --verify-tag `
+            --latest
