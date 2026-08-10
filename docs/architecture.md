@@ -48,8 +48,11 @@ gxShell 是一款 Windows 桌面终端/SSH 客户端，集成了系统监控、�
 
 ```
 gxShell/
-├── main.go                  # 应用入口，Wails 配置
-├── app.go                   # 核心桥接层，所有前端可调用的方法
+├── main.go                  # 根入口、Wails 配置和嵌入资源
+├── internal/
+│   └── app/                 # 核心桥接层、托盘和应用测试
+├── cmd/
+│   └── gxshell-cli/         # 独立 CLI 客户端
 ├── backend/
 │   ├── ai/                  # AI 模块：对话、工具调用、流式响应
 │   ├── config/              # 配置存储：JSON 读写、原子写入
@@ -81,8 +84,8 @@ gxShell/
 │   │   ├── utils/           # 工具函数
 │   │   ├── i18n.ts          # 国际化
 │   │   └── types.ts         # 前端类型定义
-│   └── wailsjs/             # Wails 自动生成的绑定
-└── docs/                    # 技术文档
+│   └── wailsjs/go/app/      # 手写维护的 Wails 绑定
+└── docs/                    # 技术、用户和发布文档
 ```
 
 ---
