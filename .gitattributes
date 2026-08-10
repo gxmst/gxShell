@@ -3,6 +3,11 @@
 * text=auto
 
 # Source and text files are always LF in the repository.
+# LICENSE has no extension, so without this line it falls to `text=auto` and is
+# checked out CRLF on Windows. The release workflow copies it straight into the
+# zip, so that CRLF copy is what users receive; pinning LF keeps the shipped
+# file byte-identical to the upstream GNU text.
+LICENSE     text eol=lf
 *.go        text eol=lf
 *.mod       text eol=lf
 *.sum       text eol=lf

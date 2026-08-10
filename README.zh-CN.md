@@ -2,7 +2,7 @@
 
 [![最新版本](https://img.shields.io/github/v/release/gxmst/gxShell?display_name=tag)](https://github.com/gxmst/gxShell/releases/latest)
 [![CI](https://github.com/gxmst/gxShell/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/gxmst/gxShell/actions/workflows/verify.yml)
-[![许可证](https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-blue.svg)](LICENSE)
+[![许可证](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 ![Windows](https://img.shields.io/badge/platform-Windows%20x64-0078d4.svg)
 
 gxShell 是一个 Windows SSH 工作台，把终端会话、SFTP、监控、隧道、AI
@@ -84,4 +84,8 @@ Get-FileHash .\gxShell-v<版本>-windows-amd64.zip -Algorithm SHA256
 
 ## 许可证
 
-gxShell 使用 [知识共享署名-非商业性使用-相同方式共享 4.0 国际许可协议](https://creativecommons.org/licenses/by-nc-sa/4.0/) 授权。
+gxShell 使用 [GNU Affero General Public License v3.0](LICENSE) 授权。
+
+允许商业使用。衍生作品必须以相同许可证发布；如果你把修改后的版本作为网络服务运
+行，服务的使用者有权获得该版本的源码。此前使用的是 CC BY-NC-SA 4.0——它不是软件
+许可证，且禁止商业使用；v1.5.2 及更早的发布仍可按原条款获取。

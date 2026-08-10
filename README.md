@@ -2,7 +2,7 @@
 
 [![Latest release](https://img.shields.io/github/v/release/gxmst/gxShell?display_name=tag)](https://github.com/gxmst/gxShell/releases/latest)
 [![CI](https://github.com/gxmst/gxShell/actions/workflows/verify.yml/badge.svg?branch=main)](https://github.com/gxmst/gxShell/actions/workflows/verify.yml)
-[![License](https://img.shields.io/badge/license-CC%20BY--NC--SA%204.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 ![Windows](https://img.shields.io/badge/platform-Windows%20x64-0078d4.svg)
 
 gxShell is a Windows SSH workbench that combines terminal sessions, SFTP,
@@ -89,4 +89,10 @@ Read the full [security model](docs/security.md).
 
 ## License
 
-gxShell is licensed under the [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International](https://creativecommons.org/licenses/by-nc-sa/4.0/) license.
+gxShell is licensed under the [GNU Affero General Public License v3.0](LICENSE).
+
+Commercial use is permitted. Derivative works must be released under the same
+license, and if you run a modified version as a network service, its users are
+entitled to that version's source. gxShell was previously licensed under
+CC BY-NC-SA 4.0, which is not a software license and forbade commercial use;
+releases up to and including v1.5.2 remain available under those terms.

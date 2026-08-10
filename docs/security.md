@@ -31,6 +31,11 @@ credentials away from ordinary profile data and terminal input.
 - gxShell sends no telemetry.
 - The optional update check is an unauthenticated read of the public GitHub release feed and can be disabled.
 - CLI tunnels bind only to loopback and are temporary; close them after use.
+- The CLI's HTTP listener address is hard-coded to `127.0.0.1:56789` and cannot
+  be configured. There is no setting that exposes it on a routable interface —
+  the only switch is on or off. A side effect worth naming since the project is
+  AGPL-3.0: an unmodified gxShell has no remote network users, so section 13
+  does not come into play in ordinary desktop use.
 
 This model is a set of guardrails, not a sandbox. Review commands and secret
 destinations before approving them, and rotate any credential that appears in a
