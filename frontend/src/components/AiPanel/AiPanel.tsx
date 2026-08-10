@@ -3,7 +3,7 @@ import { Bot, Check, History, Link2, ListChecks, MessageSquarePlus, Play, Refres
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { types } from "../../../wailsjs/go/models";
-import { AiChat, AiContinueChat, AiExecuteTools, CancelAiChat, GetAiConfig, GetAiUsage, ListAiModels, ResetAiUsage, SaveAiConfig } from "../../../wailsjs/go/main/App";
+import { AiChat, AiContinueChat, AiExecuteTools, CancelAiChat, GetAiConfig, GetAiUsage, ListAiModels, ResetAiUsage, SaveAiConfig } from "../../../wailsjs/go/app/App";
 import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import { t } from "../../i18n";
 import type { Tab, Toast } from "../../types";

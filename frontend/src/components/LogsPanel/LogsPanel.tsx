@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Activity, AlertCircle, CheckCircle2, FileText, Loader2, RefreshCw } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
-import { ListLogFiles } from "../../../wailsjs/go/main/App";
+import { ListLogFiles } from "../../../wailsjs/go/app/App";
 import { t } from "../../i18n";
 import type { AutomationActivityRecord } from "../../types";
 

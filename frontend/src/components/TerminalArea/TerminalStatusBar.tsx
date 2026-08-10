@@ -3,7 +3,7 @@ import { Radio } from "lucide-react";
 import type { Tab } from "../../types";
 import type { types } from "../../../wailsjs/go/models";
 import { EventsOn } from "../../../wailsjs/runtime/runtime";
-import { GetLatestMetrics } from "../../../wailsjs/go/main/App";
+import { GetLatestMetrics } from "../../../wailsjs/go/app/App";
 
 type Dims = { cols: number; rows: number };
 

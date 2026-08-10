@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { CancelTransfer } from "../../wailsjs/go/main/App";
+import { CancelTransfer } from "../../wailsjs/go/app/App";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 
 export type TransferStatus = "started" | "progress" | "resumed" | "succeeded" | "failed" | "cancelled";

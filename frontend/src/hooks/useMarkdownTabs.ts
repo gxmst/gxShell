@@ -7,7 +7,7 @@ import {
   OpenRecentTextFile,
   RestoreTextFiles,
   SelectTextFile,
-} from "../../wailsjs/go/main/App";
+} from "../../wailsjs/go/app/App";
 import type { Drawer, MarkdownOpenTarget, RecentMarkdownItem, Tab } from "../types";
 import { usePersistedState } from "./usePersistedState";
 import { t } from "../i18n";

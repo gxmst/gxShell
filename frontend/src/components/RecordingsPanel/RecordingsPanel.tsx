@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Clock, FolderOpen, Play, RefreshCw, Trash2, Video } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
-import { ListRecordings, DeleteRecording, OpenRecordingsDir } from "../../../wailsjs/go/main/App";
+import { ListRecordings, DeleteRecording, OpenRecordingsDir } from "../../../wailsjs/go/app/App";
 import type { Tab } from "../../types";
 import { t } from "../../i18n";
 import { CastPlayer } from "../CastPlayer/CastPlayer";

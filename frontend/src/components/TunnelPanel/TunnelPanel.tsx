@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { ArrowRightLeft, Circle, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
-import { AddTunnelRule, ListTunnelStatus, RemoveTunnelRule, RestartTunnels } from "../../../wailsjs/go/main/App";
+import { AddTunnelRule, ListTunnelStatus, RemoveTunnelRule, RestartTunnels } from "../../../wailsjs/go/app/App";
 import type { Tab, Toast } from "../../types";
 import { t, type LangKey } from "../../i18n";
 

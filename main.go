@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	"gxShell/internal/app"
+
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -14,17 +16,21 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+//go:embed build/windows/icon.ico
+var trayIcon []byte
+
 func main() {
 	// Create an instance of the app structure
-	app := NewApp()
+	a := app.NewApp()
+	a.SetTrayIcon(trayIcon)
 
 	// Check command line arguments
 	if len(os.Args) > 1 {
-		app.startupFilePath = os.Args[1]
+		a.SetStartupFilePath(os.Args[1])
 	}
 
 	// Initialize system tray
-	app.setupSystemTray()
+	a.SetupSystemTray()
 
 	// Create application with options
 	err := wails.Run(&options.App{
@@ -40,17 +46,17 @@ func main() {
 		DragAndDrop: &options.DragAndDrop{
 			EnableFileDrop: true,
 		},
-		OnStartup:  app.startup,
-		OnDomReady: app.domReady,
-		OnShutdown: app.shutdown,
+		OnStartup:  a.Startup,
+		OnDomReady: a.DomReady,
+		OnShutdown: a.Shutdown,
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: "gxshell-2f6c1d8a-single-instance",
 			OnSecondInstanceLaunch: func(data options.SecondInstanceData) {
-				app.handleSecondInstanceLaunch(data.Args)
+				a.HandleSecondInstanceLaunch(data.Args)
 			},
 		},
 		Bind: []interface{}{
-			app,
+			a,
 		},
 		Windows: &windows.Options{
 			WebviewIsTransparent: false,

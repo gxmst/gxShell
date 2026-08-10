@@ -10,7 +10,7 @@ const appMocks = vi.hoisted(() => ({
   downloadFile: vi.fn(),
 }));
 
-vi.mock("../../../wailsjs/go/main/App", () => ({
+vi.mock("../../../wailsjs/go/app/App", () => ({
   CancelTransfer: vi.fn(),
   LocalHomeDir: appMocks.localHomeDir,
   ListLocalDir: appMocks.listLocalDir,

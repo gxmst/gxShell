@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ListRemoteDir } from "../../wailsjs/go/main/App";
+import { ListRemoteDir } from "../../wailsjs/go/app/App";
 import { types } from "../../wailsjs/go/models";
 import type { Tab } from "../types";
 

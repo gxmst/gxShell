@@ -4,7 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Pause, Play, RotateCcw, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import { types } from "../../../wailsjs/go/models";
-import { ReadRecording } from "../../../wailsjs/go/main/App";
+import { ReadRecording } from "../../../wailsjs/go/app/App";
 import { getTerminalTheme } from "../../utils/format";
 import { normalizeFontSize, normalizeLineHeight } from "../../utils/terminalSettings";
 import { t } from "../../i18n";

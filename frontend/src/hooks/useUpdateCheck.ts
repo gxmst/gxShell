@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckForUpdate, SkipUpdateVersion } from "../../wailsjs/go/main/App";
+import { CheckForUpdate, SkipUpdateVersion } from "../../wailsjs/go/app/App";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 import { version } from "../../wailsjs/go/models";
 

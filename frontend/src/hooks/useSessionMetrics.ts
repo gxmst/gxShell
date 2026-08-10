@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
-import { GetLatestMetrics } from "../../wailsjs/go/main/App";
+import { GetLatestMetrics } from "../../wailsjs/go/app/App";
 import { types } from "../../wailsjs/go/models";
 
 // Per-session monitor subscription, mirroring the proven TerminalStatusBar

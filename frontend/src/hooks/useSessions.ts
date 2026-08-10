@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
-import { Connect, ConnectQuick, ConnectWithSecrets, ConnectLocal, Disconnect, ListSessions, Reconnect, ReconnectWithSecrets, StopMonitor } from "../../wailsjs/go/main/App";
+import { Connect, ConnectQuick, ConnectWithSecrets, ConnectLocal, Disconnect, ListSessions, Reconnect, ReconnectWithSecrets, StopMonitor } from "../../wailsjs/go/app/App";
 import { types } from "../../wailsjs/go/models";
 import type { SecretRequest, Tab } from "../types";
 import { needsSecret, tabTitle } from "../utils/format";

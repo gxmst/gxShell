@@ -16,7 +16,7 @@ import {
   DeleteFirewallRule,
   GetFirewallStatus,
   SetFirewallEnabled,
-} from "../../../wailsjs/go/main/App";
+} from "../../../wailsjs/go/app/App";
 import { t } from "../../i18n";
 import { ConfirmDialog } from "../modals/ConfirmDialog";
 import type { Tab, Toast } from "../../types";

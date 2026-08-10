@@ -14,7 +14,7 @@ const appMocks = vi.hoisted(() => ({
   writeRemoteFile: vi.fn(),
 }));
 
-vi.mock('../../../wailsjs/go/main/App', () => ({
+vi.mock('../../../wailsjs/go/app/App', () => ({
   ReadLocalFile: appMocks.readLocalFile,
   ReadLocalPDFBase64: appMocks.readLocalPdf,
   ReadLocalMarkdownResourceDataURL: appMocks.readLocalResource,

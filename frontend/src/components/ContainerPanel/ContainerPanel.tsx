@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Eye, Loader2, Play, RefreshCw, RotateCcw, Square, StopCircle, Trash2 } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
-import { ListContainers, StreamContainerLogs, StopContainerLogs, RestartContainer, StopContainer, StartContainer, RemoveContainer } from "../../../wailsjs/go/main/App";
+import { ListContainers, StreamContainerLogs, StopContainerLogs, RestartContainer, StopContainer, StartContainer, RemoveContainer } from "../../../wailsjs/go/app/App";
 import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import { t } from "../../i18n";
 import type { Tab, Toast } from "../../types";

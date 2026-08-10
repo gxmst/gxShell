@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { types } from "../../wailsjs/go/models";
-import { CreateProfile, DeleteProfile, DuplicateProfile, GetAppInfo, GetSettings, ListCommands, ListProfiles, UpdateProfile, UpdateSettings } from "../../wailsjs/go/main/App";
+import { CreateProfile, DeleteProfile, DuplicateProfile, GetAppInfo, GetSettings, ListCommands, ListProfiles, UpdateProfile, UpdateSettings } from "../../wailsjs/go/app/App";
 import { appThemes } from "../constants";
 
 export function useProfiles(notify: (text: string, tone?: "info" | "error" | "success") => void) {

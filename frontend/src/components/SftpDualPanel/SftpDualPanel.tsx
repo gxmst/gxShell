@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { ArrowDown, ArrowUp, File, Folder, RefreshCw } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
-import { DownloadFileWithPolicy, ListLocalDir, LocalHomeDir, ListRemoteDir, UploadFileWithPolicy } from "../../../wailsjs/go/main/App";
+import { DownloadFileWithPolicy, ListLocalDir, LocalHomeDir, ListRemoteDir, UploadFileWithPolicy } from "../../../wailsjs/go/app/App";
 import type { Tab, Toast } from "../../types";
 import { formatFileSize } from "../../utils/format";
 import { t } from "../../i18n";

@@ -32,7 +32,7 @@ import {
   SelectDownloadPath,
   SelectUploadFile,
   UploadFileWithPolicy,
-} from "../../../wailsjs/go/main/App";
+} from "../../../wailsjs/go/app/App";
 import type { Tab, Toast } from "../../types";
 import type { AppContextMenu } from "../../hooks/useTerminal";
 import { writeClipboardText } from "../../utils/clipboard";

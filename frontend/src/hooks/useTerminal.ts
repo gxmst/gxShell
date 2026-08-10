@@ -5,7 +5,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { types } from "../../wailsjs/go/models";
-import { ResizeTerminal, WriteToTerminal, LogCommand } from "../../wailsjs/go/main/App";
+import { ResizeTerminal, WriteToTerminal, LogCommand } from "../../wailsjs/go/app/App";
 import { writeClipboardText } from "../utils/clipboard";
 import { getTerminalTheme } from "../utils/format";
 import { normalizeFontSize, normalizeLineHeight, normalizeScrollbackLines } from "../utils/terminalSettings";

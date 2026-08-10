@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import clsx from "clsx";
 import { ArrowUpRight, Bot, Edit3, FileText, Folder, FolderOpen, MoreHorizontal, PanelLeftClose, Play, Plus, Search, Server, Settings, Star, Trash2, X, Zap } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
-import { TraceRoute, PingHost, UpdateSettings } from "../../../wailsjs/go/main/App";
+import { TraceRoute, PingHost, UpdateSettings } from "../../../wailsjs/go/app/App";
 import type { AutomationActivityRecord, AutomationIndicator, Drawer, RecentMarkdownItem, Tab, Toast } from "../../types";
 import type { AppContextMenu } from "../../hooks/useTerminal";
 import { AppIcon, drawerIcon } from "../../constants";

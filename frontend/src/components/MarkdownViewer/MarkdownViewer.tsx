@@ -28,7 +28,7 @@ import {
   ResolveRemoteMarkdownLink,
   WriteLocalFile,
   WriteRemoteTextFile,
-} from '../../../wailsjs/go/main/App';
+} from '../../../wailsjs/go/app/App';
 import type { MarkdownOpenTarget, MarkdownSource } from '../../types';
 import { isWindowsPlatform, toClipboardText, writeClipboardText } from '../../utils/clipboard';
 import { applyEol, detectEol, eolLabel, toLf, type Eol } from '../../utils/eol';

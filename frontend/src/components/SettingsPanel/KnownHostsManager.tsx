@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
-import { ListKnownHosts, RemoveKnownHost } from "../../../wailsjs/go/main/App";
+import { ListKnownHosts, RemoveKnownHost } from "../../../wailsjs/go/app/App";
 import { sshmanager } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
 

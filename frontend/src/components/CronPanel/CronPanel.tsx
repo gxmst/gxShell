@@ -20,7 +20,7 @@ import {
   RunCronJob,
   SaveCronJob,
   SetCronJobEnabled,
-} from "../../../wailsjs/go/main/App";
+} from "../../../wailsjs/go/app/App";
 import { t } from "../../i18n";
 import type { Tab, Toast } from "../../types";
 

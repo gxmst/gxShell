@@ -21,7 +21,7 @@ import {
   ServiceLogs,
   StopServiceLogs,
   StreamServiceLogs,
-} from "../../../wailsjs/go/main/App";
+} from "../../../wailsjs/go/app/App";
 import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import { t, type LangKey } from "../../i18n";
 import { ConfirmDialog } from "../modals/ConfirmDialog";

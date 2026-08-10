@@ -12,7 +12,7 @@ vi.mock("../../wailsjs/runtime/runtime", () => ({
   EventsOn: vi.fn(() => () => undefined),
 }));
 
-vi.mock("../../wailsjs/go/main/App", () => ({
+vi.mock("../../wailsjs/go/app/App", () => ({
   Connect: appMocks.connect,
   ConnectQuick: vi.fn(),
   ConnectWithSecrets: vi.fn(),
