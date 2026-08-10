@@ -186,41 +186,11 @@ func NewApp() *App {
 	return a
 }
 
-// SetStartupFilePath passes an OS-opened document from the Wails entry point
-// into the application lifecycle before startup begins.
-func (a *App) SetStartupFilePath(path string) {
-	a.startupFilePath = path
-}
-
-// SetTrayIcon supplies the embedded tray icon kept in the root Wails entry
-// point. go:embed paths cannot reach a parent directory from internal/app.
-func (a *App) SetTrayIcon(icon []byte) {
-	a.trayIcon = append([]byte(nil), icon...)
-}
-
-// SetupSystemTray starts the platform tray integration from the Wails entry
-// point.
-func (a *App) SetupSystemTray() {
-	a.setupSystemTray()
-}
-
-// Startup, DomReady, Shutdown, and HandleSecondInstanceLaunch are exported
-// lifecycle adapters used by the root Wails entry point.
-func (a *App) Startup(ctx context.Context) {
-	a.startup(ctx)
-}
-
-func (a *App) DomReady(ctx context.Context) {
-	a.domReady(ctx)
-}
-
-func (a *App) Shutdown(ctx context.Context) {
-	a.shutdown(ctx)
-}
-
-func (a *App) HandleSecondInstanceLaunch(args []string) {
-	a.handleSecondInstanceLaunch(args)
-}
+// The lifecycle entry points (startup, domReady, shutdown,
+// handleSecondInstanceLaunch) and the tray/startup-file setters stay
+// unexported. main.go reaches them through the package-level seam in
+// entrypoint.go, which keeps them off the Wails bound surface. See that file
+// for why exporting them as App methods is a security regression.
 
 // startup initializes all managers and loads configuration.
 func (a *App) startup(ctx context.Context) {

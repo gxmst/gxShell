@@ -22,15 +22,21 @@ var trayIcon []byte
 func main() {
 	// Create an instance of the app structure
 	a := app.NewApp()
-	a.SetTrayIcon(trayIcon)
+	app.SetTrayIcon(a, trayIcon)
 
 	// Check command line arguments
 	if len(os.Args) > 1 {
-		a.SetStartupFilePath(os.Args[1])
+		app.SetStartupFilePath(a, os.Args[1])
 	}
 
 	// Initialize system tray
-	a.SetupSystemTray()
+	app.SetupSystemTray(a)
+
+	// Lifecycle callbacks come from a package-level seam rather than exported
+	// App methods: Wails binds every exported method of a bound struct, so
+	// exporting these would also expose them to the webview. See
+	// internal/app/entrypoint.go.
+	hooks := app.NewHooks(a)
 
 	// Create application with options
 	err := wails.Run(&options.App{
@@ -46,13 +52,13 @@ func main() {
 		DragAndDrop: &options.DragAndDrop{
 			EnableFileDrop: true,
 		},
-		OnStartup:  a.Startup,
-		OnDomReady: a.DomReady,
-		OnShutdown: a.Shutdown,
+		OnStartup:  hooks.Startup,
+		OnDomReady: hooks.DomReady,
+		OnShutdown: hooks.Shutdown,
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: "gxshell-2f6c1d8a-single-instance",
 			OnSecondInstanceLaunch: func(data options.SecondInstanceData) {
-				a.HandleSecondInstanceLaunch(data.Args)
+				hooks.SecondInstanceLaunch(data.Args)
 			},
 		},
 		Bind: []interface{}{
