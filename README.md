@@ -33,7 +33,7 @@ gxShell is a Windows desktop SSH workbench built with Wails v2, Go, and React. I
 - Session recording of terminal output to asciinema `.cast` files, with a built-in player (play, pause, restart, variable speed) and a recordings panel to play, delete, or reveal saved recordings. Recording taps terminal output only, not stdin; shell-echoed commands can appear in recordings, while password prompts with echo disabled are not captured.
 - Reusable command templates with `<name>` variable placeholders. Running a template with placeholders prompts for each value with a live preview before the command is sent, to the active terminal or broadcast to all sessions.
 - AI assistant for OpenAI-compatible APIs, with streaming responses, model listing, token usage, terminal context, and explicit native confirmation before remote tool execution.
-- External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands, track jobs, transfer local files, copy remote files, and open temporary loopback SSH tunnels on opted-in profiles through the running app, without exposing saved SSH credentials. Script execution uses an explicit shell and SSH stdin. See [GXSHELL_CLI.md](GXSHELL_CLI.md).
+- External `gxshell-cli` command-line client and local HTTP API that let local tools and AI agents run commands, track jobs, transfer local files, copy remote files, and open temporary loopback SSH tunnels on opted-in profiles through the running app, without exposing saved SSH credentials. Script execution uses an explicit shell and SSH stdin. See [CLI documentation](docs/cli.md).
 - Model-independent agent guidance, structured execution outcomes, enforced stdin/file handling for multiline scripts, and named `secret://` references for using credentials without placing plaintext values in model prompts, process arguments, confirmations, or command audits.
 - Local and remote text/Markdown viewer/editor with sanitized Markdown rendering, plain-text viewing for logs and other text formats, file-open support, drag-and-drop opening, recent files, sibling and relative-link navigation, relative image previews for Markdown, table of contents, code highlighting, Mermaid diagrams, in-document search, zoom, edit, save, split preview, and refresh.
 - Windows tray menu for showing the app, creating a connection, opening a text file, settings, and quit.
@@ -120,7 +120,7 @@ gxShell/
 |   |   `-- types.ts           # Frontend types
 |   `-- wailsjs/               # Generated Wails bindings
 |-- build/                     # Icons and Windows packaging metadata
-`-- doc/                       # Project notes and technical docs
+`-- docs/                      # Project notes and technical docs
 ```
 
 ## Development
@@ -200,7 +200,7 @@ go build -o gxshell-cli.exe .\cmd\gxshell-cli
 5. Create a GitHub release with the built executables as assets:
 
 ```powershell
-gh release create v1.5.1 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.5.1" --notes-file .\release-notes.md
+gh release create v1.5.1 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.5.1" --notes-file .\CHANGELOG.md
 ```
 
 Use release notes that describe behavior and fixes only. Do not include local paths, tokens, API keys, server addresses, private hostnames, or log output.
@@ -258,7 +258,7 @@ gxShell 是一个基于 Wails v2、Go 和 React 构建的 Windows 桌面 SSH 工
 - 会话录制为 asciinema `.cast` 文件，内置播放器支持播放、暂停、重播和倍速；录制面板可播放、删除或打开录制文件夹。录制只捕获终端输出，不读取 stdin；Shell 回显的命令可能出现在录制中，关闭回显的密码输入不会被捕获。
 - 可复用命令模板，支持 `<name>` 变量占位符。执行带占位符的模板时，会先弹出填写窗口并显示实时预览，然后发送到当前终端或广播到所有会话。
 - AI 助手支持 OpenAI 兼容 API，包含流式响应、模型列表、token 用量、终端上下文，以及执行远程工具前的原生确认。
-- 外部 `gxshell-cli` 命令行客户端和本地 HTTP API，可让本地工具或 AI agent 通过正在运行的 gxShell 在已授权配置上执行命令、跟踪作业、跨服务器复制文件和开启临时回环 SSH 隧道，同时不暴露已保存的 SSH 凭据。脚本执行会显式选择 shell 并通过 SSH stdin 传输。参见 [GXSHELL_CLI.md](GXSHELL_CLI.md)。
+- 外部 `gxshell-cli` 命令行客户端和本地 HTTP API，可让本地工具或 AI agent 通过正在运行的 gxShell 在已授权配置上执行命令、跟踪作业、跨服务器复制文件和开启临时回环 SSH 隧道，同时不暴露已保存的 SSH 凭据。脚本执行会显式选择 shell 并通过 SSH stdin 传输。参见 [CLI 文档](docs/cli.md)。
 - 提供与模型无关的 agent 使用规范、结构化执行结果、对多行脚本强制使用 stdin/file 通道，以及命名 `secret://` 引用，使凭据无需以明文进入模型提示、进程参数、确认框或命令审计。
 - 本地和远程文本/Markdown 查看与编辑，支持安全 Markdown 渲染、日志等文本格式查看、文件打开、拖拽打开、最近文件、同目录文件导航、相对链接导航、相对图片预览、目录、代码高亮、Mermaid 图、文内搜索、缩放、编辑、保存、分屏预览和刷新。
 - Windows 托盘菜单，支持显示应用、新建连接、打开文本文件、设置和退出。
@@ -341,7 +341,7 @@ gxShell/
 |   |   `-- types.ts           # 前端类型
 |   `-- wailsjs/               # Wails 生成绑定
 |-- build/                     # 图标和 Windows 打包元数据
-`-- doc/                       # 项目说明和技术文档
+`-- docs/                      # 项目说明和技术文档
 ```
 
 ## 开发
@@ -419,7 +419,7 @@ go build -o gxshell-cli.exe .\cmd\gxshell-cli
 5. 创建 GitHub release，并把构建出的可执行文件作为资产上传：
 
 ```powershell
-gh release create v1.5.1 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.5.1" --notes-file .\release-notes.md
+gh release create v1.5.1 .\build\bin\gxShell.exe .\gxshell-cli.exe --title "gxShell v1.5.1" --notes-file .\CHANGELOG.md
 ```
 
 Release notes 只应描述行为和修复。不要包含本地路径、token、API key、服务器地址、私有主机名或日志输出。

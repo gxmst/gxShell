@@ -22,7 +22,7 @@ Localhost is not treated as a complete security boundary. The token and confirma
 
 ## AI Agent Usage
 
-The model-independent automation contract is [GXSHELL_AGENT_GUIDE.md](GXSHELL_AGENT_GUIDE.md). Model-specific files such as `CLAUDE.md` and `AGENTS.md` only point to that shared guide; safety and input rules are also enforced by the CLI/API.
+The model-independent automation contract is [agent-guide.md](agent-guide.md). Model-specific files such as `CLAUDE.md` and `AGENTS.md` only point to that shared guide; safety and input rules are also enforced by the CLI/API.
 
 AI agents should treat the CLI alias as the only gxShell-provided target identity. The CLI intentionally does not expose hostnames, IP addresses, usernames, ports, profile IDs, or jump-host details, so agents must not rely on those values being available through `list`, `status`, or `exec` metadata.
 

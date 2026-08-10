@@ -30,3 +30,6 @@ frontend/vite.config.ts.timestamp-*.mjs
 # build/, docs/ and frontend/src/assets/ and must stay tracked.
 /tmp_*
 /*.png
+/.staging/
+/.tmp/
+/.agents/

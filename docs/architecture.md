@@ -82,7 +82,7 @@ gxShell/
 │   │   ├── i18n.ts          # 国际化
 │   │   └── types.ts         # 前端类型定义
 │   └── wailsjs/             # Wails 自动生成的绑定
-└── doc/                     # 技术文档
+└── docs/                    # 技术文档
 ```
 
 ---

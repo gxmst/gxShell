@@ -1,6 +1,6 @@
 # Claude Code instructions
 
-Before using `gxshell-cli`, follow [GXSHELL_AGENT_GUIDE.md](GXSHELL_AGENT_GUIDE.md). Use `exec-stdin` or `exec-file` for multiline scripts and heredocs, inspect structured JSON outcomes, and use `secret://` references instead of plaintext credentials.
+Before using `gxshell-cli`, follow [docs/agent-guide.md](docs/agent-guide.md). Use `exec-stdin` or `exec-file` for multiline scripts and heredocs, inspect structured JSON outcomes, and use `secret://` references instead of plaintext credentials.
 
 A packaged version of that contract, with bash examples and task recipes, is
 installed as the `gxshell` skill (`~/.claude/skills/gxshell/SKILL.md`). The guide
