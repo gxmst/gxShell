@@ -31,8 +31,15 @@ cd ..
 Build the Windows desktop app with:
 
 ```powershell
-wails build -clean
+wails build -clean -skipbindings
 ```
+
+`-skipbindings` is required, not optional. `frontend/wailsjs` is hand-maintained
+(see below), and Wails regenerates it *before* compiling the frontend. Without
+the flag the build reverts the corrections in `models.ts`, then fails on the
+bindings check inside `npm run build` — and leaves the reverted file in your
+working tree. If that happens, run `git checkout -- frontend/wailsjs` and rebuild
+with the flag. Both CI workflows pass it for the same reason.
 
 Build the separate CLI with:
 
@@ -72,10 +79,12 @@ feeds `allowFile`, which is what authorizes a path for
 renderer read or overwrite any file with a supported text extension. Add new
 frontend APIs deliberately, not as a side effect of package structure.
 
-**`frontend/wailsjs/` is hand-maintained, not generated output.** CI builds
-with `-skipbindings`. Running `wails generate module` reverts local fixes: it
-regresses `Profile.cliTrustUntil` in `models.ts` from `string` back to `any`.
-If you do run it, diff the result and keep the hand-written corrections. When
+**`frontend/wailsjs/` is hand-maintained, not generated output.** Pass
+`-skipbindings` to every `wails build` and `wails dev`; both CI workflows do.
+Regenerating reverts local fixes — it regresses `Profile.cliTrustUntil` in
+`models.ts` from `string` back to `any` — and `check-bindings.mjs` fails the
+build when it happens. `wails generate module` has the same effect. If you do
+run one of them, diff the result and keep the hand-written corrections. When
 adding a backend method, hand-edit `App.d.ts`, `App.js`, and any new type in
 `models.ts`.
 

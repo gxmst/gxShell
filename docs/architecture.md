@@ -297,11 +297,11 @@ type App struct {
 ## 构建与部署
 
 ```bash
-# 开发模式
-wails dev
+# 开发模式（同样需要 -skipbindings）
+wails dev -skipbindings
 
-# 生产构建
-wails build
+# 生产构建（-skipbindings 是必需的，见 development.md）
+wails build -clean -skipbindings
 
 # 输出
 build/bin/gxShell.exe

@@ -109,6 +109,14 @@ if (failures.length > 0) {
   for (const failure of failures) {
     console.error(`check-bindings: ${failure}`);
   }
+  // The most common way to get here is a `wails build` without -skipbindings,
+  // which regenerates the bindings before this runs. Say so: whoever hits it is
+  // looking at a failed build and a modified file they did not edit.
+  console.error('');
+  console.error('check-bindings: if you just ran `wails build` without -skipbindings, it');
+  console.error('check-bindings: regenerated the hand-maintained bindings. Recover with:');
+  console.error('check-bindings:   git checkout -- frontend/wailsjs');
+  console.error('check-bindings: then rebuild as `wails build -clean -skipbindings`.');
   process.exit(1);
 }
 
