@@ -8,6 +8,11 @@
 gxShell 是一个 Windows SSH 工作台，把终端会话、SFTP、监控、隧道、AI
 工具、本地文本/Markdown 查看器和可选 CLI 集成在一个桌面应用中。
 
+与常规 SSH 客户端不同的地方：本地工具和 AI agent 可以**通过**正在运行的
+gxShell 在你的服务器上执行命令，全程拿不到 SSH 凭据。它们只能用 alias 指定目标
+——不给 hostname、用户名、端口和跳板机信息——超出只读范围的动作会弹出原生确认对
+话框。信任可以按 1、4、8、24 小时授予，没有永久开关。
+
 [English](README.md)
 
 ![gxShell 桌面 SSH 工作台](docs/assets/gxshell-overview.webp)
@@ -29,14 +34,14 @@ Get-FileHash .\gxShell-v<版本>-windows-amd64.zip -Algorithm SHA256
 
 ## 主要功能
 
-- 多会话 SSH 终端，支持重连、搜索、分屏、浮动标签和键盘导航。
+- 本地 CLI 和 HTTP API，让脚本和 AI agent 借助本应用操作服务器：只能用 alias 指定目标、原生确认、限时信任，以及 `secret://` 引用（凭据不进入模型提示词和进程参数）。
+- 内置 AI 助手，支持任意 OpenAI 兼容 API，流式回复、终端上下文，远程工具调用前必须确认。
+- 多会话 SSH 终端，支持重连、搜索、分屏、浮动标签、同步广播输入和自适应标签栏。
 - SFTP 浏览、上传、下载、断点续传，以及本地/远程文本工作流。
 - 通过 SSH 提供 Linux 监控、Docker、隧道、服务、防火墙、Cron 和网站工具。
-- AI 助手和可选本地 CLI，支持显式确认、限时信任和命名密钥注入。
 - Markdown 和文本查看/编辑，支持代码高亮、Mermaid、搜索、编辑和保存。
-- 标签页过多时自动收缩、滚动，并提供全部标签菜单。
+- 终端录制为 asciinema `.cast` 文件，内置播放器。
 - Windows 托盘、文件关联、拖放打开和更新提示。
-- 默认优先保护凭据，不把保存的密钥写入 profile JSON 或远程 PTY。
 
 ## 快捷键
 

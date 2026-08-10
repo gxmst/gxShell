@@ -70,8 +70,12 @@ jobs:
           $wailsVersion = go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2
           go install "github.com/wailsapp/wails/v2/cmd/wails@$wailsVersion"
 
+      # -skipbindings, as in verify.yml: frontend/wailsjs is hand-maintained, and
+      # regenerating it reverts the corrections check-bindings.mjs asserts. Wails
+      # regenerates before compiling the frontend, so without this flag the
+      # bindings check inside npm run build fails the release build every time.
       - name: Build Windows desktop app
-        run: wails build -clean
+        run: wails build -clean -skipbindings
 
       - name: Build CLI
         run: go build -o gxshell-cli.exe ./cmd/gxshell-cli

@@ -9,6 +9,13 @@ gxShell is a Windows SSH workbench that combines terminal sessions, SFTP,
 monitoring, tunnels, AI tools, a local text/Markdown viewer, and an optional
 CLI in one desktop app.
 
+What it does that a conventional SSH client does not: local tools and AI agents
+can run commands on your servers *through* the running app, without ever
+receiving your SSH credentials. They address servers by alias only — never a
+hostname, user, port, or jump host — and anything beyond a read-only command
+raises a native confirmation dialog. Trust can be granted for 1, 4, 8, or 24
+hours; there is no permanent switch.
+
 [中文说明](README.zh-CN.md)
 
 ![gxShell desktop SSH workbench](docs/assets/gxshell-overview.webp)
@@ -32,14 +39,14 @@ Get-FileHash .\gxShell-v<version>-windows-amd64.zip -Algorithm SHA256
 
 ## Highlights
 
-- Multi-session SSH terminal with reconnect, search, split view, floating tabs, and keyboard navigation.
+- Local CLI and HTTP API that let scripts and AI agents work on your servers through the app, with alias-only targeting, native approvals, expiring trust, and `secret://` references that keep credentials out of prompts and process arguments.
+- Built-in AI assistant over any OpenAI-compatible API, with streaming replies, terminal context, and confirmation before any remote tool call.
+- Multi-session SSH terminal with reconnect, search, split view, floating tabs, broadcast input, and adaptive tabs.
 - SFTP browsing, uploads, downloads, resumable transfers, and local/remote text workflows.
 - Linux monitoring, Docker operations, SSH tunnels, services, firewall, cron, and website helpers over SSH.
-- AI assistant and an optional local CLI with explicit approvals, trust windows, and named-secret injection.
 - Markdown and text viewer/editor with code highlighting, Mermaid diagrams, search, edit, and save.
-- Adaptive tabs that shrink, scroll, and expose an all-tabs menu when a workspace gets crowded.
+- Session recording to asciinema `.cast` files with a built-in player.
 - Windows tray integration, file associations, drag-and-drop opening, and update notifications.
-- Security-focused defaults that keep saved credentials out of profile JSON and remote PTY input.
 
 ## Keyboard shortcuts
 
