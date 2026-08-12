@@ -458,6 +458,8 @@
   background: color-mix(in srgb, var(--border) 85%, transparent);
   cursor: col-resize;
   transition: background var(--dur) var(--ease);
+  touch-action: none;
+  user-select: none;
 }
 
 .split-divider:hover,
@@ -602,6 +604,7 @@
   background: linear-gradient(180deg, var(--terminal-top), var(--terminal));
   cursor: grab;
   user-select: none;
+  touch-action: none;
 }
 
 .floating-terminal-header:active {
@@ -650,6 +653,8 @@
   height: 16px;
   cursor: nwse-resize;
   z-index: 1;
+  touch-action: none;
+  user-select: none;
 }
 
 .floating-terminal-resize::before {

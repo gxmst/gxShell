@@ -6,6 +6,26 @@
   background: var(--bg);
 }
 
+.markdown-viewer[data-active="false"] {
+  content-visibility: hidden;
+  contain: strict;
+}
+
+.markdown-viewer-zooming .md-document,
+.markdown-viewer-zooming .text-document,
+.markdown-viewer-zooming .source-editor .cm-editor {
+  transform: scale(var(--md-live-scale, 1));
+  transform-origin: top center;
+  will-change: transform;
+  pointer-events: none;
+}
+
+.markdown-viewer-zooming .text-document,
+.markdown-viewer-zooming .source-editor .cm-editor,
+.markdown-viewer-zooming .markdown-viewer-edit-split .md-document {
+  transform-origin: top left;
+}
+
 /* Document toolbar. A normal flex row above the content, not an overlay: the
    previous floating version sat over the top-right of the text with a timed
    fade, which obscured the document, stayed clickable while nearly invisible,
@@ -45,6 +65,7 @@
   margin-right: 4px;
   cursor: pointer;
   accent-color: var(--accent);
+  touch-action: none;
 }
 
 .markdown-viewer-tbtn {
@@ -191,6 +212,8 @@
   z-index: 2;
   width: 8px;
   cursor: col-resize;
+  touch-action: none;
+  user-select: none;
 }
 
 .markdown-outline-resizer::before {

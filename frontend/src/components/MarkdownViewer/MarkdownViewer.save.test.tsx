@@ -28,11 +28,15 @@ vi.mock('../../../wailsjs/go/app/App', () => ({
 
 vi.mock('./SourceEditor', () => ({
   default: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => (
-    <textarea
-      aria-label="Source editor"
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-    />
+    <div className="source-editor">
+      <div className="cm-editor">
+        <textarea
+          aria-label="Source editor"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </div>
+    </div>
   ),
 }));
 
@@ -117,5 +121,94 @@ describe('MarkdownViewer saving', () => {
     expect(appMocks.writeLocalFile).toHaveBeenCalledTimes(2);
     expect(appMocks.writeLocalFile).toHaveBeenLastCalledWith('C:\\notes.txt', 'second draft\r\n');
     await waitFor(() => expect(screen.queryByLabelText('Source editor')).not.toBeInTheDocument());
+  });
+});
+
+describe('MarkdownViewer performance-sensitive interactions', () => {
+  beforeEach(() => {
+    appMocks.readLocalFile.mockReset();
+    appMocks.readLocalResource.mockReset();
+    appMocks.readLocalResource.mockResolvedValue('data:image/png;base64,cG5n');
+    Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
+      configurable: true,
+      value: vi.fn(),
+    });
+  });
+
+  it('previews pointer zoom with a transform and commits layout on release', async () => {
+    appMocks.readLocalFile.mockResolvedValue('# Heading\n\nBody\n');
+    const { container } = render(
+      <MarkdownViewer active filePath={'C:\\notes.md'} onClose={vi.fn()} />,
+    );
+    await waitFor(() => expect(screen.getAllByText('Heading')).toHaveLength(2));
+
+    const input = screen.getByLabelText('Document zoom') as HTMLInputElement;
+    const viewer = container.querySelector<HTMLElement>('.markdown-viewer')!;
+    const document = container.querySelector<HTMLElement>('.md-document')!;
+    expect(document.style.zoom).toBe('1');
+
+    fireEvent.pointerDown(input, { pointerId: 1 });
+    fireEvent.input(input, { target: { value: '1.5' } });
+    expect(viewer).toHaveClass('markdown-viewer-zooming');
+    expect(viewer.style.getPropertyValue('--md-live-scale')).toBe('1.5');
+    expect(document.style.zoom).toBe('1');
+
+    fireEvent.pointerUp(input, { pointerId: 1 });
+    await waitFor(() => expect(document.style.zoom).toBe('1.5'));
+    expect(viewer).not.toHaveClass('markdown-viewer-zooming');
+  });
+
+  it('uses the same live zoom preview while editing', async () => {
+    appMocks.readLocalFile.mockResolvedValue('plain text\n');
+    const { container } = render(
+      <MarkdownViewer active filePath={'C:\\notes.txt'} onClose={vi.fn()} />,
+    );
+    await screen.findByText('plain text');
+    fireEvent.click(screen.getByTitle('Edit'));
+    await screen.findByLabelText('Source editor');
+
+    const input = screen.getByLabelText('Document zoom') as HTMLInputElement;
+    const viewer = container.querySelector<HTMLElement>('.markdown-viewer')!;
+    expect(container.querySelector('.source-editor .cm-editor')).not.toBeNull();
+
+    fireEvent.pointerDown(input, { pointerId: 2 });
+    fireEvent.input(input, { target: { value: '1.4' } });
+    expect(viewer).toHaveClass('markdown-viewer-zooming');
+    expect(viewer.style.getPropertyValue('--md-live-scale')).toBe('1.4');
+
+    fireEvent.pointerUp(input, { pointerId: 2 });
+    await waitFor(() => expect(viewer).not.toHaveClass('markdown-viewer-zooming'));
+  });
+
+  it('does not reload an already resolved image when the tab is reactivated', async () => {
+    appMocks.readLocalFile.mockResolvedValue('![diagram](diagram.png)\n');
+    const props = { filePath: 'C:\\notes.md', onClose: vi.fn() };
+    const { rerender } = render(<MarkdownViewer active {...props} />);
+    await waitFor(() => expect(appMocks.readLocalResource).toHaveBeenCalledTimes(1));
+
+    rerender(<MarkdownViewer active={false} {...props} />);
+    rerender(<MarkdownViewer active {...props} />);
+    await act(async () => Promise.resolve());
+    expect(appMocks.readLocalResource).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a failed image when the tab is reactivated', async () => {
+    appMocks.readLocalFile.mockResolvedValue('![diagram](diagram.png)\n');
+    appMocks.readLocalResource
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockResolvedValueOnce('data:image/png;base64,cmV0cnk=');
+    const props = { filePath: 'C:\\notes.md', onClose: vi.fn() };
+    const { container, rerender } = render(<MarkdownViewer active {...props} />);
+    await waitFor(() => {
+      expect(appMocks.readLocalResource).toHaveBeenCalledTimes(1);
+      expect(container.querySelector('img')).toHaveAttribute('data-md-loaded', 'error');
+    });
+
+    rerender(<MarkdownViewer active={false} {...props} />);
+    rerender(<MarkdownViewer active {...props} />);
+    await waitFor(() => {
+      expect(appMocks.readLocalResource).toHaveBeenCalledTimes(2);
+      expect(container.querySelector('img')).toHaveAttribute('data-md-loaded', 'true');
+    });
   });
 });

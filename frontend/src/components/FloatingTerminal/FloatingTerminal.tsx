@@ -17,8 +17,12 @@ export function FloatingTerminal({ tab, terminalHosts, onDock, onClose, refitTer
   const [size, setSize] = useState({ width: 720, height: 480 });
   const dragRef = useRef({ active: false, startX: 0, startY: 0, startLeft: 0, startTop: 0 });
   const resizeRef = useRef({ active: false, startX: 0, startY: 0, startW: 0, startH: 0 });
+  const panelRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const movedRef = useRef(false);
+  const frameRef = useRef(0);
+  const livePosRef = useRef(pos);
+  const liveSizeRef = useRef(size);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -54,60 +58,103 @@ export function FloatingTerminal({ tab, terminalHosts, onDock, onClose, refitTer
     };
   }, [tab.id, reattachTerminal]);
 
-  const onHeaderMouseDown = useCallback((e: React.MouseEvent) => {
+  const onHeaderPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest("button")) return;
+    livePosRef.current = pos;
     dragRef.current = { active: true, startX: e.clientX, startY: e.clientY, startLeft: pos.left, startTop: pos.top };
+    e.currentTarget.setPointerCapture(e.pointerId);
     e.preventDefault();
-  }, [pos.left, pos.top]);
+  }, [pos]);
 
-  const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
+  const onResizePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    liveSizeRef.current = size;
     resizeRef.current = { active: true, startX: e.clientX, startY: e.clientY, startW: size.width, startH: size.height };
+    e.currentTarget.setPointerCapture(e.pointerId);
     e.preventDefault();
     e.stopPropagation();
-  }, [size.width, size.height]);
+  }, [size]);
 
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      if (dragRef.current.active) {
-        const dx = e.clientX - dragRef.current.startX;
-        const dy = e.clientY - dragRef.current.startY;
-        setPos({
-          left: Math.max(0, Math.min(window.innerWidth - 100, dragRef.current.startLeft + dx)),
-          top: Math.max(0, Math.min(window.innerHeight - 40, dragRef.current.startTop + dy)),
-        });
+  const applyLiveBounds = useCallback(() => {
+    frameRef.current = 0;
+    const panel = panelRef.current;
+    if (!panel) return;
+    if (dragRef.current.active) {
+      panel.style.left = `${livePosRef.current.left}px`;
+      panel.style.top = `${livePosRef.current.top}px`;
+    }
+    if (resizeRef.current.active) {
+      panel.style.width = `${liveSizeRef.current.width}px`;
+      panel.style.height = `${liveSizeRef.current.height}px`;
+    }
+  }, []);
+
+  const onPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current.active) {
+      const dx = e.clientX - dragRef.current.startX;
+      const dy = e.clientY - dragRef.current.startY;
+      livePosRef.current = {
+        left: Math.max(0, Math.min(window.innerWidth - 100, dragRef.current.startLeft + dx)),
+        top: Math.max(0, Math.min(window.innerHeight - 40, dragRef.current.startTop + dy)),
+      };
+    }
+    if (resizeRef.current.active) {
+      liveSizeRef.current = {
+        width: Math.max(320, resizeRef.current.startW + e.clientX - resizeRef.current.startX),
+        height: Math.max(200, resizeRef.current.startH + e.clientY - resizeRef.current.startY),
+      };
+    }
+    if (!frameRef.current && (dragRef.current.active || resizeRef.current.active)) {
+      frameRef.current = requestAnimationFrame(applyLiveBounds);
+    }
+  }, [applyLiveBounds]);
+
+  const finishPointerGesture = useCallback((cancelled = false) => {
+    const wasDragging = dragRef.current.active;
+    const wasResizing = resizeRef.current.active;
+    if (!wasDragging && !wasResizing) return;
+    if (frameRef.current) cancelAnimationFrame(frameRef.current);
+    frameRef.current = 0;
+    dragRef.current.active = false;
+    resizeRef.current.active = false;
+    if (!cancelled) {
+      if (wasDragging) setPos(livePosRef.current);
+      if (wasResizing) setSize(liveSizeRef.current);
+    } else {
+      livePosRef.current = pos;
+      liveSizeRef.current = size;
+      const panel = panelRef.current;
+      if (panel) {
+        panel.style.left = `${pos.left}px`;
+        panel.style.top = `${pos.top}px`;
+        panel.style.width = `${size.width}px`;
+        panel.style.height = `${size.height}px`;
       }
-      if (resizeRef.current.active) {
-        const dx = e.clientX - resizeRef.current.startX;
-        const dy = e.clientY - resizeRef.current.startY;
-        setSize({
-          width: Math.max(320, resizeRef.current.startW + dx),
-          height: Math.max(200, resizeRef.current.startH + dy),
-        });
-      }
-    };
-    const onUp = () => {
-      const wasActive = dragRef.current.active || resizeRef.current.active;
-      dragRef.current.active = false;
-      resizeRef.current.active = false;
-      if (wasActive) {
-        setTimeout(() => refitTerminal?.(tab.id), 30);
-      }
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
-  }, [tab.id, refitTerminal]);
+    }
+    setTimeout(() => refitTerminal?.(tab.id), 30);
+  }, [pos, size, tab.id, refitTerminal]);
 
   return (
-    <div className="floating-terminal" style={{ left: pos.left, top: pos.top, width: size.width, height: size.height }}>
-      <div className="floating-terminal-header" onMouseDown={onHeaderMouseDown}>
+    <div ref={panelRef} className="floating-terminal" style={{ left: pos.left, top: pos.top, width: size.width, height: size.height }}>
+      <div
+        className="floating-terminal-header"
+        onPointerDown={onHeaderPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={() => finishPointerGesture()}
+        onPointerCancel={() => finishPointerGesture(true)}
+      >
         <span className={stateClass(tab.state) + " status-dot"} />
         <span className="floating-terminal-title">{tab.title}</span>
         <button className="mini-btn" title="Dock back" onClick={() => onDock(tab.id)}><ArrowLeftToLine size={12} /></button>
         <button className="mini-btn" title="Close" onClick={() => onClose(tab.id)}><X size={12} /></button>
       </div>
       <div className="floating-terminal-body" ref={hostRef} />
-      <div className="floating-terminal-resize" onMouseDown={onResizeMouseDown} />
+      <div
+        className="floating-terminal-resize"
+        onPointerDown={onResizePointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={() => finishPointerGesture()}
+        onPointerCancel={() => finishPointerGesture(true)}
+      />
     </div>
   );
 }

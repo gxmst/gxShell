@@ -57,7 +57,10 @@ export function FloatingCard({
   const [pos, setPos] = useState(() =>
     resolveInitial({ initialLeft, initialTop, width: safeWidth, center }),
   );
+  const panelRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef({ active: false, startX: 0, startY: 0, startLeft: 0, startTop: 0 });
+  const livePosRef = useRef(pos);
+  const frameRef = useRef(0);
 
   // Re-clamp on resize so wide cards (dual-pane) stay fully visible.
   useEffect(() => {
@@ -68,7 +71,8 @@ export function FloatingCard({
     return () => window.removeEventListener("resize", onResize);
   }, [width]);
 
-  const onHeaderMouseDown = useCallback((e: React.MouseEvent) => {
+  const onHeaderPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    livePosRef.current = pos;
     dragRef.current = {
       active: true,
       startX: e.clientX,
@@ -76,27 +80,43 @@ export function FloatingCard({
       startLeft: pos.left,
       startTop: pos.top,
     };
+    e.currentTarget.setPointerCapture(e.pointerId);
     e.preventDefault();
-  }, [pos.left, pos.top]);
+  }, [pos]);
 
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      if (!dragRef.current.active) return;
-      const dx = e.clientX - dragRef.current.startX;
-      const dy = e.clientY - dragRef.current.startY;
-      const w = Math.min(width, window.innerWidth - 24);
-      setPos(clampPos(dragRef.current.startLeft + dx, dragRef.current.startTop + dy, w));
-    };
-    const onUp = () => {
-      dragRef.current.active = false;
-    };
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
+  const onHeaderPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current.active) return;
+    const w = Math.min(width, window.innerWidth - 24);
+    livePosRef.current = clampPos(
+      dragRef.current.startLeft + e.clientX - dragRef.current.startX,
+      dragRef.current.startTop + e.clientY - dragRef.current.startY,
+      w,
+    );
+    if (frameRef.current) return;
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = 0;
+      const panel = panelRef.current;
+      if (!panel) return;
+      panel.style.left = `${livePosRef.current.left}px`;
+      panel.style.top = `${livePosRef.current.top}px`;
+    });
   }, [width]);
+
+  const finishHeaderGesture = useCallback((cancelled = false) => {
+    if (!dragRef.current.active) return;
+    dragRef.current.active = false;
+    if (frameRef.current) cancelAnimationFrame(frameRef.current);
+    frameRef.current = 0;
+    if (cancelled) {
+      livePosRef.current = pos;
+      if (panelRef.current) {
+        panelRef.current.style.left = `${pos.left}px`;
+        panelRef.current.style.top = `${pos.top}px`;
+      }
+    } else {
+      setPos(livePosRef.current);
+    }
+  }, [pos]);
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
@@ -122,6 +142,7 @@ export function FloatingCard({
 
   return createPortal(
     <div
+      ref={panelRef}
       className="floating-card"
       style={{
         left: pos.left,
@@ -132,7 +153,13 @@ export function FloatingCard({
       role="dialog"
       aria-modal="false"
     >
-      <div className="floating-card-drag-bar" onMouseDown={onHeaderMouseDown} />
+      <div
+        className="floating-card-drag-bar"
+        onPointerDown={onHeaderPointerDown}
+        onPointerMove={onHeaderPointerMove}
+        onPointerUp={() => finishHeaderGesture()}
+        onPointerCancel={() => finishHeaderGesture(true)}
+      />
       <button type="button" className="floating-card-close" onClick={onClose}>
         <X size={14} />
       </button>

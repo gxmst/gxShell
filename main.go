@@ -46,7 +46,8 @@ func main() {
 		MinWidth:  900,
 		MinHeight: 620,
 		AssetServer: &assetserver.Options{
-			Assets: assets,
+			Assets:  assets,
+			Handler: app.DocumentAssetHandler(a),
 		},
 		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		DragAndDrop: &options.DragAndDrop{

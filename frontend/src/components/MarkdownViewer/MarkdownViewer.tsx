@@ -20,7 +20,6 @@ import yaml from 'highlight.js/lib/languages/yaml';
 import { Columns2, ListTree, Pencil, RefreshCw, Save, WrapText, X, ChevronUp, ChevronDown } from 'lucide-react';
 import {
   ReadLocalFile,
-  ReadLocalPDFBase64,
   ReadLocalMarkdownResourceDataURL,
   ReadRemoteTextFile,
   ReadRemoteMarkdownResourceDataURL,
@@ -91,9 +90,27 @@ const DEFAULT_TOC_WIDTH = 210;
 const HL_ALL = 'md-search';
 const HL_ACTIVE = 'md-search-active';
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg)([#?].*)?$/i;
+let mermaidModulePromise: Promise<typeof import('mermaid')['default']> | null = null;
+let mermaidRenderSequence = 0;
+const markdownImageLoadTokens = new WeakMap<HTMLImageElement, object>();
+const mermaidRenderTokens = new WeakMap<HTMLElement, object>();
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
+}
+
+function localPDFURL(filePath: string) {
+  return `/__gxshell/document/pdf?path=${encodeURIComponent(filePath)}&v=${Date.now()}`;
+}
+
+function getMermaid() {
+  if (!mermaidModulePromise) {
+    mermaidModulePromise = import('mermaid').then(({ default: mermaid }) => {
+      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'dark' });
+      return mermaid;
+    });
+  }
+  return mermaidModulePromise;
 }
 
 function initialTocWidth() {
@@ -302,6 +319,8 @@ export default function MarkdownViewer({
 
 
   const editorRef = useRef<SourceEditorHandle | null>(null);
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const viewerMainRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const splitPreviewRef = useRef<HTMLDivElement>(null);
   const contentRootRef = useRef<HTMLElement>(null);
@@ -312,6 +331,9 @@ export default function MarkdownViewer({
   const pendingEditorRevealRef = useRef<{ start: number; end: number } | null>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
+  const committedZoomRef = useRef(zoom);
+  const zoomGestureRef = useRef(false);
+  const tocResizeRef = useRef<{ pointerId: number; startX: number; startWidth: number; width: number; frame: number } | null>(null);
 
 
   const displayPath = source === 'remote' ? remotePath : filePath;
@@ -335,19 +357,19 @@ export default function MarkdownViewer({
     } catch {}
   }, [tocWidth]);
 
+  useLayoutEffect(() => {
+    committedZoomRef.current = zoom;
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    viewer.classList.remove('markdown-viewer-zooming');
+    viewer.style.removeProperty('--md-live-scale');
+  }, [zoom]);
+
   const loadFile = useCallback(async () => {
     try {
       setLoading(true);
       if (pdfMode) {
-        const encoded = await ReadLocalPDFBase64(filePath || '');
-        const binary = window.atob(encoded);
-        const bytes = new Uint8Array(binary.length);
-        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-        const nextURL = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
-        setPdfURL((previous) => {
-          if (previous) URL.revokeObjectURL(previous);
-          return nextURL;
-        });
+        setPdfURL(localPDFURL(filePath || ''));
         setContent('');
         draftRef.current = '';
         setDraft('');
@@ -377,17 +399,13 @@ export default function MarkdownViewer({
     }
   }, [source, filePath, remotePath, sessionId, pdfMode]);
 
-  useEffect(() => () => {
-    if (pdfURL) URL.revokeObjectURL(pdfURL);
-  }, [pdfURL]);
-
   useEffect(() => {
     setEditing(false);
     setSplitPreview(false);
     loadFile();
   }, [loadFile]);
 
-  const dirty = editing && (draft !== content || eol !== loadedEol);
+  const dirty = editing && (draft.length !== content.length || draft !== content || eol !== loadedEol);
 
   useEffect(() => {
     if (!editing || !splitPreview || !active) return;
@@ -777,44 +795,107 @@ export default function MarkdownViewer({
     el?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   };
 
-  const onTocResizeStart = useCallback((e: React.MouseEvent) => {
+  const previewZoom = useCallback((next: number) => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const ratio = next / committedZoomRef.current;
+    viewer.style.setProperty('--md-live-scale', String(ratio));
+    viewer.classList.add('markdown-viewer-zooming');
+  }, []);
+
+  const onZoomPointerDown = useCallback((e: React.PointerEvent<HTMLInputElement>) => {
+    zoomGestureRef.current = true;
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }, []);
+
+  const commitZoomGesture = useCallback((input: HTMLInputElement) => {
+    zoomGestureRef.current = false;
+    const next = clamp(Number(input.value), MIN_ZOOM, MAX_ZOOM);
+    if (next === committedZoomRef.current) {
+      const viewer = viewerRef.current;
+      viewer?.classList.remove('markdown-viewer-zooming');
+      viewer?.style.removeProperty('--md-live-scale');
+      return;
+    }
+    setZoom(next);
+  }, []);
+
+  const cancelZoomGesture = useCallback((input: HTMLInputElement) => {
+    zoomGestureRef.current = false;
+    input.value = String(committedZoomRef.current);
+    const viewer = viewerRef.current;
+    viewer?.classList.remove('markdown-viewer-zooming');
+    viewer?.style.removeProperty('--md-live-scale');
+  }, []);
+
+  const onTocResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
-    const startX = e.clientX;
-    const startWidth = tocWidth;
-    const onMove = (ev: MouseEvent) => {
-      setTocWidth(clamp(startWidth + ev.clientX - startX, MIN_TOC_WIDTH, MAX_TOC_WIDTH));
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    e.currentTarget.setPointerCapture(e.pointerId);
+    tocResizeRef.current = { pointerId: e.pointerId, startX: e.clientX, startWidth: tocWidth, width: tocWidth, frame: 0 };
+  }, [tocWidth]);
+
+  const onTocResizeMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = tocResizeRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    drag.width = clamp(drag.startWidth + e.clientX - drag.startX, MIN_TOC_WIDTH, MAX_TOC_WIDTH);
+    if (drag.frame) return;
+    drag.frame = requestAnimationFrame(() => {
+      const current = tocResizeRef.current;
+      if (!current) return;
+      current.frame = 0;
+      viewerMainRef.current?.style.setProperty('--md-outline-width', `${current.width}px`);
+    });
+  }, []);
+
+  const finishTocResize = useCallback((e: React.PointerEvent<HTMLDivElement>, cancelled = false) => {
+    const drag = tocResizeRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    if (drag.frame) cancelAnimationFrame(drag.frame);
+    tocResizeRef.current = null;
+    const width = cancelled ? tocWidth : drag.width;
+    viewerMainRef.current?.style.setProperty('--md-outline-width', `${width}px`);
+    if (!cancelled && width !== tocWidth) setTocWidth(width);
   }, [tocWidth]);
 
   useEffect(() => {
     const root = contentRootRef.current;
-    if (!markdownMode || !root || !displayPath) return;
+    if (!active || !markdownMode || !root || !displayPath) return;
     let cancelled = false;
-    const images = Array.from(root.querySelectorAll<HTMLImageElement>('img[data-md-src]'));
+    const images = Array.from(root.querySelectorAll<HTMLImageElement>(
+      'img[data-md-src]:not([data-md-loaded]), img[data-md-loaded="error"]',
+    ));
     images.forEach(async (img) => {
       const href = img.dataset.mdSrc || '';
       if (!href) return;
+      const token = {};
+      markdownImageLoadTokens.set(img, token);
+      img.dataset.mdLoaded = 'pending';
+      img.classList.remove('md-image-error');
+      img.classList.add('md-image-loading');
       try {
         const dataUrl = source === 'remote'
           ? await ReadRemoteMarkdownResourceDataURL(sessionId || '', remotePath || '', href)
           : await ReadLocalMarkdownResourceDataURL(filePath || '', href);
-        if (cancelled) return;
+        if (cancelled || markdownImageLoadTokens.get(img) !== token) return;
+        markdownImageLoadTokens.delete(img);
         img.src = dataUrl;
+        img.dataset.mdLoaded = 'true';
         img.classList.remove('md-image-loading');
       } catch {
-        if (cancelled) return;
+        if (cancelled || markdownImageLoadTokens.get(img) !== token) return;
+        markdownImageLoadTokens.delete(img);
+        img.dataset.mdLoaded = 'error';
         img.classList.remove('md-image-loading');
         img.classList.add('md-image-error');
       }
     });
     return () => {
       cancelled = true;
+      images.forEach((img) => {
+        if (img.dataset.mdLoaded !== 'pending') return;
+        markdownImageLoadTokens.delete(img);
+        delete img.dataset.mdLoaded;
+      });
     };
   }, [active, markdownMode, visibleDoc.html, editing, splitPreview, source, filePath, remotePath, sessionId, displayPath]);
 
@@ -823,23 +904,33 @@ export default function MarkdownViewer({
     const root = contentRootRef.current;
     if (!root) return;
     let cancelled = false;
-    const blocks = Array.from(root.querySelectorAll<HTMLElement>('.md-mermaid'));
+    const blocks = Array.from(root.querySelectorAll<HTMLElement>('.md-mermaid:not([data-md-rendered])'));
     if (!blocks.length) return;
 
+    const tokens = blocks.map((block) => {
+      const token = {};
+      mermaidRenderTokens.set(block, token);
+      block.dataset.mdRendered = 'pending';
+      return token;
+    });
+
     (async () => {
-      const mermaid = (await import('mermaid')).default;
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'dark' });
+      const mermaid = await getMermaid();
       for (let i = 0; i < blocks.length; i++) {
         const block = blocks[i];
         const sourceText = block.dataset.source || block.textContent || '';
-        const id = `md-mermaid-${Date.now()}-${i}`;
+        const id = `md-mermaid-${++mermaidRenderSequence}`;
         try {
           const result = await mermaid.render(id, sourceText);
-          if (cancelled) return;
+          if (cancelled || mermaidRenderTokens.get(block) !== tokens[i]) return;
+          mermaidRenderTokens.delete(block);
           block.innerHTML = DOMPurify.sanitize(result.svg, { USE_PROFILES: { svg: true, svgFilters: true } });
+          block.dataset.mdRendered = 'true';
           block.classList.add('md-mermaid-rendered');
         } catch (err: any) {
-          if (cancelled) return;
+          if (cancelled || mermaidRenderTokens.get(block) !== tokens[i]) return;
+          mermaidRenderTokens.delete(block);
+          block.dataset.mdRendered = 'error';
           block.classList.add('md-mermaid-error');
           block.textContent = err?.message || 'Mermaid render failed';
         }
@@ -848,6 +939,11 @@ export default function MarkdownViewer({
 
     return () => {
       cancelled = true;
+      blocks.forEach((block, index) => {
+        if (mermaidRenderTokens.get(block) !== tokens[index]) return;
+        mermaidRenderTokens.delete(block);
+        if (block.dataset.mdRendered === 'pending') delete block.dataset.mdRendered;
+      });
     };
   }, [active, markdownMode, visibleDoc.html, editing, splitPreview]);
 
@@ -858,28 +954,51 @@ export default function MarkdownViewer({
       setActiveHeading('');
       return;
     }
-    const updateActiveHeading = () => {
-      const headings = Array.from(root.querySelectorAll<HTMLElement>('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]'));
-      let next = headings[0]?.id || '';
-      for (const heading of headings) {
-        if (heading.offsetTop - scroller.scrollTop <= 96) {
-          next = heading.id;
-        } else {
-          break;
-        }
-      }
-      setActiveHeading(next);
+    let frame = 0;
+    let headings: Array<{ id: string; top: number }> = [];
+    const measureHeadings = () => {
+      headings = Array.from(root.querySelectorAll<HTMLElement>('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]'))
+        .map((heading) => ({ id: heading.id, top: heading.offsetTop }));
     };
+    const updateActiveHeading = () => {
+      frame = 0;
+      if (!headings.length) {
+        setActiveHeading('');
+        return;
+      }
+      const target = scroller.scrollTop + 96;
+      let low = 0;
+      let high = headings.length - 1;
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        if (headings[mid].top <= target) low = mid;
+        else high = mid - 1;
+      }
+      setActiveHeading(headings[low].id);
+    };
+    const scheduleUpdate = () => {
+      if (!frame) frame = requestAnimationFrame(updateActiveHeading);
+    };
+    const resizeObserver = new ResizeObserver(() => {
+      measureHeadings();
+      scheduleUpdate();
+    });
+    measureHeadings();
     updateActiveHeading();
-    scroller.addEventListener('scroll', updateActiveHeading);
-    return () => scroller.removeEventListener('scroll', updateActiveHeading);
-  }, [active, visibleDoc.html, editing, splitPreview, canShowToc]);
+    resizeObserver.observe(root);
+    scroller.addEventListener('scroll', scheduleUpdate, { passive: true });
+    return () => {
+      resizeObserver.disconnect();
+      scroller.removeEventListener('scroll', scheduleUpdate);
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [active, visibleDoc.html, editing, splitPreview, canShowToc, zoom]);
 
   if (loading) return <div className="markdown-viewer-loading">{t(lang, "loading")}</div>;
   if (error) return <div className="markdown-viewer-error">{error}</div>;
 
   return (
-    <div className="markdown-viewer">
+    <div className="markdown-viewer" ref={viewerRef} data-active={active ? 'true' : 'false'}>
       {/* A real toolbar in normal flow, not an overlay. It previously floated
           over the top-right of the document with a three-tier idle fade: that
           covered text, stayed clickable while nearly invisible, and sat in the
@@ -896,9 +1015,20 @@ export default function MarkdownViewer({
           min={MIN_ZOOM}
           max={MAX_ZOOM}
           step={0.05}
-          value={zoom}
+          defaultValue={zoom}
+          aria-label="Document zoom"
           title={`Zoom ${Math.round(zoom * 100)}%`}
-          onChange={(e) => setZoom(Number(e.target.value))}
+          onPointerDown={onZoomPointerDown}
+          onInput={(e) => {
+            const next = Number(e.currentTarget.value);
+            e.currentTarget.title = `Zoom ${Math.round(next * 100)}%`;
+            previewZoom(next);
+          }}
+          onChange={(e) => {
+            if (!zoomGestureRef.current) setZoom(Number(e.currentTarget.value));
+          }}
+          onPointerUp={(e) => commitZoomGesture(e.currentTarget)}
+          onPointerCancel={(e) => cancelZoomGesture(e.currentTarget)}
         />}
         {!pdfMode && <button
           onClick={() => setTocOpen((v) => !v)}
@@ -983,7 +1113,7 @@ export default function MarkdownViewer({
         </div>
       )}
 
-      <div className={clsx('markdown-viewer-main', canShowToc && tocOpen && 'with-toc')} style={viewerMainStyle}>
+      <div ref={viewerMainRef} className={clsx('markdown-viewer-main', canShowToc && tocOpen && 'with-toc')} style={viewerMainStyle}>
         {canShowToc && tocOpen && (
           <aside className="markdown-viewer-outline">
             <div className="markdown-outline-header">
@@ -1005,7 +1135,13 @@ export default function MarkdownViewer({
                 </button>
               ))}
             </div>
-            <div className="markdown-outline-resizer" onMouseDown={onTocResizeStart} />
+            <div
+              className="markdown-outline-resizer"
+              onPointerDown={onTocResizeStart}
+              onPointerMove={onTocResizeMove}
+              onPointerUp={(e) => finishTocResize(e)}
+              onPointerCancel={(e) => finishTocResize(e, true)}
+            />
           </aside>
         )}
 

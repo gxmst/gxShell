@@ -33,6 +33,8 @@ export interface SourceEditorHandle {
   redo: () => void;
 }
 
+const WORD_COUNT_DEBOUNCE_MS = 240;
+
 interface SourceEditorProps {
   value: string;
   onChange: (value: string) => void;
@@ -222,6 +224,7 @@ export function SourceEditor({
 }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const emittedValueRef = useRef<string | null>(null);
   const wrapCompartment = useRef(new Compartment());
   const langCompartment = useRef(new Compartment());
 
@@ -247,6 +250,9 @@ export function SourceEditor({
     const host = hostRef.current;
     if (!host) return;
 
+    let wordCount = countWords(value);
+    let wordCountTimer = 0;
+
     const reportStats = (view: EditorView) => {
       const report = onStatsRef.current;
       if (!report) return;
@@ -259,9 +265,18 @@ export function SourceEditor({
         line: line.number,
         column: head - line.from + 1,
         chars: state.doc.length,
-        words: countWords(state.doc.toString()),
+        words: wordCount,
         selected,
       });
+    };
+
+    const scheduleWordCount = (view: EditorView, text: string) => {
+      window.clearTimeout(wordCountTimer);
+      wordCountTimer = window.setTimeout(() => {
+        if (viewRef.current !== view) return;
+        wordCount = countWords(text);
+        reportStats(view);
+      }, WORD_COUNT_DEBOUNCE_MS);
     };
 
     const view = new EditorView({
@@ -311,7 +326,12 @@ export function SourceEditor({
           keymap.of([indentWithTab]),
           keymap.of(defaultKeymap),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) onChangeRef.current(update.state.doc.toString());
+            if (update.docChanged) {
+              const text = update.state.doc.toString();
+              emittedValueRef.current = text;
+              onChangeRef.current(text);
+              scheduleWordCount(update.view, text);
+            }
             if (update.docChanged || update.selectionSet) reportStats(update.view);
           }),
           EditorView.domEventHandlers({
@@ -361,6 +381,7 @@ export function SourceEditor({
     reportStats(view);
 
     return () => {
+      window.clearTimeout(wordCountTimer);
       view.destroy();
       viewRef.current = null;
     };
@@ -376,7 +397,12 @@ export function SourceEditor({
   // and reset the selection.
   useEffect(() => {
     const view = viewRef.current;
-    if (!view || view.state.doc.toString() === value) return;
+    if (!view) return;
+    if (emittedValueRef.current === value) {
+      emittedValueRef.current = null;
+      return;
+    }
+    if (view.state.doc.length === value.length && view.state.doc.toString() === value) return;
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: value },
       selection: { anchor: Math.min(view.state.selection.main.anchor, value.length) },

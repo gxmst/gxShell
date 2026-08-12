@@ -4,8 +4,10 @@ package app
 // settings, logs, and terminal-backend helpers.
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +19,9 @@ import (
 	"gxShell/backend/types"
 	"gxShell/backend/version"
 )
+
+const logViewerTailBytes int64 = 1024 * 1024
+const logViewerTruncationNotice = "[gxShell: older log output was omitted]\n"
 
 // GetAppInfo returns application metadata.
 func (a *App) GetAppInfo() map[string]string {
@@ -211,9 +216,32 @@ func (a *App) ReadLogFile(name string) (string, error) {
 	if err != nil || !strings.HasPrefix(absPath, filepath.Clean(logDir)+string(os.PathSeparator)) {
 		return "", fmt.Errorf("access denied")
 	}
-	data, err := os.ReadFile(absPath)
+	file, err := os.Open(absPath)
 	if err != nil {
 		return "", err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return "", err
+	}
+	start := info.Size() - logViewerTailBytes
+	truncated := start > 0
+	if start < 0 {
+		start = 0
+	}
+	if _, err := file.Seek(start, io.SeekStart); err != nil {
+		return "", err
+	}
+	data, err := io.ReadAll(io.LimitReader(file, logViewerTailBytes))
+	if err != nil {
+		return "", err
+	}
+	if truncated {
+		if newline := bytes.IndexByte(data, '\n'); newline >= 0 {
+			data = data[newline+1:]
+		}
+		return logViewerTruncationNotice + string(data), nil
 	}
 	return string(data), nil
 }
