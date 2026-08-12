@@ -3,6 +3,28 @@
 All notable gxShell changes are documented here. Release notes are generated
 from the version section in this file.
 
+## [1.5.3] - 2026-08-13
+
+### English
+
+- Made document zoom dragging responsive on large previews and in the source editor by using compositor-only live previews and committing layout once on release.
+- Reduced repeated work in document tabs: cached heading measurements with frame-scheduled scroll tracking, debounced full-document word counts, reused loaded Markdown images and Mermaid diagrams, and isolated hidden viewers from rendering.
+- Improved all drag-heavy surfaces, including the document outline, terminal split divider, floating terminals, and floating cards. Pointer capture and frame-scheduled DOM updates now avoid a React render for every pointer sample.
+- Streamed authorized local PDFs through the Wails asset server with range-request support instead of transferring Base64 copies through the frontend, substantially reducing peak memory use.
+- Bounded log previews to the latest 1 MiB while preserving long single-line tails, and allowed transient Markdown image failures to retry when a tab becomes active again.
+- Added focused performance and regression coverage for zooming, image retries and reuse, editor statistics, terminal splitting, PDF authorization and ranges, and bounded log reads.
+- Relicensed gxShell under AGPL-3.0 starting with this release. Commercial use is permitted, while modified versions remain available under the same terms; releases through v1.5.2 keep their original license.
+
+### 中文
+
+- 大文档预览和源码编辑器的缩放拖动改为合成层实时预览，松手时才提交一次真实布局，拖动响应更跟手。
+- 减少文档标签页的重复工作：缓存标题位置并按帧跟踪滚动、延迟全文字数统计、复用已加载的 Markdown 图片和 Mermaid 图表，并隔离隐藏预览的渲染。
+- 优化文档目录、终端分屏、浮动终端和浮动卡片等拖动密集界面；通过指针捕获和按帧直接更新 DOM，避免每个指针采样都触发 React 渲染。
+- 本地 PDF 改由 Wails 资源服务在授权后流式传输并支持 Range 请求，不再通过前端传递 Base64 副本，显著降低峰值内存占用。
+- 日志预览限制为最新 1 MiB，同时保留超长单行日志的尾部；Markdown 图片的临时加载失败会在标签页再次激活时重试。
+- 为缩放、图片重试与复用、编辑器统计、终端分屏、PDF 授权与分段读取、日志读取上限补充了针对性性能与回归测试。
+- 从本版本起，gxShell 改用 AGPL-3.0 许可证。商业使用被允许，修改后的版本需继续按相同条款开放；v1.5.2 及更早发布仍沿用原许可证。
+
 ## [1.5.2] - 2026-08-10
 
 ### English
@@ -39,5 +61,6 @@ from the version section in this file.
 - 全局搜索覆盖连接、已打开标签、命令和工作区操作；终端搜索增加清晰的匹配计数与导航。
 - 工作区恢复改为显式开关，并增加顶层错误兜底、辅助功能和键盘交互改进。
 
+[1.5.3]: https://github.com/gxmst/gxShell/releases/tag/v1.5.3
 [1.5.2]: https://github.com/gxmst/gxShell/releases/tag/v1.5.2
 [1.5.1]: https://github.com/gxmst/gxShell/releases/tag/v1.5.1
