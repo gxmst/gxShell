@@ -88,7 +88,8 @@ type AppSettings struct {
 	RestoreWorkspace bool `json:"restoreWorkspace"`
 	// CliServerEnabled controls whether the local gxshell-cli HTTP server runs.
 	// When false the server does not listen at all, so no local process can use
-	// the CLI interface regardless of per-profile opt-in. Defaults to true.
+	// the CLI interface regardless of per-profile opt-in. Defaults to false so
+	// the additional local control surface requires explicit user consent.
 	CliServerEnabled bool `json:"cliServerEnabled"`
 	// Deprecated: CliAutoApprove was a global, permanent full-trust switch.
 	// It is deliberately never migrated into per-profile CliTrustUntil because
@@ -101,8 +102,12 @@ type AppSettings struct {
 	UpdateCheckEnabled bool `json:"updateCheckEnabled"`
 	// UpdateSkippedVersion is a version the user chose to skip. The prompt stays
 	// quiet for it while still appearing for anything newer.
-	UpdateSkippedVersion string   `json:"updateSkippedVersion,omitempty"`
-	Ai                   AiConfig `json:"ai"`
+	UpdateSkippedVersion string `json:"updateSkippedVersion,omitempty"`
+	// ConsentDefaultsVersion records the one-time privacy/security-default
+	// migration. It prevents a later explicit opt-in from being disabled again
+	// on every startup.
+	ConsentDefaultsVersion int      `json:"consentDefaultsVersion"`
+	Ai                     AiConfig `json:"ai"`
 }
 
 type TerminalSettings struct {

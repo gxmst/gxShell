@@ -232,6 +232,7 @@ export namespace types {
 	    cliAutoApprove?: boolean;
 	    updateCheckEnabled: boolean;
 	    updateSkippedVersion?: string;
+	    consentDefaultsVersion: number;
 	    ai: AiConfig;
 	
 	    static createFrom(source: any = {}) {
@@ -257,6 +258,7 @@ export namespace types {
 	        this.cliAutoApprove = source["cliAutoApprove"];
 	        this.updateCheckEnabled = source["updateCheckEnabled"];
 	        this.updateSkippedVersion = source["updateSkippedVersion"];
+	        this.consentDefaultsVersion = source["consentDefaultsVersion"];
 	        this.ai = this.convertValues(source["ai"], AiConfig);
 	    }
 	

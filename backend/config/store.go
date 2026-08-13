@@ -224,12 +224,13 @@ func (s *Store) SaveSettings(settings types.AppSettings) error {
 }
 
 const (
-	minTerminalFontSize        = 9
-	maxTerminalFontSize        = 30
-	minTerminalLineHeight      = 1
-	maxTerminalLineHeight      = 2.5
-	minTerminalScrollbackLines = 500
-	maxTerminalScrollbackLines = 200000
+	minTerminalFontSize           = 9
+	maxTerminalFontSize           = 30
+	minTerminalLineHeight         = 1
+	maxTerminalLineHeight         = 2.5
+	minTerminalScrollbackLines    = 500
+	maxTerminalScrollbackLines    = 200000
+	currentConsentDefaultsVersion = 1
 )
 
 // NormalizeSettings keeps persisted or hand-edited configuration inside the
@@ -257,10 +258,9 @@ func NormalizeSettings(settings types.AppSettings) types.AppSettings {
 }
 
 // MigrateSettingsDefaults backfills fields that older settings.json files did
-// not contain. JSON unmarshalling cannot distinguish a missing boolean from an
-// explicit false, so for keys whose default is true we inspect the raw file:
-// only when the key is genuinely absent do we write the default. This runs once
-// on startup and is a no-op once those keys have been persisted.
+// not contain and applies the one-time safer defaults for local CLI access and
+// automatic update checks. The consent-defaults version makes that security
+// migration idempotent: a later explicit opt-in is never reset on startup.
 func (s *Store) MigrateSettingsDefaults() {
 	s.mu.RLock()
 	data, err := os.ReadFile(filepath.Join(s.dir, "settings.json"))
@@ -274,7 +274,10 @@ func (s *Store) MigrateSettingsDefaults() {
 	}
 	_, hasCliServerEnabled := raw["cliServerEnabled"]
 	_, hasSmartHighlight := raw["smartHighlight"]
-	_, hasUpdateCheckEnabled := raw["updateCheckEnabled"]
+	var consentDefaultsVersion int
+	if encoded, ok := raw["consentDefaultsVersion"]; ok {
+		_ = json.Unmarshal(encoded, &consentDefaultsVersion)
+	}
 	var rawTerminal map[string]json.RawMessage
 	if terminal, ok := raw["terminal"]; ok {
 		_ = json.Unmarshal(terminal, &rawTerminal)
@@ -290,27 +293,54 @@ func (s *Store) MigrateSettingsDefaults() {
 			break
 		}
 	}
-	if hasCliServerEnabled && hasSmartHighlight && hasUpdateCheckEnabled && hasTerminalDefaults {
+	if hasSmartHighlight && hasTerminalDefaults && consentDefaultsVersion >= currentConsentDefaultsVersion {
 		return
 	}
 	// Start from DefaultSettings and overlay the on-disk file so any field the
 	// old file omitted keeps its real default (e.g. fontSize 14, timeout 15)
-	// instead of being persisted as a Go zero value. Absent true-by-default
-	// booleans then stay true, while explicit false values are preserved.
+	// instead of being persisted as a Go zero value.
 	settings := DefaultSettings()
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return
 	}
-	if !hasCliServerEnabled {
-		settings.CliServerEnabled = true
-	}
 	if !hasSmartHighlight {
 		settings.SmartHighlight = true
 	}
-	if !hasUpdateCheckEnabled {
-		settings.UpdateCheckEnabled = true
+	// Earlier releases silently enabled both local CLI control and the only
+	// automatic outbound request. Apply the safer defaults once to every
+	// pre-migration settings file, including files where those old defaults were
+	// already persisted as true. A subsequent explicit opt-in is preserved
+	// because SaveSettings also persists the migration version.
+	if consentDefaultsVersion < currentConsentDefaultsVersion {
+		// An existing profile-level CLI opt-in is evidence that the user was
+		// actively using the feature before this safer default shipped. Preserve
+		// that global opt-in so an upgrade does not silently break their workflow;
+		// installations with no exposed profile are closed by default.
+		if hasCliProfileOptIn := s.hasCliProfileOptIn(); !hasCliProfileOptIn {
+			settings.CliServerEnabled = false
+		} else if !hasCliServerEnabled {
+			// Before the global switch existed, an opted-in profile was enough
+			// to make the always-running server usable. Preserve that deliberate
+			// profile opt-in, while an explicit global false still wins.
+			settings.CliServerEnabled = true
+		}
+		settings.UpdateCheckEnabled = false
+		settings.ConsentDefaultsVersion = currentConsentDefaultsVersion
 	}
 	_ = s.SaveSettings(settings)
+}
+
+func (s *Store) hasCliProfileOptIn() bool {
+	profiles, err := s.ListProfiles()
+	if err != nil {
+		return false
+	}
+	for _, profile := range profiles {
+		if profile.CliEnabled {
+			return true
+		}
+	}
+	return false
 }
 
 // MigrateCommandDefaults remains as a startup compatibility hook. Built-in
@@ -333,17 +363,18 @@ func (s *Store) SaveCommands(commands []types.CommandTemplate) error {
 
 func DefaultSettings() types.AppSettings {
 	return types.AppSettings{
-		ThemeName:          "Light",
-		MonitorEnabled:     true,
-		MonitorIntervalSec: 5,
-		ConnectionTimeout:  15,
-		SidebarWidth:       300,
-		SavePasswords:      false,
-		SmartHighlight:     true,
-		HighlightLevel:     "off",
-		RestoreWorkspace:   false,
-		CliServerEnabled:   true,
-		UpdateCheckEnabled: true,
+		ThemeName:              "Light",
+		MonitorEnabled:         true,
+		MonitorIntervalSec:     5,
+		ConnectionTimeout:      15,
+		SidebarWidth:           300,
+		SavePasswords:          false,
+		SmartHighlight:         true,
+		HighlightLevel:         "off",
+		RestoreWorkspace:       false,
+		CliServerEnabled:       false,
+		UpdateCheckEnabled:     false,
+		ConsentDefaultsVersion: currentConsentDefaultsVersion,
 		Terminal: types.TerminalSettings{
 			FontFamily:        "JetBrains Mono, Cascadia Code, Consolas, monospace",
 			FontSize:          14,

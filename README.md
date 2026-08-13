@@ -23,8 +23,10 @@ hours; there is no permanent switch.
 ## Download
 
 Download the latest [Windows x64 release](https://github.com/gxmst/gxShell/releases/latest).
-The recommended zip contains the desktop app, `gxshell-cli.exe`, the license,
-and a build manifest.
+The recommended zip keeps the desktop app at its root. The optional CLI,
+English and Chinese usage guides, and agent-safety guide are grouped under
+`CLI/`; the license and build manifest are also included. The CLI server is
+disabled by default and must be explicitly enabled in Settings.
 
 Requirements: Windows 10/11 x64 and the Microsoft WebView2 Runtime. The
 unsigned build may show a SmartScreen warning on first launch; use **More
@@ -62,9 +64,9 @@ Get-FileHash .\gxShell-v<version>-windows-amd64.zip -Algorithm SHA256
 ## Security
 
 - Passwords, key passphrases, and AI API keys use the OS credential store or an encrypted fallback.
-- CLI access is local-only, token-protected, opt-in per profile, and guarded by native confirmations.
+- CLI access is disabled by default. When explicitly enabled, it is local-only, token-protected, opt-in per profile, and guarded by native confirmations.
 - AI and CLI commands apply dangerous-command and sensitive-path policies before execution.
-- The app does not send telemetry; its only automatic request is the optional public release check.
+- The app does not send telemetry; its optional public release check is disabled by default.
 
 Read the full [security model](docs/security.md).
 

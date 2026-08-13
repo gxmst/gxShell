@@ -12,7 +12,7 @@ credentials away from ordinary profile data and terminal input.
 
 ## AI and CLI controls
 
-- CLI access is disabled globally when its server setting is off and is opt-in per profile.
+- CLI access is globally disabled by default and is additionally opt-in per profile.
 - Requests stay on `127.0.0.1` and require a local bearer token.
 - The CLI exposes aliases rather than hostnames, usernames, ports, profile IDs, or jump-host details.
 - Non-read-only commands, transfers, tunnels, and secret changes require native confirmation unless a limited trust window applies.
@@ -29,7 +29,7 @@ credentials away from ordinary profile data and terminal input.
 ## Network and privacy
 
 - gxShell sends no telemetry.
-- The optional update check is an unauthenticated read of the public GitHub release feed and can be disabled.
+- The optional update check is disabled by default. When enabled, it performs an unauthenticated read of the public GitHub release feed.
 - CLI tunnels bind only to loopback and are temporary; close them after use.
 - The CLI's HTTP listener address is hard-coded to `127.0.0.1:56789` and cannot
   be configured. There is no setting that exposes it on a routable interface —

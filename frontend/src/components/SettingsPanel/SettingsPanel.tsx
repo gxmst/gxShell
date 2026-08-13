@@ -282,7 +282,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
             label={zh ? "恢复上次工作区" : "Restore last workspace"}
             hint={zh ? "启动时重新连接上次仍打开的服务器；最多同时恢复 3 个连接。" : "Reconnect servers that were still open at exit, with at most 3 concurrent restores."}
           />
-          <SettingsToggle checked={draft.cliServerEnabled ?? true} onChange={(checked) => update({ cliServerEnabled: checked })} label={t(lang, "cliServerEnabled")} hint={t(lang, "cliServerEnabledHint")} />
+          <SettingsToggle checked={draft.cliServerEnabled ?? false} onChange={(checked) => update({ cliServerEnabled: checked })} label={t(lang, "cliServerEnabled")} hint={t(lang, "cliServerEnabledHint")} />
         </SettingsSection>
 
         <SettingsSection icon={<ShieldCheck size={15} />} title={zh ? "系统集成" : "System integration"} description={zh ? "Windows 右键菜单和本地文件入口" : "Windows context menus and local file entry points"}>
@@ -290,7 +290,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
         </SettingsSection>
 
         <SettingsSection icon={<Download size={15} />} title={t(lang, "updateSection")} description={t(lang, "updateSectionDesc")}>
-          <SettingsToggle checked={draft.updateCheckEnabled ?? true} onChange={(checked) => update({ updateCheckEnabled: checked })} label={t(lang, "updateCheckEnabled")} hint={t(lang, "updateCheckEnabledHint")} />
+          <SettingsToggle checked={draft.updateCheckEnabled ?? false} onChange={(checked) => update({ updateCheckEnabled: checked })} label={t(lang, "updateCheckEnabled")} hint={t(lang, "updateCheckEnabledHint")} />
           <div className="settings-action-grid">
             <button className="btn-secondary" onClick={runUpdateCheck} disabled={checking}>
               <RefreshCw size={13} className={checking ? "animate-spin" : ""} /> {checking ? t(lang, "updateChecking") : t(lang, "updateCheckNow")}

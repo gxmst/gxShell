@@ -20,7 +20,9 @@ gxShell 在你的服务器上执行命令，全程拿不到 SSH 凭据。它们�
 ## 下载
 
 前往 [Windows x64 最新版](https://github.com/gxmst/gxShell/releases/latest)。
-推荐下载 zip，里面包含桌面应用、`gxshell-cli.exe`、许可证和构建清单。
+推荐下载 zip；桌面应用位于压缩包根目录，可选 CLI、中英文使用说明和 Agent 安全
+规范统一放在 `CLI/` 子目录，另附许可证和构建清单。CLI 服务默认关闭，必须在设置
+中明确开启。
 
 运行要求：Windows 10/11 x64，以及 Microsoft WebView2 Runtime。未签名版本
 首次启动可能显示 SmartScreen 提示；只有在校验和与 Release 页面一致时，才应点
@@ -57,9 +59,9 @@ Get-FileHash .\gxShell-v<版本>-windows-amd64.zip -Algorithm SHA256
 ## 安全
 
 - 密码、密钥口令和 AI API Key 使用系统凭据存储或加密回退存储。
-- CLI 仅监听本机，使用令牌保护，按 profile 显式启用，并受原生确认保护。
+- CLI 默认关闭；明确开启后仅监听本机，使用令牌保护，按 profile 显式启用，并受原生确认保护。
 - AI 和 CLI 执行前会检查危险命令和敏感路径。
-- 应用不发送遥测；唯一的自动网络请求是可关闭的公开 Release 检查。
+- 应用不发送遥测；可选的公开 Release 检查默认关闭。
 
 详见[安全模型](docs/security.md)。
 

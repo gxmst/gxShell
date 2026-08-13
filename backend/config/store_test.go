@@ -34,6 +34,19 @@ func TestDefaultSettingsDoesNotRestoreWorkspace(t *testing.T) {
 	}
 }
 
+func TestDefaultSettingsRequireNetworkAndCliOptIn(t *testing.T) {
+	settings := DefaultSettings()
+	if settings.CliServerEnabled {
+		t.Fatal("CLI server must be disabled by default")
+	}
+	if settings.UpdateCheckEnabled {
+		t.Fatal("startup update check must be disabled by default")
+	}
+	if settings.ConsentDefaultsVersion != currentConsentDefaultsVersion {
+		t.Fatalf("consent defaults version=%d, want %d", settings.ConsentDefaultsVersion, currentConsentDefaultsVersion)
+	}
+}
+
 func readCliServerEnabled(t *testing.T, s *Store) (value bool, present bool) {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(s.dir, "settings.json"))
@@ -54,11 +67,11 @@ func readCliServerEnabled(t *testing.T, s *Store) (value bool, present bool) {
 	return value, true
 }
 
-// An older settings.json with no cliServerEnabled key must be backfilled to
-// true, preserving the prior behaviour where the CLI server always ran.
-func TestMigrateSettingsDefaultsBackfillsMissingKey(t *testing.T) {
+// A settings.json written before the safer consent defaults must explicitly
+// disable the CLI server, even when the old version had persisted true.
+func TestMigrateSettingsDefaultsDisablesLegacyCliServer(t *testing.T) {
 	s := newTestStore(t)
-	writeSettingsJSON(t, s, `{"themeName":"Light","monitorEnabled":true}`)
+	writeSettingsJSON(t, s, `{"themeName":"Light","monitorEnabled":true,"cliServerEnabled":true}`)
 
 	s.MigrateSettingsDefaults()
 
@@ -66,8 +79,62 @@ func TestMigrateSettingsDefaultsBackfillsMissingKey(t *testing.T) {
 	if !present {
 		t.Fatal("cliServerEnabled was not written")
 	}
-	if !value {
-		t.Fatal("missing key should migrate to true")
+	if value {
+		t.Fatal("legacy CLI server setting should migrate to false")
+	}
+}
+
+func TestMigrateSettingsDefaultsPreservesLegacyCliOptIn(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.SaveProfiles([]types.Profile{{ID: "prod", CliEnabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	writeSettingsJSON(t, s, `{"themeName":"Light","cliServerEnabled":true,"updateCheckEnabled":true}`)
+
+	s.MigrateSettingsDefaults()
+	got, err := s.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.CliServerEnabled {
+		t.Fatal("legacy global CLI opt-in should be preserved when a profile is explicitly enabled")
+	}
+	if got.UpdateCheckEnabled {
+		t.Fatal("update checks must still migrate to the safer default")
+	}
+}
+
+func TestMigrateSettingsDefaultsPreservesPreSwitchCliOptIn(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.SaveProfiles([]types.Profile{{ID: "prod", CliEnabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	writeSettingsJSON(t, s, `{"themeName":"Light","updateCheckEnabled":true}`)
+
+	s.MigrateSettingsDefaults()
+	got, err := s.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.CliServerEnabled {
+		t.Fatal("pre-switch profile opt-in should preserve CLI availability")
+	}
+}
+
+func TestMigrateSettingsDefaultsPreservesExplicitGlobalCliOptOut(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.SaveProfiles([]types.Profile{{ID: "prod", CliEnabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	writeSettingsJSON(t, s, `{"themeName":"Light","cliServerEnabled":false}`)
+
+	s.MigrateSettingsDefaults()
+	got, err := s.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CliServerEnabled {
+		t.Fatal("explicit global CLI opt-out must override a profile opt-in")
 	}
 }
 
@@ -107,8 +174,8 @@ func TestMigrateSettingsDefaultsPreservesOtherDefaults(t *testing.T) {
 	if got.MonitorEnabled {
 		t.Fatal("monitorEnabled overwritten: explicit false became true")
 	}
-	if !got.CliServerEnabled {
-		t.Fatal("cliServerEnabled should be backfilled to true")
+	if got.CliServerEnabled {
+		t.Fatal("legacy cliServerEnabled should migrate to false")
 	}
 }
 
@@ -183,11 +250,11 @@ func readBoolField(t *testing.T, s *Store, key string) (value bool, present bool
 	return value, true
 }
 
-// updateCheckEnabled is true by default, so a settings.json written before the
-// key existed must be backfilled rather than read as an explicit opt-out.
-func TestMigrateSettingsDefaultsBackfillsUpdateCheck(t *testing.T) {
+// A settings.json written before the safer consent defaults must disable the
+// startup update request, even when the old version had persisted true.
+func TestMigrateSettingsDefaultsDisablesLegacyUpdateCheck(t *testing.T) {
 	s := newTestStore(t)
-	writeSettingsJSON(t, s, `{"themeName":"Light","cliServerEnabled":true,"smartHighlight":true}`)
+	writeSettingsJSON(t, s, `{"themeName":"Light","cliServerEnabled":true,"smartHighlight":true,"updateCheckEnabled":true}`)
 
 	s.MigrateSettingsDefaults()
 
@@ -195,8 +262,8 @@ func TestMigrateSettingsDefaultsBackfillsUpdateCheck(t *testing.T) {
 	if !present {
 		t.Fatal("updateCheckEnabled was not written")
 	}
-	if !value {
-		t.Fatal("missing updateCheckEnabled should migrate to true")
+	if value {
+		t.Fatal("legacy updateCheckEnabled should migrate to false")
 	}
 }
 
@@ -214,6 +281,29 @@ func TestMigrateSettingsDefaultsPreservesUpdateCheckOptOut(t *testing.T) {
 	}
 	if value {
 		t.Fatal("explicit false must be preserved")
+	}
+}
+
+func TestMigrateSettingsDefaultsIsOneTime(t *testing.T) {
+	s := newTestStore(t)
+	writeSettingsJSON(t, s, `{"themeName":"Light","cliServerEnabled":true,"updateCheckEnabled":true}`)
+	s.MigrateSettingsDefaults()
+	settings, err := s.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.CliServerEnabled = true
+	settings.UpdateCheckEnabled = true
+	if err := s.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	s.MigrateSettingsDefaults()
+	got, err := s.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.CliServerEnabled || !got.UpdateCheckEnabled {
+		t.Fatal("explicit opt-ins must survive subsequent startup migrations")
 	}
 }
 

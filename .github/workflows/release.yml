@@ -87,9 +87,14 @@ jobs:
           $null = $source -match 'const\s+Version\s*=\s*"([^"]+)"'
           $version = $Matches[1]
           $stage = Join-Path $env:RUNNER_TEMP 'gxshell-release-stage'
+          $cliStage = Join-Path $stage 'CLI'
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          New-Item -ItemType Directory -Force -Path $cliStage | Out-Null
           Copy-Item build/bin/gxShell.exe (Join-Path $stage 'gxShell.exe')
-          Copy-Item gxshell-cli.exe (Join-Path $stage 'gxshell-cli.exe')
+          Copy-Item gxshell-cli.exe (Join-Path $cliStage 'gxshell-cli.exe')
+          Copy-Item docs/cli.md (Join-Path $cliStage 'CLI-README.md')
+          Copy-Item docs/cli.zh-CN.md (Join-Path $cliStage 'CLI-README.zh-CN.md')
+          Copy-Item docs/agent-guide.md (Join-Path $cliStage 'agent-guide.md')
           Copy-Item LICENSE (Join-Path $stage 'LICENSE')
           $manifest = @(
             'gxShell release build manifest',
@@ -99,7 +104,10 @@ jobs:
             "built_at_utc: $((Get-Date).ToUniversalTime().ToString('o'))",
             'assets:',
             '  gxShell.exe',
-            '  gxshell-cli.exe',
+            '  CLI/gxshell-cli.exe',
+            '  CLI/CLI-README.md',
+            '  CLI/CLI-README.zh-CN.md',
+            '  CLI/agent-guide.md',
             '  LICENSE',
             '  BUILD-MANIFEST.txt'
           )
@@ -112,14 +120,14 @@ jobs:
           $lf = [System.Text.UTF8Encoding]::new($false)
           [System.IO.File]::WriteAllText((Join-Path $stage 'BUILD-MANIFEST.txt'), (($manifest -join "`n") + "`n"), $lf)
           $package = "gxShell-v$version-windows-amd64.zip"
-          $inputs = @(Get-ChildItem -LiteralPath $stage -File | Select-Object -ExpandProperty FullName)
+          $inputs = @(Get-ChildItem -LiteralPath $stage | Select-Object -ExpandProperty FullName)
           Compress-Archive -LiteralPath $inputs -DestinationPath $package -CompressionLevel Optimal
           $hash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
           # Absolute path: .NET resolves a relative path against the process
           # working directory, which does not follow PowerShell's location.
           [System.IO.File]::WriteAllText((Join-Path $PWD 'SHA256SUMS.txt'), "$hash  $package`n", $lf)
           Write-Output "PACKAGE=$package"
-          Get-ChildItem -LiteralPath $stage -File | Select-Object Name,Length
+          Get-ChildItem -LiteralPath $stage -File -Recurse | Select-Object FullName,Length
           Get-Item $package,SHA256SUMS.txt | Select-Object Name,Length
 
       - name: Create GitHub release
@@ -159,7 +167,7 @@ jobs:
           $body = @(
             '## Download',
             '',
-            "Download ${tick}gxShell-v$version-windows-amd64.zip${tick}. It contains the desktop app, CLI, license, and build manifest.",
+            "Download ${tick}gxShell-v$version-windows-amd64.zip${tick}. The desktop app is at the archive root; the optional CLI, English and Chinese CLI documentation, and agent safety guide are grouped under ${tick}CLI/${tick}. The CLI server is disabled by default.",
             '',
             '## Changes',
             '',

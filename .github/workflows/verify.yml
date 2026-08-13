@@ -118,9 +118,12 @@ jobs:
         run: |
           VERSION="$(node -p "require('./frontend/package.json').version")"
           PACKAGE="gxShell-v${VERSION}-linux-amd64"
-          mkdir -p "release/${PACKAGE}"
+          mkdir -p "release/${PACKAGE}/CLI"
           install -m 0755 build/bin/gxShell "release/${PACKAGE}/gxShell"
-          go build -o "release/${PACKAGE}/gxshell-cli" ./cmd/gxshell-cli
+          go build -o "release/${PACKAGE}/CLI/gxshell-cli" ./cmd/gxshell-cli
+          cp docs/cli.md "release/${PACKAGE}/CLI/CLI-README.md"
+          cp docs/cli.zh-CN.md "release/${PACKAGE}/CLI/CLI-README.zh-CN.md"
+          cp docs/agent-guide.md "release/${PACKAGE}/CLI/agent-guide.md"
           cp LICENSE "release/${PACKAGE}/LICENSE"
           tar -C release -czf "release/${PACKAGE}.tar.gz" "${PACKAGE}"
           (cd release && sha256sum "${PACKAGE}.tar.gz" > "${PACKAGE}.tar.gz.sha256")
@@ -173,9 +176,12 @@ jobs:
         run: |
           VERSION="$(node -p "require('./frontend/package.json').version")"
           PACKAGE="gxShell-v${VERSION}-macos-arm64"
-          mkdir -p "release/${PACKAGE}"
+          mkdir -p "release/${PACKAGE}/CLI"
           cp -R build/bin/gxShell.app "release/${PACKAGE}/gxShell.app"
-          go build -o "release/${PACKAGE}/gxshell-cli" ./cmd/gxshell-cli
+          go build -o "release/${PACKAGE}/CLI/gxshell-cli" ./cmd/gxshell-cli
+          cp docs/cli.md "release/${PACKAGE}/CLI/CLI-README.md"
+          cp docs/cli.zh-CN.md "release/${PACKAGE}/CLI/CLI-README.zh-CN.md"
+          cp docs/agent-guide.md "release/${PACKAGE}/CLI/agent-guide.md"
           cp LICENSE "release/${PACKAGE}/LICENSE"
           ditto -c -k --sequesterRsrc --keepParent "release/${PACKAGE}" "release/${PACKAGE}.zip"
           (cd release && shasum -a 256 "${PACKAGE}.zip" > "${PACKAGE}.zip.sha256")

@@ -293,9 +293,9 @@ func (a *App) startup(ctx context.Context) {
 	a.store.MigrateCommandDefaults()
 	a.log.Info("gxShell started")
 
-	// Start the CLI server only when the user has left it enabled. A missing
-	// setting is migrated to true by MigrateSettingsDefaults above, so existing
-	// installs keep their prior behaviour.
+	// Start the CLI server only after the user has explicitly enabled it. The
+	// default and one-time migration both leave this additional local control
+	// surface closed.
 	if settings, err := a.store.GetSettings(); err != nil {
 		a.log.ErrorFields("CLI server disabled because settings could not be read", logger.LogFields{"error": err.Error()})
 	} else if settings.CliServerEnabled {

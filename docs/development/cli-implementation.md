@@ -5,13 +5,13 @@ The CLI integration is implemented as a local authenticated proxy:
 - `app_cli.go` starts a localhost HTTP server inside the GUI process.
 - `cmd/gxshell-cli/main.go` is a small client that reads the local token and calls the GUI.
 - `types.Profile` includes `cliEnabled` and `cliAlias` so access is explicit per profile. (Older profiles written under the `aiEnabled`/`aiAlias` keys are migrated to these on startup.)
-- A global `AppSettings.cliServerEnabled` flag gates whether the localhost server starts at all; when false the listener is never opened. Missing values in older `settings.json` files are backfilled to true on startup to preserve prior behavior.
+- A global `AppSettings.cliServerEnabled` flag gates whether the localhost server starts at all; when false the listener is never opened. It defaults to false. A versioned, one-time consent migration also disables the server for settings written before this safer default, after which explicit user opt-ins are preserved.
 - The server reuses an existing connected SSH session for the selected profile when possible and reports `reusedConnection` in structured exec responses.
 - If no session exists, it connects through `App.Connect`, preserving the existing gxShell connection path.
 
 Important safety choices:
 
-- No profile is exposed by default, and the whole server can be turned off via `Enable CLI server` in Settings.
+- The whole server and every profile are disabled for CLI access by default. Users must first enable the global server and then opt in individual profiles.
 - Each opted-in profile may receive time-limited full trust (1/4/8/24 hours). While its wall-clock deadline is active, command execution skips interactive approval; there is no permanent trust switch. It does not bypass command preflight blocks for catastrophic operations or sensitive credential paths.
 - `/cli/list` and `/cli/status` omit host, user, port, and profile ID.
 - `/cli/exec`, `/cli/jobs`, `/cli/copy`, and `/cli/tunnels` require token authentication. Simple read-only allowlisted commands run without a prompt; by default, commands with shell operators, quoting, variable/tilde expansion, globs, or anything outside the allowlist require native user confirmation. Requests for the same alias that arrive within about one second are batched into one prompt. Active per-profile trust bypasses this confirmation tier only. A cross-server copy bypasses approval only when both endpoint profiles are trusted.

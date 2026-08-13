@@ -3,6 +3,20 @@
 All notable gxShell changes are documented here. Release notes are generated
 from the version section in this file.
 
+## [1.5.4] - 2026-08-13
+
+### English
+
+- Disabled the local CLI server and automatic startup update checks by default. Existing installations without a deliberate profile-level CLI opt-in migrate to the safer CLI default once; explicit CLI users and later opt-ins are preserved.
+- Reorganized release packages so the desktop executable remains unambiguous at the archive root, while the optional CLI is grouped under `CLI/` with English and Chinese usage guides plus the agent safety contract.
+- Clarified in Settings and the security documentation that CLI access opens an additional token-protected localhost control surface and that update checks are the app's only optional automatic network request.
+
+### 中文
+
+- 本机 CLI 服务和启动时自动检查更新改为默认关闭。没有明确 profile 级 CLI 授权的旧安装会一次性迁移到更安全的默认值；已明确使用 CLI 的用户以及之后的手动开启会被保留。
+- 调整发布包结构：桌面主程序继续清晰地放在压缩包根目录，可选 CLI 则统一收进 `CLI/` 子目录，并附中英文使用说明和 Agent 安全规范。
+- 在设置和安全文档中明确说明：CLI 会增加一个受令牌保护的本机控制接口，而更新检查是应用唯一可选的自动网络请求。
+
 ## [1.5.3] - 2026-08-13
 
 ### English
@@ -61,6 +75,7 @@ from the version section in this file.
 - 全局搜索覆盖连接、已打开标签、命令和工作区操作；终端搜索增加清晰的匹配计数与导航。
 - 工作区恢复改为显式开关，并增加顶层错误兜底、辅助功能和键盘交互改进。
 
+[1.5.4]: https://github.com/gxmst/gxShell/releases/tag/v1.5.4
 [1.5.3]: https://github.com/gxmst/gxShell/releases/tag/v1.5.3
 [1.5.2]: https://github.com/gxmst/gxShell/releases/tag/v1.5.2
 [1.5.1]: https://github.com/gxmst/gxShell/releases/tag/v1.5.1
