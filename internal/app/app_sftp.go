@@ -84,11 +84,12 @@ func (a *App) WriteRemoteMarkdownFile(sessionID, remotePath, content string) err
 	return a.WriteRemoteTextFile(sessionID, remotePath, content)
 }
 
-// ListRemoteTextFilesInDir lists supported text siblings for a remote text file.
+// ListRemoteTextFilesInDir lists supported document siblings for a remote
+// document. The historical method name is kept for binding compatibility.
 func (a *App) ListRemoteTextFilesInDir(sessionID, remotePath string) ([]string, error) {
 	remotePath = cleanRemoteMarkdownPath(remotePath)
-	if !isRemoteSupportedTextPath(remotePath) {
-		return nil, fmt.Errorf("remote file is not a supported text file")
+	if !isRemoteSupportedDocumentPath(remotePath) {
+		return nil, fmt.Errorf("remote file is not a supported document")
 	}
 	dir := path.Dir(remotePath)
 	files, err := a.sftp.ListRemoteDir(sessionID, dir)
@@ -97,7 +98,7 @@ func (a *App) ListRemoteTextFilesInDir(sessionID, remotePath string) ([]string, 
 	}
 	result := make([]string, 0)
 	for _, file := range files {
-		if !file.IsDir && isRemoteSupportedTextPath(file.Name) {
+		if !file.IsDir && isRemoteSupportedDocumentPath(file.Name) {
 			result = append(result, path.Join(dir, file.Name))
 		}
 	}
@@ -236,4 +237,8 @@ func isRemoteMarkdownPath(p string) bool {
 
 func isRemoteSupportedTextPath(p string) bool {
 	return supportedTextFileExts()[strings.ToLower(path.Ext(p))]
+}
+
+func isRemoteSupportedDocumentPath(p string) bool {
+	return isRemoteSupportedTextPath(p) || strings.EqualFold(path.Ext(p), ".pdf")
 }

@@ -9,15 +9,17 @@ terminal window.
 - Local terminals beside remote sessions, synchronized broadcast input, clickable URLs and remote paths, and terminal recordings with an asciinema player.
 - Per-profile start directories, environment variables, login commands, tunnel rules, and optional workspace restoration.
 
-## Files and text
+## Files and documents
 
 - SFTP browsing with path navigation, search, sorting, selection, rename, delete, transfer progress, folder downloads, resumable transfers, and conflict protection.
 - Local and remote text/Markdown viewing and editing with sanitized rendering, code highlighting, Mermaid diagrams, table of contents, relative links/images, search, zoom, save, and refresh.
+- Local and remote PDF viewing through authorized, range-capable document streams, plus syntax-aware JSON/JSONL editing with validation and token-preserving formatting.
+- Opening a local document reveals its workspace and scrolls the current-folder list to the active file.
 
 Supported text extensions include `.md`, `.markdown`, `.txt`, `.log`, `.conf`,
 `.cfg`, `.ini`, `.env`, `.json`, `.jsonl`, `.yaml`, `.yml`, `.toml`, `.xml`,
 `.csv`, `.tsv`, `.sh`, `.bash`, `.zsh`, `.fish`, `.ps1`, `.bat`, `.cmd`, `.sql`,
-and `.service`.
+and `.service`. PDF documents use the view-only `.pdf` workflow.
 
 ## Remote operations
 

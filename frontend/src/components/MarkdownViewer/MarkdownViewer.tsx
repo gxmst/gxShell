@@ -1,23 +1,6 @@
 import clsx from 'clsx';
-import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo, lazy, Suspense } from 'react';
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
-import hljs from 'highlight.js/lib/core';
-import bash from 'highlight.js/lib/languages/bash';
-import css from 'highlight.js/lib/languages/css';
-import dockerfile from 'highlight.js/lib/languages/dockerfile';
-import go from 'highlight.js/lib/languages/go';
-import ini from 'highlight.js/lib/languages/ini';
-import javascript from 'highlight.js/lib/languages/javascript';
-import json from 'highlight.js/lib/languages/json';
-import markdown from 'highlight.js/lib/languages/markdown';
-import powershell from 'highlight.js/lib/languages/powershell';
-import python from 'highlight.js/lib/languages/python';
-import sql from 'highlight.js/lib/languages/sql';
-import typescript from 'highlight.js/lib/languages/typescript';
-import xml from 'highlight.js/lib/languages/xml';
-import yaml from 'highlight.js/lib/languages/yaml';
-import { Columns2, ListTree, Pencil, RefreshCw, Save, WrapText, X, ChevronUp, ChevronDown } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, useLayoutEffect, lazy, Suspense } from 'react';
+import { Braces, Columns2, ListTree, Pencil, RefreshCw, Save, WrapText, X, ChevronUp, ChevronDown } from 'lucide-react';
 import {
   ReadLocalFile,
   ReadLocalMarkdownResourceDataURL,
@@ -31,8 +14,10 @@ import {
 import type { MarkdownOpenTarget, MarkdownSource } from '../../types';
 import { isWindowsPlatform, toClipboardText, writeClipboardText } from '../../utils/clipboard';
 import { applyEol, detectEol, eolLabel, toLf, type Eol } from '../../utils/eol';
-import { isMarkdownPath, isPdfPath } from '../../utils/textFiles';
+import { documentEditorMode, isMarkdownPath, isPdfPath } from '../../utils/textFiles';
+import type { JsonValidationResult } from '../../utils/jsonDocuments';
 import type { EditorStats, SourceEditorHandle } from './SourceEditor';
+import type { RenderedMarkdown } from './markdownRenderer';
 import { t } from '../../i18n';
 import '../../styles/markdown-viewer.css';
 
@@ -40,37 +25,13 @@ import '../../styles/markdown-viewer.css';
 // the startup bundle for the read-only viewing path.
 const SourceEditor = lazy(() => import('./SourceEditor'));
 
-hljs.registerLanguage('bash', bash);
-hljs.registerLanguage('sh', bash);
-hljs.registerLanguage('shell', bash);
-hljs.registerLanguage('css', css);
-hljs.registerLanguage('dockerfile', dockerfile);
-hljs.registerLanguage('go', go);
-hljs.registerLanguage('ini', ini);
-hljs.registerLanguage('toml', ini);
-hljs.registerLanguage('javascript', javascript);
-hljs.registerLanguage('js', javascript);
-hljs.registerLanguage('json', json);
-hljs.registerLanguage('markdown', markdown);
-hljs.registerLanguage('md', markdown);
-hljs.registerLanguage('powershell', powershell);
-hljs.registerLanguage('ps1', powershell);
-hljs.registerLanguage('python', python);
-hljs.registerLanguage('py', python);
-hljs.registerLanguage('sql', sql);
-hljs.registerLanguage('typescript', typescript);
-hljs.registerLanguage('ts', typescript);
-hljs.registerLanguage('xml', xml);
-hljs.registerLanguage('html', xml);
-hljs.registerLanguage('yaml', yaml);
-hljs.registerLanguage('yml', yaml);
-
 interface MarkdownViewerProps {
   source?: MarkdownSource;
   filePath?: string;
   remotePath?: string;
   sessionId?: string;
   active?: boolean;
+  visible?: boolean;
   locale?: string;
   onClose: () => void;
   onNotify?: (text: string, tone?: 'info' | 'error' | 'success') => void;
@@ -78,18 +39,17 @@ interface MarkdownViewerProps {
   onDirtyChange?: (dirty: boolean, save: () => Promise<boolean>) => void;
 }
 
-type TocItem = { id: string; text: string; depth: number };
-type RenderedMarkdown = { html: string; toc: TocItem[] };
-
 const EMPTY_RENDERED_MARKDOWN: RenderedMarkdown = { html: '', toc: [] };
 const MIN_ZOOM = 0.7;
 const MAX_ZOOM = 2.2;
 const MIN_TOC_WIDTH = 150;
 const MAX_TOC_WIDTH = 320;
 const DEFAULT_TOC_WIDTH = 210;
+const MAX_LIVE_JSON_VALIDATION_CHARS = 256 * 1024;
 const HL_ALL = 'md-search';
 const HL_ACTIVE = 'md-search-active';
-const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|svg)([#?].*)?$/i;
+let markdownRendererModulePromise: Promise<typeof import('./markdownRenderer')> | null = null;
+let jsonDocumentsModulePromise: Promise<typeof import('../../utils/jsonDocuments')> | null = null;
 let mermaidModulePromise: Promise<typeof import('mermaid')['default']> | null = null;
 let mermaidRenderSequence = 0;
 const markdownImageLoadTokens = new WeakMap<HTMLImageElement, object>();
@@ -103,6 +63,10 @@ function localPDFURL(filePath: string) {
   return `/__gxshell/document/pdf?path=${encodeURIComponent(filePath)}&v=${Date.now()}`;
 }
 
+function remotePDFURL(sessionId: string, remotePath: string) {
+  return `/__gxshell/document/remote-pdf?sessionId=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(remotePath)}&v=${Date.now()}`;
+}
+
 function getMermaid() {
   if (!mermaidModulePromise) {
     mermaidModulePromise = import('mermaid').then(({ default: mermaid }) => {
@@ -111,6 +75,16 @@ function getMermaid() {
     });
   }
   return mermaidModulePromise;
+}
+
+function getMarkdownRenderer() {
+  if (!markdownRendererModulePromise) markdownRendererModulePromise = import('./markdownRenderer');
+  return markdownRendererModulePromise;
+}
+
+function getJsonDocuments() {
+  if (!jsonDocumentsModulePromise) jsonDocumentsModulePromise = import('../../utils/jsonDocuments');
+  return jsonDocumentsModulePromise;
 }
 
 function initialTocWidth() {
@@ -129,142 +103,6 @@ function clearHighlights() {
   reg.delete(HL_ACTIVE);
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function escapeAttr(value: string) {
-  return escapeHtml(value).replace(/`/g, '&#96;');
-}
-
-function stripInlineMarkdown(value: string) {
-  return value
-    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    .replace(/[*_`~#>]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function slugify(text: string, seen: Record<string, number>) {
-  const base = text
-    .toLowerCase()
-    .trim()
-    .replace(/[^\p{L}\p{N}\s-]/gu, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '') || 'section';
-  const count = seen[base] || 0;
-  seen[base] = count + 1;
-  return count ? `${base}-${count + 1}` : base;
-}
-
-function firstLang(value?: string) {
-  return (value || '').trim().split(/\s+/)[0] || '';
-}
-
-function isExternalHref(href: string) {
-  return /^(https?:|mailto:|data:|blob:|#)/i.test(href) || href.startsWith('//');
-}
-
-function isMarkdownHref(href: string) {
-  if (!href || isExternalHref(href)) return false;
-  const withoutFragment = href.split('#')[0].split('?')[0];
-  return /\.md$/i.test(withoutFragment);
-}
-
-function isRelativeImageHref(href: string) {
-  return !!href && !isExternalHref(href) && IMAGE_EXT_RE.test(href);
-}
-
-function highlightCode(code: string, lang: string) {
-  const language = firstLang(lang);
-  if (language && hljs.getLanguage(language)) {
-    try {
-      return { html: hljs.highlight(code, { language }).value, label: language };
-    } catch {}
-  }
-  try {
-    // Unlabeled blocks: restrict auto-detection to a small common subset —
-    // running it against every registered language is quadratic-ish and runs
-    // synchronously inside buildMarkdown.
-    const result = hljs.highlightAuto(code, ['bash', 'json', 'yaml', 'python', 'javascript']);
-    return { html: result.value, label: language || result.language || 'text' };
-  } catch {
-    return { html: escapeHtml(code), label: language || 'text' };
-  }
-}
-
-function buildMarkdown(markdown: string): RenderedMarkdown {
-  const renderer = new marked.Renderer();
-  const toc: TocItem[] = [];
-  const seen: Record<string, number> = {};
-
-  renderer.heading = function heading(token: any) {
-    const depth = token.depth || 1;
-    const rawText = stripInlineMarkdown(token.text || '');
-    const id = slugify(rawText, seen);
-    toc.push({ id, text: rawText || id, depth });
-    const inner = this.parser.parseInline(token.tokens || []);
-    return `<h${depth} id="${escapeAttr(id)}" data-md-heading="${escapeAttr(id)}"><a class="md-heading-anchor" href="#${escapeAttr(id)}">#</a>${inner}</h${depth}>\n`;
-  };
-
-  renderer.code = function code(token: any) {
-    const lang = firstLang(token.lang || '');
-    const text = token.text || '';
-    if (lang.toLowerCase() === 'mermaid') {
-      return `<div class="md-mermaid" data-source="${escapeAttr(text)}">${escapeHtml(text)}</div>`;
-    }
-    const highlighted = highlightCode(text, lang);
-    const label = highlighted.label || lang || 'text';
-    return [
-      '<div class="md-code-block">',
-      '<div class="md-code-header">',
-      `<span>${escapeHtml(label)}</span>`,
-      '<button type="button" class="md-code-copy" data-code-copy="true" aria-label="Copy code">',
-      '<span>Copy</span>',
-      '</button>',
-      '</div>',
-      `<pre><code class="hljs language-${escapeAttr(label)}">${highlighted.html}</code></pre>`,
-      '</div>\n',
-    ].join('');
-  };
-
-  renderer.link = function link(token: any) {
-    const href = token.href || '';
-    const label = this.parser.parseInline(token.tokens || []);
-    const title = token.title ? ` title="${escapeAttr(token.title)}"` : '';
-    if (isMarkdownHref(href)) {
-      return `<a href="#" data-md-link="${escapeAttr(href)}"${title}>${label}</a>`;
-    }
-    const external = isExternalHref(href) && !href.startsWith('#');
-    const attrs = external ? ' target="_blank" rel="noreferrer noopener"' : '';
-    return `<a href="${escapeAttr(href)}"${title}${attrs}>${label}</a>`;
-  };
-
-  renderer.image = function image(token: any) {
-    const href = token.href || '';
-    const title = token.title ? ` title="${escapeAttr(token.title)}"` : '';
-    const alt = escapeAttr(token.text || '');
-    if (isRelativeImageHref(href)) {
-      return `<img data-md-src="${escapeAttr(href)}" alt="${alt}"${title} class="md-image-loading">`;
-    }
-    return `<img src="${escapeAttr(href)}" alt="${alt}"${title}>`;
-  };
-
-  const rawHtml = marked.parse(markdown, { renderer, gfm: true, breaks: false }) as string;
-  const html = DOMPurify.sanitize(rawHtml, {
-    ADD_ATTR: ['target', 'rel', 'data-md-link', 'data-md-src', 'data-source', 'data-md-heading', 'data-code-copy', 'aria-label'],
-    ADD_TAGS: ['button'],
-  });
-  return { html, toc };
-}
-
 function cssEscape(value: string) {
   return (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(value) : value.replace(/"/g, '\\"');
 }
@@ -275,12 +113,14 @@ export default function MarkdownViewer({
   remotePath,
   sessionId,
   active,
+  visible,
   locale = 'en',
   onClose,
   onNotify,
   onOpenMarkdownFile,
   onDirtyChange,
 }: MarkdownViewerProps) {
+  const isVisible = visible ?? active;
   const [content, setContent] = useState('');
   const [pdfURL, setPdfURL] = useState('');
   const lang = locale || 'en';
@@ -316,6 +156,7 @@ export default function MarkdownViewer({
   const [query, setQuery] = useState('');
   const [matchCount, setMatchCount] = useState(0);
   const [current, setCurrent] = useState(0);
+  const [jsonValidation, setJsonValidation] = useState<JsonValidationResult | null>(null);
 
 
   const editorRef = useRef<SourceEditorHandle | null>(null);
@@ -338,18 +179,63 @@ export default function MarkdownViewer({
 
   const displayPath = source === 'remote' ? remotePath : filePath;
   const fileName = (displayPath || '').split(/[\\/]/).pop() || '';
+  const editorMode = documentEditorMode(displayPath || '');
+  const jsonMode = editorMode === 'json' || editorMode === 'jsonl' ? editorMode : null;
+  const deferJsonValidation = !!jsonMode && draft.length > MAX_LIVE_JSON_VALIDATION_CHARS;
   const markdownMode = isMarkdownPath(displayPath || '');
-  const pdfMode = source === 'local' && isPdfPath(displayPath || '');
-  const previewDoc = useMemo(() => (markdownMode ? buildMarkdown(content) : EMPTY_RENDERED_MARKDOWN), [content, markdownMode]);
-  const draftDoc = useMemo(
-    () => (markdownMode && editing && splitPreview && active ? buildMarkdown(previewDraft) : EMPTY_RENDERED_MARKDOWN),
-    [previewDraft, editing, splitPreview, markdownMode, active],
-  );
+  const pdfMode = isPdfPath(displayPath || '');
+  const [previewDoc, setPreviewDoc] = useState<RenderedMarkdown>(EMPTY_RENDERED_MARKDOWN);
+  const [draftDoc, setDraftDoc] = useState<RenderedMarkdown>(EMPTY_RENDERED_MARKDOWN);
   const visibleDoc = editing && splitPreview ? draftDoc : previewDoc;
   const canShowToc = markdownMode && (!editing || splitPreview) && visibleDoc.toc.length > 0;
   const viewerMainStyle = canShowToc && tocOpen
     ? ({ '--md-outline-width': `${tocWidth}px` } as React.CSSProperties)
     : undefined;
+
+  useEffect(() => {
+    if (!markdownMode || !isVisible) return;
+    let cancelled = false;
+    void getMarkdownRenderer()
+      .then((renderer) => renderer.buildMarkdown(content))
+      .then((rendered) => {
+        if (!cancelled) setPreviewDoc(rendered);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(String(err));
+      });
+    return () => { cancelled = true; };
+  }, [content, isVisible, markdownMode]);
+
+  useEffect(() => {
+    if (!markdownMode || !editing || !splitPreview || !isVisible) return;
+    let cancelled = false;
+    void getMarkdownRenderer()
+      .then((renderer) => renderer.buildMarkdown(previewDraft))
+      .then((rendered) => {
+        if (!cancelled) setDraftDoc(rendered);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(String(err));
+      });
+    return () => { cancelled = true; };
+  }, [editing, isVisible, markdownMode, previewDraft, splitPreview]);
+
+  useEffect(() => {
+    if (!editing || !jsonMode || deferJsonValidation) {
+      setJsonValidation(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void getJsonDocuments().then(({ validateJsonDocument }) => {
+        if (!cancelled) setJsonValidation(validateJsonDocument(draft, jsonMode));
+      });
+    }, 280);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [deferJsonValidation, draft, editing, jsonMode]);
 
   useEffect(() => {
     try {
@@ -369,7 +255,9 @@ export default function MarkdownViewer({
     try {
       setLoading(true);
       if (pdfMode) {
-        setPdfURL(localPDFURL(filePath || ''));
+        setPdfURL(source === 'remote'
+          ? remotePDFURL(sessionId || '', remotePath || '')
+          : localPDFURL(filePath || ''));
         setContent('');
         draftRef.current = '';
         setDraft('');
@@ -408,17 +296,17 @@ export default function MarkdownViewer({
   const dirty = editing && (draft.length !== content.length || draft !== content || eol !== loadedEol);
 
   useEffect(() => {
-    if (!editing || !splitPreview || !active) return;
+    if (!editing || !splitPreview || !isVisible) return;
     const timer = window.setTimeout(() => setPreviewDraft(draft), 220);
     return () => window.clearTimeout(timer);
-  }, [active, draft, editing, splitPreview]);
+  }, [draft, editing, isVisible, splitPreview]);
 
   useEffect(() => {
-    if (editing && splitPreview && active) setPreviewDraft(draft);
+    if (editing && splitPreview && isVisible) setPreviewDraft(draft);
     // Only refresh immediately when the preview is opened or becomes visible;
     // keystrokes are handled by the debounced effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, editing, splitPreview]);
+  }, [editing, isVisible, splitPreview]);
 
   const captureScrollRatio = () => {
     if (editing) {
@@ -487,6 +375,30 @@ export default function MarkdownViewer({
     setSplitPreview(false);
   };
 
+  const jsonErrorMessage = (validation: JsonValidationResult) => {
+    if (validation.valid) return '';
+    return t(lang, 'jsonInvalid', {
+      line: String(validation.error.line),
+      column: String(validation.error.column),
+    });
+  };
+
+  const formatJson = async () => {
+    if (!jsonMode) return;
+    const { formatJsonDocument } = await getJsonDocuments();
+    const result = formatJsonDocument(draftRef.current, jsonMode);
+    if (!result.ok) {
+      const validation: JsonValidationResult = { valid: false, error: result.error };
+      setJsonValidation(validation);
+      onNotify?.(jsonErrorMessage(validation), 'error');
+      return;
+    }
+    draftRef.current = result.text;
+    setDraft(result.text);
+    setJsonValidation({ valid: true });
+    requestAnimationFrame(() => editorRef.current?.focus());
+  };
+
   const save = () => {
     // React state does not update synchronously, so `saving` alone cannot stop
     // two Ctrl+S/click events from starting writes in the same render frame.
@@ -500,6 +412,15 @@ export default function MarkdownViewer({
     const operation = Promise.resolve().then(async (): Promise<boolean> => {
       try {
         setSaving(true);
+        if (jsonMode) {
+          const { validateJsonDocument } = await getJsonDocuments();
+          const validation = validateJsonDocument(snapshot.draft, jsonMode);
+          setJsonValidation(validation);
+          if (!validation.valid) {
+            onNotify?.(jsonErrorMessage(validation), 'error');
+            return false;
+          }
+        }
         // Restore the selected line ending on the snapshot written to disk.
         // Edits made while this await is pending stay in draftRef/eolRef.
         const payload = applyEol(snapshot.draft, snapshot.eol);
@@ -746,7 +667,7 @@ export default function MarkdownViewer({
   }, [splitPreview]);
 
   const onContentClick = useCallback(async (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!active || !markdownMode) return;
+    if (!isVisible || !markdownMode) return;
     if (!(e.target instanceof HTMLElement)) return;
 
     const copyBtn = e.target.closest('[data-code-copy]');
@@ -788,7 +709,7 @@ export default function MarkdownViewer({
     } catch (err: any) {
       onNotify?.(err.toString(), 'error');
     }
-  }, [markdownMode, source, filePath, remotePath, sessionId, onOpenMarkdownFile, onNotify]);
+  }, [filePath, isVisible, lang, markdownMode, onNotify, onOpenMarkdownFile, remotePath, sessionId, source]);
 
   const jumpToHeading = (id: string) => {
     const el = contentRootRef.current?.querySelector<HTMLElement>(`#${cssEscape(id)}`);
@@ -859,7 +780,7 @@ export default function MarkdownViewer({
 
   useEffect(() => {
     const root = contentRootRef.current;
-    if (!active || !markdownMode || !root || !displayPath) return;
+    if (!isVisible || !markdownMode || !root || !displayPath) return;
     let cancelled = false;
     const images = Array.from(root.querySelectorAll<HTMLImageElement>(
       'img[data-md-src]:not([data-md-loaded]), img[data-md-loaded="error"]',
@@ -897,10 +818,10 @@ export default function MarkdownViewer({
         delete img.dataset.mdLoaded;
       });
     };
-  }, [active, markdownMode, visibleDoc.html, editing, splitPreview, source, filePath, remotePath, sessionId, displayPath]);
+  }, [displayPath, editing, filePath, isVisible, markdownMode, remotePath, sessionId, source, splitPreview, visibleDoc.html]);
 
   useEffect(() => {
-    if (!active || !markdownMode) return;
+    if (!isVisible || !markdownMode) return;
     const root = contentRootRef.current;
     if (!root) return;
     let cancelled = false;
@@ -923,8 +844,11 @@ export default function MarkdownViewer({
         try {
           const result = await mermaid.render(id, sourceText);
           if (cancelled || mermaidRenderTokens.get(block) !== tokens[i]) return;
+          const renderer = await getMarkdownRenderer();
+          const sanitizedSVG = renderer.sanitizeMermaidSVG(result.svg);
+          if (cancelled || mermaidRenderTokens.get(block) !== tokens[i]) return;
           mermaidRenderTokens.delete(block);
-          block.innerHTML = DOMPurify.sanitize(result.svg, { USE_PROFILES: { svg: true, svgFilters: true } });
+          block.innerHTML = sanitizedSVG;
           block.dataset.mdRendered = 'true';
           block.classList.add('md-mermaid-rendered');
         } catch (err: any) {
@@ -945,12 +869,12 @@ export default function MarkdownViewer({
         if (block.dataset.mdRendered === 'pending') delete block.dataset.mdRendered;
       });
     };
-  }, [active, markdownMode, visibleDoc.html, editing, splitPreview]);
+  }, [editing, isVisible, markdownMode, splitPreview, visibleDoc.html]);
 
   useEffect(() => {
     const scroller = editing && splitPreview ? splitPreviewRef.current : previewRef.current;
     const root = contentRootRef.current;
-    if (!active || !scroller || !root || !canShowToc) {
+    if (!isVisible || !scroller || !root || !canShowToc) {
       setActiveHeading('');
       return;
     }
@@ -992,13 +916,18 @@ export default function MarkdownViewer({
       scroller.removeEventListener('scroll', scheduleUpdate);
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [active, visibleDoc.html, editing, splitPreview, canShowToc, zoom]);
+  }, [canShowToc, editing, isVisible, splitPreview, visibleDoc.html, zoom]);
 
   if (loading) return <div className="markdown-viewer-loading">{t(lang, "loading")}</div>;
   if (error) return <div className="markdown-viewer-error">{error}</div>;
 
   return (
-    <div className="markdown-viewer" ref={viewerRef} data-active={active ? 'true' : 'false'}>
+    <div
+      className="markdown-viewer"
+      ref={viewerRef}
+      data-active={active ? 'true' : 'false'}
+      data-visible={isVisible ? 'true' : 'false'}
+    >
       {/* A real toolbar in normal flow, not an overlay. It previously floated
           over the top-right of the document with a three-tier idle fade: that
           covered text, stayed clickable while nearly invisible, and sat in the
@@ -1054,6 +983,11 @@ export default function MarkdownViewer({
             <Columns2 size={15} />
           </button>
         )}
+        {jsonMode && editing && (
+          <button onClick={formatJson} className="markdown-viewer-tbtn" title={t(lang, 'formatJson')}>
+            <Braces size={15} />
+          </button>
+        )}
         {pdfMode ? (
           <>
             <button onClick={loadFile} className="markdown-viewer-tbtn" title="Refresh">
@@ -1065,7 +999,7 @@ export default function MarkdownViewer({
           </>
         ) : editing ? (
           <>
-            <button onClick={save} className="markdown-viewer-tbtn" disabled={saving} title="Save (Ctrl+S)">
+            <button onClick={save} className="markdown-viewer-tbtn" disabled={saving || jsonValidation?.valid === false} title="Save (Ctrl+S)">
               <Save size={15} />
             </button>
             <button onClick={cancelEdit} className="markdown-viewer-tbtn" title="Cancel">
@@ -1166,7 +1100,7 @@ export default function MarkdownViewer({
                 // preview uses, so both modes track one control.
                 fontSize={Math.round(14 * zoom)}
                 wrap={wrapCode}
-                markdownMode={markdownMode}
+                mode={editorMode}
               />
             </Suspense>
             {markdownMode && splitPreview && (
@@ -1218,6 +1152,17 @@ export default function MarkdownViewer({
           {editorStats.selected > 0 && (
             <span className="source-editor-status-item">
               {t(lang, 'statusSelected', { count: String(editorStats.selected) })}
+            </span>
+          )}
+          {jsonMode && deferJsonValidation && (
+            <span className="source-editor-status-item">{t(lang, 'jsonValidateOnSave')}</span>
+          )}
+          {jsonMode && !deferJsonValidation && jsonValidation && (
+            <span className={clsx(
+              'source-editor-status-item',
+              jsonValidation.valid ? 'source-editor-status-valid' : 'source-editor-status-invalid',
+            )}>
+              {jsonValidation.valid ? t(lang, 'jsonValid') : jsonErrorMessage(jsonValidation)}
             </span>
           )}
           <span className="source-editor-status-spacer" />

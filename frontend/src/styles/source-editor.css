@@ -73,3 +73,11 @@
   color: var(--warn);
   font-weight: 640;
 }
+
+.source-editor-status-valid {
+  color: var(--ok);
+}
+
+.source-editor-status-invalid {
+  color: var(--danger);
+}

@@ -205,6 +205,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
                     remotePath={tab.remotePath}
                     sessionId={tab.remoteSessionId}
                     active={isActive && !isFloating}
+                    visible={!!isSplitVisible && isSplitTab ? !isFloating : isActive && !isFloating}
                     locale={lang}
                     onClose={() => props.onClose(tab.id)}
                     onNotify={props.onNotify}

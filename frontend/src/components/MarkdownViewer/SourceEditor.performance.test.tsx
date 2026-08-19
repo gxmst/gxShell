@@ -28,7 +28,7 @@ describe('SourceEditor statistics', () => {
         onStats={vi.fn()}
         fontSize={14}
         wrap={false}
-        markdownMode={false}
+        mode="plain"
       />,
     );
     expect(wordCountMock).toHaveBeenCalledTimes(1);
@@ -43,5 +43,23 @@ describe('SourceEditor statistics', () => {
     expect(wordCountMock).toHaveBeenCalledTimes(1);
     act(() => vi.advanceTimersByTime(1));
     expect(wordCountMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('reconfigures JSON highlighting without rebuilding the editor', () => {
+    const props = {
+      value: '{"enabled":true}',
+      onChange: vi.fn(),
+      onSave: vi.fn(),
+      fontSize: 14,
+      wrap: false,
+    };
+    const { container, rerender } = render(<SourceEditor {...props} mode="plain" />);
+    const editor = container.querySelector('.cm-editor');
+    const plainSpanCount = container.querySelectorAll('.cm-line span').length;
+
+    rerender(<SourceEditor {...props} mode="json" />);
+
+    expect(container.querySelector('.cm-editor')).toBe(editor);
+    expect(container.querySelectorAll('.cm-line span').length).toBeGreaterThan(plainSpanCount);
   });
 });

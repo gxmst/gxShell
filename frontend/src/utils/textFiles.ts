@@ -9,6 +9,8 @@ export const supportedTextExtensions = [
 
 export const supportedDocumentExtensions = [...supportedTextExtensions, ".pdf"];
 
+export type DocumentEditorMode = "plain" | "markdown" | "json" | "jsonl";
+
 export function extensionOf(filePath: string) {
   const name = filePath.split(/[\\/]/).pop() || "";
   const idx = name.lastIndexOf(".");
@@ -22,6 +24,21 @@ export function isMarkdownPath(filePath: string) {
 
 export function isPdfPath(filePath: string) {
   return extensionOf(filePath) === ".pdf";
+}
+
+export function isJsonPath(filePath: string) {
+  return extensionOf(filePath) === ".json";
+}
+
+export function isJsonLinesPath(filePath: string) {
+  return extensionOf(filePath) === ".jsonl";
+}
+
+export function documentEditorMode(filePath: string): DocumentEditorMode {
+  if (isMarkdownPath(filePath)) return "markdown";
+  if (isJsonPath(filePath)) return "json";
+  if (isJsonLinesPath(filePath)) return "jsonl";
+  return "plain";
 }
 
 export function isSupportedTextPath(filePath: string) {

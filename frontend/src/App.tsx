@@ -71,6 +71,7 @@ function App() {
   const [terminalSearch, setTerminalSearch] = useState("");
   const [terminalSearchResult, setTerminalSearchResult] = useState<{ id: string; index: number; count: number } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("gx:sidebarCollapsed", false);
+  const revealLocalDocumentWorkspace = useCallback(() => setSidebarCollapsed(false), [setSidebarCollapsed]);
   const [logViewer, setLogViewer] = useState<{ name: string; content: string } | null>(null);
   const [floatingTabIds, setFloatingTabIds] = usePersistedState<string[]>("gx:floatingTabIds", []);
   const [splitPane, setSplitPane] = useState<SplitPane | null>(null);
@@ -248,6 +249,7 @@ function App() {
     setTabs: sessions.setTabs,
     setActiveTab: sessions.setActiveTab,
     setDrawer: requestDrawer,
+    revealLocalDocumentWorkspace,
     notify,
     language: profileState.settings?.language || "en",
   });
@@ -271,11 +273,10 @@ function App() {
     });
 
     // Explorer's context-menu/Open With path is distinct from drag-and-drop.
-    // Document-focused launches start with the sidebar tucked away, while an
-    // in-app open or a dropped document preserves the user's current layout.
+    // Both paths reveal the document workspace so the active local file can be
+    // located in the sidebar immediately.
     const openExternalDocument = (filePath: string) => {
       if (!isSupportedDocumentPath(filePath)) return;
-      setSidebarCollapsed(true);
       openMarkdownFile(filePath);
     };
     const unsubExternalFileOpen = EventsOn("file:open-external", openExternalDocument);
@@ -684,7 +685,7 @@ function App() {
       { type: "action", title: t(lang, "newConnection"), subtitle: zh ? "创建并保存 SSH 连接" : "Create and save an SSH connection", keywords: "new connection server ssh 新建 连接 服务器", action: () => setProfileModal(emptyProfile()) },
       { type: "action", title: t(lang, "quickConnect"), subtitle: t(lang, "quickConnectHint"), keywords: "quick connect temporary 快速 临时 连接", action: () => setQuickConnectOpen(true) },
       { type: "action", title: t(lang, "localTerminal"), subtitle: zh ? "打开本机命令行" : "Open a local shell", keywords: "local terminal shell 本地 终端", action: () => { searchConnectLocal().catch((err) => notify(String(err), "error")); } },
-      { type: "action", title: t(lang, "openTextFile"), subtitle: zh ? "查看或编辑本地文本文件" : "View or edit a local text file", keywords: "open text markdown file 打开 文本 文件", action: handleOpenMarkdown },
+      { type: "action", title: t(lang, "openDocument"), subtitle: zh ? "查看本地文档或编辑文本" : "View local documents or edit text", keywords: "open document pdf text markdown file 打开 文档 PDF 文本 文件", action: handleOpenMarkdown },
     ].filter((item) => includesQuery(item.title, item.subtitle, item.keywords));
 
     const serverResults = profilesRef.current

@@ -6,8 +6,8 @@
 ![Windows](https://img.shields.io/badge/platform-Windows%20x64-0078d4.svg)
 
 gxShell is a Windows SSH workbench that combines terminal sessions, SFTP,
-monitoring, tunnels, AI tools, a local text/Markdown viewer, and an optional
-CLI in one desktop app.
+monitoring, tunnels, AI tools, a local and remote document viewer/editor, and
+an optional CLI in one desktop app.
 
 What it does that a conventional SSH client does not: local tools and AI agents
 can run commands on your servers *through* the running app, without ever
@@ -44,9 +44,9 @@ Get-FileHash .\gxShell-v<version>-windows-amd64.zip -Algorithm SHA256
 - Local CLI and HTTP API that let scripts and AI agents work on your servers through the app, with alias-only targeting, native approvals, expiring trust, and `secret://` references that keep credentials out of prompts and process arguments.
 - Built-in AI assistant over any OpenAI-compatible API, with streaming replies, terminal context, and confirmation before any remote tool call.
 - Multi-session SSH terminal with reconnect, search, split view, floating tabs, broadcast input, and adaptive tabs.
-- SFTP browsing, uploads, downloads, resumable transfers, and local/remote text workflows.
+- SFTP browsing, uploads, downloads, resumable transfers, and local/remote document workflows.
 - Linux monitoring, Docker operations, SSH tunnels, services, firewall, cron, and website helpers over SSH.
-- Markdown and text viewer/editor with code highlighting, Mermaid diagrams, search, edit, and save.
+- Markdown and text viewing/editing with code highlighting and Mermaid diagrams, local/remote PDF viewing, plus syntax-aware JSON/JSONL validation and formatting.
 - Session recording to asciinema `.cast` files with a built-in player.
 - Windows tray integration, file associations, drag-and-drop opening, and update notifications.
 
@@ -55,11 +55,11 @@ Get-FileHash .\gxShell-v<version>-windows-amd64.zip -Algorithm SHA256
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl+K` | Search servers, sessions, commands, and workspace actions |
-| `Ctrl+F` | Find in the focused terminal or text document |
+| `Ctrl+F` | Find in the focused terminal or document |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous tab |
 | `Alt+1` … `Alt+9` | Jump to a tab |
 | `Ctrl+Shift+W` | Close the active tab |
-| `Ctrl+S` | Save an edited text file |
+| `Ctrl+S` | Save an edited document |
 
 ## Security
 

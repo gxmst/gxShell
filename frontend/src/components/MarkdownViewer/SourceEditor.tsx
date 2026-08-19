@@ -4,6 +4,7 @@ import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLi
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands';
 import { syntaxHighlighting, HighlightStyle, bracketMatching, indentUnit } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import { json } from '@codemirror/lang-json';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
 import { toClipboardText } from '../../utils/clipboard';
@@ -33,6 +34,8 @@ export interface SourceEditorHandle {
   redo: () => void;
 }
 
+export type SourceEditorMode = 'plain' | 'markdown' | 'json' | 'jsonl';
+
 const WORD_COUNT_DEBOUNCE_MS = 240;
 
 interface SourceEditorProps {
@@ -45,7 +48,7 @@ interface SourceEditorProps {
   onImage?: (file: File) => Promise<string | null>;
   fontSize: number;
   wrap: boolean;
-  markdownMode: boolean;
+  mode: SourceEditorMode;
   handleRef?: Ref<SourceEditorHandle>;
 }
 
@@ -63,7 +66,27 @@ const highlightStyle = HighlightStyle.define([
   { tag: tags.list, color: 'var(--accent)' },
   { tag: tags.contentSeparator, color: 'var(--muted)' },
   { tag: tags.processingInstruction, color: 'var(--muted)' },
+  { tag: tags.propertyName, color: 'var(--code-variable)' },
+  { tag: tags.string, color: 'var(--code-string)' },
+  { tag: [tags.number, tags.bool, tags.null], color: 'var(--code-number)' },
+  { tag: [tags.separator, tags.brace], color: 'var(--muted)' },
 ]);
+
+function languageExtension(mode: SourceEditorMode) {
+  switch (mode) {
+    case 'markdown':
+      return markdown({ base: markdownLanguage });
+    case 'json':
+    case 'jsonl':
+      // JSON Lines has one JSON value per physical line. The JSON grammar
+      // still provides correct token highlighting for every line; document
+      // validation is handled separately so additional root values are not
+      // reported as false errors by a whole-document JSON linter.
+      return json();
+    default:
+      return [];
+  }
+}
 
 const editorTheme = EditorView.theme({
   '&': {
@@ -219,7 +242,7 @@ export function SourceEditor({
   onImage,
   fontSize,
   wrap,
-  markdownMode,
+  mode,
   handleRef,
 }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -299,7 +322,7 @@ export function SourceEditor({
           indentUnit.of('  '),
           EditorState.tabSize.of(2),
           syntaxHighlighting(highlightStyle),
-          langCompartment.current.of(markdownMode ? markdown({ base: markdownLanguage }) : []),
+          langCompartment.current.of(languageExtension(mode)),
           wrapCompartment.current.of(wrap ? EditorView.lineWrapping : []),
           editorTheme,
           // Ordering matters: these bindings must win over defaultKeymap.
@@ -417,9 +440,9 @@ export function SourceEditor({
 
   useEffect(() => {
     viewRef.current?.dispatch({
-      effects: langCompartment.current.reconfigure(markdownMode ? markdown({ base: markdownLanguage }) : []),
+      effects: langCompartment.current.reconfigure(languageExtension(mode)),
     });
-  }, [markdownMode]);
+  }, [mode]);
 
   useImperativeHandle(handleRef, (): SourceEditorHandle => ({
     focus: () => viewRef.current?.focus(),

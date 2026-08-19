@@ -6,7 +6,7 @@
   background: var(--bg);
 }
 
-.markdown-viewer[data-active="false"] {
+.markdown-viewer[data-visible="false"] {
   content-visibility: hidden;
   contain: strict;
 }

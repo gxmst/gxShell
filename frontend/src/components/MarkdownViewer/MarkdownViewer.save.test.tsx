@@ -122,6 +122,114 @@ describe('MarkdownViewer saving', () => {
     expect(appMocks.writeLocalFile).toHaveBeenLastCalledWith('C:\\notes.txt', 'second draft\r\n');
     await waitFor(() => expect(screen.queryByLabelText('Source editor')).not.toBeInTheDocument());
   });
+
+  it('rejects invalid JSON before writing and reports the error in Chinese', async () => {
+    appMocks.readLocalFile.mockResolvedValue('{"ok":true}\n');
+    const onNotify = vi.fn();
+    let saveCurrent = async () => false;
+    const onDirtyChange = vi.fn((dirty: boolean, save: () => Promise<boolean>) => {
+      if (dirty) saveCurrent = save;
+    });
+
+    render(
+      <MarkdownViewer
+        active
+        locale="zh-CN"
+        filePath={'C:\\settings.json'}
+        onClose={vi.fn()}
+        onNotify={onNotify}
+        onDirtyChange={onDirtyChange}
+      />,
+    );
+
+    await screen.findByText('{"ok":true}');
+    fireEvent.click(screen.getByTitle('Edit'));
+    const editor = await screen.findByLabelText('Source editor');
+    fireEvent.change(editor, { target: { value: '{"ok":}' } });
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true, expect.any(Function)));
+
+    let saved = true;
+    await act(async () => { saved = await saveCurrent(); });
+
+    expect(saved).toBe(false);
+    expect(appMocks.writeLocalFile).not.toHaveBeenCalled();
+    expect(onNotify).toHaveBeenCalledWith('JSON 格式错误：第 1 行，第 7 列', 'error');
+  });
+
+  it('formats JSON from the localized toolbar command', async () => {
+    appMocks.readLocalFile.mockResolvedValue('{"a":1,"nested":{"ok":true}}');
+    render(
+      <MarkdownViewer active locale="zh-CN" filePath={'C:\\settings.json'} onClose={vi.fn()} />,
+    );
+
+    await screen.findByText('{"a":1,"nested":{"ok":true}}');
+    fireEvent.click(screen.getByTitle('Edit'));
+    const editor = await screen.findByLabelText('Source editor');
+    fireEvent.click(screen.getByTitle('格式化 JSON'));
+
+    await waitFor(() => expect(editor).toHaveValue(`{
+  "a": 1,
+  "nested": {
+    "ok": true
+  }
+}`));
+  });
+
+  it('defers live validation for large JSON while retaining save-time validation', async () => {
+    appMocks.readLocalFile.mockResolvedValue(`{"payload":"${'x'.repeat(256 * 1024)}"}`);
+    render(
+      <MarkdownViewer active filePath={'C:\\large.json'} onClose={vi.fn()} />,
+    );
+
+    fireEvent.click(await screen.findByTitle('Edit'));
+    expect(await screen.findByText('Large document: validate on save')).toBeInTheDocument();
+  });
+});
+
+describe('MarkdownViewer PDF browsing', () => {
+  beforeEach(() => {
+    appMocks.readLocalFile.mockClear();
+    appMocks.readRemoteFile.mockClear();
+  });
+
+  it('opens a local PDF through the authorized range-streaming asset route', async () => {
+    render(
+      <MarkdownViewer active source="local" filePath={'C:\\docs\\manual #1.pdf'} onClose={vi.fn()} />,
+    );
+
+    const frame = await waitFor(() => {
+      const element = document.querySelector<HTMLIFrameElement>('.pdf-viewer-frame');
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    const src = frame.getAttribute('src') || '';
+    expect(src).toContain('/__gxshell/document/pdf?');
+    expect(src).toContain('path=C%3A%5Cdocs%5Cmanual%20%231.pdf');
+    expect(appMocks.readLocalFile).not.toHaveBeenCalled();
+  });
+
+  it('opens a remote PDF through the range-streaming asset route', async () => {
+    render(
+      <MarkdownViewer
+        active
+        source="remote"
+        sessionId="session 5"
+        remotePath="/srv/docs/a #1.pdf"
+        onClose={vi.fn()}
+      />,
+    );
+
+    const frame = await waitFor(() => {
+      const element = document.querySelector<HTMLIFrameElement>('.pdf-viewer-frame');
+      expect(element).not.toBeNull();
+      return element!;
+    });
+    const src = frame.getAttribute('src') || '';
+    expect(src).toContain('/__gxshell/document/remote-pdf?');
+    expect(src).toContain('sessionId=session%205');
+    expect(src).toContain('path=%2Fsrv%2Fdocs%2Fa%20%231.pdf');
+    expect(appMocks.readRemoteFile).not.toHaveBeenCalled();
+  });
 });
 
 describe('MarkdownViewer performance-sensitive interactions', () => {

@@ -99,6 +99,74 @@ type RemoteCopyResult struct {
 	SHA256 string `json:"sha256"`
 }
 
+type remoteReadFile interface {
+	io.Reader
+	io.ReaderAt
+	io.Seeker
+	Stat() (os.FileInfo, error)
+	Close() error
+}
+
+// RemoteReadHandle is a seekable, read-only remote file whose lifetime also
+// owns one reference to the cached SFTP client. Callers must close it. Close is
+// idempotent so an HTTP handler can safely defer it through every exit path.
+type RemoteReadHandle struct {
+	manager   *Manager
+	sessionID string
+	file      remoteReadFile
+	release   func()
+	size      int64
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (h *RemoteReadHandle) Read(p []byte) (int, error) {
+	n, err := h.file.Read(p)
+	h.invalidateOnError(err)
+	return n, err
+}
+
+func (h *RemoteReadHandle) ReadAt(p []byte, off int64) (int, error) {
+	n, err := h.file.ReadAt(p, off)
+	h.invalidateOnError(err)
+	return n, err
+}
+
+func (h *RemoteReadHandle) Seek(offset int64, whence int) (int64, error) {
+	// http.ServeContent seeks to the end before serving every request. The size
+	// was already obtained while opening the handle, so translate that seek to
+	// avoid another SFTP Stat round trip for each PDF range request.
+	if whence == io.SeekEnd {
+		offset += h.size
+		whence = io.SeekStart
+	}
+	position, err := h.file.Seek(offset, whence)
+	h.invalidateOnError(err)
+	return position, err
+}
+
+func (h *RemoteReadHandle) Close() error {
+	h.closeOnce.Do(func() {
+		// Releasing after Close keeps eviction from closing the shared client
+		// while the remote file handle is still being finalized.
+		h.closeErr = h.file.Close()
+		h.invalidateOnError(h.closeErr)
+		if h.release != nil {
+			h.release()
+		}
+	})
+	return h.closeErr
+}
+
+func (h *RemoteReadHandle) invalidateOnError(err error) {
+	if err == nil || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, os.ErrClosed) {
+		return
+	}
+	if h.manager != nil {
+		h.manager.invalidateOnConnErr(h.sessionID, err)
+	}
+}
+
 // ErrOverwriteRequired is returned when a transfer would replace an existing
 // regular file without an explicit overwrite decision. Callers should use
 // IsOverwriteRequired (or errors.Is with this sentinel) instead of matching the
@@ -967,6 +1035,51 @@ func (m *Manager) DownloadFileWithPolicy(sessionID, remotePath, localPath string
 		return err
 	}
 	return nil
+}
+
+// OpenRemoteRead opens a regular remote file without buffering its contents.
+// The returned handle keeps the cached SFTP client alive until Close and is
+// suitable for HTTP range serving through its Read/Seek implementation.
+func (m *Manager) OpenRemoteRead(sessionID string, remotePath string, maxSize int64) (*RemoteReadHandle, os.FileInfo, error) {
+	remotePath = cleanRemotePath(remotePath)
+	client, release, err := m.acquire(sessionID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	src, err := client.Open(remotePath)
+	if err != nil {
+		release()
+		m.invalidateOnConnErr(sessionID, err)
+		return nil, nil, err
+	}
+
+	info, err := src.Stat()
+	if err != nil {
+		_ = src.Close()
+		release()
+		m.invalidateOnConnErr(sessionID, err)
+		return nil, nil, err
+	}
+	if !info.Mode().IsRegular() {
+		_ = src.Close()
+		release()
+		return nil, nil, fmt.Errorf("remote path is not a regular file")
+	}
+	if maxSize > 0 && info.Size() > maxSize {
+		_ = src.Close()
+		release()
+		return nil, nil, fmt.Errorf("remote file too large")
+	}
+
+	handle := &RemoteReadHandle{
+		manager:   m,
+		sessionID: sessionID,
+		file:      src,
+		release:   release,
+		size:      info.Size(),
+	}
+	return handle, info, nil
 }
 
 func (m *Manager) ReadRemoteFile(sessionID string, remotePath string, maxSize int64) ([]byte, error) {

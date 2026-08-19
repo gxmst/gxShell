@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { isMarkdownPath, isPdfPath, isSupportedDocumentPath, isSupportedTextPath } from './textFiles';
+import {
+  documentEditorMode,
+  isJsonLinesPath,
+  isJsonPath,
+  isMarkdownPath,
+  isPdfPath,
+  isSupportedDocumentPath,
+  isSupportedTextPath,
+} from './textFiles';
 
 describe('document path helpers', () => {
   it('keeps PDFs separate from editable text documents', () => {
@@ -12,5 +20,14 @@ describe('document path helpers', () => {
   it('retains existing text and Markdown support', () => {
     expect(isSupportedDocumentPath('/tmp/notes.txt')).toBe(true);
     expect(isMarkdownPath('/tmp/README.md')).toBe(true);
+  });
+
+  it('selects structured editor modes case-insensitively', () => {
+    expect(isJsonPath('/tmp/settings.JSON')).toBe(true);
+    expect(isJsonLinesPath('events.JsOnL')).toBe(true);
+    expect(documentEditorMode('/tmp/settings.JSON')).toBe('json');
+    expect(documentEditorMode('events.JsOnL')).toBe('jsonl');
+    expect(documentEditorMode('README.markdown')).toBe('markdown');
+    expect(documentEditorMode('notes.txt')).toBe('plain');
   });
 });

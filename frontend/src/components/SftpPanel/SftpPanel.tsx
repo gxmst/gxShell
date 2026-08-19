@@ -38,7 +38,7 @@ import type { AppContextMenu } from "../../hooks/useTerminal";
 import { writeClipboardText } from "../../utils/clipboard";
 import { formatFileSize } from "../../utils/format";
 import { joinRemotePath, parentRemotePath, pathSegments } from "../../utils/shellQuote";
-import { isSupportedTextPath } from "../../utils/textFiles";
+import { isSupportedDocumentPath } from "../../utils/textFiles";
 import { useTransfers } from "../../hooks/useTransfers";
 import { ConfirmDialog } from "../modals/ConfirmDialog";
 import { TextInputDialog } from "../modals/TextInputDialog";
@@ -111,7 +111,7 @@ const FileRow = memo(function FileRow(props: {
   onDownload: (file: types.RemoteFile) => void;
 }) {
   const { file, lang } = props;
-  const isTextFile = !file.isDir && isSupportedTextPath(file.name);
+  const isTextFile = !file.isDir && isSupportedDocumentPath(file.name);
   return (
     <div
       className={clsx("sftp-file-row", props.selected && "selected")}
@@ -150,7 +150,7 @@ const FileRow = memo(function FileRow(props: {
             <ChevronRight size={12} />
           </button>
         ) : isTextFile ? (
-          <button className="mini-btn" onClick={(event) => { event.stopPropagation(); props.onOpenText(file); }} title={t(lang, "openTextFile")}><FileText size={12} /></button>
+          <button className="mini-btn" onClick={(event) => { event.stopPropagation(); props.onOpenText(file); }} title={t(lang, "openDocument")}><FileText size={12} /></button>
         ) : (
           <button className="mini-btn" onClick={(event) => { event.stopPropagation(); props.onDownload(file); }} title={t(lang, "download")}>
             <Download size={12} />
@@ -427,12 +427,12 @@ export function SftpPanel(props: {
 
   const openEntry = (file: types.RemoteFile) => {
     if (file.isDir) goTo(file.path);
-    else if (isSupportedTextPath(file.name)) props.onOpenMarkdownFile?.(active?.id || "", file.path);
+    else if (isSupportedDocumentPath(file.name)) props.onOpenMarkdownFile?.(active?.id || "", file.path);
     else download(file);
   };
 
   const fileMenuItems = (file: types.RemoteFile) => {
-    const isTextFile = !file.isDir && isSupportedTextPath(file.name);
+    const isTextFile = !file.isDir && isSupportedDocumentPath(file.name);
     return [
       ...(file.isDir
         ? [
@@ -441,7 +441,7 @@ export function SftpPanel(props: {
           ]
         : [
             ...(isTextFile
-              ? [{ label: t(lang, "openTextFile"), action: () => props.onOpenMarkdownFile?.(active?.id || "", file.path) }]
+              ? [{ label: t(lang, "openDocument"), action: () => props.onOpenMarkdownFile?.(active?.id || "", file.path) }]
               : []),
             { label: t(lang, "download"), action: () => download(file) },
           ]),

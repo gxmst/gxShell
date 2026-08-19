@@ -207,7 +207,7 @@ export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSi
               </button>
               <button className="tab-action-item" role="menuitem" onClick={() => { setNewMenuOpen(false); onOpenMarkdown?.(); }}>
                 <FileText size={12} />
-                {t(lang, "openTextFile")}
+                {t(lang, "openDocument")}
               </button>
             </div>
           )}

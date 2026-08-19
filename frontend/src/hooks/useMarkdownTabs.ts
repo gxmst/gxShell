@@ -9,10 +9,15 @@ import {
   SelectTextFile,
 } from "../../wailsjs/go/app/App";
 import type { Drawer, MarkdownOpenTarget, RecentMarkdownItem, Tab } from "../types";
+import { isWindowsPlatform } from "../utils/clipboard";
 import { usePersistedState } from "./usePersistedState";
 import { t } from "../i18n";
 
 const normalizeLocalPath = (filePath: string) => filePath.replace(/\\/g, "/");
+const localPathKey = (filePath: string) => {
+  const normalized = normalizeLocalPath(filePath);
+  return isWindowsPlatform() ? normalized.toLowerCase() : normalized;
+};
 
 const newMarkdownTabId = () => `text-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -29,7 +34,7 @@ const readWorkspaceFiles = (): { paths: string[]; activePath: string } => {
 };
 
 const recentMarkdownId = (item: Pick<RecentMarkdownItem, "source" | "path" | "profileId" | "sessionId">) => {
-  if (item.source === "local") return `local:${normalizeLocalPath(item.path).toLowerCase()}`;
+  if (item.source === "local") return `local:${localPathKey(item.path)}`;
   return `remote:${item.profileId || item.sessionId || ""}:${item.path}`;
 };
 
@@ -41,6 +46,7 @@ interface UseMarkdownTabsParams {
   setTabs: Dispatch<SetStateAction<Tab[]>>;
   setActiveTab: (id: string) => void;
   setDrawer: (drawer: Drawer) => void;
+  revealLocalDocumentWorkspace?: () => void;
   notify: (text: string, tone?: "info" | "error" | "success") => void;
 }
 
@@ -69,6 +75,7 @@ export function useMarkdownTabs({
   setTabs,
   setActiveTab,
   setDrawer,
+  revealLocalDocumentWorkspace,
   notify,
 }: UseMarkdownTabsParams): MarkdownTabs {
   const [markdownSiblings, setMarkdownSiblings] = useState<string[]>([]);
@@ -104,13 +111,13 @@ export function useMarkdownTabs({
       setTabs((current) => {
         const next = [...current];
         for (const candidate of candidates) {
-          const normalized = normalizeLocalPath(candidate.filePath || "");
-          const existing = next.find((tab) => tab.type === "markdown" && tab.filePath && normalizeLocalPath(tab.filePath) === normalized);
+          const normalized = localPathKey(candidate.filePath || "");
+          const existing = next.find((tab) => tab.type === "markdown" && tab.filePath && localPathKey(tab.filePath) === normalized);
           if (!existing) next.push(candidate);
         }
-        const activePath = normalizeLocalPath(workspaceFiles.current.activePath);
+        const activePath = localPathKey(workspaceFiles.current.activePath);
         if (activePath) {
-          const restoredActive = next.find((tab) => tab.type === "markdown" && tab.filePath && normalizeLocalPath(tab.filePath) === activePath);
+          const restoredActive = next.find((tab) => tab.type === "markdown" && tab.filePath && localPathKey(tab.filePath) === activePath);
           if (restoredActive) setActiveTab(restoredActive.id);
         }
         return next;
@@ -143,18 +150,13 @@ export function useMarkdownTabs({
   }, [setRecentMarkdown]);
 
   const openMarkdownFile = useCallback(async (filePath: string) => {
-    const normalizedPath = normalizeLocalPath(filePath);
-    const existing = tabsRef.current.find((tab) => tab.type === "markdown" && tab.filePath && normalizeLocalPath(tab.filePath) === normalizedPath);
+    revealLocalDocumentWorkspace?.();
+    const normalizedPath = localPathKey(filePath);
+    const existing = tabsRef.current.find((tab) => tab.type === "markdown" && tab.filePath && localPathKey(tab.filePath) === normalizedPath);
     rememberMarkdown({ source: "local", path: filePath, title: fileNameFromPath(filePath) });
     if (existing) {
       setActiveTab(existing.id);
       setDrawer("sftp");
-      try {
-        const siblings = await ListTextFilesInDir(filePath);
-        setMarkdownSiblings(siblings || []);
-      } catch {
-        setMarkdownSiblings([]);
-      }
       return;
     }
 
@@ -172,14 +174,7 @@ export function useMarkdownTabs({
     setTabs(prev => [...prev, newTab]);
     setActiveTab(newTab.id);
     setDrawer("sftp");
-
-    try {
-      const siblings = await ListTextFilesInDir(filePath);
-      setMarkdownSiblings(siblings || []);
-    } catch {
-      setMarkdownSiblings([]);
-    }
-  }, [rememberMarkdown, setActiveTab, setTabs, setDrawer]);
+  }, [rememberMarkdown, revealLocalDocumentWorkspace, setActiveTab, setTabs, setDrawer]);
 
   const openRemoteMarkdownFile = useCallback(async (sessionID: string, remotePath: string) => {
     const sessionTab = tabsRef.current.find((tab) => tab.id === sessionID);
@@ -201,12 +196,6 @@ export function useMarkdownTabs({
     if (existing) {
       setActiveTab(existing.id);
       setDrawer("sftp");
-      try {
-        const siblings = await ListRemoteTextFilesInDir(sessionID, remotePath);
-        setMarkdownSiblings(siblings || []);
-      } catch {
-        setMarkdownSiblings([]);
-      }
       return;
     }
 
@@ -224,13 +213,6 @@ export function useMarkdownTabs({
     setTabs(prev => [...prev, newTab]);
     setActiveTab(newTab.id);
     setDrawer("sftp");
-
-    try {
-      const siblings = await ListRemoteTextFilesInDir(sessionID, remotePath);
-      setMarkdownSiblings(siblings || []);
-    } catch {
-      setMarkdownSiblings([]);
-    }
   }, [rememberMarkdown, setActiveTab, setTabs, setDrawer]);
 
   const openMarkdownTarget = useCallback((target: MarkdownOpenTarget) => {
@@ -305,22 +287,24 @@ export function useMarkdownTabs({
   // Depends only on the derived key above (not on tabs), so a remote SFTP
   // directory listing is never re-fired by unrelated tab updates.
   useEffect(() => {
+    let cancelled = false;
     const active = tabsRef.current.find(t => t.id === activeTabRef.current);
     if (active?.type === 'markdown' && active.markdownSource === "remote" && active.remoteSessionId && active.remotePath) {
       ListRemoteTextFilesInDir(active.remoteSessionId, active.remotePath).then(siblings => {
-        setMarkdownSiblings(siblings || []);
+        if (!cancelled) setMarkdownSiblings(siblings || []);
       }).catch(() => {
-        setMarkdownSiblings([]);
+        if (!cancelled) setMarkdownSiblings([]);
       });
     } else if (active?.type === 'markdown' && active.filePath) {
       ListTextFilesInDir(active.filePath).then(siblings => {
-        setMarkdownSiblings(siblings || []);
+        if (!cancelled) setMarkdownSiblings(siblings || []);
       }).catch(() => {
-        setMarkdownSiblings([]);
+        if (!cancelled) setMarkdownSiblings([]);
       });
     } else {
       setMarkdownSiblings([]);
     }
+    return () => { cancelled = true; };
   }, [activeMarkdownKey]);
 
   return {

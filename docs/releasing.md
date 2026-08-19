@@ -27,8 +27,8 @@ separate release-notes source.
 
 ```powershell
 git push origin main
-git tag v1.5.1
-git push origin v1.5.1
+git tag -a v<version> -m "gxShell v<version>"
+git push origin v<version>
 ```
 
 The GitHub workflow then creates the Release and uploads the package. Do not

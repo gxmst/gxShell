@@ -4,11 +4,90 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
 )
+
+type remoteReadHandleTestFile struct {
+	*bytes.Reader
+	mu        sync.Mutex
+	closeCall int
+	statCall  int
+}
+
+func (f *remoteReadHandleTestFile) Close() error {
+	f.mu.Lock()
+	f.closeCall++
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *remoteReadHandleTestFile) Stat() (os.FileInfo, error) {
+	f.mu.Lock()
+	f.statCall++
+	f.mu.Unlock()
+	return nil, errors.New("unexpected Stat call")
+}
+
+func TestRemoteReadHandleUsesKnownSizeAndReleasesOnce(t *testing.T) {
+	contents := []byte("0123456789")
+	file := &remoteReadHandleTestFile{Reader: bytes.NewReader(contents)}
+	releaseCalls := 0
+	var releaseMu sync.Mutex
+	handle := &RemoteReadHandle{
+		file: file,
+		size: int64(len(contents)),
+		release: func() {
+			releaseMu.Lock()
+			releaseCalls++
+			releaseMu.Unlock()
+		},
+	}
+
+	position, err := handle.Seek(-3, io.SeekEnd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if position != 7 {
+		t.Fatalf("seek position = %d, want 7", position)
+	}
+	data := make([]byte, 3)
+	if _, err := io.ReadFull(handle, data); err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "789" {
+		t.Fatalf("read data = %q, want 789", data)
+	}
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := handle.Close(); err != nil {
+				t.Errorf("Close: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	file.mu.Lock()
+	closeCalls := file.closeCall
+	statCalls := file.statCall
+	file.mu.Unlock()
+	releaseMu.Lock()
+	gotReleaseCalls := releaseCalls
+	releaseMu.Unlock()
+	if closeCalls != 1 || gotReleaseCalls != 1 {
+		t.Fatalf("close calls = %d, release calls = %d; want 1 each", closeCalls, gotReleaseCalls)
+	}
+	if statCalls != 0 {
+		t.Fatalf("SeekEnd made %d Stat calls, want 0", statCalls)
+	}
+}
 
 func TestCleanRemotePath(t *testing.T) {
 	tests := []struct {

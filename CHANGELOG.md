@@ -3,6 +3,26 @@
 All notable gxShell changes are documented here. Release notes are generated
 from the version section in this file.
 
+## [1.5.6] - 2026-08-19
+
+### English
+
+- Replaced the external CLI's blacklist-style execution gate with T0-T3 risk classification. Automation trust now auto-approves only scoped, recoverable T1 work; opaque T2 operations and critical T3 operations always require native confirmation, with every T3 request reviewed separately.
+- Added localized, classifier-derived explanations to command confirmations and hardened script workflows against upload-and-execute bypasses. Upload approvals now include a hash and preview, execution of remembered uploaded scripts repeats that provenance, and arbitrary interpreters or generated programs are treated as opaque code rather than trusted transport.
+- Expanded the document workspace with local and remote PDF viewing through authorized, range-capable streams, and automatically reveals and scrolls the sidebar to the active local document.
+- Added syntax-aware JSON and JSONL editing, validation, and formatting while preserving large integers, exponent spellings, and negative zero. Large documents defer full validation until save to keep typing responsive.
+- Reduced document-opening work by lazily loading the source editor and Markdown renderer, cancelling stale directory and render requests, and correctly rendering visible non-active split panes without enabling their global shortcuts.
+- Added regression coverage for CLI risk tiers and approval behavior, PDF authorization and range handling, JSON numeric fidelity and performance, document navigation, and asynchronous rendering races.
+
+### 中文
+
+- 外部 CLI 的执行门禁由黑名单式判断升级为 T0-T3 风险分级。自动化信任现在只会自动批准范围明确、可恢复的 T1 操作；不透明的 T2 和关键 T3 操作始终需要原生确认，每条 T3 请求必须单独审核。
+- 命令确认增加由分类器生成的本地化操作说明，并强化脚本流程以防止通过“上传后执行”绕过审核。上传确认会展示哈希和内容预览；随后执行已记录的上传脚本时会再次展示这些来源信息；任意解释器或生成程序按不透明代码处理，而不是当作可信传输方式。
+- 文档工作区加入本地与远程 PDF 查看，通过授权且支持 Range 的流式接口读取；打开本地文档时会自动展开侧栏并滚动定位当前文件。
+- 新增带语法支持的 JSON/JSONL 编辑、校验与格式化，并保留大整数、指数写法和负零等原始数值文本。大型文档延后到保存时做完整校验，避免输入卡顿。
+- 文档打开路径改为按需加载源码编辑器和 Markdown 渲染器，取消过期的目录与渲染请求，并确保分屏中可见但非活动的文档正常渲染且不会注册全局快捷键。
+- 为 CLI 风险分级与审批、PDF 授权与分段读取、JSON 数字保真与性能、文档导航及异步渲染竞态补充了回归测试。
+
 ## [1.5.4] - 2026-08-13
 
 ### English
@@ -75,6 +95,7 @@ from the version section in this file.
 - 全局搜索覆盖连接、已打开标签、命令和工作区操作；终端搜索增加清晰的匹配计数与导航。
 - 工作区恢复改为显式开关，并增加顶层错误兜底、辅助功能和键盘交互改进。
 
+[1.5.6]: https://github.com/gxmst/gxShell/releases/tag/v1.5.6
 [1.5.4]: https://github.com/gxmst/gxShell/releases/tag/v1.5.4
 [1.5.3]: https://github.com/gxmst/gxShell/releases/tag/v1.5.3
 [1.5.2]: https://github.com/gxmst/gxShell/releases/tag/v1.5.2

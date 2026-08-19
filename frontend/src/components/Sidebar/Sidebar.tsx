@@ -1,7 +1,8 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { ArrowUpRight, Bot, Edit3, FileText, Folder, FolderOpen, MoreHorizontal, PanelLeftClose, Play, Plus, Search, Server, Settings, Star, Trash2, X, Zap } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
+import { isWindowsPlatform } from "../../utils/clipboard";
 import { TraceRoute, PingHost, UpdateSettings } from "../../../wailsjs/go/app/App";
 import type { AutomationActivityRecord, AutomationIndicator, Drawer, RecentMarkdownItem, Tab, Toast } from "../../types";
 import type { AppContextMenu } from "../../hooks/useTerminal";
@@ -45,6 +46,16 @@ function primaryForDrawer(drawer: Drawer): PrimaryNav | "ai" | "settings" {
   if (drawer === "ai") return "ai";
   if (drawer === "settings") return "settings";
   return "tools";
+}
+
+function sameDocumentPath(left: string | undefined, right: string, remote: boolean) {
+  if (!left) return false;
+  if (remote) return left === right;
+  const normalize = (value: string) => {
+    const normalized = value.replace(/\\/g, "/");
+    return isWindowsPlatform() ? normalized.toLowerCase() : normalized;
+  };
+  return normalize(left) === normalize(right);
 }
 
 export function Sidebar(props: {
@@ -114,6 +125,7 @@ export function Sidebar(props: {
 
   const [activeGroup, setActiveGroup] = useState<string>("__all__");
   const [fileMode, setFileMode] = useState<FileMode>("remote");
+  const activeDocumentRowRef = useRef<HTMLButtonElement>(null);
   const [aiMounted, setAiMounted] = useState(props.drawer === "ai");
 
   useEffect(() => {
@@ -123,6 +135,14 @@ export function Sidebar(props: {
   useEffect(() => {
     if (props.drawer === "sftp") setFileMode(props.active?.type === "markdown" ? "text" : "remote");
   }, [props.drawer, props.active?.id, props.active?.type]);
+
+  useLayoutEffect(() => {
+    if (props.drawer !== "sftp" || fileMode !== "text") return;
+    const frame = requestAnimationFrame(() => {
+      activeDocumentRowRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [fileMode, props.active?.id, props.active?.filePath, props.active?.remotePath, props.drawer, props.markdownSiblings]);
 
   const groups = useMemo(() => {
     const set = new Set<string>();
@@ -407,7 +427,7 @@ export function Sidebar(props: {
                     <div className="text-file-toolbar">
                       <div>
                         <strong>{t(lang, "textFiles")}</strong>
-                        <small>{lang === "zh-CN" ? "本地与远程文本工作区" : "Local and remote text workspace"}</small>
+                        <small>{lang === "zh-CN" ? "本地与远程文档工作区" : "Local and remote document workspace"}</small>
                       </div>
                       <button className="text-file-open-btn" onClick={props.onPickTextFile}><Plus size={11} /> {t(lang, "open")}</button>
                     </div>
@@ -417,9 +437,18 @@ export function Sidebar(props: {
                         <div className="text-file-section-title">{lang === "zh-CN" ? "当前目录" : "Current folder"}<span>{props.markdownSiblings.length}</span></div>
                         <div className="text-file-list text-file-list-scroll">
                           {props.markdownSiblings.map((file) => {
-                            const isActive = props.active?.type === "markdown" && (props.active.filePath === file || props.active.remotePath === file);
+                            const isRemote = props.active?.markdownSource === "remote";
+                            const activePath = isRemote ? props.active?.remotePath : props.active?.filePath;
+                            const isActive = props.active?.type === "markdown" && sameDocumentPath(activePath, file, isRemote);
                             return (
-                              <button key={file} className={clsx("text-file-row", isActive && "active")} onClick={() => props.onOpenMarkdownFile?.(file)} title={file}>
+                              <button
+                                key={file}
+                                ref={isActive ? activeDocumentRowRef : undefined}
+                                className={clsx("text-file-row", isActive && "active")}
+                                aria-current={isActive ? "page" : undefined}
+                                onClick={() => props.onOpenMarkdownFile?.(file)}
+                                title={file}
+                              >
                                 <FileText size={13} />
                                 <span>{file.split(/[\\/]/).pop()}</span>
                                 {isActive && <span className="text-file-current">{lang === "zh-CN" ? "当前" : "Open"}</span>}
