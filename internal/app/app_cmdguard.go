@@ -1,9 +1,10 @@
 package app
 
-// This file contains the shared pre-execution safety policy (dangerous-command
-// and sensitive-path blocklists, the read-only allowlist, and the confirmation
-// gate) used by both the in-app AI assistant and the external CLI. It is kept
-// separate from app.go so the policy can be reviewed and tested in isolation.
+// This file contains the legacy known-pattern preflight checks used by the
+// in-app AI assistant and by sensitive-path checks for transfer/copy features.
+// External CLI exec requests use the behaviour-based T0-T3 classifier in
+// app_cmdtier.go instead. The helpers remain isolated here so both policies can
+// be reviewed and tested without implying that either one is a sandbox.
 
 import (
 	"fmt"
@@ -584,9 +585,10 @@ func isReadOnlyCommand(cmd string) bool {
 	return ok
 }
 
-// guardCommand applies the shared pre-execution safety policy used by both the
-// in-app AI assistant and the external CLI: the dangerous-command and
-// sensitive-path blocklists, then a human confirmation gate. When
+// guardCommand composes the legacy known-pattern preflight checks with a human
+// confirmation gate. It is retained for focused policy tests; production
+// in-app AI calls checkCommandPreflightBlock before its own authorization flow,
+// while external CLI exec uses classifyCommand. When
 // allowReadOnlyWithoutConfirm is true, commands on the read-only allowlist skip
 // confirmation; every other command requires confirm() to return true. confirm
 // must be backed by a native dialog the renderer cannot forge. It returns

@@ -93,9 +93,19 @@ func (a *App) handleCliTransfer(w http.ResponseWriter, r *http.Request) {
 	if req.Operation == "pull" {
 		source, destination = destination, localPath
 	}
+	var uploadInfo cliLocalFileInfo
+	if req.Operation == "push" {
+		uploadInfo, err = inspectCliLocalFile(localPath)
+		if err != nil {
+			writeCliError(w, http.StatusBadRequest, "validation", "inspect local source: "+err.Error())
+			return
+		}
+	}
 	description := fmt.Sprintf("Transfer local file %s to %s (atomic, no overwrite by default)", localPath, destination)
 	if req.Operation == "pull" {
 		description = fmt.Sprintf("Transfer remote file %s to local file %s (atomic, no overwrite by default)", source, destination)
+	} else {
+		description += formatCliLocalFileApproval(uploadInfo)
 	}
 	if req.Overwrite {
 		description += "; allow replacing an existing destination"
@@ -158,7 +168,7 @@ func (a *App) handleCliTransfer(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		err = a.sftp.UploadFileWithPolicy(sessionID, localPath, req.RemotePath, req.Overwrite)
+		err = a.sftp.UploadFileWithPolicyVerified(sessionID, localPath, req.RemotePath, req.Overwrite, uploadInfo.SHA256)
 	} else {
 		if info, statErr := os.Lstat(localPath); statErr == nil {
 			if !info.Mode().IsRegular() {
@@ -189,17 +199,24 @@ func (a *App) handleCliTransfer(w http.ResponseWriter, r *http.Request) {
 		writeCliError(w, http.StatusBadGateway, "sftp", err.Error())
 		return
 	}
-	writeCliJSON(w, http.StatusOK, map[string]any{
+	if req.Operation == "push" {
+		a.rememberCliUploadedFile(profile.ID, req.RemotePath, uploadInfo)
+	}
+	payload := map[string]any{
 		"outcome": "succeeded", "operation": req.Operation, "server": alias,
 		"source": source, "destination": destination, "bytes": bytes,
 		"overwritten": overwritten, "atomic": true,
-	})
+	}
+	if req.Operation == "push" {
+		payload["sha256"] = uploadInfo.SHA256
+	}
+	writeCliJSON(w, http.StatusOK, payload)
 }
 
 // checkCliTransferSensitivePath applies the command guard to both absolute and
 // relative remote spellings. SFTP accepts paths relative to the server's
 // working directory, so a relative `etc/shadow` or `../etc/shadow` must not be
-// allowed to bypass the absolute-path blocklist.
+// allowed to bypass the sensitive-path transfer policy.
 func checkCliTransferSensitivePath(remotePath string) (commandBlock, bool) {
 	if block, blocked := checkSensitivePathBlock(remotePath); blocked {
 		return block, true

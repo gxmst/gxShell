@@ -63,6 +63,9 @@ export type AutomationActivityEvent = {
   exitCode?: number;
   durationMs?: number;
   truncated?: boolean;
+  riskTier?: string;
+  riskLabel?: string;
+  approval?: string;
 };
 
 export type AutomationActivityRecord = AutomationActivityEvent & {
@@ -75,6 +78,25 @@ export type AutomationIndicator = {
   phase: AutomationActivityPhase;
   running: number;
   updatedAt: number;
+};
+
+export type CliRiskSpan = {
+  start: number;
+  end: number;
+  class: "tier-driver" | "amplifier" | "opaque" | "credential" | "network";
+  note?: string;
+};
+
+export type CliApprovalEvent = {
+  id: string;
+  alias?: string;
+  phase: "pending" | "approved" | "denied";
+  command?: string;
+  riskTier?: string;
+  riskLabel?: string;
+  strength?: "click";
+  riskLines?: string[];
+  spans?: CliRiskSpan[];
 };
 
 export type SecretRequest = {

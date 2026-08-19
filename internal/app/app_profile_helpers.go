@@ -122,7 +122,7 @@ func validateProfileCliSettings(profile types.Profile, profiles []types.Profile)
 		return errors.New("CLI alias is required when access is enabled")
 	}
 	if profile.CliTrustUntil.After(time.Now().Add(24*time.Hour + time.Minute)) {
-		return errors.New("CLI full trust cannot be granted for more than 24 hours")
+		return errors.New("CLI automation trust cannot be granted for more than 24 hours")
 	}
 	for _, existing := range profiles {
 		if existing.ID == profile.ID || !existing.CliEnabled {

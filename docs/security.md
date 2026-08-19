@@ -15,9 +15,19 @@ credentials away from ordinary profile data and terminal input.
 - CLI access is globally disabled by default and is additionally opt-in per profile.
 - Requests stay on `127.0.0.1` and require a local bearer token.
 - The CLI exposes aliases rather than hostnames, usernames, ports, profile IDs, or jump-host details.
-- Non-read-only commands, transfers, tunnels, and secret changes require native confirmation unless a limited trust window applies.
-- Dangerous commands and sensitive remote paths are hard-blocked before execution.
-- AI tools are short-lived, single-use authorizations and require native confirmation before remote execution or file reads.
+- External CLI `exec` requests use behavior-based T0-T3 risk tiers. Automation
+  trust auto-approves only T1 scoped, recoverable changes. T2 always requires a
+  native click; T3 uses an immediate individual click and never joins a batch,
+  regardless of trust. Prompted commands include a short classifier-derived
+  explanation of their recognized behavior and target.
+- The native dialog is authoritative. The in-app coloured risk card is
+  informational and cannot approve execution.
+- Transfer/copy sensitive-path policy can still block an operation outright.
+  The built-in AI assistant retains its known-pattern command preflight and
+  short-lived, single-use native authorizations. It does not yet share the
+  external CLI's tier path.
+- Local transfers, tunnels, and secret changes always require native
+  confirmation. Remote copies may skip it only when both profiles are trusted.
 
 ## Terminal and files
 
@@ -37,6 +47,12 @@ credentials away from ordinary profile data and terminal input.
   AGPL-3.0: an unmodified gxShell has no remote network users, so section 13
   does not come into play in ordinary desktop use.
 
-This model is a set of guardrails, not a sandbox. Review commands and secret
-destinations before approving them, and rotate any credential that appears in a
+This model is a set of guardrails, not a sandbox. In particular, a shell script,
+an uploaded program, an interpreter or build-tool invocation, or code that is
+decoded or compiled on the server can perform actions that do not resemble its
+outer command text. Risk classification helps a cooperative client and reviewer;
+it is not containment against a malicious local token holder. A non-blocked
+result is not a claim that the operation is safe.
+Review the complete source, command, destination, and secret/network use before
+approving or trusting automation. Rotate any credential that appears in a
 prompt, process argument, terminal capture, or log.

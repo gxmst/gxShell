@@ -27,6 +27,9 @@ type terminalAutomationEvent struct {
 	ExitCode   int    `json:"exitCode,omitempty"`
 	DurationMs int64  `json:"durationMs,omitempty"`
 	Truncated  bool   `json:"truncated,omitempty"`
+	RiskTier   string `json:"riskTier,omitempty"`
+	RiskLabel  string `json:"riskLabel,omitempty"`
+	Approval   string `json:"approval,omitempty"`
 }
 
 func (a *App) emitTerminalAutomation(event terminalAutomationEvent) {
@@ -43,6 +46,14 @@ func (a *App) emitTerminalAutomation(event terminalAutomationEvent) {
 }
 
 func (a *App) beginTerminalAutomation(sessionID, source, tool, command string) string {
+	return a.beginTerminalAutomationDetails(sessionID, source, tool, command, "", "", "")
+}
+
+func (a *App) beginTerminalAutomationWithRisk(sessionID, source, tool, command string, assessment riskAssessment, approval string) string {
+	return a.beginTerminalAutomationDetails(sessionID, source, tool, command, assessment.Tier.String(), assessment.Tier.Label(), approval)
+}
+
+func (a *App) beginTerminalAutomationDetails(sessionID, source, tool, command, riskTier, riskLabel, approval string) string {
 	activityID := types.NewID(source)
 	a.emitTerminalAutomation(terminalAutomationEvent{
 		SessionID:  sessionID,
@@ -51,6 +62,9 @@ func (a *App) beginTerminalAutomation(sessionID, source, tool, command string) s
 		Phase:      "started",
 		Tool:       tool,
 		Command:    command,
+		RiskTier:   riskTier,
+		RiskLabel:  riskLabel,
+		Approval:   approval,
 	})
 	return activityID
 }

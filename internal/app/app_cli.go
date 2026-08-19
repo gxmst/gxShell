@@ -35,8 +35,10 @@ const (
 var cliHeredocPattern = regexp.MustCompile(`(?:^|[;&|]\s*|\s)<<-?\s*["']?[A-Za-z_][A-Za-z0-9_]*["']?`)
 
 type cliApprovalDecision struct {
-	Allowed bool
-	Source  string
+	Allowed  bool
+	Source   string
+	Strength string
+	Err      error
 }
 
 const (
@@ -203,26 +205,54 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		stdin = &script
 	}
 
-	approvalSource := cliApprovalNotRequired
-	if block, ok := guardCommandReport(guardText, req.Script == "", func() bool {
-		display := execCommand
-		if req.Script != "" {
-			display += " via SSH stdin:\n" + req.Script
-		} else if len(secretValues) > 0 {
-			display += " via SSH stdin:\n" + req.Command
+	display := execCommand
+	if req.Script != "" {
+		display += " via SSH stdin:\n" + req.Script
+	} else if len(secretValues) > 0 {
+		display += " via SSH stdin:\n" + req.Command
+	}
+	if len(secretNames) > 0 {
+		display += "\nNamed secrets: " + strings.Join(secretNames, ", ") + " (values hidden)"
+	}
+	assessment := classifyCommand(guardText)
+	matchedUploads := a.applyCliUploadedFileRisk(profile.ID, guardText, &assessment)
+	if len(matchedUploads) > 0 {
+		display += formatCliUploadedFileContext(matchedUploads)
+	}
+	decision := a.authorizeCliProfileRiskExecution(profile, display, guardText, assessment)
+	approvalSource := decision.Source
+	if !decision.Allowed {
+		if decision.Err != nil {
+			fields := logger.CommandAuditFields(guardText)
+			fields["server"] = serverName
+			fields["profileID"] = profile.ID
+			fields["approval"] = approvalSource
+			fields["error"] = decision.Err.Error()
+			for key, value := range tierAuditFields(assessment) {
+				fields[key] = value
+			}
+			a.log.ErrorFields("CLI confirmation failed", fields)
+			writeCliJSON(w, http.StatusInternalServerError, map[string]any{
+				"alias":     serverName,
+				"error":     "native confirmation failed: " + decision.Err.Error(),
+				"errorKind": "confirmation",
+				"blocked":   false,
+				"outcome":   "client_error",
+				"approval":  approvalSource,
+				"riskTier":  assessment.Tier.String(), "riskLabel": assessment.Tier.Label(),
+				"riskCategories": riskCategoryList(assessment), "approvalStrength": decision.Strength,
+			})
+			return
 		}
-		if len(secretNames) > 0 {
-			display += "\nNamed secrets: " + strings.Join(secretNames, ", ") + " (values hidden)"
-		}
-		decision := a.authorizeCliProfileExecution(profile, display)
-		approvalSource = decision.Source
-		return decision.Allowed
-	}); !ok {
+		block := commandBlock{Kind: "confirmation", Reason: "user declined execution", Detail: describeTier(assessment)}
 		fields := logger.CommandAuditFields(guardText)
 		fields["server"] = serverName
 		fields["profileID"] = profile.ID
 		fields["approval"] = approvalSource
 		fields["reason"] = block.Message()
+		for key, value := range tierAuditFields(assessment) {
+			fields[key] = value
+		}
 		a.log.ErrorFields("CLI command blocked", fields)
 		writeCliJSON(w, http.StatusForbidden, map[string]any{
 			"alias":     serverName,
@@ -233,6 +263,9 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 			"reason":    block.Reason,
 			"detail":    block.Detail,
 			"outcome":   "blocked",
+			"approval":  approvalSource,
+			"riskTier":  assessment.Tier.String(), "riskLabel": assessment.Tier.Label(),
+			"riskCategories": riskCategoryList(assessment), "approvalStrength": decision.Strength,
 		})
 		return
 	}
@@ -241,6 +274,9 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	fields["server"] = serverName
 	fields["profileID"] = profile.ID
 	fields["approval"] = approvalSource
+	for key, value := range tierAuditFields(assessment) {
+		fields[key] = value
+	}
 	a.log.InfoFields("CLI executing command", fields)
 
 	sessionID, reusedConnection, err := a.cliSessionForProfile(profile.ID)
@@ -261,16 +297,19 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	// surfaced before their automation output arrives.
 	a.announceCliSession(sessionID)
 	if req.Async {
-		job := a.startCliJob(serverName, profile.ID, sessionID, execCommand, stdin, timeout, reusedConnection)
+		job := a.startCliJob(serverName, profile.ID, sessionID, execCommand, stdin, timeout, reusedConnection, assessment, approvalSource, decision.Strength)
 		writeCliJSON(w, http.StatusAccepted, map[string]any{
 			"alias": serverName, "reusedConnection": reusedConnection,
 			"jobId": job.ID, "state": "queued", "timeoutMs": int(timeout / time.Millisecond),
+			"approval": approvalSource, "approvalStrength": decision.Strength,
+			"riskTier": assessment.Tier.String(), "riskLabel": assessment.Tier.Label(),
+			"riskCategories": riskCategoryList(assessment),
 		})
 		return
 	}
 
 	safeActivityCommand := logger.RedactKnownSecrets(guardText, secretMapValues(secretValues))
-	activityID := a.beginTerminalAutomation(sessionID, "cli", "execute_command", safeActivityCommand)
+	activityID := a.beginTerminalAutomationWithRisk(sessionID, "cli", "execute_command", safeActivityCommand, assessment, approvalSource)
 	activityFinished := false
 	// r.Context() ends when the CLI client disconnects, so an abandoned request
 	// does not keep the remote command's exec channel open for up to 30 minutes.
@@ -291,7 +330,7 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		if reconnectErr == nil {
 			reconnected = true
 			a.announceCliSessionReplacement(oldSessionID, sessionID)
-			activityID = a.beginTerminalAutomation(sessionID, "cli", "execute_command", safeActivityCommand)
+			activityID = a.beginTerminalAutomationWithRisk(sessionID, "cli", "execute_command", safeActivityCommand, assessment, approvalSource)
 			activityFinished = false
 			result, err = a.ssh.ExecuteCommandResultStream(r.Context(), sessionID, execCommand, stdin, timeout, cliOutputLimit, nil)
 		} else {
@@ -338,6 +377,11 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		"timedOut":           result.TimedOut,
 		"truncated":          result.Truncated,
 		"blocked":            false,
+		"approval":           approvalSource,
+		"riskTier":           assessment.Tier.String(),
+		"riskLabel":          assessment.Tier.Label(),
+		"riskCategories":     riskCategoryList(assessment),
+		"approvalStrength":   decision.Strength,
 	}
 	status := http.StatusOK
 	if result.TimedOut {
@@ -675,16 +719,123 @@ func (a *App) confirmCliExecution(serverName, command string) bool {
 	return <-req.result
 }
 
-// authorizeCliProfileExecution applies time-limited trust only to remote
-// commands for the concrete profile selected by the request.
+// authorizeCliProfileExecution is the convenience entry point used by tests and
+// non-script callers. The request handler classifies guardText separately so a
+// script can display its transport command while still scoring its full body.
 func (a *App) authorizeCliProfileExecution(profile types.Profile, command string) cliApprovalDecision {
-	if a.cliProfilesTrustedNow([]string{profile.ID}, time.Now()) {
-		return cliApprovalDecision{Allowed: true, Source: cliApprovalTimedTrust}
+	return a.authorizeCliProfileRiskExecution(profile, command, command, classifyCommand(command))
+}
+
+func (a *App) authorizeCliProfileRiskExecution(profile types.Profile, display, riskText string, assessment riskAssessment) cliApprovalDecision {
+	trusted := a.cliProfilesTrustedNow([]string{profile.ID}, time.Now())
+	strength := assessment.requiredApproval(trusted)
+	if strength == approvalNone {
+		source := cliApprovalNotRequired
+		if trusted && assessment.Tier == tierRecoverable {
+			source = cliApprovalTimedTrust
+		}
+		return cliApprovalDecision{Allowed: true, Source: source, Strength: strength.String()}
 	}
+	language := a.cliApprovalLanguage()
+	riskLines := assessment.riskLinesForLanguage(language)
+	display = formatRiskApprovalForLanguage(display, assessment, language, riskLines)
+	var confirmationErr error
+	allowed := a.withCliApprovalEvent(cliProfileName(profile), riskText, assessment, strength, language, riskLines, func() bool {
+		if assessment.Tier == tierCritical {
+			// Critical requests never join a batch: otherwise one dangerous command
+			// can hide among ordinary T1/T2 requests behind a single Allow all click.
+			var confirmed bool
+			confirmed, confirmationErr = a.confirmCliCriticalExecution(cliProfileName(profile), display, assessment, strength)
+			return confirmed
+		}
+		return a.confirmCliExecution(cliProfileName(profile), display)
+	})
 	return cliApprovalDecision{
-		Allowed: a.confirmCliExecution(cliProfileName(profile), command),
-		Source:  cliApprovalUser,
+		Allowed:  allowed,
+		Source:   cliApprovalUser,
+		Strength: strength.String(),
+		Err:      confirmationErr,
 	}
+}
+
+func formatRiskApproval(command string, assessment riskAssessment) string {
+	return formatRiskApprovalForLanguage(command, assessment, "", assessment.riskLines())
+}
+
+func formatRiskApprovalForLanguage(command string, assessment riskAssessment, language string, lines []string) string {
+	sections := []string{truncate(command, 800)}
+	if len(lines) > 0 {
+		const explanationLimit = 4
+		visible := lines
+		if len(visible) > explanationLimit {
+			visible = visible[:explanationLimit]
+		}
+		items := make([]string, 0, len(visible)+1)
+		for _, line := range visible {
+			items = append(items, "- "+line)
+		}
+		if remaining := len(lines) - len(visible); remaining > 0 {
+			if isChineseLanguage(language) {
+				items = append(items, fmt.Sprintf("- 另有 %d 项作用", remaining))
+			} else {
+				items = append(items, fmt.Sprintf("- and %d additional effect(s)", remaining))
+			}
+		}
+		heading := "What this does:"
+		if isChineseLanguage(language) {
+			heading = "作用说明："
+		}
+		sections = append(sections, heading+"\n"+strings.Join(items, "\n"))
+	}
+	if isChineseLanguage(language) {
+		sections = append(sections, fmt.Sprintf("风险等级：%s（%s）", assessment.Tier, assessment.Tier.labelForLanguage(language)))
+	} else {
+		sections = append(sections, fmt.Sprintf("Risk level: %s (%s)", assessment.Tier, assessment.Tier.Label()))
+	}
+	return strings.Join(sections, "\n\n")
+}
+
+func (a *App) cliApprovalLanguage() string {
+	if a.store == nil {
+		return ""
+	}
+	settings, err := a.store.GetSettings()
+	if err != nil {
+		return ""
+	}
+	return settings.Language
+}
+
+func (a *App) confirmCliCriticalExecution(serverName, command string, assessment riskAssessment, strength approvalStrength) (bool, error) {
+	if a.cliConfirmRiskFn != nil {
+		return a.cliConfirmRiskFn(serverName, command, assessment, strength)
+	}
+	return a.confirmCliCriticalExecutionNative(serverName, command, assessment, strength)
+}
+
+func (a *App) confirmCliCriticalExecutionNative(serverName, command string, _ riskAssessment, _ approvalStrength) (bool, error) {
+	ctx := a.ctx.Get()
+	if ctx == nil {
+		return false, fmt.Errorf("application context is unavailable")
+	}
+	title := "CLI critical command"
+	message := fmt.Sprintf("An external CLI request wants to run a critical command on %s:\n\n%s\n\nAllow this?", serverName, truncate(command, 2000))
+	a.nativeDialogMu.Lock()
+	defer a.nativeDialogMu.Unlock()
+	res, err := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
+		Type:          runtime.QuestionDialog,
+		Title:         title,
+		Message:       message,
+		Buttons:       []string{"Allow", "Deny"},
+		DefaultButton: "Deny",
+		CancelButton:  "Deny",
+	})
+	if err != nil {
+		return false, err
+	}
+	// Wails 2.x uses a native Yes/No MessageBox on Windows and ignores custom
+	// button labels there. Other platforms return "Allow".
+	return res == "Allow" || res == "Yes", nil
 }
 
 // authorizeCliCopy requires both endpoints to be inside their trust windows.
@@ -771,7 +922,7 @@ func (a *App) confirmCliExecutionBatchNative(serverName string, commands []strin
 	if len(commands) == 1 {
 		title = "CLI wants to run a command"
 		buttons = []string{"Allow", "Deny"}
-		message = fmt.Sprintf("An external CLI request wants to run this command on %s:\n\n%s\n\nAllow this?", serverName, truncate(commands[0], 500))
+		message = fmt.Sprintf("An external CLI request wants to run this command on %s:\n\n%s\n\nAllow this?", serverName, truncate(commands[0], 2000))
 	}
 	a.nativeDialogMu.Lock()
 	defer a.nativeDialogMu.Unlock()

@@ -119,7 +119,7 @@ func (a *App) logCliTrustEnabled(profile types.Profile) {
 	if a.log == nil {
 		return
 	}
-	a.log.InfoFields("CLI full trust enabled", logger.LogFields{
+	a.log.InfoFields("CLI automation trust enabled", logger.LogFields{
 		"profileID":  profile.ID,
 		"alias":      profile.CliAlias,
 		"trustUntil": profile.CliTrustUntil.UTC().Format(time.RFC3339Nano),
@@ -143,13 +143,13 @@ func (a *App) confirmCliProfileTrust(profile types.Profile) bool {
 	}
 	alias := profile.CliAlias
 	until := profile.CliTrustUntil.Local().Format("2006-01-02 15:04:05")
-	title := "Enable time-limited CLI full trust?"
-	message := "Until " + until + ", any process that has the local gxShell CLI token can perform write operations on " + alias + " without another prompt.\n\n" +
-		"Commands may use registered named secrets. A malicious command can encode and exfiltrate those values despite output redaction. Catastrophic-command and sensitive-path blocks remain enabled, but they are a limited last line of defence, not a sandbox.\n\nEnable full trust for this server?"
+	title := "Enable time-limited CLI automation trust?"
+	message := "Until " + until + ", processes with the local gxShell CLI token may run T1 scoped, recoverable changes on " + alias + " without another prompt. T2 and T3 commands still require native approval, and every T3 command is confirmed separately. Trusted remote-to-remote copies may also skip their prompt.\n\n" +
+		"Scripts, build tools, and interpreters can run arbitrary code, so this classifier is not a sandbox. Only enable automation trust for a controlled workflow whose code and dependencies you accept. Local file transfers, secret changes, and tunnels still require confirmation.\n\nEnable automation trust for this server?"
 	if zh {
-		title = "开启限时 CLI 完全信任？"
-		message = "在 " + until + " 前，任何持有本机 gxShell CLI token 的进程都可以在 " + alias + " 上无提示执行写操作。\n\n" +
-			"命令可以使用已经登记的命名 secret；恶意命令仍可能编码并外泄这些值，输出脱敏无法完全阻止。灾难性命令和敏感路径硬拦截仍然生效，但它们只是有限的最后防线，不是沙箱。\n\n是否为这台服务器开启完全信任？"
+		title = "开启限时 CLI 自动化信任？"
+		message = "在 " + until + " 前，持有本机 gxShell CLI token 的进程可以在 " + alias + " 上无提示执行 T1 级、范围明确且可恢复的变更。T2 和 T3 命令仍需原生框授权，每条 T3 命令都必须单独确认。受信任服务器之间的远程复制也可以跳过确认。\n\n" +
+			"脚本、构建工具和解释器都能执行任意代码，风险分类器不是沙箱。只有在你认可工作流代码及依赖时才开启自动化信任。本地文件传输、secret 变更和隧道仍需确认。\n\n是否为这台服务器开启自动化信任？"
 	}
 	a.nativeDialogMu.Lock()
 	defer a.nativeDialogMu.Unlock()
@@ -189,7 +189,7 @@ func (a *App) RevokeCliTrust(profileID string) error {
 			return err
 		}
 		if a.log != nil {
-			a.log.InfoFields("CLI full trust revoked", logger.LogFields{"profileID": profileID, "alias": profiles[i].CliAlias})
+			a.log.InfoFields("CLI automation trust revoked", logger.LogFields{"profileID": profileID, "alias": profiles[i].CliAlias})
 		}
 		return nil
 	}

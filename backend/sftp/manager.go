@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"os"
 	"path"
@@ -580,6 +581,26 @@ func (m *Manager) UploadFile(sessionID, localPath, remotePath string) error {
 // UploadFileWithPolicy uploads a file and atomically applies the caller's
 // overwrite decision when the completed temporary file is promoted.
 func (m *Manager) UploadFileWithPolicy(sessionID, localPath, remotePath string, overwrite bool) (err error) {
+	return m.uploadFileWithPolicy(sessionID, localPath, remotePath, overwrite, "")
+}
+
+// UploadFileWithPolicyVerified additionally requires the exact bytes uploaded
+// to match expectedSHA256. CLI approvals use it so a local file changed after
+// the native dialog cannot silently substitute different code before remote
+// promotion. Verified uploads start from byte zero because an old resumable
+// prefix was not part of this request's hash stream.
+func (m *Manager) UploadFileWithPolicyVerified(sessionID, localPath, remotePath string, overwrite bool, expectedSHA256 string) error {
+	expectedSHA256 = strings.ToLower(strings.TrimSpace(expectedSHA256))
+	if len(expectedSHA256) != sha256.Size*2 {
+		return fmt.Errorf("expected SHA-256 must contain %d hexadecimal characters", sha256.Size*2)
+	}
+	if _, err := hex.DecodeString(expectedSHA256); err != nil {
+		return fmt.Errorf("invalid expected SHA-256: %w", err)
+	}
+	return m.uploadFileWithPolicy(sessionID, localPath, remotePath, overwrite, expectedSHA256)
+}
+
+func (m *Manager) uploadFileWithPolicy(sessionID, localPath, remotePath string, overwrite bool, expectedSHA256 string) (err error) {
 	remotePath = cleanRemotePath(remotePath)
 	job := m.beginTransfer(sessionID, remotePath, "upload")
 	var done, totalSize int64
@@ -625,7 +646,7 @@ func (m *Manager) UploadFileWithPolicy(sessionID, localPath, remotePath string, 
 	var offset int64
 	// Without source metadata there is no identity to compare across attempts.
 	// Transfer from byte zero rather than trusting a zero-key partial.
-	if statErr == nil {
+	if statErr == nil && expectedSHA256 == "" {
 		if info, statPartErr := client.Stat(tmpPath); statPartErr == nil && info.Mode().IsRegular() {
 			offset = resumeOffset(info.Size(), totalSize, true)
 		}
@@ -679,8 +700,14 @@ func (m *Manager) UploadFileWithPolicy(sessionID, localPath, remotePath string, 
 	// length must be able to trust). Downloads get the concurrency for free
 	// because WriteTo orders its writes; matching it here would mean giving up
 	// length-based resume for content verification.
+	reader := io.Reader(&progressReader{ctx: job.ctx, r: src, fn: progress})
+	var uploadedHash hash.Hash
+	if expectedSHA256 != "" {
+		uploadedHash = sha256.New()
+		reader = io.TeeReader(reader, uploadedHash)
+	}
 	var copied int64
-	copied, err = dst.ReadFrom(&progressReader{ctx: job.ctx, r: src, fn: progress})
+	copied, err = dst.ReadFrom(reader)
 	done = offset + copied
 	closeErr := dst.Close()
 	dstClosed = true
@@ -697,6 +724,12 @@ func (m *Manager) UploadFileWithPolicy(sessionID, localPath, remotePath string, 
 	}
 	if statErr == nil && done != totalSize {
 		return fmt.Errorf("upload source size changed during transfer: copied %d of expected %d bytes", done, totalSize)
+	}
+	if uploadedHash != nil {
+		actual := hex.EncodeToString(uploadedHash.Sum(nil))
+		if actual != expectedSHA256 {
+			return fmt.Errorf("upload source changed after approval: SHA-256 %s, approved %s", actual, expectedSHA256)
+		}
 	}
 	if err = checkTransferContext(job.ctx); err != nil {
 		return err

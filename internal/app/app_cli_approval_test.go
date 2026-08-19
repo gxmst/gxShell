@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -201,6 +203,206 @@ func TestCliTimedTrustSkipsDialog(t *testing.T) {
 	}
 }
 
+func TestCliRiskTierAuthorization(t *testing.T) {
+	store, err := config.NewStoreAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	app.ctx.Set(context.Background())
+	app.store = store
+	app.cliApprovalEventFn = func(cliApprovalEvent) {}
+	app.cliApprovalDelay = time.Millisecond
+	profile := types.Profile{
+		ID: "prod", CliEnabled: true, CliAlias: "prod-web",
+		CliTrustUntil: time.Now().Add(time.Hour),
+	}
+	if err := store.SaveProfiles([]types.Profile{profile}); err != nil {
+		t.Fatal(err)
+	}
+
+	var batchCalls int32
+	app.cliConfirmBatchFn = func(_ string, _ []string) bool {
+		atomic.AddInt32(&batchCalls, 1)
+		return true
+	}
+	type riskCall struct {
+		tier     commandTier
+		strength approvalStrength
+	}
+	var riskCalls []riskCall
+	var riskMu sync.Mutex
+	app.cliConfirmRiskFn = func(_ string, _ string, assessment riskAssessment, strength approvalStrength) (bool, error) {
+		riskMu.Lock()
+		riskCalls = append(riskCalls, riskCall{tier: assessment.Tier, strength: strength})
+		riskMu.Unlock()
+		return true, nil
+	}
+
+	for _, command := range []string{"uptime", "mkdir -p /srv/app"} {
+		decision := app.authorizeCliProfileExecution(profile, command)
+		if !decision.Allowed {
+			t.Fatalf("trusted %q was denied", command)
+		}
+	}
+	if got := atomic.LoadInt32(&batchCalls); got != 0 {
+		t.Fatalf("T0/T1 trusted commands opened %d batch dialogs, want 0", got)
+	}
+
+	decision := app.authorizeCliProfileExecution(profile, "rm -rf /srv/app/old")
+	if !decision.Allowed || decision.Source != cliApprovalUser {
+		t.Fatal("trusted T2 request did not require and receive user approval")
+	}
+	if got := atomic.LoadInt32(&batchCalls); got != 1 {
+		t.Fatalf("T2 command opened %d batch dialogs, want 1", got)
+	}
+
+	decision = app.authorizeCliProfileExecution(profile, "rm -rf /etc")
+	if !decision.Allowed {
+		t.Fatal("trusted T3 request was denied by the test confirmation")
+	}
+	riskMu.Lock()
+	if len(riskCalls) != 1 || riskCalls[0].tier != tierCritical || riskCalls[0].strength != approvalClick {
+		t.Fatalf("trusted T3 risk calls = %#v, want one immediate click confirmation", riskCalls)
+	}
+	riskMu.Unlock()
+	if got := atomic.LoadInt32(&batchCalls); got != 1 {
+		t.Fatalf("T3 entered the ordinary batch; batch calls = %d, want unchanged", got)
+	}
+
+	profile.CliTrustUntil = time.Now().Add(-time.Second)
+	if err := store.SaveProfiles([]types.Profile{profile}); err != nil {
+		t.Fatal(err)
+	}
+	decision = app.authorizeCliProfileExecution(profile, "rm -rf /etc")
+	if !decision.Allowed {
+		t.Fatal("untrusted T3 request was denied by the test confirmation")
+	}
+	decision = app.authorizeCliProfileExecution(profile, "cat /root/.aws/credentials")
+	if !decision.Allowed {
+		t.Fatal("credential T3 request was denied by the test confirmation")
+	}
+	riskMu.Lock()
+	defer riskMu.Unlock()
+	if len(riskCalls) != 3 || riskCalls[1].strength != approvalClick || riskCalls[2].strength != approvalClick {
+		t.Fatalf("untrusted/credential T3 risk calls = %#v, want click confirmations", riskCalls)
+	}
+}
+
+func TestCliCriticalConfirmationErrorIsNotUserDenial(t *testing.T) {
+	store, err := config.NewStoreAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	app.ctx.Set(context.Background())
+	app.store = store
+	app.cliApprovalEventFn = func(cliApprovalEvent) {}
+	profile := types.Profile{ID: "prod", CliEnabled: true, CliAlias: "prod-web"}
+	if err := store.SaveProfiles([]types.Profile{profile}); err != nil {
+		t.Fatal(err)
+	}
+
+	dialogErr := errors.New("native dialog failed")
+	app.cliConfirmRiskFn = func(_ string, _ string, _ riskAssessment, _ approvalStrength) (bool, error) {
+		return false, dialogErr
+	}
+	decision := app.authorizeCliProfileExecution(profile, "rm -rf /etc")
+	if decision.Allowed {
+		t.Fatal("T3 command was allowed after the native dialog failed")
+	}
+	if !errors.Is(decision.Err, dialogErr) {
+		t.Fatalf("confirmation error = %v, want %v", decision.Err, dialogErr)
+	}
+}
+
+func TestCliApprovalEventLifecycle(t *testing.T) {
+	store, err := config.NewStoreAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	app.ctx.Set(context.Background())
+	app.store = store
+	app.cliApprovalDelay = time.Millisecond
+	profile := types.Profile{ID: "prod", CliEnabled: true, CliAlias: "prod-web"}
+	if err := store.SaveProfiles([]types.Profile{profile}); err != nil {
+		t.Fatal(err)
+	}
+
+	var events []cliApprovalEvent
+	app.cliApprovalEventFn = func(event cliApprovalEvent) {
+		events = append(events, event)
+	}
+	app.cliConfirmBatchFn = func(_ string, _ []string) bool { return true }
+	decision := app.authorizeCliProfileExecution(profile, "rm -rf /srv/app/old")
+	if !decision.Allowed {
+		t.Fatal("test approval was not propagated")
+	}
+	if len(events) != 2 || events[0].Phase != "pending" || events[1].Phase != "approved" || events[0].ID != events[1].ID {
+		t.Fatalf("approved event lifecycle = %#v", events)
+	}
+	if events[0].RiskTier != "T2" || events[0].Strength != "click" || events[0].Command == "" {
+		t.Fatalf("pending event omitted risk context: %#v", events[0])
+	}
+
+	events = nil
+	app.cliConfirmBatchFn = func(_ string, _ []string) bool { return false }
+	decision = app.authorizeCliProfileExecution(profile, "rm -rf /srv/app/old")
+	if decision.Allowed {
+		t.Fatal("test denial was not propagated")
+	}
+	if len(events) != 2 || events[0].Phase != "pending" || events[1].Phase != "denied" || events[0].ID != events[1].ID {
+		t.Fatalf("denied event lifecycle = %#v", events)
+	}
+}
+
+func TestCliApprovalUsesConfiguredChineseExplanation(t *testing.T) {
+	store, err := config.NewStoreAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := store.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.Language = "zh-CN"
+	if err := store.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+
+	app := NewApp()
+	app.ctx.Set(context.Background())
+	app.store = store
+	app.cliApprovalDelay = time.Millisecond
+	profile := types.Profile{ID: "prod", CliEnabled: true, CliAlias: "prod-web"}
+	if err := store.SaveProfiles([]types.Profile{profile}); err != nil {
+		t.Fatal(err)
+	}
+
+	var pending cliApprovalEvent
+	app.cliApprovalEventFn = func(event cliApprovalEvent) {
+		if event.Phase == "pending" {
+			pending = event
+		}
+	}
+	var nativeText string
+	app.cliConfirmBatchFn = func(_ string, commands []string) bool {
+		nativeText = commands[0]
+		return true
+	}
+	decision := app.authorizeCliProfileExecution(profile, "rm -rf /srv/app/old")
+	if !decision.Allowed {
+		t.Fatal("test approval was not propagated")
+	}
+	if pending.RiskLabel != "有限破坏性操作" || len(pending.RiskLines) == 0 || pending.RiskLines[0] != "删除文件：/srv/app/old" {
+		t.Fatalf("pending event was not localized: %#v", pending)
+	}
+	if !strings.Contains(nativeText, "作用说明：\n- 删除文件：/srv/app/old") || !strings.Contains(nativeText, "风险等级：T2（有限破坏性操作）") {
+		t.Fatalf("native approval text was not localized: %q", nativeText)
+	}
+}
+
 func TestCliTimedTrustCopyRequiresBothProfiles(t *testing.T) {
 	store, err := config.NewStoreAt(t.TempDir())
 	if err != nil {
@@ -228,7 +430,9 @@ func TestCliTimedTrustCopyRequiresBothProfiles(t *testing.T) {
 	}
 }
 
-func TestCliTimedTrustStillHonorsHardBlocks(t *testing.T) {
+// The in-app AI assistant and transfer/copy path checks still use the legacy
+// preflight guard. External CLI exec uses the tier classifier tested above.
+func TestLegacyCommandGuardStillBlocksItsCallers(t *testing.T) {
 	for _, command := range []string{"rm -rf /", "shutdown now", "cat /etc/shadow"} {
 		confirmCalled := false
 		block, ok := guardCommandReport(command, false, func() bool {
@@ -236,10 +440,10 @@ func TestCliTimedTrustStillHonorsHardBlocks(t *testing.T) {
 			return true
 		})
 		if ok {
-			t.Errorf("%q passed the hard safety guard", command)
+			t.Errorf("%q passed the legacy known-pattern guard", command)
 		}
 		if confirmCalled {
-			t.Errorf("%q reached auto-approval before the hard safety guard", command)
+			t.Errorf("%q reached confirmation before the legacy preflight guard", command)
 		}
 		if block.Kind == "" {
 			t.Errorf("%q returned no structured block reason", command)

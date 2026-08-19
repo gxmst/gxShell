@@ -2,9 +2,14 @@ package app
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -94,5 +99,37 @@ func TestCheckCliTransferSensitivePathCoversRelativeSpellings(t *testing.T) {
 	}
 	if _, blocked := checkCliTransferSensitivePath("tmp/release.tar.gz"); blocked {
 		t.Fatal("ordinary relative transfer path was blocked")
+	}
+}
+
+func TestInspectCliLocalFileAndRememberUpload(t *testing.T) {
+	content := "#!/bin/sh\necho 中文\n"
+	localPath := filepath.Join(t.TempDir(), "deploy.sh")
+	if err := os.WriteFile(localPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := inspectCliLocalFile(localPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHash := fmt.Sprintf("%x", sha256.Sum256([]byte(content)))
+	if info.SHA256 != wantHash || info.Size != int64(len([]byte(content))) || !info.Text || !info.Script {
+		t.Fatalf("file info = %#v, want script with hash %s", info, wantHash)
+	}
+	approval := formatCliLocalFileApproval(info)
+	if !strings.Contains(approval, wantHash) || !strings.Contains(approval, "echo 中文") {
+		t.Fatalf("approval omitted hash or preview: %q", approval)
+	}
+
+	app := NewApp()
+	app.rememberCliUploadedFile("profile-1", "/tmp/deploy.sh", info)
+	assessment := classifyCommand("bash /tmp/deploy.sh")
+	matched := app.applyCliUploadedFileRisk("profile-1", "bash /tmp/deploy.sh", &assessment)
+	if len(matched) != 1 || matched[0].SHA256 != wantHash || assessment.Tier < tierBounded {
+		t.Fatalf("uploaded execution context = %#v, assessment = %#v", matched, assessment)
+	}
+	other := classifyCommand("bash /tmp/deploy.sh")
+	if matched := app.applyCliUploadedFileRisk("profile-2", "bash /tmp/deploy.sh", &other); len(matched) != 0 {
+		t.Fatalf("upload provenance leaked across profiles: %#v", matched)
 	}
 }

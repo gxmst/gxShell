@@ -79,6 +79,9 @@ type App struct {
 	// automationEventFn is a test seam for terminal activity events. Production
 	// leaves it nil and emitTerminalAutomation forwards events through Wails.
 	automationEventFn func(terminalAutomationEvent)
+	// cliApprovalEventFn is the equivalent seam for the in-app risk card shown
+	// while the native dialog remains the authoritative approval boundary.
+	cliApprovalEventFn func(cliApprovalEvent)
 	// cliSessionEventFn is the equivalent seam for announcing the SSH session
 	// selected by an external CLI request so the frontend can ensure it has a
 	// visible terminal tab before automation output is mirrored.
@@ -105,13 +108,18 @@ type App struct {
 	// seams for tests to exercise the batching logic without a GUI.
 	cliApprovalDelay  time.Duration
 	cliConfirmBatchFn func(serverName string, commands []string) bool
+	// cliConfirmRiskFn overrides immediate T3 confirmation in tests.
+	// T3 never enters cliConfirmBatchFn, even when trusted.
+	cliConfirmRiskFn func(serverName, command string, assessment riskAssessment, strength approvalStrength) (bool, error)
 	// cliTrustConfirmFn is a test seam for the native warning shown when a
-	// profile gains or extends time-limited full trust.
+	// profile gains or extends time-limited automation trust.
 	cliTrustConfirmFn func(types.Profile) bool
 	cliJobsMu         sync.Mutex
 	cliJobs           map[string]*cliJob
 	cliTunnelsMu      sync.Mutex
 	cliTunnels        map[string]cliTunnelRecord
+	cliUploadsMu      sync.Mutex
+	cliUploads        map[string]cliUploadedFile
 	// cliServer is written by the CLI server goroutine and read by shutdown on
 	// the Wails callback thread, hence the atomic pointer.
 	cliServer   atomic.Pointer[http.Server]

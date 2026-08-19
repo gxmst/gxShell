@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { types } from "../wailsjs/go/models";
 import { AnswerKeyboardInteractive, CreateCommand, DeleteCommand, ExportProfiles, GetStartupFile, ImportOpenSSHConfig, ImportProfiles, IsRecording, ListCommands, OpenDataDir, ReadLogFile, RevokeCliTrust, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/app/App";
 import { emptyProfile } from "./constants";
-import type { AutomationActivityEvent, AutomationActivityRecord, AutomationIndicator, Drawer, SplitPane, Tab } from "./types";
+import type { AutomationActivityEvent, AutomationActivityRecord, AutomationIndicator, CliApprovalEvent, Drawer, SplitPane, Tab } from "./types";
 import { normalizeAppTheme } from "./utils/format";
 import { useToasts } from "./hooks/useToasts";
 import { useProfiles } from "./hooks/useProfiles";
@@ -36,6 +36,7 @@ import { isSupportedDocumentPath } from "./utils/textFiles";
 import { shellQuote } from "./utils/shellQuote";
 import { t } from "./i18n";
 import { formatAutomationTerminalEvent } from "./utils/automation";
+import { CliApprovalQueue } from "./components/CliApprovalQueue/CliApprovalQueue";
 
 function App() {
   const { toasts, notify } = useToasts();
@@ -82,6 +83,7 @@ function App() {
   const [kiRequests, setKiRequests] = useState<KiRequest[]>([]);
   const [automationActivity, setAutomationActivity] = useState<Record<string, AutomationIndicator>>({});
   const [activityHistory, setActivityHistory] = useState<AutomationActivityRecord[]>([]);
+  const [cliApprovals, setCliApprovals] = useState<CliApprovalEvent[]>([]);
   const automationRunningRef = useRef<Record<string, Map<string, AutomationIndicator["source"]>>>({});
   const automationClearTimers = useRef<Record<string, number>>({});
   const dirtyDocumentsRef = useRef<Record<string, { save: () => Promise<boolean> }>>({});
@@ -440,6 +442,18 @@ function App() {
     });
     return () => offAutomation();
   }, [writeOutput]);
+
+  useEffect(() => {
+    const offApproval = EventsOn("cli:approval", (payload: CliApprovalEvent) => {
+      if (!payload?.id) return;
+      setCliApprovals((previous) => {
+        if (payload.phase !== "pending") return previous.filter((item) => item.id !== payload.id);
+        const next = previous.filter((item) => item.id !== payload.id);
+        return [...next, payload].slice(-8);
+      });
+    });
+    return () => offApproval();
+  }, []);
 
   useEffect(() => () => {
     Object.values(automationClearTimers.current).forEach((timer) => window.clearTimeout(timer));
@@ -833,6 +847,7 @@ function App() {
           onMarkdownDirtyChange={handleMarkdownDirtyChange}
         />
       </main>
+      <CliApprovalQueue approvals={cliApprovals} locale={profileState.settings?.language || "en"} />
       {floatingTabIds.map((id) => {
         const tab = sessions.tabs.find((t) => t.id === id);
         if (!tab) return null;

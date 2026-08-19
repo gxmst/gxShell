@@ -327,3 +327,12 @@ func TestProgressWriterStopsBeforeWritingWhenCancelled(t *testing.T) {
 		t.Fatalf("cancelled writer wrote %d bytes", dst.Len())
 	}
 }
+
+func TestVerifiedUploadRejectsInvalidHashBeforeStartingTransfer(t *testing.T) {
+	m := &Manager{}
+	for _, hash := range []string{"", "not-a-hash", "abcd"} {
+		if err := m.UploadFileWithPolicyVerified("session", "local", "/tmp/remote", false, hash); err == nil {
+			t.Fatalf("hash %q was accepted", hash)
+		}
+	}
+}

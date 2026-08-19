@@ -19,6 +19,36 @@ Get-Content .\check.sh -Raw | .\gxshell-cli.exe exec-stdin 3 --shell bash --json
 
 Do not embed a heredoc in the `exec` argument. The CLI rejects it with `errorKind: script_input_required` and recommends the stdin form. This avoids parsing the same text through the caller shell, Windows argument handling, JSON, and the remote shell.
 
+## Treat Scripts And Interpreters As Arbitrary Code
+
+`exec-file` and `exec-stdin` are transport modes, not sandboxes. The same is
+true of a command that starts an interpreter, build tool, or compiler. gxShell
+classifies visible command and script text into risk tiers, but it cannot prove
+what an arbitrary Python, Node, Perl, Ruby, `awk`, compiled program, or decoded
+payload will do after it starts.
+
+An agent must not use another program to disguise an operation that would need
+a higher-risk approval or that the user did not authorize. This includes:
+
+- generating or uploading a script and then executing it;
+- using an interpreter's `-c`/`-e` option or a shell wrapper;
+- decoding, decompressing, compiling, or fetching code before running it;
+- replacing a blocked command with equivalent library calls or system APIs.
+
+Treat the complete script or generated program, its destination, file changes,
+network destinations, and secret use as the requested action. A successful
+upload approval covers file movement only; it does not approve executing the
+uploaded file. A profile trust window suppresses approval only for T1 scoped,
+recoverable changes; opaque execution is at least T2 and still prompts. This is
+a policy control for cooperative automation, not containment against a
+malicious token holder or cleverly disguised program. Use arbitrary scripts
+only when the user has explicitly authorized that exact source and purpose.
+Prefer a small, inspectable command or a dedicated CLI operation when one
+exists.
+
+`blocked: false` means only that gxShell did not stop the request. It does not
+mean that the operation is read-only, harmless, or fully reviewed.
+
 ## Interpret fields instead of guessing
 
 Always request and inspect JSON. `outcome` is authoritative:
@@ -30,6 +60,24 @@ Always request and inspect JSON. `outcome` is authoritative:
 - `validation_error` or `client_error`: fix the request before reasoning about the server.
 
 Never describe a plain non-zero `exitCode` as a gxShell guard rejection. A guard rejection is explicitly marked `blocked: true` and `outcome: blocked`.
+
+For `exec`, also inspect `riskTier`, `riskCategories`, `approval`, and
+`approvalStrength`. The approval policy is:
+
+- T0 observation: no prompt.
+- T1 scoped, recoverable change: no prompt only during an active trust window;
+  otherwise one native click.
+- T2 bounded destructive, opaque, or external action: one native click even
+  during a trust window.
+- T3 irreversible, self-locking, credential, or public action: immediate native
+  click and never part of an "Allow all" batch, regardless of trust.
+
+Prompted commands include a short classifier-derived explanation of recognized
+behavior and targets below the command. Treat it as a review aid, not a safety
+proof; opaque behavior remains at least T2.
+
+The native dialog is the authorization boundary. Any coloured in-app risk card
+is explanatory only and never grants permission.
 
 ## Use named secrets without revealing values
 
@@ -52,7 +100,12 @@ For a script:
 Get-Content .\request.sh -Raw | .\gxshell-cli.exe exec-stdin 3 --shell bash --secret API_KEY=anyrouter-api-key --json
 ```
 
-gxShell resolves the reference only after the normal local approval gate (or an active per-profile trust window), injects the value through SSH stdin, hides it from approval text and command audit, and replaces exact occurrences in captured output. Named-secret execution is synchronous only; `--follow` and `--detach` are rejected. Full trust is not a secret sandbox: transformed or encoded values may evade exact-value redaction.
+gxShell resolves the reference only after the applicable local approval gate,
+injects the value through SSH stdin, hides it from approval text and command
+audit, and replaces exact occurrences in captured output. Named-secret
+execution is synchronous only; `--follow` and `--detach` are rejected. A trust
+window does not bypass T3 credential confirmation, and exact-value redaction is
+still not a secret sandbox: transformed or encoded values may evade it.
 
 This protects against accidental disclosure, including `echo $API_KEY` and ordinary error output. It cannot make a general shell safe against a malicious command that transforms or encodes a secret before exfiltration. Approve secret-bearing commands only when their destination and purpose are clear. If a task only needs to test whether a secret works, do that without printing it.
 

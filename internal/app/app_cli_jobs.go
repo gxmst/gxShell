@@ -48,6 +48,9 @@ type cliJob struct {
 	ReusedConnection   bool
 	ReconnectAttempted bool
 	Reconnected        bool
+	RiskAssessment     riskAssessment
+	Approval           string
+	ApprovalStrength   string
 	cancel             context.CancelFunc
 }
 
@@ -59,12 +62,13 @@ func newCliResourceID(prefix string) string {
 	return prefix + "-" + hex.EncodeToString(raw[:])
 }
 
-func (a *App) startCliJob(alias, profileID, sessionID, command string, stdin *string, timeout time.Duration, reusedConnection bool) *cliJob {
+func (a *App) startCliJob(alias, profileID, sessionID, command string, stdin *string, timeout time.Duration, reusedConnection bool, assessment riskAssessment, approval, approvalStrength string) *cliJob {
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &cliJob{
 		ID: newCliResourceID("job"), Alias: alias, ProfileID: profileID, SessionID: sessionID,
 		Command: command, State: "queued", CreatedAt: time.Now(), cancel: cancel,
 		ReusedConnection: reusedConnection,
+		RiskAssessment:   assessment, Approval: approval, ApprovalStrength: approvalStrength,
 	}
 	a.cliJobsMu.Lock()
 	if a.cliJobs == nil {
@@ -81,7 +85,7 @@ func (a *App) startCliJob(alias, profileID, sessionID, command string, stdin *st
 		job.mu.Unlock()
 
 		currentSessionID := sessionID
-		activityID := a.beginTerminalAutomation(currentSessionID, "cli", "execute_command", command)
+		activityID := a.beginTerminalAutomationWithRisk(currentSessionID, "cli", "execute_command", command, assessment, approval)
 		activityFinished := false
 		run := func() (sshmanager.CommandExecutionResult, error) {
 			return a.ssh.ExecuteCommandResultStream(ctx, currentSessionID, command, stdin, timeout, cliOutputLimit, func(stream string, chunk []byte) {
@@ -110,7 +114,7 @@ func (a *App) startCliJob(alias, profileID, sessionID, command string, stdin *st
 				job.SessionID = currentSessionID
 				job.Reconnected = true
 				job.mu.Unlock()
-				activityID = a.beginTerminalAutomation(currentSessionID, "cli", "execute_command", command)
+				activityID = a.beginTerminalAutomationWithRisk(currentSessionID, "cli", "execute_command", command, assessment, approval)
 				activityFinished = false
 				result, err = run()
 			} else {
@@ -218,6 +222,11 @@ func cliJobSnapshot(job *cliJob, after int64) map[string]any {
 		"reusedConnection":   job.ReusedConnection,
 		"reconnectAttempted": job.ReconnectAttempted,
 		"reconnected":        job.Reconnected,
+		"approval":           job.Approval,
+		"riskTier":           job.RiskAssessment.Tier.String(),
+		"riskLabel":          job.RiskAssessment.Tier.Label(),
+		"riskCategories":     riskCategoryList(job.RiskAssessment),
+		"approvalStrength":   job.ApprovalStrength,
 	}
 	if !job.StartedAt.IsZero() {
 		payload["startedAt"] = job.StartedAt
