@@ -1,13 +1,13 @@
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { types } from "../wailsjs/go/models";
-import { AnswerKeyboardInteractive, CreateCommand, DeleteCommand, ExportProfiles, GetStartupFile, ImportOpenSSHConfig, ImportProfiles, IsRecording, ListCommands, OpenDataDir, ReadLogFile, RevokeCliTrust, SelectPrivateKey, SendCommandToAll, SendCommandToTerminal, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/app/App";
+import { AnswerKeyboardInteractive, CreateCommand, DeleteCommand, ExportProfiles, GetStartupFile, ImportOpenSSHConfig, ImportProfiles, IsRecording, ListCommands, OpenDataDir, ReadLogFile, RevokeCliTrust, SelectPrivateKey, SendCommandToTerminal, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/app/App";
 import { emptyProfile } from "./constants";
 import type { AutomationActivityEvent, AutomationActivityRecord, AutomationIndicator, CliApprovalEvent, Drawer, SplitPane, Tab } from "./types";
 import { normalizeAppTheme } from "./utils/format";
 import { useToasts } from "./hooks/useToasts";
 import { useProfiles } from "./hooks/useProfiles";
-import { useTerminal, type AppContextMenu } from "./hooks/useTerminal";
+import { useTerminal, type AppContextMenu, type TerminalPasteRequest } from "./hooks/useTerminal";
 import { useSessions } from "./hooks/useSessions";
 import { useSftp } from "./hooks/useSftp";
 import { useHotkeys } from "./hooks/useHotkeys";
@@ -30,16 +30,37 @@ import { UpdateDialog } from "./components/modals/UpdateDialog";
 import { ConfirmDialog } from "./components/modals/ConfirmDialog";
 import { ProgressBar } from "./components/ProgressBar/ProgressBar";
 import { ToastStack } from "./components/ToastStack";
-import { TransfersProvider } from "./hooks/useTransfers";
+import { TransfersProvider, type TransferHistoryItem } from "./hooks/useTransfers";
 import { BrowserOpenURL, EventsOn, OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
 import { isSupportedDocumentPath } from "./utils/textFiles";
 import { shellQuote } from "./utils/shellQuote";
 import { t } from "./i18n";
 import { formatAutomationTerminalEvent } from "./utils/automation";
 import { CliApprovalQueue } from "./components/CliApprovalQueue/CliApprovalQueue";
+import { PasteConfirmDialog } from "./components/modals/PasteConfirmDialog";
+import { sameTerminalPasteTargets, terminalPasteTargets } from "./utils/terminalPaste";
+import { TextInputDialog } from "./components/modals/TextInputDialog";
+import { ActivityCenter } from "./components/ActivityCenter/ActivityCenter";
+import { parsePaletteQuery } from "./utils/paletteSearch";
+import { createDefaultActionRegistry, type ActionContext } from "./actions/actionRegistry";
+import { PanelLeftOpen, Type as TypeIcon } from "lucide-react";
+import { BatchCommandDialog, type BatchCommandRequest } from "./components/modals/BatchCommandDialog";
+import { sendBatchCommand, type BatchCommandOptions } from "./utils/batchCommand";
+import { ShortcutHelpDialog } from "./components/modals/ShortcutHelpDialog";
 
 function App() {
-  const { toasts, notify } = useToasts();
+  const {
+    toasts,
+    activities,
+    unreadActivityCount,
+    notify,
+    recordActivity,
+    dismissToast,
+    markActivityRead,
+    markAllActivitiesRead,
+    removeActivity,
+    clearActivities,
+  } = useToasts();
   const profileState = useProfiles(notify);
   const updateCheck = useUpdateCheck();
   const [drawer, setDrawer] = usePersistedState<Drawer>("gx:drawer", "monitor");
@@ -76,6 +97,16 @@ function App() {
   const [floatingTabIds, setFloatingTabIds] = usePersistedState<string[]>("gx:floatingTabIds", []);
   const [splitPane, setSplitPane] = useState<SplitPane | null>(null);
   const [ctxMenu, setCtxMenu] = useState<AppContextMenu | null>(null);
+  const [pasteRequest, setPasteRequest] = useState<TerminalPasteRequest | null>(null);
+  const [batchCommandRequest, setBatchCommandRequest] = useState<BatchCommandRequest | null>(null);
+  const [batchCommandProgress, setBatchCommandProgress] = useState({ running: false, sent: 0, total: 0 });
+  const [shortcutHelpOpen, setShortcutHelpOpen] = useState(false);
+  const batchCommandAbort = useRef<AbortController | null>(null);
+  const [renameTabRequest, setRenameTabRequest] = useState<Tab | null>(null);
+  const [activityCenterOpen, setActivityCenterOpen] = useState(false);
+  const [zenMode, setZenMode] = useState(false);
+  const [fontSizeHud, setFontSizeHud] = useState<number | null>(null);
+  const fontSizeHudTimer = useRef<number | null>(null);
   const [broadcastInput, setBroadcastInput] = useState(false);
   // Session ids currently recording. Backend owns the real state; this mirror
   // drives the TabBar toggle. Cleared for a session when it stops or closes.
@@ -135,6 +166,40 @@ function App() {
   });
   const tabsRef = useRef(sessions.tabs);
   tabsRef.current = sessions.tabs;
+  const activeTabIdRef = useRef(sessions.activeTab);
+  activeTabIdRef.current = sessions.activeTab;
+  const splitPaneRef = useRef(splitPane);
+  splitPaneRef.current = splitPane;
+  const floatingTabIdsRef = useRef(floatingTabIds);
+  floatingTabIdsRef.current = floatingTabIds;
+  const previousSessionStates = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    for (const tab of sessions.tabs) {
+      if (tab.local || tab.type === "markdown") continue;
+      const identity = tab.runtimeId || tab.profileId || tab.id;
+      next[identity] = tab.state;
+      const previous = previousSessionStates.current[identity];
+      if (!previous || previous === tab.state) continue;
+      const zh = profileState.settings?.language === "zh-CN";
+      const severity = tab.state === "connected" ? "success" : tab.state === "error" ? "error" : tab.state === "connecting" || tab.state === "reconnecting" ? "info" : "warning";
+      const stateText: Record<string, string> = zh
+        ? { connected: "连接已就绪", connecting: "正在连接", reconnecting: "正在重新连接", restoring: "正在恢复会话", disconnected: "连接已断开", error: "连接失败" }
+        : { connected: "Connection ready", connecting: "Connecting", reconnecting: "Reconnecting", restoring: "Restoring session", disconnected: "Connection closed", error: "Connection failed" };
+      recordActivity({
+        text: tab.error || stateText[tab.state] || tab.state,
+        title: tab.title,
+        tone: severity,
+        category: "connection",
+        scope: identity,
+        scopeLabel: tab.title,
+        dedupeKey: `connection-state:${identity}:${tab.state}`,
+        toast: false,
+      });
+    }
+    previousSessionStates.current = next;
+  }, [profileState.settings?.language, recordActivity, sessions.tabs]);
 
   // Broadcast (synchronized input) target set, kept in a ref so the terminal's
   // onData closure always reads the current value without re-binding. Targets are
@@ -228,7 +293,7 @@ function App() {
   const handleTerminalSearchResults = useCallback((id: string, index: number, count: number) => {
     setTerminalSearchResult({ id, index, count });
   }, []);
-  const activeTerminal = useTerminal(sessions.activeTab, activeIsTerminal, profileState.settings, notify, sidebarCollapsed, splitPane, broadcastRef, linkHandlersRef, setCtxMenu, handleTerminalSearchResults);
+  const activeTerminal = useTerminal(sessions.activeTab, activeIsTerminal, profileState.settings, notify, sidebarCollapsed, splitPane, broadcastRef, linkHandlersRef, setCtxMenu, handleTerminalSearchResults, setPasteRequest);
   const { writeOutput, disposeTerminal, findNext, findPrev, focusTerminal, refitTerminal, reattachTerminal } = activeTerminal;
   terminalBridge.current.disposeTerminal = disposeTerminal;
 
@@ -296,10 +361,16 @@ function App() {
     // matching requestId; the :closed event fires if the handshake gives up
     // (timeout) so we can dismiss a dialog the user never answered.
     const unsubKi = EventsOn("terminal:keyboard-interactive", (payload: KiRequest) => {
+      if (!sessions.isCurrentRuntimeEvent(payload)) return;
       setKiRequests((prev) => prev.some((item) => item.requestId === payload.requestId) ? prev : [...prev, payload]);
     });
-    const unsubKiClosed = EventsOn("terminal:keyboard-interactive:closed", (payload: { requestId: string }) => {
-      setKiRequests((prev) => prev.filter((item) => item.requestId !== payload.requestId));
+    const unsubKiClosed = EventsOn("terminal:keyboard-interactive:closed", (payload: Pick<KiRequest, "requestId" | "runtimeId" | "generation">) => {
+      setKiRequests((prev) => prev.filter((item) => {
+        if (item.requestId !== payload.requestId) return true;
+        if (payload.runtimeId && item.runtimeId !== payload.runtimeId) return true;
+        if (payload.generation && item.generation !== payload.generation) return true;
+        return false;
+      }));
     });
 
     // Pull side of the file-open handshake. On first launch the Go side may emit
@@ -336,7 +407,17 @@ function App() {
       if (unsubKiClosed) unsubKiClosed();
       OnFileDropOff();
     };
-  }, [openMarkdownFile, handleOpenMarkdown, setDrawer, setSidebarCollapsed, notify]);
+  }, [openMarkdownFile, handleOpenMarkdown, setDrawer, setSidebarCollapsed, notify, sessions.isCurrentRuntimeEvent]);
+
+  // A prompt can be queued while its connection is current and become stale
+  // when a reconnect advances the runtime generation before the timeout event
+  // arrives. Re-check the queue whenever session state changes.
+  useEffect(() => {
+    setKiRequests((prev) => {
+      const next = prev.filter((request) => sessions.isCurrentRuntimeEvent(request));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [sessions.isCurrentRuntimeEvent, sessions.tabs]);
 
   const handleTearOff = useCallback((tab: Tab) => {
     setFloatingTabIds((prev) => prev.includes(tab.id) ? prev : [...prev, tab.id]);
@@ -382,15 +463,65 @@ function App() {
   }, [sessions.tabs]);
 
   useEffect(() => {
-    const offData = EventsOn("terminal:data", (payload: { sessionId: string; data: string }) => {
+    const offData = EventsOn("terminal:data", (payload: { sessionId: string; data: string; runtimeId?: string; generation?: number }) => {
+      if (!sessions.isCurrentRuntimeEvent(payload)) return;
       writeOutput(payload.sessionId, payload.data);
+      const split = splitPaneRef.current;
+      const visibleInWorkspace = payload.sessionId === activeTabIdRef.current
+        || split?.left === payload.sessionId
+        || split?.right === payload.sessionId
+        || floatingTabIdsRef.current.includes(payload.sessionId);
+      const userCanSeeOutput = document.visibilityState === "visible" && document.hasFocus() && visibleInWorkspace;
+      if (!userCanSeeOutput) {
+        sessions.setTabs((items) => {
+          let changed = false;
+          const next = items.map((tab) => {
+            if (tab.id !== payload.sessionId || tab.unread) return tab;
+            changed = true;
+            return { ...tab, unread: true };
+          });
+          return changed ? next : items;
+        });
+      }
     });
     return () => offData();
-  }, [writeOutput]);
+  }, [sessions.isCurrentRuntimeEvent, sessions.setTabs, writeOutput]);
+
+  const clearVisibleUnread = useCallback(() => {
+    if (document.visibilityState !== "visible" || !document.hasFocus()) return;
+    const visible = new Set<string>();
+    if (activeTabIdRef.current) visible.add(activeTabIdRef.current);
+    if (splitPaneRef.current?.left) visible.add(splitPaneRef.current.left);
+    if (splitPaneRef.current?.right) visible.add(splitPaneRef.current.right);
+    floatingTabIdsRef.current.forEach((id) => visible.add(id));
+    sessions.setTabs((items) => {
+      let changed = false;
+      const next = items.map((tab) => {
+        if (!tab.unread || !visible.has(tab.id)) return tab;
+        changed = true;
+        return { ...tab, unread: false };
+      });
+      return changed ? next : items;
+    });
+  }, [sessions.setTabs]);
+
+  useEffect(() => {
+    clearVisibleUnread();
+  }, [clearVisibleUnread, floatingTabIds, sessions.activeTab, splitPane]);
+
+  useEffect(() => {
+    window.addEventListener("focus", clearVisibleUnread);
+    document.addEventListener("visibilitychange", clearVisibleUnread);
+    return () => {
+      window.removeEventListener("focus", clearVisibleUnread);
+      document.removeEventListener("visibilitychange", clearVisibleUnread);
+    };
+  }, [clearVisibleUnread]);
 
   useEffect(() => {
     const offAutomation = EventsOn("terminal:automation", (payload: AutomationActivityEvent) => {
       if (!payload?.sessionId || !payload.activityId) return;
+      if (!sessions.isCurrentRuntimeEvent(payload)) return;
       writeOutput(payload.sessionId, formatAutomationTerminalEvent(payload));
       const title = tabsRef.current.find((tab) => tab.id === payload.sessionId)?.title;
       setActivityHistory((previous) => [{
@@ -406,6 +537,22 @@ function App() {
       automationRunningRef.current[payload.sessionId] = running;
       if (payload.phase === "started") running.set(payload.activityId, payload.source);
       else running.delete(payload.activityId);
+
+      if (payload.phase !== "started") {
+        recordActivity({
+          text: payload.phase === "failed"
+            ? (payload.error || payload.command || payload.tool || payload.activityId)
+            : (payload.command || payload.tool || payload.activityId),
+          title: title || (payload.source === "ai" ? "AI" : "CLI"),
+          tone: payload.phase === "failed" ? "error" : "success",
+          category: "automation",
+          scope: payload.sessionId,
+          scopeLabel: title,
+          detail: payload.phase === "failed" ? payload.error?.slice(0, 800) : undefined,
+          dedupeKey: `automation:${payload.activityId}:${payload.phase}`,
+          toast: false,
+        });
+      }
 
       const existingTimer = automationClearTimers.current[payload.sessionId];
       if (existingTimer) {
@@ -442,7 +589,7 @@ function App() {
       }
     });
     return () => offAutomation();
-  }, [writeOutput]);
+  }, [recordActivity, sessions.isCurrentRuntimeEvent, writeOutput]);
 
   useEffect(() => {
     const offApproval = EventsOn("cli:approval", (payload: CliApprovalEvent) => {
@@ -473,6 +620,19 @@ function App() {
   // Keyboard tab navigation walks the tab strip, so it has to see the same order
   // and the same membership the strip shows: torn-off terminals live in their own
   // windows and are not in it.
+  const activateTab = useCallback((id: string, focus = true) => {
+    const target = tabsRef.current.find((tab) => tab.id === id);
+    if (!target) return;
+    setSplitPane((current) => {
+      if (!current || current.left === id || current.right === id) return current;
+      const replaceLeft = current.left === activeTabIdRef.current;
+      return replaceLeft ? { ...current, left: id } : { ...current, right: id };
+    });
+    sessions.setActiveTab(id);
+    sessions.setTabs((items) => items.map((tab) => tab.id === id && tab.unread ? { ...tab, unread: false } : tab));
+    if (focus && target.type !== "markdown") window.setTimeout(() => focusTerminal(id), 10);
+  }, [focusTerminal, sessions.setActiveTab, sessions.setTabs]);
+
   const activateTabByOffset = useCallback((offset: number) => {
     const visible = sessions.tabs.filter((tab) => !floatingTabIds.includes(tab.id));
     if (visible.length < 2) return;
@@ -482,27 +642,187 @@ function App() {
       ? (offset > 0 ? 0 : visible.length - 1)
       : (current + offset + visible.length) % visible.length;
     const target = visible[next];
-    sessions.setActiveTab(target.id);
-    if (target.type !== "markdown") setTimeout(() => focusTerminal(target.id), 10);
-  }, [sessions.tabs, sessions.activeTab, sessions.setActiveTab, floatingTabIds, focusTerminal]);
+    activateTab(target.id);
+  }, [activateTab, sessions.tabs, sessions.activeTab, floatingTabIds]);
 
   const activateTabByIndex = useCallback((index: number) => {
     const visible = sessions.tabs.filter((tab) => !floatingTabIds.includes(tab.id));
     const target = visible[index];
     if (!target) return;
-    sessions.setActiveTab(target.id);
-    if (target.type !== "markdown") setTimeout(() => focusTerminal(target.id), 10);
-  }, [sessions.tabs, sessions.setActiveTab, floatingTabIds, focusTerminal]);
+    activateTab(target.id);
+  }, [activateTab, sessions.tabs, floatingTabIds]);
+
+  const togglePinTab = useCallback((tab: Tab) => {
+    sessions.setTabs((items) => {
+      const next = items.map((item) => item.id === tab.id ? { ...item, pinned: !item.pinned } : item);
+      return [...next.filter((item) => item.pinned), ...next.filter((item) => !item.pinned)];
+    });
+  }, [sessions.setTabs]);
+
+  // Runtime font changes are deliberately session-local: they update every
+  // open xterm immediately without rewriting preferences until the user saves
+  // the terminal settings. A small HUD makes the otherwise invisible action
+  // discoverable and confirms the effective (clamped) value.
+  const showFontSizeHud = useCallback((value: number) => {
+    setFontSizeHud(value);
+    if (fontSizeHudTimer.current !== null) window.clearTimeout(fontSizeHudTimer.current);
+    fontSizeHudTimer.current = window.setTimeout(() => {
+      fontSizeHudTimer.current = null;
+      setFontSizeHud(null);
+    }, 1400);
+  }, []);
+
+  useEffect(() => () => {
+    if (fontSizeHudTimer.current !== null) window.clearTimeout(fontSizeHudTimer.current);
+  }, []);
+
+  const adjustTerminalFontSize = useCallback((delta: number) => {
+    if (!sessions.active || sessions.active.type === "markdown") return;
+    showFontSizeHud(activeTerminal.adjustFontSize(delta));
+  }, [activeTerminal.adjustFontSize, sessions.active, showFontSizeHud]);
+
+  const resetTerminalFontSize = useCallback(() => {
+    if (!sessions.active || sessions.active.type === "markdown") return;
+    showFontSizeHud(activeTerminal.resetFontSize());
+  }, [activeTerminal.resetFontSize, sessions.active, showFontSizeHud]);
+
+  const reopenClosedTab = useCallback(async () => {
+    const hadClosedTab = sessions.closedTabCount > 0;
+    const restored = await sessions.reopenClosedTab();
+    if (!restored && !hadClosedTab) {
+      const lang = profileState.settings?.language || "en";
+      notify(lang === "zh-CN" ? "没有可恢复的已关闭标签" : "There are no closed tabs to reopen", "info");
+    }
+  }, [notify, profileState.settings?.language, sessions.closedTabCount, sessions.reopenClosedTab]);
+
+  const renameActiveTab = useCallback(() => {
+    const tab = tabsRef.current.find((item) => item.id === activeTabIdRef.current);
+    if (tab) setRenameTabRequest(tab);
+  }, []);
+
+  // This is the sole action registry for the keyboard, command palette, menus,
+  // conflict detection, and future shortcut help/customization.
+  const appActionRegistry = useMemo(() => {
+    const lang = profileState.settings?.language || "en";
+    const zh = lang === "zh-CN";
+    const registry = createDefaultActionRegistry({
+      onGlobalSearch: () => { setGlobalQuery(""); setGlobalSearchOpen(true); },
+      onTerminalSearch: () => setTerminalSearchOpen(true),
+      onCloseTab: sessions.closeTab,
+      onNextTab: () => activateTabByOffset(1),
+      onPrevTab: () => activateTabByOffset(-1),
+      onSelectTab: activateTabByIndex,
+      labels: zh ? {
+        nextTab: "切换到相邻标签",
+        selectTab: "按编号切换标签",
+        workspaceSearch: "搜索工作区",
+        terminalSearch: "在终端中查找",
+        closeTab: "关闭当前标签",
+      } : undefined,
+    });
+    registry.registerMany([
+      {
+        id: "workspace.reopen-closed-tab",
+        label: zh ? "恢复最近关闭的标签" : "Reopen closed tab",
+        category: "Tabs",
+        scope: "global",
+        defaultShortcuts: ["Ctrl+Shift+T"],
+        shortcuts: [{ key: "t", mod: true, shift: true }],
+        allowInEditable: true,
+        run: () => { void reopenClosedTab(); },
+      },
+      {
+        id: "terminal.increase-font-size",
+        label: zh ? "放大终端字号" : "Increase terminal font size",
+        category: "Terminal",
+        scope: "terminal",
+        defaultShortcuts: ["Ctrl+="],
+        // Some keyboard layouts report the shifted plus key as `+` instead of
+        // `=`. `matches` keeps both physical forms ergonomic without claiming
+        // Ctrl+Alt combinations used by international layouts.
+        matches: (event, context) => !!context.activeTab
+          && !context.activeIsMarkdown
+          && (event.ctrlKey || event.metaKey)
+          && !event.altKey
+          && (event.key === "=" || event.key === "+"),
+        run: () => adjustTerminalFontSize(1),
+      },
+      {
+        id: "terminal.decrease-font-size",
+        label: zh ? "缩小终端字号" : "Decrease terminal font size",
+        category: "Terminal",
+        scope: "terminal",
+        defaultShortcuts: ["Ctrl+-"],
+        matches: (event, context) => !!context.activeTab
+          && !context.activeIsMarkdown
+          && (event.ctrlKey || event.metaKey)
+          && !event.altKey
+          && event.key === "-",
+        run: () => adjustTerminalFontSize(-1),
+      },
+      {
+        id: "terminal.reset-font-size",
+        label: zh ? "重置终端字号" : "Reset terminal font size",
+        category: "Terminal",
+        scope: "terminal",
+        defaultShortcuts: ["Ctrl+0"],
+        shortcuts: [{ key: "0", mod: true }],
+        availability: (context) => !!context.activeTab && !context.activeIsMarkdown,
+        run: resetTerminalFontSize,
+      },
+      {
+        id: "workspace.rename-tab",
+        label: zh ? "重命名当前标签" : "Rename active tab",
+        category: "Tabs",
+        scope: "workspace",
+        defaultShortcuts: ["F2"],
+        shortcuts: [{ key: "F2" }],
+        // Terminal function keys belong to the remote TUI while xterm owns
+        // focus. F2 remains available from the tab strip and command palette.
+        availability: (context) => !!context.activeTab && !context.isTerminalInput,
+        run: renameActiveTab,
+      },
+      {
+        id: "workspace.toggle-zen-mode",
+        label: zenMode
+          ? (zh ? "退出专注模式" : "Exit Zen mode")
+          : (zh ? "进入专注模式" : "Enter Zen mode"),
+        category: "Workspace",
+        scope: "global",
+        defaultShortcuts: ["Ctrl+Shift+F11"],
+        shortcuts: [{ key: "F11", mod: true, shift: true }],
+        allowInEditable: true,
+        run: () => setZenMode((value) => !value),
+      },
+      {
+        id: "workspace.toggle-activity-center",
+        label: activityCenterOpen
+          ? (zh ? "关闭通知中心" : "Close notification center")
+          : (zh ? "打开通知中心" : "Open notification center"),
+        category: "Workspace",
+        scope: "global",
+        // Ctrl+Shift+N is a widely established new-window/incognito binding.
+        // The center already has a persistent bell trigger, so keep this as a
+        // palette/menu action instead of stealing that accelerator.
+        defaultShortcuts: [],
+        run: () => setActivityCenterOpen((value) => !value),
+      },
+      {
+        id: "workspace.shortcut-help",
+        label: zh ? "查看快捷键" : "Keyboard shortcuts",
+        category: "Workspace",
+        scope: "global",
+        defaultShortcuts: [],
+        run: () => setShortcutHelpOpen(true),
+      },
+    ]);
+    return registry;
+  }, [activityCenterOpen, activateTabByIndex, activateTabByOffset, adjustTerminalFontSize, profileState.settings?.language, renameActiveTab, reopenClosedTab, resetTerminalFontSize, sessions.closeTab, setActivityCenterOpen, zenMode]);
 
   useHotkeys({
     activeTab: sessions.activeTab,
     activeIsMarkdown: sessions.active?.type === "markdown",
-    onGlobalSearch: () => { setGlobalQuery(""); setGlobalSearchOpen(true); },
-    onTerminalSearch: () => setTerminalSearchOpen(true),
-    onCloseTab: sessions.closeTab,
-    onNextTab: () => activateTabByOffset(1),
-    onPrevTab: () => activateTabByOffset(-1),
-    onSelectTab: activateTabByIndex,
+    registry: appActionRegistry,
   });
 
   const automationByProfile = useMemo(() => {
@@ -522,7 +842,14 @@ function App() {
 
   const profileStates = useMemo(() => {
     const states: Record<string, { state: string; count: number; error?: string }> = {};
-    const priority: Record<string, number> = { disconnected: 1, error: 2, connecting: 3, connected: 4 };
+    const priority: Record<string, number> = {
+      disconnected: 1,
+      error: 2,
+      connecting: 3,
+      reconnecting: 3,
+      restoring: 3,
+      connected: 4,
+    };
     for (const tab of sessions.tabs) {
       if (!tab.profileId || tab.local || tab.type === "markdown") continue;
       const current = states[tab.profileId];
@@ -639,27 +966,97 @@ function App() {
   }, [focusTerminal, notify, profileState.settings?.language, runCommandTemplate, sessions.setActiveTab, sessions.tabs]);
 
   const runOnAll = useCallback((cmd: types.CommandTemplate) => {
-    runCommandTemplate(cmd, async (command) => {
-      try {
-        await SendCommandToAll(command);
-        notify(profileState.settings?.language === "zh-CN" ? `已发送到 ${connectedSshCount} 个在线会话` : `Sent to ${connectedSshCount} online sessions`, "success");
-      } catch (err) {
-        notify(String(err), "error");
+    runCommandTemplate(cmd, (command) => {
+      const targets = connectedSshTabs.map((tab) => ({ id: tab.id, title: tab.title }));
+      if (targets.length === 0) {
+        notify(profileState.settings?.language === "zh-CN" ? "没有已连接的 SSH 会话" : "No connected SSH sessions", "error");
+        return;
       }
+      setBatchCommandProgress({ running: false, sent: 0, total: 0 });
+      setBatchCommandRequest({ commandName: cmd.name, command, targets });
     });
-  }, [connectedSshCount, notify, profileState.settings?.language, runCommandTemplate]);
+  }, [connectedSshTabs, notify, profileState.settings?.language, runCommandTemplate]);
+
+  const startBatchCommand = useCallback(async (options: BatchCommandOptions) => {
+    const request = batchCommandRequest;
+    if (!request || batchCommandProgress.running) return;
+    const currentTargets = connectedSshTabs.map((tab) => ({ id: tab.id, title: tab.title }));
+    if (!sameTerminalPasteTargets(request.targets.map((target) => target.id), currentTargets.map((target) => target.id))) {
+      setBatchCommandRequest({ ...request, targets: currentTargets });
+      setBatchCommandProgress({ running: false, sent: 0, total: 0 });
+      notify(profileState.settings?.language === "zh-CN" ? "在线目标已变化，请核对后再次确认" : "Online targets changed; review and confirm again", "error");
+      return;
+    }
+
+    const controller = new AbortController();
+    batchCommandAbort.current = controller;
+    setBatchCommandProgress({ running: true, sent: 0, total: 0 });
+    try {
+      const result = await sendBatchCommand({
+        command: request.command,
+        targetIds: request.targets.map((target) => target.id),
+        options,
+        signal: controller.signal,
+        send: SendCommandToTerminal,
+        onProgress: (sent, total) => setBatchCommandProgress({ running: true, sent, total }),
+      });
+      if (result.cancelled) {
+        notify(profileState.settings?.language === "zh-CN" ? `已停止，发送 ${result.sent}/${result.total}` : `Stopped after ${result.sent}/${result.total} sends`, "info");
+        setBatchCommandProgress({ running: false, sent: result.sent, total: result.total });
+      } else {
+        notify(profileState.settings?.language === "zh-CN" ? `已完成 ${result.sent} 次发送` : `Completed ${result.sent} sends`, "success");
+        setBatchCommandRequest(null);
+        setBatchCommandProgress({ running: false, sent: result.sent, total: result.total });
+      }
+    } catch (err) {
+      notify(String(err), "error");
+      setBatchCommandProgress((current) => ({ ...current, running: false }));
+    } finally {
+      if (batchCommandAbort.current === controller) batchCommandAbort.current = null;
+    }
+  }, [batchCommandProgress.running, batchCommandRequest, connectedSshTabs, notify, profileState.settings?.language]);
+
+  const stopBatchCommand = useCallback(() => {
+    batchCommandAbort.current?.abort();
+  }, []);
+
+  useEffect(() => () => batchCommandAbort.current?.abort(), []);
 
   const handleNewConnection = useCallback(() => setProfileModal(emptyProfile()), []);
   const handleToggleSidebar = useCallback(() => setSidebarCollapsed(v => !v), []);
   // From SFTP: jump the session terminal into the browsed directory and focus it.
-  const handleOpenTerminalInDir = useCallback((sessionId: string, dirPath: string) => {
+  // OSC 7 is an enhancement here, not a prerequisite: a default server bash
+  // never reports it, so requiring it would disable this action almost
+  // everywhere. It is only consulted to veto the POSIX `cd` when the shell has
+  // told us it uses a different path syntax (a Windows drive path).
+  const handleOpenTerminalInDir = useCallback(async (sessionId: string, dirPath: string) => {
+    const reportedDirectory = activeTerminal.getCurrentDirectory(sessionId)?.path || "";
+    if (reportedDirectory && !reportedDirectory.startsWith("/")) {
+      notify(profileState.settings?.language === "zh-CN"
+        ? "远端 Shell 使用非 POSIX 路径，请在终端中手动切换目录"
+        : "The remote shell uses non-POSIX paths; change directory in the terminal manually", "error");
+      return false;
+    }
     const cmd = dirPath && dirPath !== "."
       ? `cd ${shellQuote(dirPath)}\n`
       : "pwd\n";
-    SendCommandToTerminal(sessionId, cmd).catch((err) => notify(String(err), "error"));
+    try {
+      await SendCommandToTerminal(sessionId, cmd);
+    } catch (err) {
+      notify(String(err), "error");
+      return false;
+    }
     sessions.setActiveTab(sessionId);
     setTimeout(() => focusTerminal(sessionId), 30);
-  }, [focusTerminal, notify, sessions.setActiveTab]);
+    return true;
+  }, [activeTerminal.getCurrentDirectory, focusTerminal, notify, profileState.settings?.language, sessions.setActiveTab]);
+  const handleOpenCurrentDirectory = useCallback((sessionId: string, dirPath: string) => {
+    const tab = tabsRef.current.find((item) => item.id === sessionId);
+    if (!tab || tab.local || tab.type === "markdown" || tab.state !== "connected") return;
+    sessions.setActiveTab(sessionId);
+    requestDrawer("sftp");
+    void sftp.refreshSftp(dirPath, sessionId);
+  }, [requestDrawer, sessions.setActiveTab, sftp.refreshSftp]);
   // Stable identities so an App re-render does not break the memo(TerminalArea)
   // boundary and re-render the whole terminal/markdown subtree. (Metrics no
   // longer live in App state; monitor:update consumers subscribe individually
@@ -673,36 +1070,79 @@ function App() {
   }, []);
   const searchConnectLocal = sessions.connectLocal;
   const searchConnectProfile = sessions.connectProfile;
-  const searchSetActiveTab = sessions.setActiveTab;
+  const searchSetActiveTab = activateTab;
   const searchTabs = sessions.tabs;
 
   const globalResults = useMemo(() => {
-    const q = globalQuery.trim().toLowerCase();
+    const parsedQuery = parsePaletteQuery(globalQuery);
+    const q = parsedQuery.query.trim();
+    const hasQuery = q.length > 0;
     const lang = profileState.settings?.language || "en";
     const zh = lang === "zh-CN";
-    const includesQuery = (...values: Array<string | undefined>) => !q || values.some((value) => (value || "").toLowerCase().includes(q));
+    // Candidates are deliberately unfiltered and unranked here: paletteSearch
+    // owns matching (including subsequence matches like "dkr" -> "docker"),
+    // scoring, and the >/@/# mode filter. Filtering with a substring test or
+    // slicing per section first would hide exactly what it exists to find, so
+    // everything searchable has to travel in `keywords`. With no query the
+    // palette is a short suggestion list instead, which is what the caps below
+    // are for.
+    const suggestions = <T,>(items: T[]) => hasQuery ? items : items.slice(0, 4);
+    const paletteContext: ActionContext = {
+      event: new KeyboardEvent("keydown"),
+      target: null,
+      isTerminalInput: false,
+      isEditable: false,
+      isOverlay: false,
+      activeTab: sessions.activeTab,
+      activeIsMarkdown: sessions.active?.type === "markdown",
+    };
+    const registeredActionResults = appActionRegistry.list()
+      .filter((action) => !action.availability || action.availability(paletteContext))
+      .map((action) => ({
+        type: "action",
+        title: action.label,
+        subtitle: zh ? `${action.category} 操作` : `${action.category} action`,
+        keywords: `${action.id} ${action.category} ${action.label}`,
+        category: action.category,
+        scope: action.scope,
+        defaultShortcuts: action.defaultShortcuts,
+        mruKey: `action:${action.id}`,
+        action: () => action.run({ ...paletteContext, event: new KeyboardEvent("keydown") }),
+      }));
     const actionResults = [
       { type: "action", title: t(lang, "newConnection"), subtitle: zh ? "创建并保存 SSH 连接" : "Create and save an SSH connection", keywords: "new connection server ssh 新建 连接 服务器", action: () => setProfileModal(emptyProfile()) },
       { type: "action", title: t(lang, "quickConnect"), subtitle: t(lang, "quickConnectHint"), keywords: "quick connect temporary 快速 临时 连接", action: () => setQuickConnectOpen(true) },
       { type: "action", title: t(lang, "localTerminal"), subtitle: zh ? "打开本机命令行" : "Open a local shell", keywords: "local terminal shell 本地 终端", action: () => { searchConnectLocal().catch((err) => notify(String(err), "error")); } },
       { type: "action", title: t(lang, "openDocument"), subtitle: zh ? "查看本地文档或编辑文本" : "View local documents or edit text", keywords: "open document pdf text markdown file 打开 文档 PDF 文本 文件", action: handleOpenMarkdown },
-    ].filter((item) => includesQuery(item.title, item.subtitle, item.keywords));
+    ];
 
-    const serverResults = profilesRef.current
-      .filter((profile) => includesQuery(profile.name, profile.host, profile.username, profile.group, ...(profile.tags || [])))
-      .sort((a, b) => Number(b.favorite) - Number(a.favorite) || String(b.lastConnectedAt || "").localeCompare(String(a.lastConnectedAt || "")))
-      .slice(0, q ? 6 : 4)
-      .map((profile) => ({ type: "server", title: profile.name || profile.host, subtitle: `${profile.username}@${profile.host}`, action: () => searchConnectProfile(profile) }));
+    const serverResults = suggestions(profilesRef.current
+      .slice()
+      .sort((a, b) => Number(b.favorite) - Number(a.favorite) || String(b.lastConnectedAt || "").localeCompare(String(a.lastConnectedAt || ""))))
+      .map((profile) => ({
+        type: "server",
+        title: profile.name || profile.host,
+        subtitle: `${profile.username}@${profile.host}`,
+        keywords: [profile.name, profile.host, profile.username, profile.group, ...(profile.tags || [])].filter(Boolean).join(" "),
+        action: () => searchConnectProfile(profile),
+      }));
 
-    const tabResults = searchTabs
-      .filter((tab) => includesQuery(tab.title, tab.local ? "local terminal 本地终端" : "terminal session 终端 会话"))
-      .slice(0, q ? 6 : 4)
-      .map((tab) => ({ type: "terminal", title: tab.title, subtitle: zh ? "切换到已打开的标签" : "Switch to open tab", action: () => searchSetActiveTab(tab.id) }));
+    const tabResults = suggestions(searchTabs).map((tab) => ({
+      type: "terminal",
+      title: tab.title,
+      subtitle: zh ? "切换到已打开的标签" : "Switch to open tab",
+      keywords: `${tab.title} ${tab.local ? "local terminal 本地终端" : "terminal session 终端 会话"}`,
+      action: () => searchSetActiveTab(tab.id),
+    }));
 
-    const commandResults = q ? commandsRef.current
-      .filter((cmd) => includesQuery(cmd.name, cmd.command, cmd.category, cmd.description, ...(cmd.tags || [])))
-      .slice(0, 6)
-      .map((cmd) => ({ type: "command", title: cmd.name, subtitle: cmd.command, action: () => runOnActive(cmd) })) : [];
+    const commandResults = (hasQuery || parsedQuery.mode === "commands") ? commandsRef.current
+      .map((cmd) => ({
+        type: "command",
+        title: cmd.name,
+        subtitle: cmd.command,
+        keywords: [cmd.name, cmd.command, cmd.category, cmd.description, ...(cmd.tags || [])].filter(Boolean).join(" "),
+        action: () => runOnActive(cmd),
+      })) : [];
 
     const drawerMeta: Array<{ drawer: Drawer; title: string; keywords: string }> = [
       { drawer: "monitor", title: t(lang, "monitor"), keywords: "monitor metrics cpu memory 监控 指标" },
@@ -719,16 +1159,46 @@ function App() {
       { drawer: "ai", title: t(lang, "ai"), keywords: "ai assistant model 助手 模型" },
       { drawer: "settings", title: t(lang, "settings"), keywords: "settings preferences 设置 偏好" },
     ];
-    const areaResults = q ? drawerMeta
-      .filter((item) => includesQuery(item.title, item.drawer, item.keywords))
-      .map((item) => ({ type: "area", title: item.title, subtitle: zh ? "打开工作区" : "Open workspace", action: () => requestDrawer(item.drawer) })) : [];
+    const areaResults = hasQuery ? drawerMeta.map((item) => ({
+      type: "area",
+      title: item.title,
+      subtitle: zh ? "打开工作区" : "Open workspace",
+      keywords: `${item.title} ${item.drawer} ${item.keywords}`,
+      action: () => requestDrawer(item.drawer),
+    })) : [];
 
-    return [...actionResults, ...tabResults, ...serverResults, ...commandResults, ...areaResults].slice(0, q ? 18 : 10);
-  }, [globalQuery, handleOpenMarkdown, notify, profileState.settings?.language, requestDrawer, runOnActive, searchConnectLocal, searchConnectProfile, searchSetActiveTab, searchTabs]);
+    return [...registeredActionResults, ...actionResults, ...tabResults, ...serverResults, ...commandResults, ...areaResults];
+  }, [appActionRegistry, globalQuery, handleOpenMarkdown, notify, profileState.settings?.language, requestDrawer, runOnActive, searchConnectLocal, searchConnectProfile, searchSetActiveTab, searchTabs, sessions.active?.type, sessions.activeTab]);
+
+  const resolveTransferSession = (item: Pick<TransferHistoryItem, "sessionId" | "runtimeId" | "profileId">) => {
+    const current = sessions.tabs.find((tab) => tab.state === "connected" && (
+      (item.runtimeId && tab.runtimeId === item.runtimeId)
+      || (!item.runtimeId && item.profileId && tab.profileId === item.profileId)
+      || (!item.runtimeId && !item.profileId && tab.id === item.sessionId)
+    ));
+    return current?.id;
+  };
 
   return (
-    <TransfersProvider>
-    <div className="app-shell" onContextMenu={() => setCtxMenu(null)} data-theme={themeName} data-collapsed={sidebarCollapsed ? "true" : "false"} >
+    <TransfersProvider resolveSessionId={resolveTransferSession}>
+    <div className="app-shell" onContextMenu={() => setCtxMenu(null)} data-theme={themeName} data-collapsed={sidebarCollapsed ? "true" : "false"} data-zen={zenMode ? "true" : "false"}>
+      {zenMode && (
+        <button
+          type="button"
+          className="zen-mode-exit"
+          aria-label={profileState.settings?.language === "zh-CN" ? "退出专注模式" : "Exit Zen mode"}
+          title={profileState.settings?.language === "zh-CN" ? "退出专注模式" : "Exit Zen mode"}
+          onClick={() => setZenMode(false)}
+        >
+          <PanelLeftOpen size={15} />
+        </button>
+      )}
+      {fontSizeHud !== null && (
+        <div className="terminal-font-hud" role="status" aria-live="polite">
+          <TypeIcon size={14} aria-hidden="true" />
+          <span>{fontSizeHud}px</span>
+        </div>
+      )}
       <main className="workspace">
         <Sidebar
           collapsed={sidebarCollapsed}
@@ -819,14 +1289,29 @@ function App() {
           profiles={profileState.profiles}
           terminalHosts={activeTerminal.terminalHosts}
           getDimensions={activeTerminal.getDimensions}
+          getCurrentDirectory={activeTerminal.getCurrentDirectory}
+          onOpenCurrentDirectory={handleOpenCurrentDirectory}
           sidebarCollapsed={sidebarCollapsed}
           onToggleSidebar={handleToggleSidebar}
-          onActive={sessions.setActiveTab}
+          onActive={activateTab}
           onClose={sessions.closeTab}
           onReconnect={sessions.reconnectTab}
           onNewConnection={handleNewConnection}
           onNewLocal={sessions.connectLocal}
           onReorder={sessions.reorderTabs}
+          onRenameTab={setRenameTabRequest}
+          onTogglePinTab={togglePinTab}
+          rightAccessory={<ActivityCenter
+            activities={activities}
+            unreadCount={unreadActivityCount}
+            locale={profileState.settings?.language || "en"}
+            open={activityCenterOpen}
+            onOpenChange={setActivityCenterOpen}
+            onMarkRead={markActivityRead}
+            onMarkAllRead={markAllActivitiesRead}
+            onDismiss={removeActivity}
+            onClear={clearActivities}
+          />}
           onOpenMarkdown={handleOpenMarkdown}
           onOpenMarkdownFile={openMarkdownTarget}
           onNotify={notify}
@@ -868,6 +1353,53 @@ function App() {
         matchIndex={terminalSearchResult?.id === sessions.activeTab ? terminalSearchResult.index : undefined}
         matchCount={terminalSearchResult?.id === sessions.activeTab ? terminalSearchResult.count : undefined}
         locale={profileState.settings?.language || "en"}
+      />}
+      {pasteRequest && <PasteConfirmDialog
+        request={pasteRequest}
+        language={profileState.settings?.language || "en"}
+        onCancel={() => setPasteRequest(null)}
+        onConfirm={() => {
+          const request = pasteRequest;
+          setPasteRequest(null);
+          const connected = new Set(tabsRef.current.filter((tab) => tab.state === "connected").map((tab) => tab.id));
+          const currentTargets = request.broadcast
+            ? (broadcastRef.current.enabled ? terminalPasteTargets(request.sessionId, broadcastRef.current) : [])
+            : [request.sessionId];
+          const targetsChanged = !sameTerminalPasteTargets(request.targetIds, currentTargets)
+            || request.targetIds.some((id) => !connected.has(id));
+          if (targetsChanged) {
+            notify(profileState.settings?.language === "zh-CN" ? "目标终端已变化，请重新粘贴并确认" : "Terminal targets changed; paste again to confirm", "error");
+            return;
+          }
+          request.commit();
+        }}
+      />}
+      {batchCommandRequest && <BatchCommandDialog
+        request={batchCommandRequest}
+        language={profileState.settings?.language || "en"}
+        running={batchCommandProgress.running}
+        sent={batchCommandProgress.sent}
+        total={batchCommandProgress.total}
+        onClose={() => setBatchCommandRequest(null)}
+        onStart={(options) => { void startBatchCommand(options); }}
+        onStop={stopBatchCommand}
+      />}
+      {shortcutHelpOpen && <ShortcutHelpDialog
+        actions={appActionRegistry.list()}
+        conflicts={appActionRegistry.conflicts()}
+        language={profileState.settings?.language || "en"}
+        onClose={() => setShortcutHelpOpen(false)}
+      />}
+      {renameTabRequest && <TextInputDialog
+        title={profileState.settings?.language === "zh-CN" ? "重命名标签" : "Rename tab"}
+        label={profileState.settings?.language === "zh-CN" ? "标签名称" : "Tab name"}
+        initialValue={renameTabRequest.title}
+        locale={profileState.settings?.language || "en"}
+        onClose={() => setRenameTabRequest(null)}
+        onSubmit={(title) => {
+          sessions.setTabs((items) => items.map((tab) => tab.id === renameTabRequest.id ? { ...tab, title, customTitle: true } : tab));
+          setRenameTabRequest(null);
+        }}
       />}
       {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={(id) => setDeleteProfileRequest({ id, name: profileModal.name || profileModal.host, closeEditor: true })} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify(t(profileState.settings?.language || "en", "profileCopied"), "info"); }} />}
       {quickConnectOpen && <QuickConnectModal
@@ -914,7 +1446,7 @@ function App() {
         }}
       />}
       {commandVars && <CommandVarsDialog commandName={commandVars.commandName} template={commandVars.template} placeholders={commandVars.placeholders} locale={profileState.settings?.language || "en"} onClose={() => setCommandVars(null)} onSubmit={(resolved) => { const send = commandVars.send; setCommandVars(null); send(resolved); }} />}
-      {sessions.secretRequest && <SecretModal request={sessions.secretRequest} language={profileState.settings?.language || "en"} onClose={() => sessions.setSecretRequest(null)} onSubmit={async (password, passphrase) => { const request = sessions.secretRequest; if (!request) return; await sessions.submitSecret(request, password, passphrase); sessions.setSecretRequest(null); }} />}
+      {sessions.secretRequest && <SecretModal request={sessions.secretRequest} language={profileState.settings?.language || "en"} onClose={sessions.cancelSecretRequest} onSubmit={async (password, passphrase) => { const request = sessions.secretRequest; if (!request) return; await sessions.submitSecret(request, password, passphrase); sessions.setSecretRequest(null); }} />}
       {activeKiRequest && <KeyboardInteractiveDialog key={activeKiRequest.requestId} request={activeKiRequest} language={profileState.settings?.language || "en"} onSubmit={(answers) => answerKiRequest(activeKiRequest, answers, false)} onCancel={() => answerKiRequest(activeKiRequest, [], true)} />}
       {settingsPrompt && <UnsavedChangesDialog
         title={t(profileState.settings?.language || "en", "unsavedSettingsTitle")}
@@ -970,7 +1502,7 @@ function App() {
         onClose={updateCheck.dismissPrompt}
       />}
       <ProgressBar />
-      <ToastStack toasts={toasts} />
+      <ToastStack toasts={toasts} onDismiss={dismissToast} locale={profileState.settings?.language || "en"} />
       {ctxMenu && (
         <div className="ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }} onClick={(e) => e.stopPropagation()}>
           {ctxMenu.items.map((item, i) => (

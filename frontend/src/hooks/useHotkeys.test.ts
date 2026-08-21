@@ -1,6 +1,7 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useHotkeys } from "./useHotkeys";
+import { ActionRegistry, createDefaultActionRegistry, type ActionContext } from "../actions/actionRegistry";
 
 // Builds the DOM shape a keystroke really originates from, so the guards in
 // useHotkeys are exercised against the same `event.target` the app sees.
@@ -33,11 +34,12 @@ function setup(overrides: Partial<Parameters<typeof useHotkeys>[0]> = {}) {
     onPrevTab: vi.fn(),
     onSelectTab: vi.fn(),
   };
+  const registry = overrides.registry || createDefaultActionRegistry(handlers);
   renderHook(() => useHotkeys({
     activeTab: "session-1",
     activeIsMarkdown: false,
-    ...handlers,
     ...overrides,
+    registry,
   }));
   return handlers;
 }
@@ -98,6 +100,40 @@ describe("useHotkeys", () => {
     const terminal = mountTarget(TERMINAL_HTML);
     press(terminal.querySelector("textarea")!, "k", { ctrl: true });
     expect(handlers.onGlobalSearch).toHaveBeenCalledTimes(1);
+  });
+
+  it("claims an app shortcut before xterm can encode it for the remote", () => {
+    const terminal = mountTarget(TERMINAL_HTML);
+    const textarea = terminal.querySelector("textarea")!;
+    const terminalKeydown = vi.fn();
+    textarea.addEventListener("keydown", terminalKeydown);
+    setup();
+
+    press(textarea, "k", { ctrl: true });
+
+    expect(terminalKeydown).not.toHaveBeenCalled();
+  });
+
+  it("leaves an unclaimed terminal function key available to the remote", () => {
+    const terminal = mountTarget(TERMINAL_HTML);
+    const textarea = terminal.querySelector("textarea")!;
+    const terminalKeydown = vi.fn();
+    textarea.addEventListener("keydown", terminalKeydown);
+    const registry = new ActionRegistry<ActionContext>().register({
+      id: "workspace.rename-tab",
+      label: "Rename active tab",
+      category: "Tabs",
+      scope: "workspace",
+      defaultShortcuts: ["F2"],
+      shortcuts: [{ key: "F2" }],
+      availability: (context) => !context.isTerminalInput,
+      run: vi.fn(),
+    });
+    setup({ registry });
+
+    press(textarea, "F2");
+
+    expect(terminalKeydown).toHaveBeenCalledTimes(1);
   });
 
   it("does not open the terminal search when a markdown tab is active", () => {

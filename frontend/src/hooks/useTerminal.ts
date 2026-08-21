@@ -8,11 +8,14 @@ import { types } from "../../wailsjs/go/models";
 import { ResizeTerminal, WriteToTerminal, LogCommand } from "../../wailsjs/go/app/App";
 import { writeClipboardText } from "../utils/clipboard";
 import { getTerminalTheme } from "../utils/format";
-import { normalizeFontSize, normalizeLineHeight, normalizeScrollbackLines } from "../utils/terminalSettings";
+import { MAX_FONT_SIZE, MIN_FONT_SIZE, normalizeFontSize, normalizeLineHeight, normalizeScrollbackLines } from "../utils/terminalSettings";
 import { findHighlightMatches, type HighlightLevel } from "../utils/highlight";
 import { createLinkProvider, type TerminalLinkAppHandlers } from "../utils/terminalLinks";
 import type { SplitPane } from "../types";
 import { t } from "../i18n";
+import { analyzeTerminalPaste, terminalPasteTargets, type TerminalPasteRisk } from "../utils/terminalPaste";
+import { hasActiveOverlay } from "../utils/overlayManager";
+import { parseOsc7Directory, type TerminalDirectory } from "../utils/terminalCwd";
 
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 // requestAnimationFrame does not fire while the window is minimized/hidden in
@@ -35,6 +38,16 @@ export type AppContextMenu = {
   items: Array<{ label: string; action: () => void; danger?: boolean }>;
 };
 
+export type TerminalPasteRequest = {
+  sessionId: string;
+  text: string;
+  risk: TerminalPasteRisk;
+  broadcastTargets: number;
+  targetIds: string[];
+  broadcast: boolean;
+  commit: () => void;
+};
+
 type BufferCellSpan = { start: number; end: number; x: number; width: number };
 
 function readBufferCells(term: Terminal, row: number): { text: string; spans: BufferCellSpan[] } | null {
@@ -53,7 +66,7 @@ function readBufferCells(term: Terminal, row: number): { text: string; spans: Bu
   return { text: text.trimEnd(), spans };
 }
 
-export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null, broadcastRef?: MutableRefObject<{ enabled: boolean; targets: string[] }>, linkHandlersRef?: MutableRefObject<TerminalLinkAppHandlers>, setContextMenu?: (menu: AppContextMenu | null) => void, onSearchResults?: (id: string, index: number, count: number) => void) {
+export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null, broadcastRef?: MutableRefObject<{ enabled: boolean; targets: string[] }>, linkHandlersRef?: MutableRefObject<TerminalLinkAppHandlers>, setContextMenu?: (menu: AppContextMenu | null) => void, onSearchResults?: (id: string, index: number, count: number) => void, onPasteRequest?: (request: TerminalPasteRequest) => void) {
   const terminals = useRef<Record<string, Terminal>>({});
   const fits = useRef<Record<string, FitAddon>>({});
   const searches = useRef<Record<string, SearchAddon>>({});
@@ -66,6 +79,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const cleanupFns = useRef<Record<string, () => void>>({});
   const cmdBuffer = useRef<Record<string, string>>({});
   const lastDimensions = useRef<Record<string, { cols: number; rows: number }>>({});
+  const currentDirectories = useRef<Record<string, TerminalDirectory>>({});
   const pendingFitFrames = useRef<Record<string, number>>({});
   const pendingResizeTimers = useRef<Record<string, number>>({});
   const pendingOutput = useRef<Record<string, string[]>>({});
@@ -74,6 +88,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const pendingInput = useRef<Record<string, string[]>>({});
   const pendingInputSizes = useRef<Record<string, number>>({});
   const pendingInputTimers = useRef<Record<string, number>>({});
+  const pasteTargetOverrides = useRef<Record<string, string[]>>({});
   const lastInputErrorAt = useRef<Record<string, number>>({});
   const lastHostSize = useRef<Record<string, string>>({});
   const throughputRef = useRef<Record<string, number>>({});
@@ -83,6 +98,10 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const pendingHighlightFrames = useRef<Record<string, number>>({});
   const searchResultsRef = useRef(onSearchResults);
   searchResultsRef.current = onSearchResults;
+  const pasteRequestRef = useRef(onPasteRequest);
+  pasteRequestRef.current = onPasteRequest;
+  const runtimeFontSize = useRef<number | null>(null);
+  const settingsFontSize = useRef<number | null>(null);
 
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
@@ -264,7 +283,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         cursorBlink: s.terminal.cursorBlink,
         cursorStyle: (s.terminal.cursorStyle || "block") as "block" | "underline" | "bar",
         fontFamily: s.terminal.fontFamily || "JetBrains Mono, Cascadia Code, Fira Code, Maple Mono, Consolas, monospace",
-        fontSize: normalizeFontSize(s.terminal.fontSize),
+        fontSize: runtimeFontSize.current ?? normalizeFontSize(s.terminal.fontSize),
         fontWeight: 400,
         lineHeight: normalizeLineHeight(s.terminal.lineHeight),
         minimumContrastRatio: 1,
@@ -282,6 +301,12 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       // fit/search addons, it is disposed by term.dispose() in disposeTerminal.
       term.loadAddon(new Unicode11Addon());
       term.unicode.activeVersion = "11";
+      term.parser.registerOscHandler(7, (payload) => {
+        const directory = parseOsc7Directory(payload);
+        if (!directory) return false;
+        currentDirectories.current[activeTab] = directory;
+        return true;
+      });
       // Report match count/position to the search bar. Fires after every
       // findNext/findPrevious, so the bar can show "3 / 12" live. resultIndex is
       // -1 when there is no match; the addon uses 0-based indices.
@@ -294,6 +319,62 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       } catch {}
       term.open(host);
       term.onScroll(() => scheduleDisplayHighlights(activeTab, term));
+
+      const pasteIntoTerminal = (text: string) => {
+        if (!text) return;
+        const risk = analyzeTerminalPaste(text, term.buffer.active.type === "alternate");
+        const requestPaste = pasteRequestRef.current;
+        if (risk && requestPaste) {
+          const broadcast = broadcastRef?.current;
+          const targetIds = terminalPasteTargets(activeTab, broadcast);
+          requestPaste({
+            sessionId: activeTab,
+            text,
+            risk,
+            broadcastTargets: targetIds.length,
+            targetIds,
+            broadcast: broadcast?.enabled === true && broadcast.targets.includes(activeTab),
+            commit: () => {
+              pasteTargetOverrides.current[activeTab] = targetIds;
+              try {
+                term.paste(text);
+              } finally {
+                // xterm emits onData synchronously today. The microtask keeps
+                // the override valid for an implementation that defers the
+                // callback while ensuring later typing never inherits it.
+                queueMicrotask(() => {
+                  if (pasteTargetOverrides.current[activeTab] === targetIds) {
+                    delete pasteTargetOverrides.current[activeTab];
+                  }
+                });
+              }
+            },
+          });
+          return;
+        }
+        term.paste(text);
+      };
+
+      // Keep Ctrl+C ergonomic without stealing SIGINT: copy only when xterm has
+      // an actual selection; otherwise let the terminal receive the key.
+      term.attachCustomKeyEventHandler((event) => {
+        if (event.type !== "keydown" || event.altKey) return true;
+        if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "c" || !term.hasSelection()) return true;
+        writeClipboardText(term.getSelection()).catch(() => notifyRef.current(t(settingsRef.current?.language || "en", "copyFailed"), "error"));
+        return false;
+      });
+
+      // xterm normally handles browser paste itself. Capture only risky shell
+      // pastes so safe single-line and full-screen editor workflows stay fast.
+      term.element?.addEventListener("paste", (event) => {
+        const clipboardEvent = event as ClipboardEvent;
+        const text = clipboardEvent.clipboardData?.getData("text/plain") || "";
+        const risk = analyzeTerminalPaste(text, term.buffer.active.type === "alternate");
+        if (!risk || !pasteRequestRef.current) return;
+        clipboardEvent.preventDefault();
+        clipboardEvent.stopPropagation();
+        pasteIntoTerminal(text);
+      }, true);
 
       // Clickable URLs and remote file paths, detected in the xterm display
       // layer so the SSH output stream is never rewritten. The provider reads
@@ -363,7 +444,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
               if (!text) return;
               // xterm.paste honours bracketed-paste mode and routes through the
               // same onData path, preserving broadcast and command history.
-              term.paste(text);
+              pasteIntoTerminal(text);
             }).catch(() => notifyRef.current(t(lang, "pasteFailed"), "error"));
           },
         });
@@ -379,18 +460,23 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         }
       });
 
-      term.focus();
+      if (!hasActiveOverlay()) term.focus();
       terminals.current[activeTab] = term;
       fits.current[activeTab] = fit;
       searches.current[activeTab] = searchAddon;
 
       term.onData((data) => {
-        enqueueTerminalInput(activeTab, data);
+        const pasteTargets = pasteTargetOverrides.current[activeTab];
+        if (pasteTargets) {
+          for (const id of pasteTargets) enqueueTerminalInput(id, data);
+        } else {
+          enqueueTerminalInput(activeTab, data);
+        }
         // Broadcast (synchronized input): when enabled, mirror the same keystrokes
         // to every other connected SSH terminal. Only the active terminal drives
         // the command buffer / history below.
         const bc = broadcastRef?.current;
-        if (bc?.enabled) {
+        if (!pasteTargets && bc?.enabled && bc.targets.includes(activeTab)) {
           for (const id of bc.targets) {
             if (id !== activeTab) enqueueTerminalInput(id, data);
           }
@@ -607,6 +693,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     delete lastInputErrorAt.current[id];
     delete cmdBuffer.current[id];
     delete lastDimensions.current[id];
+    delete currentDirectories.current[id];
     delete lastHostSize.current[id];
     delete terminalHosts.current[id];
     delete throughputRef.current[id];
@@ -650,18 +737,44 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     }, 80);
   }, []);
 
+  const applyRuntimeFontSize = useCallback((value: number) => {
+    const normalized = normalizeFontSize(value);
+    runtimeFontSize.current = normalized;
+    Object.keys(terminals.current).forEach((id) => {
+      terminals.current[id].options.fontSize = normalized;
+      refitTerminal(id);
+    });
+    return normalized;
+  }, [refitTerminal]);
+
+  const adjustFontSize = useCallback((delta: number) => {
+    const base = runtimeFontSize.current
+      ?? settingsFontSize.current
+      ?? normalizeFontSize(settingsRef.current?.terminal.fontSize || 14);
+    return applyRuntimeFontSize(Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, base + delta)));
+  }, [applyRuntimeFontSize]);
+
+  const resetFontSize = useCallback(() => applyRuntimeFontSize(
+    settingsFontSize.current ?? normalizeFontSize(settingsRef.current?.terminal.fontSize || 14),
+  ), [applyRuntimeFontSize]);
+
   // Apply live settings changes to every open terminal. Font metrics changes
   // (size/family/line height) invalidate the current cols/rows, so each
   // terminal is refit and the new grid pushed to the remote PTY — otherwise
   // vim/htop layouts stay stale until the next window resize.
   useEffect(() => {
     if (!settings) return;
+    const configuredFontSize = normalizeFontSize(settings.terminal.fontSize);
+    if (settingsFontSize.current !== configuredFontSize) {
+      settingsFontSize.current = configuredFontSize;
+      runtimeFontSize.current = configuredFontSize;
+    }
     const theme = getTerminalTheme(settings);
     Object.keys(terminals.current).forEach((id) => {
       const term = terminals.current[id];
       term.options.theme = theme;
       term.options.fontFamily = settings.terminal.fontFamily;
-      term.options.fontSize = normalizeFontSize(settings.terminal.fontSize);
+      term.options.fontSize = runtimeFontSize.current ?? configuredFontSize;
       term.options.lineHeight = normalizeLineHeight(settings.terminal.lineHeight);
       // Cursor options do not affect the grid, so they need no refit. Scrollback
       // is deliberately absent: changing it reallocates the buffer and would
@@ -712,7 +825,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   }, [refitTerminal]);
 
   const focusTerminal = useCallback((id: string) => {
-    terminals.current[id]?.focus();
+    if (!hasActiveOverlay()) terminals.current[id]?.focus();
   }, []);
 
   useEffect(() => {
@@ -749,6 +862,10 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     return lastDimensions.current[id] || null;
   }, []);
 
+  const getCurrentDirectory = useCallback((id: string): TerminalDirectory | null => {
+    return currentDirectories.current[id] || null;
+  }, []);
+
   const stable = useMemo(() => ({
     terminalHosts,
     writeOutput,
@@ -760,7 +877,10 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     reattachTerminal,
     getTerminalLines,
     getDimensions,
-  }), [writeOutput, disposeTerminal, findNext, findPrev, focusTerminal, refitTerminal, reattachTerminal, getTerminalLines, getDimensions]);
+    getCurrentDirectory,
+    adjustFontSize,
+    resetFontSize,
+  }), [writeOutput, disposeTerminal, findNext, findPrev, focusTerminal, refitTerminal, reattachTerminal, getTerminalLines, getDimensions, getCurrentDirectory, adjustFontSize, resetFontSize]);
 
   return stable;
 }

@@ -8,6 +8,16 @@ import { formatFileSize } from "../../utils/format";
 import { t } from "../../i18n";
 import { ConfirmDialog } from "../modals/ConfirmDialog";
 
+function conflictBody(direction: "upload" | "download", source: types.LocalFile | types.RemoteFile, destination: types.LocalFile | types.RemoteFile, lang: string) {
+  const formatTime = (value: unknown) => {
+    const date = new Date(value as string | number | Date);
+    return Number.isFinite(date.getTime()) ? date.toLocaleString(lang === "zh-CN" ? "zh-CN" : "en") : "—";
+  };
+  const label = direction === "upload" ? t(lang, "transferConflictUpload") : t(lang, "transferConflictDownload");
+  const kind = (entry: { isDir: boolean }) => entry.isDir ? t(lang, "folder") : t(lang, "file");
+  return `${label}\n${source.name}\n${kind(source)} → ${kind(destination)}\n${formatFileSize(source.size)} → ${formatFileSize(destination.size)}\n${formatTime(source.modTime)} → ${formatTime(destination.modTime)}`;
+}
+
 type PendingConflict = {
   direction: "upload" | "download";
   file: types.LocalFile | types.RemoteFile;
@@ -185,7 +195,12 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
         <ConfirmDialog
           locale={lang}
           title={t(lang, "overwriteTitle")}
-          body={t(lang, "overwriteBody", { names: pendingConflict.file.name })}
+          body={conflictBody(
+            pendingConflict.direction,
+            pendingConflict.file,
+            (pendingConflict.direction === "upload" ? remoteFiles : localFiles).find((entry) => entry.name === pendingConflict.file.name) || pendingConflict.file,
+            lang,
+          )}
           confirmText={t(lang, "overwriteConfirm")}
           onClose={() => setPendingConflict(null)}
           onConfirm={() => {

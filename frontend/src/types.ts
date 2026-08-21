@@ -30,9 +30,15 @@ export type RecentMarkdownItem = {
 
 export type Tab = {
   id: string;
+  /** Stable UI identity that survives a physical SSH session replacement. */
+  runtimeId?: string;
+  connectionGeneration?: number;
   profileId: string;
   title: string;
   state: string;
+  unread?: boolean;
+  pinned?: boolean;
+  customTitle?: boolean;
   local?: boolean;
   error?: string;
   type?: 'ssh' | 'local' | 'markdown';
@@ -42,17 +48,103 @@ export type Tab = {
   remoteSessionId?: string;
 };
 
+/**
+ * The short-lived notification shown in the lower corner of the window.
+ *
+ * `tone` and the first three fields are intentionally kept compatible with
+ * the original toast API.  The optional activity fields let the same event
+ * be promoted to the Activity Center without forcing every existing caller
+ * to change at once.
+ */
+export type ToastTone = "info" | "error" | "success" | "warning";
+
+export type ActivitySeverity = ToastTone;
+
+export type ActivityCategory =
+  | "connection"
+  | "transfer"
+  | "automation"
+  | "security"
+  | "terminal"
+  | "update"
+  | "system"
+  | "other";
+
+export type ActivityAction = {
+  id: string;
+  label: string;
+  variant?: "primary" | "secondary" | "danger";
+  disabled?: boolean;
+  /** Runtime-only callback. It is deliberately not persisted to disk. */
+  onClick?: () => void;
+};
+
 export type Toast = {
   id: string;
-  tone: "info" | "error" | "success";
+  tone: ToastTone;
   text: string;
+  title?: string;
+  category?: ActivityCategory;
+  scope?: string;
+  scopeLabel?: string;
+  actions?: ActivityAction[];
 };
+
+/** A durable, reviewable item in the Activity/Notification Center. */
+export type ActivityRecord = {
+  id: string;
+  timestamp: number;
+  text: string;
+  title?: string;
+  tone: ActivitySeverity;
+  severity: ActivitySeverity;
+  category: ActivityCategory;
+  scope?: string;
+  scopeLabel?: string;
+  dedupeKey?: string;
+  unread: boolean;
+  /** Number of coalesced occurrences when a producer uses `dedupeKey`. */
+  occurrences?: number;
+  detail?: string;
+  actions?: ActivityAction[];
+  source?: string;
+  metadata?: Record<string, string | number | boolean>;
+};
+
+export type NotifyOptions = {
+  text: string;
+  title?: string;
+  tone?: ToastTone;
+  /** Alias for tone for callers that use the activity vocabulary. */
+  severity?: ActivitySeverity;
+  category?: ActivityCategory;
+  /** Stable scope identifier, for example a session/profile id. */
+  scope?: string;
+  /** Human-readable scope shown in the center, for example a server name. */
+  scopeLabel?: string;
+  /** Repeated events with the same key are coalesced in the history. */
+  dedupeKey?: string;
+  detail?: string;
+  actions?: ActivityAction[];
+  source?: string;
+  metadata?: Record<string, string | number | boolean>;
+  /** Keep this item in the durable activity history (default: true for the object API). */
+  persist?: boolean;
+  /** Show the short-lived toast (default: true). */
+  toast?: boolean;
+  /** Auto-dismiss delay for the short-lived toast. */
+  durationMs?: number;
+};
+
+export type NotifyInput = string | NotifyOptions;
 
 export type AutomationActivitySource = "ai" | "cli";
 export type AutomationActivityPhase = "started" | "completed" | "failed";
 
 export type AutomationActivityEvent = {
   sessionId: string;
+  runtimeId?: string;
+  generation?: number;
   activityId: string;
   source: AutomationActivitySource;
   phase: AutomationActivityPhase;

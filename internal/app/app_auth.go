@@ -76,14 +76,13 @@ func (a *App) handleKeyboardInteractive(sessionID, name, instruction string, que
 	ch := a.kiRequests.register(requestID)
 	defer a.kiRequests.remove(requestID)
 
-	runtime.EventsEmit(ctx, "terminal:keyboard-interactive", map[string]any{
-		"sessionId":   sessionID,
-		"requestId":   requestID,
-		"name":        name,
-		"instruction": instruction,
-		"prompts":     questions,
-		"echos":       echos,
-	})
+	payload := a.terminalEventEnvelope(sessionID)
+	payload["requestId"] = requestID
+	payload["name"] = name
+	payload["instruction"] = instruction
+	payload["prompts"] = questions
+	payload["echos"] = echos
+	runtime.EventsEmit(ctx, "terminal:keyboard-interactive", payload)
 	a.log.InfoFields("keyboard-interactive prompt raised", LogFields{
 		"session": sessionID, "prompts": len(questions),
 	})
@@ -98,9 +97,9 @@ func (a *App) handleKeyboardInteractive(sessionID, name, instruction string, que
 		}
 		return answer.answers, nil
 	case <-time.After(kiPromptTimeout):
-		runtime.EventsEmit(ctx, "terminal:keyboard-interactive:closed", map[string]any{
-			"requestId": requestID,
-		})
+		closed := a.terminalEventEnvelope(sessionID)
+		closed["requestId"] = requestID
+		runtime.EventsEmit(ctx, "terminal:keyboard-interactive:closed", closed)
 		return nil, errors.New("interactive authentication prompt timed out")
 	}
 }

@@ -69,4 +69,44 @@ describe("TabBar overflow", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
+
+  it("surfaces unread output and exposes rename, pin, and middle-click close actions", () => {
+    const tab = { ...tabs[0], unread: true };
+    const onClose = vi.fn();
+    const onRename = vi.fn();
+    const onTogglePin = vi.fn();
+    render(
+      <TabBar
+        tabs={[tab]}
+        activeTab="other-tab"
+        profiles={[]}
+        sidebarCollapsed={false}
+        onToggleSidebar={vi.fn()}
+        onActive={vi.fn()}
+        onClose={onClose}
+        onReconnect={vi.fn()}
+        onRename={onRename}
+        onTogglePin={onTogglePin}
+        language="en"
+      />,
+    );
+
+    const tabButton = screen.getByRole("tab", { name: "Server 1" });
+    const tabElement = tabButton.closest<HTMLElement>(".tab");
+    expect(tabElement).not.toBeNull();
+    expect(tabElement).toHaveClass("tab-unread");
+    expect(within(tabElement as HTMLElement).getByTitle("New output")).toBeInTheDocument();
+
+    fireEvent.contextMenu(tabElement as HTMLElement);
+    const contextMenu = screen.getByRole("menu");
+    fireEvent.click(within(contextMenu).getByRole("menuitem", { name: "Rename tab" }));
+    expect(onRename).toHaveBeenCalledWith(tab);
+
+    fireEvent.contextMenu(tabElement as HTMLElement);
+    fireEvent.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: "Pin tab" }));
+    expect(onTogglePin).toHaveBeenCalledWith(tab);
+
+    fireEvent.mouseDown(tabElement as HTMLElement, { button: 1 });
+    expect(onClose).toHaveBeenCalledWith("tab-1");
+  });
 });

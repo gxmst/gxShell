@@ -22,6 +22,10 @@ export function CancelAiChat(arg1:string,arg2:string):Promise<boolean>;
 
 export function CancelTransfer(arg1:string):Promise<boolean>;
 
+export function PauseTransfer(arg1:string):Promise<boolean>;
+
+export function ResumeTransfer(arg1:string):Promise<boolean>;
+
 export function CheckForUpdate():Promise<version.CheckResult>;
 
 export function Connect(arg1:string,arg2:number,arg3:number):Promise<types.SessionInfo>;

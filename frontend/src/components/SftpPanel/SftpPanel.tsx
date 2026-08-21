@@ -182,8 +182,12 @@ export function SftpPanel(props: {
   onNotify: (text: string, tone?: Toast["tone"]) => void;
   setCtxMenu?: (menu: AppContextMenu | null) => void;
   onOpenMarkdownFile?: (sessionId: string, path: string) => void;
-  /** Send `cd` into the active terminal and focus it. */
-  onOpenTerminalInDir?: (sessionId: string, path: string) => void;
+  /**
+   * Send `cd` into the active terminal and focus it. Returns false when the
+   * handler declined, so the panel does not claim success it did not get. The
+   * Promise form lets the panel wait for the command to be accepted by Wails.
+   */
+   onOpenTerminalInDir?: (sessionId: string, path: string) => boolean | void | Promise<boolean | void>;
 }) {
   const { active, path, files, busy, locale, onRefresh, onNotify } = props;
   const lang = locale || "en";
@@ -415,14 +419,17 @@ export function SftpPanel(props: {
     }
   };
 
-  const openTerminalHere = () => {
+  const openTerminalHere = async () => {
     if (!active) return;
-    if (props.onOpenTerminalInDir) {
-      props.onOpenTerminalInDir(active.id, path);
+    // The handler owns the failure message, so only confirm when it did not
+    // decline. Reporting "opened" next to its own error toast is worse than
+    // saying nothing.
+    try {
+      if (await props.onOpenTerminalInDir?.(active.id, path) === false) return;
       onNotify(t(lang, "openTerminalInDirDone", { path }), "info");
-      return;
+    } catch (err) {
+      onNotify(String(err), "error");
     }
-    onNotify(t(lang, "openTerminalInDirDone", { path }), "info");
   };
 
   const openEntry = (file: types.RemoteFile) => {

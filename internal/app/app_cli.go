@@ -659,18 +659,23 @@ func (a *App) announceCliSessionReplacement(oldSessionID, newSessionID string) {
 		return
 	}
 	if ctx := a.ctx.Get(); ctx != nil {
-		runtime.EventsEmit(ctx, "terminal:cli-session-replaced", map[string]any{
+		payload := map[string]any{
 			"oldSessionId": oldSessionID,
 			"session":      info,
-		})
+			"sessionId":    info.ID,
+			"runtimeId":    info.RuntimeID,
+			"generation":   info.Generation,
+			"state":        info.State,
+		}
+		runtime.EventsEmit(ctx, "terminal:cli-session-replaced", payload)
 	}
 }
 
 func (a *App) announceCliSessionRecovering(sessionID string) {
 	if ctx := a.ctx.Get(); ctx != nil {
-		runtime.EventsEmit(ctx, "terminal:cli-session-recovering", map[string]any{
-			"sessionId": sessionID,
-		})
+		payload := a.terminalEventEnvelope(sessionID)
+		payload["state"] = "reconnecting"
+		runtime.EventsEmit(ctx, "terminal:cli-session-recovering", payload)
 	}
 }
 

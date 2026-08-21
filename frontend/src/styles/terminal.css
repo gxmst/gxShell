@@ -98,6 +98,20 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn) 16%, transparent);
 }
 
+.tab-unread-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent), var(--glow-accent);
+}
+
+.tab-pin-mark {
+  flex: 0 0 auto;
+  color: var(--muted-2);
+}
+
 /* ── Tab Bar ─────────────────────────────────────────── */
 
 .tabbar {
@@ -194,6 +208,15 @@
   background: var(--terminal);
   color: var(--text);
   box-shadow: var(--hairline);
+}
+
+.tab-unread:not(.tab-active) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+
+.tab-pinned {
+  flex-grow: 0.75;
 }
 
 .tab-automation {
@@ -412,6 +435,36 @@
   flex-shrink: 0;
 }
 
+.tab-context-menu {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 4px;
+  z-index: 70;
+  min-width: 150px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--panel-raised);
+  padding: 4px;
+  box-shadow: var(--shadow-lg);
+}
+
+.tab-context-menu button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  border-radius: var(--radius-sm);
+  padding: 8px 9px;
+  color: var(--text);
+  font-size: var(--text-sm);
+  text-align: left;
+}
+
+.tab-context-menu button:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 /* ── Terminal Stage ─────────────────────────────────── */
 
 .terminal-stage {
@@ -450,6 +503,10 @@
   visibility: visible !important;
   position: relative !important;
   pointer-events: auto !important;
+}
+
+.terminal-split-active {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 75%, transparent);
 }
 
 /* ── Split Divider ───────────────────────────────────── */
@@ -711,6 +768,30 @@
   color: var(--muted-2);
 }
 
+.tsb-cwd {
+  max-width: min(34vw, 360px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted-2);
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+
+.tsb-cwd span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tsb-cwd:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.tsb-cwd:not(:disabled):hover {
+  color: var(--text);
+}
+
 .tsb-spacer {
   flex: 1 1 0;
   min-width: 8px;
@@ -736,7 +817,9 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--ok, #5ee0a3) 24%, transparent);
 }
 
-.terminal-statusbar[data-state="connecting"] .tsb-dot {
+.terminal-statusbar[data-state="connecting"] .tsb-dot,
+.terminal-statusbar[data-state="reconnecting"] .tsb-dot,
+.terminal-statusbar[data-state="restoring"] .tsb-dot {
   background: var(--warn, #f5c451);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn, #f5c451) 24%, transparent);
 }

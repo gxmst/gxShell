@@ -80,11 +80,15 @@ func (m *Manager) ConnectWithOptions(shellSetting string, startDirectory string,
 	info := types.SessionInfo{
 		ID:        id,
 		ProfileID: "",
-		Name:      shellLabel(shell),
-		State:     types.SessionConnecting,
-		Cols:      cols,
-		Rows:      rows,
-		StartedAt: time.Now(),
+		// Local shells do not reconnect in place, but they still get an
+		// envelope so data/error events can be fenced exactly like SSH events.
+		RuntimeID:  "local:" + id,
+		Generation: 1,
+		Name:       shellLabel(shell),
+		State:      types.SessionConnecting,
+		Cols:       cols,
+		Rows:       rows,
+		StartedAt:  time.Now(),
 	}
 
 	// Create a pseudo-terminal with the requested dimensions.
@@ -119,9 +123,8 @@ func (m *Manager) ConnectWithOptions(shellSetting string, startDirectory string,
 		_, writeErr := pty.Write(data)
 		return writeErr
 	}, func(writeErr error) {
-		m.emit("terminal:error", map[string]any{
-			"sessionId": id,
-			"error":     "local terminal input failed: " + writeErr.Error(),
+		m.emitSession("terminal:error", session, map[string]any{
+			"error": "local terminal input failed: " + writeErr.Error(),
 		})
 		go func() { _ = m.Disconnect(id) }()
 	})
@@ -155,9 +158,8 @@ func (m *Manager) ConnectWithOptions(shellSetting string, startDirectory string,
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				m.emit("terminal:error", map[string]any{
-					"sessionId": id,
-					"error":     fmt.Sprintf("internal panic: %v", r),
+				m.emitSession("terminal:error", session, map[string]any{
+					"error": fmt.Sprintf("internal panic: %v", r),
 				})
 			}
 		}()
@@ -277,11 +279,29 @@ func (m *Manager) forwardOutput(id string, reader io.Reader) {
 		return
 	}
 	termio.Pump(reader, session.done, func(chunk string) {
-		m.emit("terminal:data", map[string]string{
-			"sessionId": id,
-			"data":      chunk,
-		})
+		m.emitSession("terminal:data", session, map[string]any{"data": chunk})
 	})
+}
+
+// emitSession augments local terminal events with the same routing and
+// generation fields used by the SSH manager. Keeping the helper here avoids
+// making consumers special-case local data/error payloads.
+func (m *Manager) emitSession(event string, session *Session, payload map[string]any) {
+	if payload == nil {
+		payload = make(map[string]any)
+	}
+	if session != nil {
+		session.mu.RLock()
+		info := session.info
+		session.mu.RUnlock()
+		payload["sessionId"] = info.ID
+		payload["runtimeId"] = info.RuntimeID
+		payload["generation"] = info.Generation
+		payload["state"] = info.State
+	}
+	if m.emit != nil {
+		m.emit(event, payload)
+	}
 }
 
 func defaultShell() string {

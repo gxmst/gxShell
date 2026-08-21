@@ -81,10 +81,17 @@ func (a *App) ConnectWithSecrets(profileID string, password string, privateKeyPa
 		settings.MonitorIntervalSec = defaultSettings.MonitorIntervalSec
 	}
 
-	info, err := a.ssh.ConnectViaJump(fullProfile, jumpProfile, settings.ConnectionTimeout, cols, rows)
+	info, established, err := a.ssh.ConnectViaJumpWithStatus(fullProfile, jumpProfile, settings.ConnectionTimeout, cols, rows)
 	if err != nil {
 		a.log.Error("connect failed: " + err.Error())
 		return info, err
+	}
+
+	// A concurrent caller may have waited for and reused the same physical
+	// connection. Only its owner performs per-connection setup and post-login
+	// commands; replaying those side effects is both noisy and unsafe.
+	if !established {
+		return info, nil
 	}
 
 	// Reset rate limiter on successful connection

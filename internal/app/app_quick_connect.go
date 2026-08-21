@@ -53,12 +53,20 @@ func (a *App) ConnectQuick(profile types.Profile, cols int, rows int) (types.Ses
 		settings.MonitorIntervalSec = defaults.MonitorIntervalSec
 	}
 
-	info, err := a.ssh.Connect(profile, settings.ConnectionTimeout, cols, rows)
+	info, established, err := a.ssh.ConnectViaJumpWithStatus(profile, types.Profile{}, settings.ConnectionTimeout, cols, rows)
 	if err != nil {
 		if a.log != nil {
 			a.log.Error("quick connect failed: " + err.Error())
 		}
 		return info, err
+	}
+	// This call may have reused a still-healthy transport for the same in-memory
+	// profile: a reconnect on a live tab, or a second caller that waited for the
+	// handshake owner. Only the caller that established the connection runs
+	// per-connection setup, because replaying post-connect commands into a live
+	// shell is both noisy and unsafe.
+	if !established {
+		return info, nil
 	}
 	a.rateLimiter.Reset(rateKey)
 	if settings.MonitorEnabled {

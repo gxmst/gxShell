@@ -12,6 +12,8 @@ const appMocks = vi.hoisted(() => ({
 
 vi.mock("../../../wailsjs/go/app/App", () => ({
   CancelTransfer: vi.fn(),
+  PauseTransfer: vi.fn(),
+  ResumeTransfer: vi.fn(),
   LocalHomeDir: appMocks.localHomeDir,
   ListLocalDir: appMocks.listLocalDir,
   ListRemoteDir: appMocks.listRemoteDir,
@@ -43,7 +45,7 @@ describe("TransferModal conflict context", () => {
     fireEvent.click(localName.closest(".transfer-file-item")!);
     fireEvent.click(screen.getByTitle("Upload"));
 
-    const staleOverwrite = await screen.findByRole("button", { name: "Overwrite" });
+    const staleOverwrite = await screen.findByRole("button", { name: "Overwrite all" });
     expect(appMocks.uploadFile).not.toHaveBeenCalled();
 
     rerender(
@@ -51,7 +53,7 @@ describe("TransferModal conflict context", () => {
     );
 
     await waitFor(() => {
-      expect(screen.queryByRole("button", { name: "Overwrite" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Overwrite all" })).not.toBeInTheDocument();
     });
 
     // Keep a reference to the button from session A and try to dispatch the old

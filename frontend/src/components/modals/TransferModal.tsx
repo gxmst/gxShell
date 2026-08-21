@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
-import { AlertTriangle, ArrowDown, ArrowUp, File, Folder, RefreshCw, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, File, Folder, Pause, Play, RefreshCw, X } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { DownloadFileWithPolicy, ListLocalDir, LocalHomeDir, ListRemoteDir, UploadFileWithPolicy } from "../../../wailsjs/go/app/App";
 import { useTransfers } from "../../hooks/useTransfers";
 import { isWindowsPlatform } from "../../utils/clipboard";
 import { formatFileSize } from "../../utils/format";
-import { excludeTransferNames, findTransferConflicts } from "../../utils/transferConflict";
+import { describeTransferConflicts, excludeTransferNames, findTransferConflicts, type TransferConflictDetail } from "../../utils/transferConflict";
 import { runQueue } from "../../utils/transferQueue";
 import { t } from "../../i18n";
 import { FloatingCard } from "../FloatingCard/FloatingCard";
@@ -25,7 +25,34 @@ type PendingConflict = {
   replaceable: string[];
   directories: string[];
   caseInsensitive: boolean;
+  details: TransferConflictDetail[];
 };
+
+function formatConflictTime(value: unknown, locale: string): string {
+  if (!value) return "—";
+  const date = new Date(value as string | number | Date);
+  if (!Number.isFinite(date.getTime())) return "—";
+  return new Intl.DateTimeFormat(locale === "zh-CN" ? "zh-CN" : "en", {
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
+
+function formatRate(value: number): string {
+  if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} MB/s`;
+  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB/s`;
+  return `${Math.round(value)} B/s`;
+}
+
+function formatEta(seconds: number): string {
+  const whole = Math.max(0, Math.round(seconds));
+  if (whole < 60) return `${whole}s`;
+  const minutes = Math.floor(whole / 60);
+  const rest = whole % 60;
+  return minutes < 60 ? `${minutes}m ${rest}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
 
 const transferNameKey = (name: string, caseInsensitive: boolean) => (
   caseInsensitive ? name.toLowerCase() : name
@@ -43,7 +70,7 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
   const [lastLocalIdx, setLastLocalIdx] = useState(-1);
   const [lastRemoteIdx, setLastRemoteIdx] = useState(-1);
   const [conflict, setConflict] = useState<PendingConflict | null>(null);
-  const { transfers, history, cancelTransfer } = useTransfers();
+  const { transfers, history, cancelTransfer, pauseTransfer, resumeTransfer, retryTransfer } = useTransfers();
   const remoteSeq = useRef(0);
   const remoteSessionRef = useRef(activeSessionId);
   if (remoteSessionRef.current !== activeSessionId) {
@@ -206,7 +233,7 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
       if (files.length === 0) return;
       const { replaceable, directories } = findTransferConflicts(files, remoteFiles);
       if (replaceable.length > 0 || directories.length > 0) {
-        setConflict({ direction, context, files, replaceable, directories, caseInsensitive: false });
+        setConflict({ direction, context, files, replaceable, directories, caseInsensitive: false, details: describeTransferConflicts(files, remoteFiles) });
         return;
       }
       void runUpload(files, context, []);
@@ -217,12 +244,14 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
     const caseInsensitive = isWindowsPlatform();
     const { replaceable, directories } = findTransferConflicts(files, localFiles, caseInsensitive);
     if (replaceable.length > 0 || directories.length > 0) {
-      setConflict({ direction, context, files, replaceable, directories, caseInsensitive });
+      setConflict({ direction, context, files, replaceable, directories, caseInsensitive, details: describeTransferConflicts(files, localFiles, caseInsensitive) });
       return;
     }
     void runDownload(files, context, [], caseInsensitive);
   };
 
+  // "All" applies to the conflicts in this one selected batch; no preference
+  // is persisted, so a later transfer still asks before replacing data.
   const resolveConflict = (mode: "overwrite" | "skip") => {
     const pending = conflict;
     setConflict(null);
@@ -251,6 +280,25 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
   const conflictDialog = conflict && (
     <ModalShell onClose={() => setConflict(null)} compact ariaLabel={t(lang, "overwriteTitle")}>
       <DialogHeader icon={<AlertTriangle size={15} />} title={t(lang, "overwriteTitle")} />
+      <div className="transfer-conflict-direction">
+        {conflict.direction === "upload" ? t(lang, "transferConflictUpload") : t(lang, "transferConflictDownload")}
+      </div>
+      {conflict.details.length > 0 && (
+        <div className="transfer-conflict-list">
+          {conflict.details.map((detail) => (
+            <div key={detail.name} className="transfer-conflict-row">
+              <span className="transfer-conflict-name" title={detail.name}>{detail.name}</span>
+              <span>
+                {detail.source.isDir ? t(lang, "folder") : t(lang, "file")}
+                {" → "}
+                {detail.destination.isDir ? t(lang, "folder") : t(lang, "file")}
+              </span>
+              <span>{formatFileSize(detail.source.size || 0)} → {formatFileSize(detail.destination.size || 0)}</span>
+              <span>{formatConflictTime(detail.source.modTime, lang)} → {formatConflictTime(detail.destination.modTime, lang)}</span>
+            </div>
+          ))}
+        </div>
+      )}
       {conflict.replaceable.length > 0 && (
         <div className="dialog-body-copy">
           {t(lang, "overwriteBody", { names: conflict.replaceable.join(", ") })}
@@ -263,9 +311,9 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
       )}
       <div className="dialog-footer">
         <button className="btn-secondary" onClick={() => setConflict(null)}>{t(lang, "cancel")}</button>
-        <button className="btn-secondary" onClick={() => resolveConflict("skip")}>{t(lang, "overwriteSkip")}</button>
+        <button className="btn-secondary" onClick={() => resolveConflict("skip")}>{t(lang, "overwriteSkipAll")}</button>
         {conflict.replaceable.length > 0 && (
-          <button className="btn-danger" onClick={() => resolveConflict("overwrite")}>{t(lang, "overwriteConfirm")}</button>
+          <button className="btn-danger" onClick={() => resolveConflict("overwrite")}>{t(lang, "overwriteAll")}</button>
         )}
       </div>
     </ModalShell>
@@ -365,7 +413,12 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
                 {/* Without this, a resumed transfer looks like one that
                     inexplicably started at 40%. */}
                 {tr.resumedAt ? <span className="text-[9px] text-ok shrink-0">{t(lang, "transferResumed")}</span> : null}
+                {tr.speed && tr.speed > 0 ? <span className="text-[9px] text-muted shrink-0">{formatRate(tr.speed)}</span> : null}
+                {tr.eta && tr.eta > 0 ? <span className="text-[9px] text-muted shrink-0">{formatEta(tr.eta)}</span> : null}
                 <span className="text-[9px] text-muted shrink-0 w-8 text-right tabular-nums">{pct}%</span>
+                <button className="mini-btn" onClick={() => void (tr.paused ? resumeTransfer(tr.jobId) : pauseTransfer(tr.jobId))} title={tr.paused ? (lang === "zh-CN" ? "继续" : "Resume") : (lang === "zh-CN" ? "暂停" : "Pause")}>
+                  {tr.paused ? <Play size={10} /> : <Pause size={10} />}
+                </button>
                 <button className="mini-btn" onClick={() => void cancelTransfer(tr.jobId)} title={t(lang, "cancel")}><X size={10} /></button>
               </div>
             );
@@ -377,6 +430,7 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
               <span className={h.ok ? "text-[9px] text-ok shrink-0" : "text-[9px] text-bad shrink-0"} title={h.error}>
                 {h.ok ? t(lang, "transferComplete") : h.status === "cancelled" ? t(lang, "transferCancelled") : t(lang, "transferFailed")}
               </span>
+              {!h.ok && h.retryable && h.sourcePath && h.targetPath && <button className="mini-btn" onClick={() => void retryTransfer(h)} title={lang === "zh-CN" ? "重试" : "Retry"}><RefreshCw size={10} /></button>}
             </div>
           ))}
         </div>

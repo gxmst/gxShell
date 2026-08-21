@@ -38,6 +38,14 @@ export function CancelTransfer(arg1) {
   return window['go']['app']['App']['CancelTransfer'](arg1);
 }
 
+export function PauseTransfer(arg1) {
+  return window['go']['app']['App']['PauseTransfer'](arg1);
+}
+
+export function ResumeTransfer(arg1) {
+  return window['go']['app']['App']['ResumeTransfer'](arg1);
+}
+
 export function CheckForUpdate() {
   return window['go']['app']['App']['CheckForUpdate']();
 }

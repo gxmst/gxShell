@@ -1,5 +1,5 @@
 import { memo, useEffect, useState } from "react";
-import { Radio } from "lucide-react";
+import { Folder, Radio } from "lucide-react";
 import type { Tab } from "../../types";
 import type { types } from "../../../wailsjs/go/models";
 import { EventsOn } from "../../../wailsjs/runtime/runtime";
@@ -19,11 +19,14 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
   broadcastCount?: number;
   sessionCount: number;
   getDimensions?: (id: string) => Dims | null | undefined;
+  getCurrentDirectory?: (id: string) => { path: string; host?: string } | null | undefined;
+  onOpenCurrentDirectory?: (id: string, path: string) => void;
   language: string;
 }) {
   const zh = props.language === "zh-CN";
   const [latency, setLatency] = useState<number | null>(null);
   const [dims, setDims] = useState<Dims | null>(null);
+  const [currentDirectory, setCurrentDirectory] = useState("");
 
   // Latency arrives on the shared monitor tick, keyed by session id (= tab id).
   // Seed once from the cached metrics on mount so the bar isn't blank until the
@@ -48,17 +51,21 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
       const d = props.getDimensions?.(props.tabId);
       if (d && d.cols > 0) setDims((prev) => (prev && prev.cols === d.cols && prev.rows === d.rows ? prev : d));
       else setDims((prev) => (prev === null ? prev : null));
+      const path = props.getCurrentDirectory?.(props.tabId)?.path || "";
+      setCurrentDirectory((prev) => prev === path ? prev : path);
     };
     read();
     const id = window.setInterval(read, 1500);
     return () => window.clearInterval(id);
-  }, [props.tabId, props.getDimensions]);
+  }, [props.tabId, props.getCurrentDirectory, props.getDimensions]);
 
   const state = props.tab.state;
   const local = !!props.tab.local;
   const stateLabel =
     state === "connected" ? (local ? (zh ? "就绪" : "Ready") : (zh ? "已连接" : "Connected"))
     : state === "connecting" ? (zh ? "连接中" : "Connecting")
+    : state === "reconnecting" ? (zh ? "重连中" : "Reconnecting")
+    : state === "restoring" ? (zh ? "恢复中" : "Restoring")
     : state === "error" ? (zh ? "错误" : "Error")
     : (zh ? "已断开" : "Disconnected");
 
@@ -78,6 +85,22 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
       </span>
       <span className="tsb-sep" />
       <span className="tsb-seg tsb-target" title={target}>{target}</span>
+
+      {currentDirectory && (
+        <>
+          <span className="tsb-sep" />
+          <button
+            type="button"
+            className="tsb-seg tsb-cwd"
+            title={currentDirectory}
+            disabled={local || !props.onOpenCurrentDirectory}
+            onClick={() => props.onOpenCurrentDirectory?.(props.tabId, currentDirectory)}
+          >
+            <Folder size={11} />
+            <span>{currentDirectory}</span>
+          </button>
+        </>
+      )}
 
       {!local && state === "connected" && latency != null && (
         <>

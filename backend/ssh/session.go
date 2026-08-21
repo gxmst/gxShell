@@ -25,8 +25,16 @@ import (
 )
 
 type Manager struct {
-	mu             sync.RWMutex
-	sessions       map[string]*Session
+	mu       sync.RWMutex
+	sessions map[string]*Session
+	// runtimes survives individual session teardown. It is the small identity
+	// registry that lets a later reconnect receive a new generation while
+	// consumers continue to refer to the same remote runtime.
+	runtimes map[string]*runtimeRecord
+	// connecting gives each stable runtime one connection owner. Concurrent
+	// callers wait for that owner's result instead of creating a second
+	// transport that would supersede a healthy terminal generation.
+	connecting     map[string]*connectCall
 	emit           func(event string, data any)
 	knownHostsPath string
 	confirm        func(host, fingerprint string) bool
@@ -71,6 +79,8 @@ type Session struct {
 func NewManager(knownHostsPath string, emit func(event string, data any), confirm func(host, fingerprint string) bool) *Manager {
 	return &Manager{
 		sessions:       map[string]*Session{},
+		runtimes:       map[string]*runtimeRecord{},
+		connecting:     map[string]*connectCall{},
 		emit:           emit,
 		knownHostsPath: knownHostsPath,
 		confirm:        confirm,
@@ -102,6 +112,32 @@ func (m *Manager) Connect(profile types.Profile, timeoutSec int, cols int, rows 
 }
 
 func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profile, timeoutSec int, cols int, rows int) (types.SessionInfo, error) {
+	info, _, err := m.ConnectViaJumpWithStatus(profile, jumpProfile, timeoutSec, cols, rows)
+	return info, err
+}
+
+// ConnectViaJumpWithStatus returns established=false when this call reused an
+// active session or waited for another caller that owned the handshake. The
+// app uses this bit to avoid running monitor/tunnel/post-connect setup twice.
+func (m *Manager) ConnectViaJumpWithStatus(profile types.Profile, jumpProfile types.Profile, timeoutSec int, cols int, rows int) (info types.SessionInfo, established bool, err error) {
+	runtimeID := RuntimeIDForProfile(profile)
+	existing, call, owner := m.beginRuntimeConnect(runtimeID)
+	if existing.ID != "" {
+		return existing, false, nil
+	}
+	if !owner {
+		<-call.done
+		return call.info, false, call.err
+	}
+
+	defer func() {
+		m.finishRuntimeConnect(runtimeID, call, info, err)
+	}()
+	info, err = m.connectViaJumpOwned(profile, jumpProfile, timeoutSec, cols, rows)
+	return info, true, err
+}
+
+func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.Profile, timeoutSec int, cols int, rows int) (types.SessionInfo, error) {
 	if cols <= 0 {
 		cols = 120
 	}
@@ -113,10 +149,12 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 	}
 
 	id := newSessionID()
+	runtimeID := RuntimeIDForProfile(profile)
 	info := types.SessionInfo{
 		ID:        id,
 		ProfileID: profile.ID,
 		Name:      profile.Name,
+		RuntimeID: runtimeID,
 		State:     types.SessionConnecting,
 		Cols:      cols,
 		Rows:      rows,
@@ -132,8 +170,13 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 		m.mu.Unlock()
 		return types.SessionInfo{}, fmt.Errorf("connection limit reached (%d sessions max)", maxSessions)
 	}
+	generation := m.reserveRuntimeLocked(runtimeID, id)
+	session.info.Generation = generation
+	info.Generation = generation
 	m.sessions[id] = session
 	m.mu.Unlock()
+	// Failed attempts still consume a generation; monotonicity is more
+	// important than reusing an identity after a stale event escaped the bridge.
 	m.emit("terminal:connecting", info)
 
 	config, closeAuth, err := m.clientConfig(profile, id, timeoutSec)
@@ -318,15 +361,13 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 		_, writeErr := input.Write(data)
 		return writeErr
 	}, func(writeErr error) {
-		m.emit("terminal:error", map[string]any{
-			"sessionId": id,
-			"error":     "terminal input failed: " + writeErr.Error(),
-		})
+		m.emitSession("terminal:error", session, map[string]any{"error": "terminal input failed: " + writeErr.Error()})
 		go func() { _ = m.Disconnect(id) }()
 	})
 	session.info.State = types.SessionConnected
 	info = session.info
 	session.mu.Unlock()
+	m.updateRuntimeState(session, RuntimeActive)
 	m.emit("terminal:connected", info)
 
 	go m.forwardOutput(id, stdout)
@@ -335,16 +376,15 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				m.emit("terminal:error", map[string]any{
-					"sessionId": id,
-					"error":     fmt.Sprintf("internal panic: %v", r),
+				m.emitSession("terminal:error", session, map[string]any{
+					"error": fmt.Sprintf("internal panic: %v", r),
 				})
 				m.Disconnect(id)
 			}
 		}()
 		err := shell.Wait()
 		if err != nil && !isBenignShellWaitError(err) {
-			m.emit("terminal:error", map[string]any{"sessionId": id, "error": err.Error()})
+			m.emitSession("terminal:error", session, map[string]any{"error": err.Error()})
 		}
 		m.Disconnect(id)
 	}()
@@ -357,18 +397,15 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 // them on UTF-8 rune boundaries, so high-throughput output does not flood the
 // IPC bridge and CJK/emoji never straddle a chunk as invalid UTF-8.
 func (m *Manager) forwardOutput(id string, reader io.Reader) {
-	defer panicHandler(id, m)
 	m.mu.RLock()
 	session := m.sessions[id]
 	m.mu.RUnlock()
 	if session == nil {
 		return
 	}
+	defer panicHandler(session, m)
 	termio.Pump(reader, session.done, func(chunk string) {
-		m.emit("terminal:data", map[string]string{
-			"sessionId": id,
-			"data":      chunk,
-		})
+		m.emitSession("terminal:data", session, map[string]any{"data": chunk})
 		session.mu.RLock()
 		rec := session.recorder
 		session.mu.RUnlock()
@@ -384,7 +421,6 @@ func (m *Manager) forwardOutput(id string, reader io.Reader) {
 // sleep/resume) a fire-and-forget request just sits in the kernel send buffer
 // and never errors, while a missing reply here is detected within replyTimeout.
 func (m *Manager) keepalive(id string) {
-	defer panicHandler(id, m)
 	const interval = 30 * time.Second
 	const replyTimeout = 15 * time.Second
 	m.mu.RLock()
@@ -393,6 +429,7 @@ func (m *Manager) keepalive(id string) {
 	if session == nil {
 		return
 	}
+	defer panicHandler(session, m)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -417,13 +454,13 @@ func (m *Manager) keepalive(id string) {
 		select {
 		case err := <-replied:
 			if err != nil {
-				m.emit("terminal:error", map[string]any{"sessionId": id, "error": "connection lost (keepalive failed)"})
+				m.emitSession("terminal:error", session, map[string]any{"error": "connection lost (keepalive failed)"})
 				go m.Disconnect(id)
 				return
 			}
 		case <-time.After(replyTimeout):
 			// Disconnect closes the transport, which unblocks the probe goroutine.
-			m.emit("terminal:error", map[string]any{"sessionId": id, "error": "connection lost (keepalive timeout)"})
+			m.emitSession("terminal:error", session, map[string]any{"error": "connection lost (keepalive timeout)"})
 			go m.Disconnect(id)
 			return
 		case <-session.done:
@@ -558,6 +595,11 @@ func (m *Manager) Disconnect(id string) error {
 		}
 		info := session.info
 		session.mu.Unlock()
+		if info.State == types.SessionError {
+			m.updateRuntimeState(session, RuntimeError)
+		} else {
+			m.updateRuntimeState(session, RuntimeDisconnected)
+		}
 
 		// Close the transport first: client.Close() tears down the TCP socket
 		// without writing any SSH message, which unblocks channel writers stuck
@@ -963,7 +1005,8 @@ func (m *Manager) setError(id string, err error) {
 		session.info.Error = err.Error()
 		info := session.info
 		session.mu.Unlock()
-		m.emit("terminal:error", map[string]any{"sessionId": id, "error": err.Error()})
+		m.updateRuntimeState(session, RuntimeError)
+		m.emitSession("terminal:error", session, map[string]any{"error": err.Error()})
 		m.emit("terminal:state", info)
 	}
 }
@@ -1231,13 +1274,16 @@ func (b *limitedBuffer) Truncated() bool {
 	return b.truncated
 }
 
-func panicHandler(sessionID string, m *Manager) {
+func panicHandler(session *Session, m *Manager) {
 	if r := recover(); r != nil {
-		m.emit("terminal:error", map[string]any{
-			"sessionId": sessionID,
-			"error":     fmt.Sprintf("internal panic: %v", r),
-		})
-		m.Disconnect(sessionID)
+		if session == nil {
+			return
+		}
+		m.emitSession("terminal:error", session, map[string]any{"error": fmt.Sprintf("internal panic: %v", r)})
+		session.mu.RLock()
+		sessionID := session.info.ID
+		session.mu.RUnlock()
+		_ = m.Disconnect(sessionID)
 	}
 }
 

@@ -3,7 +3,10 @@ import { appThemes, terminalThemes } from "../constants";
 
 export function stateClass(state: string) {
   if (state === "connected") return "bg-ok";
-  if (state === "connecting") return "bg-warn dot-pulse";
+  // Every in-flight state shares the pulsing amber dot. reconnecting and
+  // restoring are still "working on it": showing them in the disconnected
+  // grey would contradict the banner and the status bar.
+  if (state === "connecting" || state === "reconnecting" || state === "restoring") return "bg-warn dot-pulse";
   if (state === "error") return "bg-bad";
   return "bg-muted";
 }

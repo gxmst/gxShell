@@ -6,6 +6,8 @@ import { t } from "../../i18n";
 export type KiRequest = {
   requestId: string;
   sessionId: string;
+  runtimeId?: string;
+  generation?: number;
   name: string;
   instruction: string;
   prompts: string[];

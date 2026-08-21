@@ -1,6 +1,16 @@
 import clsx from "clsx";
 import { createPortal } from "react-dom";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
+import {
+  getActiveOverlayId,
+  getOverlayLayer,
+  getOverlayRevision,
+  hasActiveOverlay,
+  registerOverlay,
+  subscribeOverlays,
+} from "../../utils/overlayManager";
+
+let overlaySequence = 0;
 
 /**
  * Full-viewport modal shell. Portaled to the app shell so nested sidebar
@@ -12,6 +22,9 @@ export function ModalShell({
   compact,
   palette,
   ariaLabel,
+  priority = 0,
+  dismissOnBackdrop = true,
+  dismissOnEscape = true,
 }: {
   children: React.ReactNode;
   onClose: () => void;
@@ -19,15 +32,34 @@ export function ModalShell({
   /** Command-palette layout: top-centered, no default modal padding. */
   palette?: boolean;
   ariaLabel?: string;
+  /** Higher-priority dialogs own focus even if several workflows overlap. */
+  priority?: number;
+  dismissOnBackdrop?: boolean;
+  dismissOnEscape?: boolean;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  // Keep the focus origin for the lifetime of this shell. A nested overlay
+  // temporarily revokes ownership; when ownership returns, capturing the
+  // then-active element would overwrite the original terminal/button and make
+  // closing the outer dialog restore focus to a detached inner dialog.
+  const restoreFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const overlayIdRef = useRef("");
+  if (!overlayIdRef.current) overlayIdRef.current = `gx-overlay-${++overlaySequence}`;
+  const overlayId = overlayIdRef.current;
+  useSyncExternalStore(subscribeOverlays, getOverlayRevision, getOverlayRevision);
+  const activeOverlayId = getActiveOverlayId();
+  const ownsFocus = !activeOverlayId || activeOverlayId === overlayId;
+
+  useEffect(() => registerOverlay(overlayId, priority), [overlayId, priority]);
 
   useEffect(() => {
+    if (!ownsFocus) return;
     const previouslyFocused = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
+    if (restoreFocusRef.current === null) restoreFocusRef.current = previouslyFocused;
     const dialog = dialogRef.current;
     if (!dialog) return;
 
@@ -44,7 +76,7 @@ export function ModalShell({
     window.requestAnimationFrame(() => initial.focus());
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
+      if (event.key === "Escape" && dismissOnEscape) {
         event.preventDefault();
         event.stopPropagation();
         onCloseRef.current();
@@ -70,9 +102,16 @@ export function ModalShell({
     dialog.addEventListener("keydown", onKeyDown);
     return () => {
       dialog.removeEventListener("keydown", onKeyDown);
-      previouslyFocused?.focus();
+      window.requestAnimationFrame(() => {
+        const restoreTarget = restoreFocusRef.current;
+        if (!hasActiveOverlay() && restoreTarget?.isConnected) restoreTarget.focus();
+      });
     };
-  }, []);
+  }, [dismissOnEscape, ownsFocus]);
+
+  useEffect(() => {
+    if (dialogRef.current) dialogRef.current.inert = !ownsFocus;
+  }, [ownsFocus]);
 
   if (typeof document === "undefined") return null;
 
@@ -85,7 +124,14 @@ export function ModalShell({
   return createPortal(
     <div
       className={clsx("modal-backdrop", palette && "modal-backdrop-palette")}
-      onMouseDown={onClose}
+      data-overlay-owner={ownsFocus ? "true" : "false"}
+      aria-hidden={!ownsFocus || undefined}
+      style={{ zIndex: getOverlayLayer(overlayId), pointerEvents: ownsFocus ? "auto" : "none" }}
+      onMouseDown={(event) => {
+        if (!ownsFocus || !dismissOnBackdrop || event.target !== event.currentTarget) return;
+        onCloseRef.current();
+      }}
+      onWheel={(event) => event.stopPropagation()}
     >
       <div
         ref={dialogRef}

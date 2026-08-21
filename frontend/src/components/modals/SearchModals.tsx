@@ -13,7 +13,15 @@ import {
 } from "lucide-react";
 import type { GlobalSearchResult } from "../../types";
 import { t } from "../../i18n";
+import {
+  parsePaletteQuery,
+  rememberPaletteResult,
+  searchPaletteResults,
+  type PaletteResultLike,
+} from "../../utils/paletteSearch";
 import { ModalShell } from "./ModalShell";
+
+export type CommandPaletteResult = GlobalSearchResult & Partial<Omit<PaletteResultLike, "type" | "title" | "action">>;
 
 function resultIcon(type: string) {
   const key = (type || "").toLowerCase();
@@ -32,6 +40,14 @@ function resultTone(type: string): string {
   return "default";
 }
 
+function HighlightedText({ text, indices }: { text: string; indices: readonly number[] }) {
+  if (!indices.length) return <>{text}</>;
+  const highlighted = new Set(indices);
+  return <>{Array.from(text).map((char, index) => highlighted.has(index)
+    ? <mark key={index} className="cmdk-match">{char}</mark>
+    : char)}</>;
+}
+
 export function GlobalSearchModal({
   query,
   onQuery,
@@ -41,18 +57,22 @@ export function GlobalSearchModal({
 }: {
   query: string;
   onQuery: (value: string) => void;
-  results: GlobalSearchResult[];
+  results: CommandPaletteResult[];
   onClose: () => void;
   locale?: string;
 }) {
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const parsedQuery = parsePaletteQuery(query);
+  // The cap is applied after ranking, never before: slicing the candidate list
+  // first would hide whatever the fuzzy matcher was supposed to surface.
+  const matches = searchPaletteResults(results, query).slice(0, parsedQuery.query.trim() ? 24 : 18);
 
   // Reset highlight when the result set changes.
   useEffect(() => {
     setActive(0);
-  }, [query, results.length]);
+  }, [query, matches.length]);
 
   useEffect(() => {
     const el = listRef.current?.querySelector<HTMLElement>(`[data-idx="${active}"]`);
@@ -60,8 +80,9 @@ export function GlobalSearchModal({
   }, [active]);
 
   const run = (index: number) => {
-    const item = results[index];
+    const item = matches[index]?.result;
     if (!item) return;
+    rememberPaletteResult(item);
     item.action();
     onClose();
   };
@@ -72,13 +93,13 @@ export function GlobalSearchModal({
       onClose();
       return;
     }
-    if (!results.length) return;
+    if (!matches.length) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setActive((i) => (i + 1) % results.length);
+      setActive((i) => (i + 1) % matches.length);
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
-      setActive((i) => (i - 1 + results.length) % results.length);
+      setActive((i) => (i - 1 + matches.length) % matches.length);
     } else if (e.key === "Enter") {
       e.preventDefault();
       run(active);
@@ -90,6 +111,11 @@ export function GlobalSearchModal({
       <div className="cmdk" onKeyDown={onKeyDown}>
         <div className="cmdk-search">
           <Search size={18} className="cmdk-search-icon" />
+          {parsedQuery.mode !== "all" && (
+            <span className="cmdk-item-kind" aria-label={`Search mode: ${parsedQuery.mode}`}>
+              {parsedQuery.mode === "commands" ? ">" : parsedQuery.mode === "sessions" ? "@" : "#"}
+            </span>
+          )}
           <input
             ref={inputRef}
             autoFocus
@@ -119,9 +145,9 @@ export function GlobalSearchModal({
         </div>
 
         <div className="cmdk-body" ref={listRef}>
-          {results.length > 0 ? (
+          {matches.length > 0 ? (
             <div className="cmdk-list" role="listbox">
-              {results.map((item, index) => (
+              {matches.map(({ result: item, highlights, group }, index) => (
                 <button
                   key={`${item.type}-${item.title}-${index}`}
                   type="button"
@@ -136,10 +162,15 @@ export function GlobalSearchModal({
                     {resultIcon(item.type)}
                   </span>
                   <span className="cmdk-item-text">
-                    <span className="cmdk-item-title">{item.title}</span>
+                    <span className="cmdk-item-title"><HighlightedText text={item.title} indices={highlights} /></span>
                     {item.subtitle && <span className="cmdk-item-sub">{item.subtitle}</span>}
                   </span>
-                  <span className="cmdk-item-kind">{item.type}</span>
+                  <span className="cmdk-item-meta">
+                    <span className="cmdk-item-kind" title={group}>{group}</span>
+                    {item.defaultShortcuts?.[0] && (
+                      <kbd className="cmdk-item-shortcut" title="Default shortcut">{item.defaultShortcuts[0]}</kbd>
+                    )}
+                  </span>
                   {active === index && (
                     <span className="cmdk-item-enter" aria-hidden>
                       <CornerDownLeft size={12} />

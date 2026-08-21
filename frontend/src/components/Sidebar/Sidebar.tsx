@@ -93,7 +93,7 @@ export function Sidebar(props: {
   onOpenSearch: () => void;
   onStartMonitor: () => void;
   onRefreshSftp: (path?: string) => void;
-  onOpenTerminalInDir?: (sessionId: string, path: string) => void;
+  onOpenTerminalInDir?: (sessionId: string, path: string) => boolean | void | Promise<boolean | void>;
   onNotify: (text: string, tone?: Toast["tone"]) => void;
   onRunCommand: (command: types.CommandTemplate) => void;
   onRunCommandInSession: (command: types.CommandTemplate, sessionId: string) => void;

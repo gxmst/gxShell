@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -347,6 +348,100 @@ func TestTerminalAutomationEmitsLifecycle(t *testing.T) {
 	}
 	if events[1].Phase != "completed" || events[1].Output != "ok" || events[1].DurationMs != 25 {
 		t.Fatalf("finish event = %#v", events[1])
+	}
+}
+
+func TestTerminalAutomationFinishKeepsStartedRuntimeEnvelope(t *testing.T) {
+	app := NewApp()
+	lookups := 0
+	app.automationRuntimeFn = func(sessionID string) (string, uint64, bool) {
+		lookups++
+		if lookups == 1 && sessionID == "session-1" {
+			return "profile:prod", 7, true
+		}
+		// Simulate the SSH manager removing the session before the command's
+		// completion callback runs.
+		return "", 0, false
+	}
+	events := make([]terminalAutomationEvent, 0, 2)
+	app.automationEventFn = func(event terminalAutomationEvent) {
+		events = append(events, event)
+	}
+
+	activityID := app.beginTerminalAutomation("session-1", "cli", "execute_command", "uptime")
+	app.finishTerminalAutomation("session-1", activityID, "cli", "execute_command", "ok", "", 0, time.Second, false)
+
+	if lookups != 1 {
+		t.Fatalf("runtime lookups = %d, want one begin-time lookup", lookups)
+	}
+	if len(events) != 2 {
+		t.Fatalf("event count = %d, want 2", len(events))
+	}
+	for _, event := range events {
+		if event.RuntimeID != "profile:prod" || event.Generation != 7 {
+			t.Fatalf("event lost its started runtime envelope: %#v", event)
+		}
+	}
+	app.automationMu.Lock()
+	remaining := len(app.automationEnvelopes)
+	app.automationMu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("finished activity left %d cached envelopes", remaining)
+	}
+}
+
+func TestTerminalAutomationEnvelopeCacheIsBounded(t *testing.T) {
+	app := NewApp()
+	for index := 0; index < terminalAutomationEnvelopeLimit+25; index++ {
+		app.rememberTerminalAutomationEnvelope(fmt.Sprintf("activity-%d", index), terminalAutomationEnvelope{
+			SessionID: "session-1", RuntimeID: "profile:prod", Generation: 1,
+		})
+	}
+	app.automationMu.Lock()
+	count := len(app.automationEnvelopes)
+	app.automationMu.Unlock()
+	if count != terminalAutomationEnvelopeLimit {
+		t.Fatalf("cached envelopes = %d, want %d", count, terminalAutomationEnvelopeLimit)
+	}
+}
+
+func TestTerminalAutomationFinishResolvesRuntimeAfterEnvelopeEviction(t *testing.T) {
+	app := NewApp()
+	app.automationRuntimeFn = func(sessionID string) (string, uint64, bool) {
+		if sessionID == "session-1" {
+			return "profile:prod", 9, true
+		}
+		return "", 0, false
+	}
+	events := make([]terminalAutomationEvent, 0, 2)
+	app.automationEventFn = func(event terminalAutomationEvent) {
+		events = append(events, event)
+	}
+
+	activityID := app.beginTerminalAutomation("session-1", "cli", "execute_command", "sleep 3600")
+	// The envelope cache is bounded by both a size cap and a TTL, so a
+	// long-running command can outlive its own envelope. Age this one past the
+	// TTL to take that path. Losing the envelope must fall back to a best-effort
+	// resolve: an event with no runtime identity cannot be fenced by the renderer
+	// at all, which is worse than one fenced against a possibly newer generation.
+	app.automationMu.Lock()
+	envelope, ok := app.automationEnvelopes[activityID]
+	if ok {
+		envelope.CreatedAt = time.Now().Add(-2 * terminalAutomationEnvelopeTTL)
+		app.automationEnvelopes[activityID] = envelope
+	}
+	app.automationMu.Unlock()
+	if !ok {
+		t.Fatal("begin did not cache an envelope to expire")
+	}
+
+	app.finishTerminalAutomation("session-1", activityID, "cli", "execute_command", "ok", "", 0, time.Second, false)
+
+	if len(events) != 2 {
+		t.Fatalf("event count = %d, want 2", len(events))
+	}
+	if events[1].RuntimeID != "profile:prod" || events[1].Generation != 9 {
+		t.Fatalf("completion event lost its runtime identity: %#v", events[1])
 	}
 }
 

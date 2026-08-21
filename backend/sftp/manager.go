@@ -29,6 +29,10 @@ type SSHClientProvider interface {
 	Client(sessionID string) (*ssh.Client, error)
 }
 
+type sshSessionInfoProvider interface {
+	Get(sessionID string) (types.SessionInfo, error)
+}
+
 type cachedClient struct {
 	client   *sftp.Client
 	lastUsed time.Time
@@ -61,14 +65,49 @@ type Manager struct {
 }
 
 type transferJob struct {
-	id        string
-	sessionID string
-	path      string
-	direction string
-	ctx       context.Context
-	cancel    context.CancelFunc
-	once      sync.Once
-	cancelled atomic.Bool
+	id         string
+	sessionID  string
+	runtimeID  string
+	profileID  string
+	generation uint64
+	path       string
+	direction  string
+	// sourcePath and targetPath are carried in lifecycle events so the UI can
+	// offer a retry after the transfer center has been reopened. They are kept
+	// in memory only; transfer history never persists these paths to disk.
+	sourcePath string
+	targetPath string
+	overwrite  bool
+	retryable  bool
+	ctx        context.Context
+	cancel     context.CancelFunc
+	once       sync.Once
+	cancelled  atomic.Bool
+	// lifecycleMu makes event ordering explicit. sequence is monotonic and a
+	// terminal status permanently fences all later pause/progress events.
+	lifecycleMu sync.Mutex
+	sequence    uint64
+	terminal    bool
+
+	// pauseMu protects the cooperative pause gate. A pause deliberately keeps
+	// the SFTP client and partial file alive; readers/writers wait at their next
+	// I/O boundary and resume without reconnecting or restarting the transfer.
+	pauseMu  sync.Mutex
+	paused   bool
+	resumeCh chan struct{}
+
+	// metricsMu serializes the small amount of state needed to derive a stable
+	// transfer rate and ETA from throttled progress events.
+	metricsMu      sync.Mutex
+	startedAt      time.Time
+	lastSampleAt   time.Time
+	lastSampleDone int64
+	rateBaseDone   int64
+	speed          float64
+	pausedAt       time.Time
+	pausedDuration time.Duration
+	lastDone       int64
+	lastTotal      int64
 
 	// partPath is the temp file this job is currently writing, published so
 	// concurrent transfers into the same directory do not clean it up as an
@@ -417,6 +456,14 @@ func (m *Manager) beginTransfer(sessionID, transferPath, direction string) *tran
 		direction: direction,
 		ctx:       ctx,
 		cancel:    cancel,
+		startedAt: time.Now(),
+	}
+	if provider, ok := m.sessions.(sshSessionInfoProvider); ok {
+		if info, err := provider.Get(sessionID); err == nil {
+			job.runtimeID = info.RuntimeID
+			job.profileID = info.ProfileID
+			job.generation = info.Generation
+		}
 	}
 	m.transferMu.Lock()
 	if m.transfers == nil {
@@ -426,6 +473,29 @@ func (m *Manager) beginTransfer(sessionID, transferPath, direction string) *tran
 	m.transferMu.Unlock()
 	m.emitTransfer(job, "started", 0, 0, nil)
 	return job
+}
+
+// setTransferPaths publishes the paths used by a transfer. It is separate
+// from beginTransfer to preserve the small internal API used by older callers
+// and tests. Terminal events include these fields for retry support.
+func (m *Manager) setTransferPaths(job *transferJob, sourcePath, targetPath string, overwrite bool) {
+	if job == nil {
+		return
+	}
+	job.metricsMu.Lock()
+	job.sourcePath = sourcePath
+	job.targetPath = targetPath
+	job.overwrite = overwrite
+	job.metricsMu.Unlock()
+}
+
+func (m *Manager) setTransferRetryable(job *transferJob, retryable bool) {
+	if job == nil {
+		return
+	}
+	job.metricsMu.Lock()
+	job.retryable = retryable
+	job.metricsMu.Unlock()
 }
 
 // claimPart publishes the temp file a job is about to write, so part cleanup in
@@ -453,17 +523,99 @@ func (m *Manager) partsInUse() map[string]bool {
 }
 
 func (m *Manager) emitTransfer(job *transferJob, status string, done, total int64, err error) {
-	if m.emit == nil {
+	m.emitTransferWithFields(job, status, done, total, err, nil)
+}
+
+func (m *Manager) emitTransferWithFields(job *transferJob, status string, done, total int64, err error, extra map[string]any) {
+	sequence, accepted := job.claimEvent(status)
+	if !accepted {
 		return
 	}
+	// Compute metrics before building the event, but release the mutex before
+	// invoking the caller's event bridge. The bridge may synchronously inspect
+	// or control transfers and must never deadlock on this lock.
+	now := time.Now()
+	actualPaused := job.isPaused()
+	// A read/write that was already in flight when PauseTransfer was called can
+	// report one final progress tick. Treat that tick as paused so it cannot
+	// make the UI flicker back to “active” or contaminate the speed sample.
+	if actualPaused && status == "progress" {
+		status = "paused"
+	}
+	job.metricsMu.Lock()
+	if job.startedAt.IsZero() {
+		job.startedAt = now
+	}
+	if status == "paused" || actualPaused {
+		if job.pausedAt.IsZero() {
+			job.pausedAt = now
+		}
+	} else if !job.pausedAt.IsZero() {
+		job.pausedDuration += now.Sub(job.pausedAt)
+		job.pausedAt = time.Time{}
+	}
+	if done > job.lastSampleDone && !job.lastSampleAt.IsZero() && job.pausedAt.IsZero() {
+		elapsed := now.Sub(job.lastSampleAt).Seconds()
+		if elapsed > 0 {
+			instant := float64(done-job.lastSampleDone) / elapsed
+			if job.speed <= 0 {
+				job.speed = instant
+			} else {
+				// Smooth bursty SFTP packets while still reacting quickly to a
+				// genuinely changed connection speed.
+				job.speed = job.speed*0.75 + instant*0.25
+			}
+		}
+	}
+	if status != "paused" && !actualPaused {
+		job.lastSampleAt = now
+		job.lastSampleDone = done
+	}
+	job.lastDone = done
+	job.lastTotal = total
+	activeElapsed := now.Sub(job.startedAt) - job.pausedDuration
+	if !job.pausedAt.IsZero() {
+		activeElapsed -= now.Sub(job.pausedAt)
+	}
+	activeDone := done - job.rateBaseDone
+	if job.speed <= 0 && activeElapsed.Seconds() > 0 && activeDone > 0 {
+		job.speed = float64(activeDone) / activeElapsed.Seconds()
+	}
+	speed := job.speed
+	eta := float64(0)
+	if speed > 0 && total > done {
+		eta = float64(total-done) / speed
+	}
+	sourcePath, targetPath, overwrite, retryable := job.sourcePath, job.targetPath, job.overwrite, job.retryable
+	if errors.Is(err, ErrOverwriteRequired) {
+		// A policy conflict is actionable in the overwrite dialog, but blindly
+		// retrying it would only reproduce the same conflict forever.
+		retryable = false
+	}
+	job.metricsMu.Unlock()
 	event := map[string]any{
-		"jobId":     job.id,
-		"sessionId": job.sessionID,
-		"path":      job.path,
-		"done":      done,
-		"total":     total,
-		"direction": job.direction,
-		"status":    status,
+		"jobId":      job.id,
+		"sessionId":  job.sessionID,
+		"runtimeId":  job.runtimeID,
+		"profileId":  job.profileID,
+		"generation": job.generation,
+		"sequence":   sequence,
+		"path":       job.path,
+		"done":       done,
+		"total":      total,
+		"direction":  job.direction,
+		"status":     status,
+		"sourcePath": sourcePath,
+		"targetPath": targetPath,
+		"overwrite":  overwrite,
+		"retryable":  retryable,
+		"speed":      speed,
+		"eta":        eta,
+	}
+	if status == "paused" || actualPaused {
+		event["paused"] = true
+	} else {
+		event["paused"] = false
 	}
 	if status == "succeeded" || status == "failed" || status == "cancelled" {
 		// Keep finished for compatibility with older frontend builds while the
@@ -473,31 +625,134 @@ func (m *Manager) emitTransfer(job *transferJob, status string, done, total int6
 	if err != nil {
 		event["error"] = err.Error()
 	}
-	m.emit("sftp:progress", event)
+	for key, value := range extra {
+		event[key] = value
+	}
+	if m.emit != nil {
+		m.emit("sftp:progress", event)
+	}
+}
+
+func isTerminalTransferStatus(status string) bool {
+	return status == "succeeded" || status == "failed" || status == "cancelled"
+}
+
+func (j *transferJob) claimEvent(status string) (uint64, bool) {
+	j.lifecycleMu.Lock()
+	defer j.lifecycleMu.Unlock()
+	if j.terminal {
+		return 0, false
+	}
+	if isTerminalTransferStatus(status) {
+		j.terminal = true
+	}
+	j.sequence++
+	return j.sequence, true
+}
+
+func (j *transferJob) isTerminal() bool {
+	j.lifecycleMu.Lock()
+	terminal := j.terminal
+	j.lifecycleMu.Unlock()
+	return terminal
+}
+
+// isPaused reads the pause gate without exposing its channel to callers.
+func (j *transferJob) isPaused() bool {
+	j.pauseMu.Lock()
+	paused := j.paused
+	j.pauseMu.Unlock()
+	return paused
+}
+
+// observeProgress records the latest byte counts without emitting an event.
+// PauseTransfer reports these numbers, so they have to track the copy loop
+// rather than the throttled event stream: otherwise a transfer paused before
+// its first emitted progress event reports 0 of an unknown total.
+func (j *transferJob) observeProgress(done, total int64) {
+	j.metricsMu.Lock()
+	if done > j.lastDone {
+		j.lastDone = done
+	}
+	if total > j.lastTotal {
+		j.lastTotal = total
+	}
+	j.metricsMu.Unlock()
+}
+
+func (j *transferJob) pause() bool {
+	j.pauseMu.Lock()
+	defer j.pauseMu.Unlock()
+	// finishTransfer cancels the context before removing the job from the map.
+	// Rejecting that narrow terminal window prevents a late Pause call from
+	// emitting a stale paused event after completion has already begun.
+	if j.paused || j.cancelled.Load() || j.ctx.Err() != nil || j.isTerminal() {
+		return false
+	}
+	j.paused = true
+	j.resumeCh = make(chan struct{})
+	return true
+}
+
+func (j *transferJob) resume() bool {
+	j.pauseMu.Lock()
+	defer j.pauseMu.Unlock()
+	if !j.paused || j.isTerminal() {
+		return false
+	}
+	j.paused = false
+	if j.resumeCh != nil {
+		close(j.resumeCh)
+		j.resumeCh = nil
+	}
+	return true
+}
+
+// waitIfPaused is deliberately context-aware: cancellation must still abort a
+// paused transfer immediately, without requiring the user to press Resume.
+func (j *transferJob) waitIfPaused() error {
+	if err := checkTransferContext(j.ctx); err != nil {
+		return err
+	}
+	j.pauseMu.Lock()
+	if !j.paused {
+		j.pauseMu.Unlock()
+		return nil
+	}
+	ch := j.resumeCh
+	j.pauseMu.Unlock()
+	select {
+	case <-ch:
+		return checkTransferContext(j.ctx)
+	case <-j.ctx.Done():
+		return j.ctx.Err()
+	}
 }
 
 // emitResumed announces that a transfer is continuing from a partial file
 // rather than starting over. It is a distinct status so the UI can say
 // "resuming at 40%" instead of appearing to have lost the earlier progress.
 func (m *Manager) emitResumed(job *transferJob, offset, total int64) {
-	if m.emit == nil {
-		return
-	}
-	m.emit("sftp:progress", map[string]any{
-		"jobId":     job.id,
-		"sessionId": job.sessionID,
-		"path":      job.path,
-		"done":      offset,
-		"total":     total,
-		"direction": job.direction,
-		"status":    "resumed",
-		"resumedAt": offset,
-	})
+	now := time.Now()
+	job.metricsMu.Lock()
+	job.startedAt = now
+	job.lastSampleAt = now
+	job.lastSampleDone = offset
+	job.rateBaseDone = offset
+	job.speed = 0
+	job.pausedAt = time.Time{}
+	job.pausedDuration = 0
+	job.lastDone = offset
+	job.lastTotal = total
+	job.metricsMu.Unlock()
+	m.emitTransferWithFields(job, "resumed", offset, total, nil, map[string]any{"resumedAt": offset})
 }
 
 func (m *Manager) finishTransfer(job *transferJob, err error, done, total int64) {
 	job.once.Do(func() {
 		job.cancel()
+		// Unblock a job that is paused while its terminal event is being emitted.
+		job.resume()
 		job.interruptMu.Lock()
 		job.interrupt = nil
 		job.interruptMu.Unlock()
@@ -517,6 +772,39 @@ func (m *Manager) finishTransfer(job *transferJob, err error, done, total int64)
 	})
 }
 
+// PauseTransfer pauses an active transfer at a safe I/O boundary. The partial
+// file and SFTP client remain intact, so resuming does not reconnect or lose
+// already-copied bytes. It returns false for unknown or terminal jobs.
+func (m *Manager) PauseTransfer(jobID string) bool {
+	m.transferMu.Lock()
+	job, ok := m.transfers[jobID]
+	m.transferMu.Unlock()
+	if !ok || !job.pause() {
+		return false
+	}
+	job.metricsMu.Lock()
+	done, total := job.lastDone, job.lastTotal
+	job.metricsMu.Unlock()
+	m.emitTransfer(job, "paused", done, total, nil)
+	return true
+}
+
+// ResumeTransfer resumes a paused active transfer. A progress event follows
+// immediately so a background transfer center can update without polling.
+func (m *Manager) ResumeTransfer(jobID string) bool {
+	m.transferMu.Lock()
+	job, ok := m.transfers[jobID]
+	m.transferMu.Unlock()
+	if !ok || !job.resume() {
+		return false
+	}
+	job.metricsMu.Lock()
+	done, total := job.lastDone, job.lastTotal
+	job.metricsMu.Unlock()
+	m.emitTransfer(job, "progress", done, total, nil)
+	return true
+}
+
 // CancelTransfer requests cancellation of an active job. Closing the current
 // file handles unblocks most pending SFTP reads/writes; the context check in
 // the copy pipeline covers the normal path without tearing down the shared
@@ -532,6 +820,7 @@ func (m *Manager) CancelTransfer(jobID string) bool {
 	if !ok {
 		return false
 	}
+	job.resume()
 	job.interruptMu.Lock()
 	interrupt := job.interrupt
 	job.interruptMu.Unlock()
@@ -671,6 +960,8 @@ func (m *Manager) UploadFileWithPolicyVerified(sessionID, localPath, remotePath 
 func (m *Manager) uploadFileWithPolicy(sessionID, localPath, remotePath string, overwrite bool, expectedSHA256 string) (err error) {
 	remotePath = cleanRemotePath(remotePath)
 	job := m.beginTransfer(sessionID, remotePath, "upload")
+	m.setTransferPaths(job, localPath, remotePath, overwrite)
+	m.setTransferRetryable(job, true)
 	var done, totalSize int64
 	defer func() {
 		m.finishTransfer(job, err, done, totalSize)
@@ -754,9 +1045,7 @@ func (m *Manager) uploadFileWithPolicy(sessionID, localPath, remotePath string, 
 	})
 	defer clearInterrupt()
 
-	progress := throttled(func(n int64) {
-		m.emitTransfer(job, "progress", offset+n, totalSize, nil)
-	})
+	progress := m.transferProgress(job, offset, totalSize)
 	// ReadFrom writes from the handle's current offset, so the seek above is what
 	// makes a resumed upload append.
 	//
@@ -768,7 +1057,7 @@ func (m *Manager) uploadFileWithPolicy(sessionID, localPath, remotePath string, 
 	// length must be able to trust). Downloads get the concurrency for free
 	// because WriteTo orders its writes; matching it here would mean giving up
 	// length-based resume for content verification.
-	reader := io.Reader(&progressReader{ctx: job.ctx, r: src, fn: progress})
+	reader := io.Reader(&progressReader{ctx: job.ctx, job: job, r: src, fn: progress})
 	var uploadedHash hash.Hash
 	if expectedSHA256 != "" {
 		uploadedHash = sha256.New()
@@ -799,7 +1088,7 @@ func (m *Manager) uploadFileWithPolicy(sessionID, localPath, remotePath string, 
 			return fmt.Errorf("upload source changed after approval: SHA-256 %s, approved %s", actual, expectedSHA256)
 		}
 	}
-	if err = checkTransferContext(job.ctx); err != nil {
+	if err = job.waitIfPaused(); err != nil {
 		return err
 	}
 	if err = replaceRemoteTemp(client, tmpPath, remotePath, overwrite); err != nil {
@@ -912,6 +1201,8 @@ func (m *Manager) DownloadFile(sessionID, remotePath, localPath string) error {
 func (m *Manager) DownloadFileWithPolicy(sessionID, remotePath, localPath string, overwrite bool) (err error) {
 	remotePath = cleanRemotePath(remotePath)
 	job := m.beginTransfer(sessionID, remotePath, "download")
+	m.setTransferPaths(job, remotePath, localPath, overwrite)
+	m.setTransferRetryable(job, true)
 	var done, totalSize int64
 	defer func() {
 		m.finishTransfer(job, err, done, totalSize)
@@ -1005,12 +1296,10 @@ func (m *Manager) DownloadFileWithPolicy(sessionID, remotePath, localPath string
 
 	// Progress is reported against the whole file, not this attempt, so a resumed
 	// transfer's bar continues from where it stopped rather than restarting at 0.
-	progress := throttled(func(n int64) {
-		m.emitTransfer(job, "progress", offset+n, totalSize, nil)
-	})
+	progress := m.transferProgress(job, offset, totalSize)
 	// WriteTo lets the sftp client issue concurrent read-ahead requests.
 	var copied int64
-	copied, err = src.WriteTo(&progressWriter{ctx: job.ctx, w: dst, fn: progress})
+	copied, err = src.WriteTo(&progressWriter{ctx: job.ctx, job: job, w: dst, fn: progress})
 	done = offset + copied
 	closeErr := dst.Close()
 	dstClosed = true
@@ -1028,7 +1317,7 @@ func (m *Manager) DownloadFileWithPolicy(sessionID, remotePath, localPath string
 	if statErr == nil && done != totalSize {
 		return fmt.Errorf("download source size changed during transfer: copied %d of expected %d bytes", done, totalSize)
 	}
-	if err = checkTransferContext(job.ctx); err != nil {
+	if err = job.waitIfPaused(); err != nil {
 		return err
 	}
 	if err = replaceLocalTemp(partPath, localPath, overwrite); err != nil {
@@ -1385,6 +1674,8 @@ func (m *Manager) CreateRemoteDir(sessionID, remotePath string) error {
 func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) (err error) {
 	remotePath = cleanRemotePath(remotePath)
 	job := m.beginTransfer(sessionID, remotePath, "download")
+	m.setTransferPaths(job, remotePath, localDir, true)
+	m.setTransferRetryable(job, false)
 	var done, totalSize int64
 	defer func() {
 		m.finishTransfer(job, err, done, totalSize)
@@ -1419,7 +1710,7 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) (err er
 	}
 	walker := client.Walk(remotePath)
 	for walker.Step() {
-		if err = checkTransferContext(job.ctx); err != nil {
+		if err = job.waitIfPaused(); err != nil {
 			return err
 		}
 		if err := walker.Err(); err != nil {
@@ -1466,14 +1757,14 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) (err er
 		return err
 	}
 
-	progress := throttled(func(n int64) {
-		m.emitTransfer(job, "progress", n, totalSize, nil)
-	})
+	// The per-file callbacks below already add their own base, so this sink
+	// receives an absolute position.
+	progress := m.transferProgress(job, 0, totalSize)
 	for _, f := range files {
 		if f.isDir {
 			continue
 		}
-		if err = checkTransferContext(job.ctx); err != nil {
+		if err = job.waitIfPaused(); err != nil {
 			return err
 		}
 		baseDone := done
@@ -1527,7 +1818,7 @@ func (m *Manager) downloadFileOnly(client *sftp.Client, job *transferJob, remote
 	})
 	defer clearInterrupt()
 
-	written, err = src.WriteTo(&progressWriter{ctx: job.ctx, w: dst, fn: progress})
+	written, err = src.WriteTo(&progressWriter{ctx: job.ctx, job: job, w: dst, fn: progress})
 	closeErr := dst.Close()
 	dstClosed = true
 	if err == nil && closeErr != nil {
@@ -1617,16 +1908,38 @@ func throttled(fn func(int64)) func(int64) {
 	}
 }
 
+// transferProgress builds the progress sink for a copy loop. The event stays
+// throttled, but the job's byte counters are updated on every I/O boundary so
+// PauseTransfer reports the real position instead of the numbers carried by the
+// last event that happened to get through the throttle. offset is the byte
+// position the loop started from; callbacks that already pass an absolute
+// position use 0.
+func (m *Manager) transferProgress(job *transferJob, offset, totalSize int64) func(int64) {
+	emit := throttled(func(n int64) {
+		m.emitTransfer(job, "progress", offset+n, totalSize, nil)
+	})
+	return func(n int64) {
+		job.observeProgress(offset+n, totalSize)
+		emit(n)
+	}
+}
+
 // progressReader counts bytes as the sftp client drains the local file during
 // an upload.
 type progressReader struct {
 	ctx context.Context
+	job *transferJob
 	r   io.Reader
 	n   int64
 	fn  func(int64)
 }
 
 func (p *progressReader) Read(b []byte) (int, error) {
+	if p.job != nil {
+		if err := p.job.waitIfPaused(); err != nil {
+			return 0, err
+		}
+	}
 	if err := checkTransferContext(p.ctx); err != nil {
 		return 0, err
 	}
@@ -1642,12 +1955,18 @@ func (p *progressReader) Read(b []byte) (int, error) {
 // download.
 type progressWriter struct {
 	ctx context.Context
+	job *transferJob
 	w   io.Writer
 	n   int64
 	fn  func(int64)
 }
 
 func (p *progressWriter) Write(b []byte) (int, error) {
+	if p.job != nil {
+		if err := p.job.waitIfPaused(); err != nil {
+			return 0, err
+		}
+	}
 	if err := checkTransferContext(p.ctx); err != nil {
 		return 0, err
 	}

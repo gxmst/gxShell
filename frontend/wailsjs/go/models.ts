@@ -989,6 +989,8 @@ export namespace types {
 	export class SessionInfo {
 	    id: string;
 	    profileId: string;
+	    runtimeId?: string;
+	    generation?: number;
 	    name: string;
 	    state: string;
 	    error?: string;
@@ -1005,6 +1007,8 @@ export namespace types {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.profileId = source["profileId"];
+	        this.runtimeId = source["runtimeId"];
+	        this.generation = source["generation"];
 	        this.name = source["name"];
 	        this.state = source["state"];
 	        this.error = source["error"];

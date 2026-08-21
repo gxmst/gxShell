@@ -70,6 +70,59 @@
   padding-inline: 10px;
 }
 
+.settings-search {
+  display: flex;
+  min-width: 150px;
+  max-width: 240px;
+  flex: 1 1 190px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: color-mix(in srgb, var(--terminal) 30%, var(--panel-raised));
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
+}
+
+.settings-search:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  background: color-mix(in srgb, var(--panel-raised) 82%, var(--terminal));
+  box-shadow: var(--ring);
+}
+
+.settings-search-input {
+  min-width: 0;
+  flex: 1;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: var(--text-xs);
+}
+
+.settings-search-input:focus {
+  border: 0;
+  box-shadow: none;
+}
+
+.settings-search-clear {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: var(--radius-xs);
+  color: var(--muted);
+}
+
+.settings-search-clear:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+}
+
 .settings-save:disabled {
   opacity: .42;
   filter: saturate(.45);
@@ -130,6 +183,21 @@
     linear-gradient(145deg, color-mix(in srgb, var(--panel-raised) 66%, transparent), color-mix(in srgb, var(--panel) 76%, transparent));
   box-shadow: var(--hairline), 0 7px 22px color-mix(in srgb, var(--shadow-color) 18%, transparent);
   animation: settings-card-in var(--dur-panel) var(--ease-out) both;
+}
+
+.settings-field,
+.settings-toggle-row,
+.theme-choice {
+  transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), opacity var(--dur-fast) var(--ease);
+}
+
+.settings-search-match {
+  border-color: color-mix(in srgb, var(--accent) 68%, var(--border)) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent), var(--shadow-sm);
+}
+
+.settings-search-dim {
+  opacity: .58;
 }
 
 .settings-card::before {
@@ -399,6 +467,7 @@
 }
 
 @container settings (max-width: 300px) {
+  .settings-search { min-width: 110px; }
   .theme-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .settings-grid { grid-template-columns: 1fr; }
   .settings-field-wide { grid-column: auto; }

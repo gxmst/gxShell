@@ -25,6 +25,60 @@
   animation: toast-in var(--dur-slow) var(--ease-spring) both;
 }
 
+.toast-content {
+  min-width: 0;
+  padding-right: 18px;
+}
+
+.toast-title {
+  margin-bottom: 2px;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 700;
+}
+
+.toast-text {
+  overflow-wrap: anywhere;
+}
+
+.toast-dismiss {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-xs);
+  color: var(--muted);
+  background: transparent;
+}
+
+.toast-dismiss:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+}
+
+.toast-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.toast-action {
+  min-height: 23px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  font-size: 10px;
+}
+
+.toast-action-primary { border-color: color-mix(in srgb, var(--accent) 52%, var(--border)); color: var(--accent-contrast); background: var(--accent); }
+.toast-action-secondary { color: var(--text); background: color-mix(in srgb, var(--panel-raised) 68%, transparent); }
+.toast-action-danger { border-color: color-mix(in srgb, var(--bad) 48%, var(--border)); color: var(--bad); background: color-mix(in srgb, var(--bad) 9%, transparent); }
+
 /* Leading signal bar encodes tone without recoloring the whole card. */
 .toast::before {
   content: "";
@@ -45,6 +99,15 @@
 .toast-error::before {
   background: var(--bad);
   box-shadow: 0 0 8px color-mix(in srgb, var(--bad) 40%, transparent);
+}
+
+.toast-warning::before {
+  background: var(--warn);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--warn) 40%, transparent);
+}
+
+.toast-warning {
+  border-color: color-mix(in srgb, var(--warn) 28%, var(--border));
 }
 
 .toast-success {

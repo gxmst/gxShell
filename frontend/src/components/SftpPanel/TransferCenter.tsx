@@ -1,7 +1,18 @@
-import { ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Columns2, Download, Upload, X } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Columns2, Download, Pause, Play, RefreshCw, Upload, X } from "lucide-react";
 import { useTransfers } from "../../hooks/useTransfers";
 import { t } from "../../i18n";
+import { formatBytes, formatFileSize } from "../../utils/format";
 import { FloatingCard } from "../FloatingCard/FloatingCard";
+
+function formatEta(seconds: number): string {
+  const whole = Math.max(0, Math.round(seconds));
+  if (whole < 60) return `${whole}s`;
+  const minutes = Math.floor(whole / 60);
+  const rest = whole % 60;
+  if (minutes < 60) return `${minutes}m ${rest}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
+}
 
 export function TransferCenter(props: {
   locale: string;
@@ -13,7 +24,7 @@ export function TransferCenter(props: {
   onUpload: () => void;
 }) {
   const lang = props.locale;
-  const { transfers, history, activeCount, cancelTransfer, clearHistory } = useTransfers();
+  const { transfers, history, activeCount, cancelTransfer, pauseTransfer, resumeTransfer, retryTransfer, clearHistory } = useTransfers();
 
   const active = Object.entries(transfers).filter(([, tr]) => !props.sessionId || tr.sessionId === props.sessionId);
   const recent = history.filter((h) => !props.sessionId || h.sessionId === props.sessionId).slice(0, 20);
@@ -61,6 +72,8 @@ export function TransferCenter(props: {
                 const pct = tr.total > 0 ? Math.round((tr.done / tr.total) * 100) : 0;
                 const name = tr.path.split(/[\\/]/).pop() || tr.path;
                 const isUp = tr.direction === "upload";
+                const speed = tr.speed && tr.speed > 0 ? formatBytes(tr.speed) : "—";
+                const eta = tr.eta && tr.eta > 0 ? formatEta(tr.eta) : "—";
                 return (
                   <div key={key} className="xfer-center-item">
                     <div className="xfer-center-item-top">
@@ -69,6 +82,13 @@ export function TransferCenter(props: {
                         : <ArrowDownToLine size={13} className="text-accent shrink-0" />}
                       <span className="xfer-center-item-name" title={tr.path}>{name}</span>
                       <span className="xfer-center-item-pct">{pct}%</span>
+                      <button
+                        className="mini-btn"
+                        onClick={() => void (tr.paused ? resumeTransfer(tr.jobId) : pauseTransfer(tr.jobId))}
+                        title={tr.paused ? (lang === "zh-CN" ? "继续" : "Resume") : (lang === "zh-CN" ? "暂停" : "Pause")}
+                      >
+                        {tr.paused ? <Play size={11} /> : <Pause size={11} />}
+                      </button>
                       <button className="mini-btn" onClick={() => void cancelTransfer(tr.jobId)} title={t(lang, "cancel")}>
                         <X size={11} />
                       </button>
@@ -78,6 +98,12 @@ export function TransferCenter(props: {
                         className={isUp ? "xfer-center-fill upload" : "xfer-center-fill"}
                         style={{ width: `${pct}%` }}
                       />
+                    </div>
+                    <div className="xfer-center-item-meta">
+                      <span>{formatFileSize(tr.done)} / {tr.total > 0 ? formatFileSize(tr.total) : "—"}</span>
+                      <span>{speed}</span>
+                      <span>{eta !== "—" ? `${eta} ${lang === "zh-CN" ? "剩余" : "left"}` : "—"}</span>
+                      {tr.paused && <span className="xfer-paused-label">{lang === "zh-CN" ? "已暂停" : "Paused"}</span>}
                     </div>
                   </div>
                 );
@@ -111,6 +137,11 @@ export function TransferCenter(props: {
                   <span className={h.ok ? "text-ok text-[10px]" : "text-bad text-[10px]"} title={h.error}>
                     {h.ok ? t(lang, "transferComplete") : h.status === "cancelled" ? t(lang, "transferCancelled") : t(lang, "transferFailed")}
                   </span>
+                  {!h.ok && h.retryable && h.sourcePath && h.targetPath && (
+                    <button className="mini-btn" onClick={() => void retryTransfer(h)} title={lang === "zh-CN" ? "重试" : "Retry"}>
+                      <RefreshCw size={11} />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

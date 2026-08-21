@@ -1,21 +1,24 @@
 import { useEffect, useRef } from "react";
+import {
+  ActionContext,
+  ActionRegistry,
+} from "../actions/actionRegistry";
 
 type HotkeyOptions = {
   activeTab: string;
   activeIsMarkdown: boolean;
-  onGlobalSearch: () => void;
-  onTerminalSearch: () => void;
-  onCloseTab: (id: string) => void;
-  /** Move to the next/previous tab, wrapping at the ends. */
-  onNextTab: () => void;
-  onPrevTab: () => void;
-  /** Activate a tab by its zero-based position; a no-op when out of range. */
-  onSelectTab: (index: number) => void;
+  /** The one registry shared by shortcuts, palette, menus, and help UI. */
+  registry: ActionRegistry<ActionContext>;
+  /** Receives the action id after a registered shortcut is consumed. */
+  onActionDispatch?: (actionId: string) => void;
 };
 
 export function useHotkeys(options: HotkeyOptions) {
   const optionsRef = useRef(options);
   optionsRef.current = options;
+
+  const registryRef = useRef<ActionRegistry<ActionContext>>(options.registry);
+  registryRef.current = options.registry;
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -30,53 +33,27 @@ export function useHotkeys(options: HotkeyOptions) {
       const isEditable = !isTerminalInput
         && !!target?.closest("input, textarea, select, [contenteditable='true'], [contenteditable='plaintext-only']");
       const isOverlay = !!target?.closest("[role='dialog'], .ctx-menu, .tab-action-dropdown");
-      // A dialog owns the keyboard entirely: switching tabs behind an open modal
-      // would leave it pointing at a session the user can no longer see.
-      if (isOverlay) return;
-
       const opts = optionsRef.current;
-
-      // Tab navigation runs ahead of the form-field guard. Ctrl+Tab and Alt+digit
-      // edit no text, so they stay available from a focused input, and Alt+digit
-      // in particular is the terminal-emulator convention: Ctrl+digit would
-      // shadow the control bytes a terminal sends (Ctrl+3 is ESC, Ctrl+8 is DEL).
-      if (event.ctrlKey && event.key === "Tab") {
-        event.preventDefault();
-        if (event.shiftKey) opts.onPrevTab();
-        else opts.onNextTab();
-        return;
-      }
-      if (event.altKey && !event.ctrlKey && !event.metaKey && /^[1-9]$/.test(event.key)) {
-        event.preventDefault();
-        opts.onSelectTab(Number(event.key) - 1);
-        return;
-      }
-
-      // Form controls own the rest of their keystrokes. In particular Ctrl+F
-      // must not erase a field's native find/edit behavior.
-      if (isEditable) return;
-
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        opts.onGlobalSearch();
-      }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
-        // When a markdown tab is active, its viewer owns Ctrl+F (in-document
-        // find). Yield so we neither open the terminal search nor fight it.
-        if (opts.activeIsMarkdown || !opts.activeTab) return;
-        // Terminal find is scoped to a focused/clicked terminal. Sidebar and
-        // tool panels keep the browser/platform shortcut semantics instead.
-        const terminalFocused = !!target?.closest(".xterm, .terminal-host, .floating-terminal");
-        if (!terminalFocused) return;
-        event.preventDefault();
-        opts.onTerminalSearch();
-      }
-      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "w" && opts.activeTab) {
-        event.preventDefault();
-        opts.onCloseTab(opts.activeTab);
+      const context: ActionContext = {
+        event,
+        target,
+        isTerminalInput,
+        isEditable,
+        isOverlay,
+        activeTab: opts.activeTab,
+        activeIsMarkdown: opts.activeIsMarkdown,
+      };
+      const action = registryRef.current.dispatch(event, context);
+      if (action) {
+        // The listener runs in capture phase so a claimed app shortcut cannot
+        // first be encoded and written by xterm's textarea listener. Stopping
+        // propagation is limited to handled actions; unclaimed function keys
+        // and control sequences continue to the terminal normally.
+        event.stopPropagation();
+        opts.onActionDispatch?.(action.id);
       }
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
 }

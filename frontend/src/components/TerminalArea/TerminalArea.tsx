@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { lazy, memo, Suspense, useCallback, useMemo, useRef } from "react";
+import { lazy, memo, Suspense, useCallback, useMemo, useRef, type ReactNode } from "react";
 import { Plus, Radio, TerminalSquare, X } from "lucide-react";
 import type { AutomationIndicator, MarkdownOpenTarget, SplitPane, Tab } from "../../types";
 import { TabBar } from "../TabBar/TabBar";
@@ -28,6 +28,9 @@ export const TerminalArea = memo(function TerminalArea(props: {
   onOpenMarkdownFile?: (target: MarkdownOpenTarget) => void;
   onTearOff?: (tab: Tab) => void;
   onReorder?: (draggedId: string, targetId: string) => void;
+  onRenameTab?: (tab: Tab) => void;
+  onTogglePinTab?: (tab: Tab) => void;
+  rightAccessory?: ReactNode;
   language: string;
   logViewer?: { name: string; content: string } | null;
   onCloseLogViewer?: () => void;
@@ -45,6 +48,8 @@ export const TerminalArea = memo(function TerminalArea(props: {
   dirtyTabIds?: string[];
   onMarkdownDirtyChange?: (id: string, dirty: boolean, save: () => Promise<boolean>) => void;
   getDimensions?: (id: string) => { cols: number; rows: number } | null;
+  getCurrentDirectory?: (id: string) => { path: string; host?: string } | null;
+  onOpenCurrentDirectory?: (id: string, path: string) => void;
 }) {
   const lang = props.language;
   const floatingSet = useMemo(() => new Set(props.floatingTabIds || []), [props.floatingTabIds]);
@@ -117,7 +122,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
 
   return (
     <section className="terminal-pane">
-      <TabBar tabs={visibleTabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} onTearOff={props.onTearOff} onReorder={props.onReorder} onNewConnection={props.onNewConnection} onNewLocal={props.onNewLocal} onOpenMarkdown={props.onOpenMarkdown} language={lang} broadcastInput={props.broadcastInput} broadcastAvailable={(props.broadcastCount || 0) > 1} onToggleBroadcast={props.onToggleBroadcast} recording={props.activeRecording} onToggleRecording={props.onToggleRecording} automationActivity={props.automationActivity} dirtyTabIds={props.dirtyTabIds} onSplitToggle={(tabId, direction) => {
+      <TabBar tabs={visibleTabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} onTearOff={props.onTearOff} onReorder={props.onReorder} onNewConnection={props.onNewConnection} onNewLocal={props.onNewLocal} onOpenMarkdown={props.onOpenMarkdown} onRename={props.onRenameTab} onTogglePin={props.onTogglePinTab} rightAccessory={props.rightAccessory} language={lang} broadcastInput={props.broadcastInput} broadcastAvailable={(props.broadcastCount || 0) > 1} onToggleBroadcast={props.onToggleBroadcast} recording={props.activeRecording} onToggleRecording={props.onToggleRecording} automationActivity={props.automationActivity} dirtyTabIds={props.dirtyTabIds} onSplitToggle={(tabId, direction) => {
         if (!props.onSplitChange) return;
         if (isSplitVisible) {
           const leftId = split!.left;
@@ -139,9 +144,13 @@ export const TerminalArea = memo(function TerminalArea(props: {
           }
         }
       }} />
-      {active && active.type !== "markdown" && active.state === "connecting" && (
+      {active && active.type !== "markdown" && (active.state === "connecting" || active.state === "reconnecting" || active.state === "restoring") && (
         <div className="terminal-state-banner terminal-state-connecting">
-          <span>{lang === "zh-CN" ? `正在连接 ${active.title}…` : `Connecting to ${active.title}…`}</span>
+          <span>{active.state === "reconnecting"
+            ? (lang === "zh-CN" ? `正在重新连接 ${active.title}…` : `Reconnecting to ${active.title}…`)
+            : active.state === "restoring"
+              ? (lang === "zh-CN" ? `正在恢复 ${active.title}…` : `Restoring ${active.title}…`)
+              : (lang === "zh-CN" ? `正在连接 ${active.title}…` : `Connecting to ${active.title}…`)}</span>
           <button onClick={() => props.onClose(active.id)}>{lang === "zh-CN" ? "取消" : "Cancel"}</button>
         </div>
       )}
@@ -170,7 +179,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
           let hostClass: string;
 
           if (isSplitVisible && isSplitTab) {
-            hostClass = clsx("terminal-host", "terminal-split-pane");
+            hostClass = clsx("terminal-host", "terminal-split-pane", isActive && "terminal-split-active");
             if (isLeft) {
               hostStyle = split.direction === "horizontal"
                 ? { gridColumn: "1", gridRow: "1" }
@@ -225,6 +234,14 @@ export const TerminalArea = memo(function TerminalArea(props: {
           onPointerMove={onDragSplitMove}
           onPointerUp={(e) => finishSplitDrag(e)}
           onPointerCancel={(e) => finishSplitDrag(e, true)}
+          onDoubleClick={() => {
+            if (!split) return;
+            props.onSplitChange?.({ ...split, ratio: 0.5 });
+            requestAnimationFrame(() => {
+              props.refitTerminal?.(split.left);
+              props.refitTerminal?.(split.right);
+            });
+          }}
         />
         {props.logViewer && (
           <div className="log-viewer-overlay">
@@ -257,6 +274,8 @@ export const TerminalArea = memo(function TerminalArea(props: {
           broadcastCount={props.broadcastCount}
           sessionCount={visibleTabs.filter((tab) => tab.type !== "markdown" && (tab.state === "connected" || tab.state === "connecting")).length}
           getDimensions={props.getDimensions}
+          getCurrentDirectory={props.getCurrentDirectory}
+          onOpenCurrentDirectory={props.onOpenCurrentDirectory}
           language={lang}
         />
       )}

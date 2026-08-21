@@ -158,6 +158,17 @@ func (a *App) CancelTransfer(jobID string) bool {
 	return a.sftp.CancelTransfer(jobID)
 }
 
+// PauseTransfer pauses an active upload or download at its next I/O boundary.
+// The partial file remains available for ResumeTransfer or a later retry.
+func (a *App) PauseTransfer(jobID string) bool {
+	return a.sftp.PauseTransfer(jobID)
+}
+
+// ResumeTransfer continues a transfer previously paused with PauseTransfer.
+func (a *App) ResumeTransfer(jobID string) bool {
+	return a.sftp.ResumeTransfer(jobID)
+}
+
 // DeleteRemoteFile deletes a file or directory on the remote server via SFTP.
 func (a *App) DeleteRemoteFile(sessionID, remotePath string) error {
 	return a.sftp.DeleteRemoteFile(sessionID, remotePath)

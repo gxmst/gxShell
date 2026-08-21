@@ -1,0 +1,80 @@
+/* Lightweight, reversible focus mode. Keep the tab strip and escape affordance
+   available so Zen mode never becomes a trap. */
+.app-shell[data-zen="true"] .left-rail {
+  display: none;
+}
+
+.app-shell[data-zen="true"] .workspace {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-shell[data-zen="true"] .tabbar {
+  padding-left: 42px;
+}
+
+.zen-mode-exit {
+  position: fixed;
+  z-index: 120;
+  top: 8px;
+  left: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 27px;
+  height: 27px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-radius: var(--radius-sm);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--panel-raised) 88%, transparent);
+  box-shadow: var(--shadow-sm, 0 4px 14px rgb(0 0 0 / 18%));
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
+}
+
+.zen-mode-exit:hover {
+  color: var(--accent-contrast);
+  background: var(--accent);
+}
+
+.zen-mode-exit:active {
+  transform: scale(.95);
+}
+
+.terminal-font-hud {
+  position: fixed;
+  z-index: 125;
+  top: 12px;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel-raised) 94%, transparent);
+  box-shadow: var(--shadow-sm, 0 4px 14px rgb(0 0 0 / 18%));
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  transform: translateX(-50%);
+  animation: terminal-font-hud-in 140ms var(--ease-out) both;
+}
+
+.terminal-font-hud svg {
+  color: var(--accent);
+}
+
+@keyframes terminal-font-hud-in {
+  from { opacity: 0; transform: translate(-50%, -4px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zen-mode-exit,
+  .terminal-font-hud {
+    animation: none;
+    transition: none;
+  }
+}

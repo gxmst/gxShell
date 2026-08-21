@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 type remoteReadHandleTestFile struct {
@@ -156,6 +157,79 @@ func TestTransferLifecycleEmitsOneTerminalEvent(t *testing.T) {
 	}
 }
 
+func TestTerminalTransferRejectsLatePausedEvent(t *testing.T) {
+	var events []map[string]any
+	m := &Manager{emit: func(_ string, data any) {
+		events = append(events, data.(map[string]any))
+	}, transfers: map[string]*transferJob{}}
+	job := m.beginTransfer("session-race", "/tmp/file", "download")
+	if !job.pause() {
+		t.Fatal("failed to stage concurrent pause")
+	}
+
+	m.finishTransfer(job, nil, 10, 10)
+	m.emitTransfer(job, "paused", 5, 10, nil)
+
+	if len(events) != 2 || events[1]["status"] != "succeeded" {
+		t.Fatalf("late pause revived terminal transfer: %#v", events)
+	}
+	if events[0]["sequence"] != uint64(1) || events[1]["sequence"] != uint64(2) {
+		t.Fatalf("unexpected event sequence: %#v", events)
+	}
+}
+
+func TestPauseReportsBytesObservedBetweenEvents(t *testing.T) {
+	var events []map[string]any
+	m := &Manager{emit: func(_ string, data any) {
+		events = append(events, data.(map[string]any))
+	}, transfers: map[string]*transferJob{}}
+	job := m.beginTransfer("session-pause", "/tmp/file", "download")
+
+	progress := m.transferProgress(job, 100, 900)
+	progress(50)
+	// Throttled away, so the only record of this position is the observation the
+	// copy loop makes. Pausing has to report it instead of the numbers carried
+	// by the last event that happened to get through.
+	progress(150)
+
+	if !m.PauseTransfer(job.id) {
+		t.Fatal("pause was rejected")
+	}
+	paused := events[len(events)-1]
+	if paused["status"] != "paused" {
+		t.Fatalf("last event = %#v, want a paused event", paused)
+	}
+	if paused["done"] != int64(250) || paused["total"] != int64(900) {
+		t.Fatalf("paused event reported stale progress: %#v", paused)
+	}
+}
+
+func TestEmitResumedResetsRateSamplingAtOffset(t *testing.T) {
+	var events []map[string]any
+	m := &Manager{emit: func(_ string, data any) {
+		events = append(events, data.(map[string]any))
+	}, transfers: map[string]*transferJob{}}
+	job := m.beginTransfer("session-resume", "/tmp/file", "download")
+	m.setTransferPaths(job, "/tmp/remote", "/tmp/local", true)
+	m.setTransferRetryable(job, true)
+	m.emitResumed(job, 1_000_000, 2_000_000)
+
+	job.metricsMu.Lock()
+	job.lastSampleAt = time.Now().Add(-time.Second)
+	job.metricsMu.Unlock()
+	m.emitTransfer(job, "progress", 1_000_100, 2_000_000, nil)
+
+	resumed := events[1]
+	if resumed["speed"] != float64(0) || resumed["sourcePath"] != "/tmp/remote" || resumed["retryable"] != true {
+		t.Fatalf("incomplete resumed event: %#v", resumed)
+	}
+	progress := events[2]
+	speed, ok := progress["speed"].(float64)
+	if !ok || speed < 50 || speed > 500 {
+		t.Fatalf("resume offset contaminated speed: %#v", progress["speed"])
+	}
+}
+
 func TestCancelTransferEmitsCancelledTerminal(t *testing.T) {
 	var events []map[string]any
 	m := &Manager{emit: func(_ string, data any) {
@@ -179,6 +253,71 @@ func TestCancelTransferEmitsCancelledTerminal(t *testing.T) {
 	terminal := events[len(events)-1]
 	if terminal["status"] != "cancelled" || terminal["jobId"] != job.id {
 		t.Fatalf("terminal event = %#v", terminal)
+	}
+}
+
+func TestPauseResumeTransferKeepsJobAndUnblocksWaiter(t *testing.T) {
+	var events []map[string]any
+	m := &Manager{emit: func(_ string, data any) {
+		events = append(events, data.(map[string]any))
+	}, transfers: map[string]*transferJob{}}
+
+	job := m.beginTransfer("session-pause", "/tmp/file", "download")
+	m.setTransferPaths(job, "/tmp/remote", "/tmp/local", false)
+	if !m.PauseTransfer(job.id) {
+		t.Fatal("active job was not paused")
+	}
+	if !job.isPaused() {
+		t.Fatal("job did not enter paused state")
+	}
+
+	ready := make(chan error, 1)
+	go func() { ready <- job.waitIfPaused() }()
+	select {
+	case err := <-ready:
+		t.Fatalf("waitIfPaused returned before resume: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	if !m.ResumeTransfer(job.id) {
+		t.Fatal("paused job was not resumed")
+	}
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Fatalf("waitIfPaused after resume = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("waitIfPaused remained blocked after resume")
+	}
+
+	if len(events) < 3 || events[1]["status"] != "paused" || events[2]["status"] != "progress" {
+		t.Fatalf("pause/resume events = %#v", events)
+	}
+	if events[1]["sourcePath"] != "/tmp/remote" || events[1]["targetPath"] != "/tmp/local" {
+		t.Fatalf("pause event paths = %#v", events[1])
+	}
+	if !m.CancelTransfer(job.id) {
+		t.Fatal("paused/resumed job was not cancellable")
+	}
+	m.finishTransfer(job, context.Canceled, 0, 10)
+}
+
+func TestEmitTransferIncludesSpeedAndEta(t *testing.T) {
+	var event map[string]any
+	m := &Manager{emit: func(_ string, data any) { event = data.(map[string]any) }, transfers: map[string]*transferJob{}}
+	job := m.beginTransfer("session-rate", "/tmp/file", "upload")
+	job.startedAt = time.Now().Add(-2 * time.Second)
+	m.setTransferPaths(job, "/tmp/local", "/tmp/remote", true)
+	m.emitTransfer(job, "progress", 100, 300, nil)
+	if got, ok := event["sourcePath"].(string); !ok || got != "/tmp/local" {
+		t.Fatalf("sourcePath = %#v", event["sourcePath"])
+	}
+	if speed, ok := event["speed"].(float64); !ok || speed <= 0 {
+		t.Fatalf("speed = %#v, want positive", event["speed"])
+	}
+	if eta, ok := event["eta"].(float64); !ok || eta <= 0 {
+		t.Fatalf("eta = %#v, want positive", event["eta"])
 	}
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { excludeTransferNames, findTransferConflicts } from "./transferConflict";
+import { describeTransferConflicts, excludeTransferNames, findTransferConflicts } from "./transferConflict";
 
 describe("findTransferConflicts", () => {
   it("separates replaceable files from directory collisions", () => {
@@ -37,5 +37,16 @@ describe("excludeTransferNames", () => {
 
     expect(excludeTransferNames(sources, ["readme.md"], true)).toEqual([sources[1]]);
     expect(excludeTransferNames(sources, ["readme.md"], false)).toEqual(sources);
+  });
+});
+
+describe("describeTransferConflicts", () => {
+  it("pairs source and destination metadata for the confirmation UI", () => {
+    const source = { name: "same.bin", isDir: false, size: 20, modTime: "2026-01-02T03:04:00Z" };
+    const destination = { name: "same.bin", isDir: false, size: 10, modTime: "2025-01-02T03:04:00Z" };
+
+    expect(describeTransferConflicts([source], [destination])).toEqual([
+      { name: "same.bin", source, destination },
+    ]);
   });
 });

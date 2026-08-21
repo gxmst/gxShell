@@ -79,6 +79,14 @@ type App struct {
 	// automationEventFn is a test seam for terminal activity events. Production
 	// leaves it nil and emitTerminalAutomation forwards events through Wails.
 	automationEventFn func(terminalAutomationEvent)
+	// automationEnvelopes pins each activity to the transport generation that
+	// started it. A command may finish after that SSH session has already been
+	// removed, so resolving only at finish time would lose the stale-event fence.
+	automationMu        sync.Mutex
+	automationEnvelopes map[string]terminalAutomationEnvelope
+	// automationRuntimeFn is a test seam for simulating a session disappearing
+	// between started and completed events. Production resolves through a.ssh.
+	automationRuntimeFn func(sessionID string) (runtimeID string, generation uint64, ok bool)
 	// cliApprovalEventFn is the equivalent seam for the in-app risk card shown
 	// while the native dialog remains the authoritative approval boundary.
 	cliApprovalEventFn func(cliApprovalEvent)
@@ -178,6 +186,7 @@ func NewApp() *App {
 		cliApprovals:         map[string]*cliApprovalBatch{},
 		cliJobs:              map[string]*cliJob{},
 		cliTunnels:           map[string]cliTunnelRecord{},
+		automationEnvelopes:  map[string]terminalAutomationEnvelope{},
 	}
 	// The logger is not created until startup, so the collision callback reads
 	// a.log lazily and stays silent until it exists.

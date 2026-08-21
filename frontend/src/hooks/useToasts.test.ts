@@ -127,4 +127,103 @@ describe('useToasts', () => {
     expect(() => vi.advanceTimersByTime(DISMISS_MS)).not.toThrow();
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it('keeps informational legacy notify calls transient while the object API records activity', () => {
+    const { result } = renderHook(() => useToasts());
+
+    act(() => result.current.notify('legacy message', 'info'));
+    expect(result.current.toasts).toHaveLength(1);
+    expect(result.current.activities).toHaveLength(0);
+
+    act(() => result.current.notify({
+      text: 'connection lost',
+      tone: 'error',
+      category: 'connection',
+      scope: 'session-1',
+      scopeLabel: 'prod',
+      toast: false,
+    }));
+    expect(result.current.toasts).toHaveLength(1);
+    expect(result.current.activities[0]).toMatchObject({
+      text: 'connection lost',
+      severity: 'error',
+      category: 'connection',
+      unread: true,
+      scopeLabel: 'prod',
+    });
+    expect(result.current.unreadActivityCount).toBe(1);
+  });
+
+  // Nearly every failure in the app is reported through a legacy string call.
+  // A toast the user was not looking at has to stay recoverable, so the failing
+  // tones are kept in the history — and coalesced, because a retry loop reports
+  // the same failure over and over.
+  it('records failing legacy notifications and coalesces repeats', () => {
+    const { result } = renderHook(() => useToasts());
+
+    act(() => result.current.notify('connection lost', 'error'));
+    act(() => {
+      vi.advanceTimersByTime(DISMISS_MS);
+    });
+    act(() => result.current.notify('connection lost', 'error'));
+    act(() => result.current.notify('disk almost full', 'warning'));
+
+    expect(result.current.activities).toHaveLength(2);
+    expect(result.current.activities.map((item) => item.text)).toEqual(['disk almost full', 'connection lost']);
+    expect(result.current.activities[1]).toMatchObject({ severity: 'error', occurrences: 2 });
+    expect(result.current.unreadActivityCount).toBe(2);
+  });
+
+  it('coalesces activity records by dedupe key and keeps the history bounded', () => {
+    const { result } = renderHook(() => useToasts({ maxActivities: 2 }));
+
+    act(() => result.current.recordActivity({ text: 'link down', tone: 'error', category: 'connection', dedupeKey: 'link', toast: false }));
+    act(() => result.current.recordActivity({ text: 'link still down', tone: 'error', category: 'connection', dedupeKey: 'link', toast: false }));
+    expect(result.current.activities).toHaveLength(1);
+    expect(result.current.activities[0]).toMatchObject({ text: 'link still down', occurrences: 2, unread: true });
+
+    act(() => {
+      result.current.recordActivity({ text: 'one', toast: false });
+      result.current.recordActivity({ text: 'two', toast: false });
+    });
+    expect(result.current.activities).toHaveLength(2);
+    expect(result.current.activities.map((item) => item.text)).toEqual(['two', 'one']);
+  });
+
+  it('supports read, remove and optional localStorage persistence', () => {
+    const key = 'test:activity-history';
+    const values = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (name: string) => values.get(name) ?? null,
+      setItem: (name: string, value: string) => values.set(name, value),
+      removeItem: (name: string) => values.delete(name),
+    });
+    const { result, unmount } = renderHook(() => useToasts({ activityStorageKey: key }));
+
+    act(() => result.current.recordActivity({ text: 'saved', category: 'system', toast: false }));
+    expect(JSON.parse(values.get(key) || '[]')).toHaveLength(1);
+    const id = result.current.activities[0].id;
+    act(() => result.current.markActivityRead(id));
+    expect(result.current.unreadActivityCount).toBe(0);
+    act(() => result.current.removeActivity(id));
+    expect(result.current.activities).toHaveLength(0);
+    unmount();
+
+    const restored = renderHook(() => useToasts({ activityStorageKey: key }));
+    expect(restored.result.current.activities).toHaveLength(0);
+    restored.unmount();
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps action callbacks on both the toast and activity record', () => {
+    const onClick = vi.fn();
+    const { result } = renderHook(() => useToasts());
+
+    act(() => result.current.notifyActivity({
+      text: 'ready',
+      actions: [{ id: 'retry', label: 'Retry', onClick }],
+    }));
+    expect(result.current.activities[0].actions?.[0].onClick).toBe(onClick);
+    expect(result.current.toasts[0].actions?.[0].onClick).toBe(onClick);
+  });
 });

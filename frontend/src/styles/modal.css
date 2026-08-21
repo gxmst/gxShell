@@ -11,6 +11,10 @@
   animation: modal-backdrop-in var(--dur) var(--ease);
 }
 
+.modal-backdrop[data-overlay-owner="false"] {
+  animation: none;
+}
+
 @keyframes modal-backdrop-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -40,6 +44,71 @@
 .modal-compact {
   width: min(400px, calc(100vw - 36px));
   padding: 16px;
+}
+
+.paste-confirm {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.paste-confirm-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.paste-confirm-heading > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--warn);
+}
+
+.paste-confirm-heading div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.paste-confirm-heading span,
+.paste-confirm-target {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.paste-confirm-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 12px;
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.paste-confirm-broadcast {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--warn);
+}
+
+.paste-confirm-preview {
+  max-height: min(260px, 38vh);
+  overflow: auto;
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--terminal);
+  padding: 10px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Session recordings are terminal event streams, not video. Give xterm a
@@ -362,6 +431,14 @@
   white-space: nowrap;
 }
 
+.cmdk-match {
+  padding: 0;
+  border-radius: 2px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  font-weight: 760;
+}
+
 .cmdk-item-sub {
   font-size: 11px;
   color: var(--muted);
@@ -381,6 +458,28 @@
   border-radius: 999px;
   background: color-mix(in srgb, var(--panel-raised) 50%, transparent);
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.cmdk-item-meta {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.cmdk-item-shortcut {
+  max-width: 96px;
+  overflow: hidden;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: var(--radius-xs);
+  color: var(--muted-2);
+  background: color-mix(in srgb, var(--panel-raised) 52%, transparent);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cmdk-item-active .cmdk-item-kind {
@@ -841,4 +940,209 @@
   display: flex;
   justify-content: space-between;
   gap: 8px;
+}
+.batch-command-dialog {
+  display: grid;
+  gap: 12px;
+  width: min(560px, calc(100vw - 32px));
+}
+
+.batch-command-preview {
+  max-height: 180px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--terminal-bg, #111);
+  color: var(--text);
+  font: 11px/1.55 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.batch-command-targets {
+  display: flex;
+  gap: 6px;
+  max-height: 72px;
+  overflow: auto;
+  flex-wrap: wrap;
+}
+
+.batch-command-targets span {
+  max-width: 180px;
+  padding: 3px 7px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted-2);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.batch-command-options {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(150px, auto) minmax(120px, auto);
+  gap: 8px;
+  align-items: center;
+}
+
+.batch-command-options > label {
+  display: grid;
+  grid-template-columns: auto auto minmax(54px, 1fr) auto;
+  gap: 5px;
+  align-items: center;
+  color: var(--muted-2);
+  font-size: 10px;
+}
+
+.batch-command-options input {
+  min-width: 0;
+  width: 72px;
+  height: 27px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text);
+}
+
+.batch-command-segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--input-bg);
+}
+
+.batch-command-segmented button {
+  display: inline-flex;
+  min-width: 0;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.batch-command-segmented button.active {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.batch-command-progress {
+  display: grid;
+  gap: 5px;
+}
+
+.batch-command-progress > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted-2);
+  font-size: 10px;
+}
+
+.batch-command-progress-track {
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--hover);
+}
+
+.batch-command-progress-track span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+
+@media (max-width: 700px) {
+  .batch-command-options {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .batch-command-segmented {
+    grid-column: 1 / -1;
+  }
+}
+
+.shortcut-help-dialog {
+  display: grid;
+  gap: 12px;
+  width: min(620px, calc(100vw - 32px));
+}
+
+.shortcut-conflict {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+  border-radius: 4px;
+  color: var(--warn);
+  font-size: 11px;
+}
+
+.shortcut-help-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 22px;
+  max-height: min(62vh, 520px);
+  overflow: auto;
+}
+
+.shortcut-help-list section {
+  min-width: 0;
+}
+
+.shortcut-help-list h3 {
+  margin: 0 0 5px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.shortcut-help-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 31px;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.shortcut-help-keys {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.shortcut-help-keys kbd {
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: var(--input-bg);
+  color: var(--muted-2);
+  font: 9px var(--font-mono);
+}
+
+.shortcut-help-keys small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+@media (max-width: 640px) {
+  .shortcut-help-list {
+    grid-template-columns: 1fr;
+  }
 }

@@ -148,14 +148,19 @@ const (
 )
 
 type SessionInfo struct {
-	ID        string       `json:"id"`
-	ProfileID string       `json:"profileId"`
-	Name      string       `json:"name"`
-	State     SessionState `json:"state"`
-	Error     string       `json:"error,omitempty"`
-	Cols      int          `json:"cols"`
-	Rows      int          `json:"rows"`
-	StartedAt time.Time    `json:"startedAt"`
+	ID        string `json:"id"`
+	ProfileID string `json:"profileId"`
+	// RuntimeID is stable across physical SSH reconnects for the same saved
+	// profile. Generation identifies the particular SSH transport instance.
+	// Both fields are additive so existing sessionId consumers remain compatible.
+	RuntimeID  string       `json:"runtimeId,omitempty"`
+	Generation uint64       `json:"generation,omitempty"`
+	Name       string       `json:"name"`
+	State      SessionState `json:"state"`
+	Error      string       `json:"error,omitempty"`
+	Cols       int          `json:"cols"`
+	Rows       int          `json:"rows"`
+	StartedAt  time.Time    `json:"startedAt"`
 }
 
 type RemoteFile struct {

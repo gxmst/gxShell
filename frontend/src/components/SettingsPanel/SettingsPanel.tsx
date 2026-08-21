@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Activity, Database, Download, FileText, HardDrive, Palette, RefreshCw, Save, Settings2, ShieldCheck, TerminalSquare } from "lucide-react";
+import { Activity, Database, Download, FileText, HardDrive, Palette, RefreshCw, Save, Search, Settings2, ShieldCheck, TerminalSquare, X } from "lucide-react";
 import { CheckForUpdate, ExportHistory, GetVersion, IsTextContextMenuRegistered, RegisterTextContextMenu, UnregisterTextContextMenu } from "../../../wailsjs/go/app/App";
 import { BrowserOpenURL } from "../../../wailsjs/runtime/runtime";
 import { types, version as versionModel } from "../../../wailsjs/go/models";
@@ -60,6 +60,8 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
   const lang = language;
   const zh = lang === "zh-CN";
   const [draft, setDraft] = useState(new types.AppSettings(settings));
+  const [settingsQuery, setSettingsQuery] = useState("");
+  const settingsPageRef = useRef<HTMLDivElement>(null);
   const [mdMenu, setMdMenu] = useState(false);
   // The manual update check is local to this panel: the startup check lives in
   // useUpdateCheck and raises a dialog, while this one only reports inline.
@@ -130,6 +132,31 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
     }
   };
 
+  // Search stays additive: it does not remove controls or change their order.
+  // The first matching field is brought into view and receives a transient
+  // outline, which makes a long settings page feel like a searchable index.
+  useEffect(() => {
+    const root = settingsPageRef.current;
+    if (!root) return;
+    const query = settingsQuery.trim().toLocaleLowerCase();
+    const candidates = Array.from(root.querySelectorAll<HTMLElement>(
+      ".settings-field, .settings-toggle-row, .theme-choice, .settings-card",
+    ));
+    candidates.forEach((element) => element.classList.remove("settings-search-match", "settings-search-dim"));
+    if (!query) return;
+    const fields = candidates.filter((element) => !element.classList.contains("settings-card"));
+    const matches = fields.filter((element) => (element.textContent || "").toLocaleLowerCase().includes(query));
+    const targets = matches.length ? matches : candidates.filter((element) => (element.textContent || "").toLocaleLowerCase().includes(query));
+    if (!targets.length) return;
+    targets[0].classList.add("settings-search-match");
+    targets[0].scrollIntoView?.({ block: "center", behavior: "smooth" });
+    if (matches.length) {
+      fields.filter((element) => !matches.includes(element)).forEach((element) => element.classList.add("settings-search-dim"));
+    }
+    const clear = window.setTimeout(() => targets[0]?.classList.remove("settings-search-match"), 1800);
+    return () => window.clearTimeout(clear);
+  }, [settingsQuery]);
+
   const toggleMdMenu = async (checked: boolean) => {
     try {
       if (checked) await RegisterTextContextMenu();
@@ -167,7 +194,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
   };
 
   return (
-    <div className="settings-page" onKeyDown={onKeyDown}>
+    <div className="settings-page" ref={settingsPageRef} onKeyDown={onKeyDown}>
       <header className="settings-hero">
         <div className="settings-hero-icon"><Settings2 size={18} /></div>
         <div className="min-w-0 flex-1">
@@ -177,6 +204,22 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
               ? <span className="settings-dirty-note">{t(lang, "unsavedChangesHint")}</span>
               : (zh ? "调整外观、终端行为和本地集成" : "Tune appearance, terminal behavior and local integrations")}
           </div>
+        </div>
+        <div className="settings-search" role="search">
+          <Search size={13} aria-hidden="true" />
+          <input
+            className="input settings-search-input"
+            value={settingsQuery}
+            onChange={(event) => setSettingsQuery(event.currentTarget.value)}
+            placeholder={t(lang, "searchPlaceholder")}
+            aria-label={t(lang, "search")}
+            spellCheck={false}
+          />
+          {settingsQuery && (
+            <button type="button" className="settings-search-clear" onClick={() => setSettingsQuery("")} aria-label={t(lang, "close")} title={t(lang, "close")}>
+              <X size={12} />
+            </button>
+          )}
         </div>
         <button className={dirty ? "btn-primary settings-save settings-save-dirty" : "btn-primary settings-save"} disabled={!dirty} onClick={() => void commit()} title="Ctrl+S">
           <Save size={13} /> {dirty ? t(lang, "saveChanges") : t(lang, "save")}

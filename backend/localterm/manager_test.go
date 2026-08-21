@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"gxShell/backend/types"
 )
 
 func TestResolveShellAutoUsesAvailableDefault(t *testing.T) {
@@ -13,6 +15,26 @@ func TestResolveShellAutoUsesAvailableDefault(t *testing.T) {
 	}
 	if got == "" {
 		t.Fatal("expected a platform default shell")
+	}
+}
+
+func TestEmitSessionIncludesRuntimeEnvelope(t *testing.T) {
+	var eventName string
+	var payload map[string]any
+	manager := NewManager(func(event string, data any) {
+		eventName = event
+		payload, _ = data.(map[string]any)
+	})
+	session := &Session{info: types.SessionInfo{
+		ID: "local-1", RuntimeID: "local:local-1", Generation: 1,
+		State: types.SessionConnected,
+	}}
+	manager.emitSession("terminal:data", session, map[string]any{"data": "hello"})
+	if eventName != "terminal:data" {
+		t.Fatalf("event = %q, want terminal:data", eventName)
+	}
+	if payload["sessionId"] != "local-1" || payload["runtimeId"] != "local:local-1" || payload["generation"] != uint64(1) || payload["data"] != "hello" {
+		t.Fatalf("unexpected local terminal envelope: %#v", payload)
 	}
 }
 
