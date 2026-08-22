@@ -196,14 +196,19 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
   return (
     <div className="settings-page" ref={settingsPageRef} onKeyDown={onKeyDown}>
       <header className="settings-hero">
-        <div className="settings-hero-icon"><Settings2 size={18} /></div>
-        <div className="min-w-0 flex-1">
-          <div className="settings-hero-title">{zh ? "偏好设置" : "Preferences"}</div>
-          <div className="settings-hero-subtitle">
-            {dirty
-              ? <span className="settings-dirty-note">{t(lang, "unsavedChangesHint")}</span>
-              : (zh ? "调整外观、终端行为和本地集成" : "Tune appearance, terminal behavior and local integrations")}
+        <div className="settings-hero-top">
+          <div className="settings-hero-icon"><Settings2 size={15} /></div>
+          <div className="settings-hero-heading">
+            <div className="settings-hero-title">{zh ? "偏好设置" : "Preferences"}</div>
+            <div className="settings-hero-subtitle">
+              {dirty
+                ? <span className="settings-dirty-note">{t(lang, "unsavedChangesHint")}</span>
+                : (zh ? "调整外观、终端行为和本地集成" : "Tune appearance, terminal behavior and local integrations")}
+            </div>
           </div>
+          <button className={dirty ? "btn-primary settings-save settings-save-dirty" : "btn-primary settings-save"} disabled={!dirty} onClick={() => void commit()} title="Ctrl+S">
+            <Save size={12} /> {dirty ? t(lang, "saveChanges") : t(lang, "save")}
+          </button>
         </div>
         <div className="settings-search" role="search">
           <Search size={13} aria-hidden="true" />
@@ -221,9 +226,6 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
             </button>
           )}
         </div>
-        <button className={dirty ? "btn-primary settings-save settings-save-dirty" : "btn-primary settings-save"} disabled={!dirty} onClick={() => void commit()} title="Ctrl+S">
-          <Save size={13} /> {dirty ? t(lang, "saveChanges") : t(lang, "save")}
-        </button>
       </header>
 
       <div className="settings-sections">
