@@ -213,6 +213,8 @@ export function SftpPanel(props: {
   const modifiedFormatter = useMemo(() => new Intl.DateTimeFormat(lang, { month: "short", day: "2-digit" }), [lang]);
   const pathWrapRef = useRef<HTMLDivElement>(null);
   const suggestSeq = useRef(0);
+  const [dragOver, setDragOver] = useState(false);
+  const dragCounterRef = useRef(0);
 
   // Windowed rendering state for the file list. Only the rows intersecting the
   // viewport (plus OVERSCAN_ROWS on each side) are mounted; spacer divs above
@@ -522,7 +524,44 @@ export function SftpPanel(props: {
   const bottomPad = Math.max(0, (totalRows - endRow) * rowHeight);
 
   return (
-    <div className="sftp-panel">
+    <div
+      className={clsx("sftp-panel", dragOver && "sftp-panel-dragover")}
+      onDragEnter={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounterRef.current += 1;
+        if (e.dataTransfer?.types?.includes("Files")) {
+          setDragOver(true);
+        }
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+        if (dragCounterRef.current === 0) {
+          setDragOver(false);
+        }
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounterRef.current = 0;
+        setDragOver(false);
+      }}
+    >
+      {dragOver && (
+        <div className="sftp-dropzone-overlay">
+          <div className="sftp-dropzone-box">
+            <Upload size={24} className="text-accent animate-bounce" />
+            <strong>{lang === "zh-CN" ? "释放文件以上传到当前目录" : "Drop files to upload here"}</strong>
+            <small>{path}</small>
+          </div>
+        </div>
+      )}
       <header className="sftp-browser-header" ref={pathWrapRef}>
         <div className="sftp-browser-topline">
           <div className="sftp-browser-title">

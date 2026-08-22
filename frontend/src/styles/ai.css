@@ -600,3 +600,31 @@
   gap: 6px;
   align-items: flex-start;
 }
+
+.ai-msg-assistant {
+  position: relative;
+}
+
+.ai-msg-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+  opacity: 0.3;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.ai-msg-assistant:hover .ai-msg-actions {
+  opacity: 1;
+}
+
+.ai-copy-btn {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  color: var(--muted);
+}
+
+.ai-copy-btn:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+}

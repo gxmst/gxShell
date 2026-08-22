@@ -455,11 +455,14 @@
 }
 
 .cmdk-match {
-  padding: 0;
-  border-radius: 2px;
+  padding: 0 1.5px;
+  border-radius: 3px;
   color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
   font-weight: 760;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  text-underline-offset: 2px;
 }
 
 .cmdk-item-sub {
@@ -994,12 +997,14 @@
 
 .batch-command-targets span {
   max-width: 180px;
-  padding: 3px 7px;
+  padding: 3px 8px;
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--muted-2);
+  border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel-raised) 45%, transparent);
+  color: var(--text);
   font-size: 10px;
+  font-family: var(--font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

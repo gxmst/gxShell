@@ -817,3 +817,55 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── SFTP Drag-and-Drop Dropzone ───────────────────── */
+
+.sftp-panel-dragover {
+  border-color: color-mix(in srgb, var(--section-accent) 65%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--section-accent) 25%, transparent);
+}
+
+.sftp-dropzone-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  background: color-mix(in srgb, var(--panel-raised) 92%, black);
+  backdrop-filter: blur(8px);
+  animation: ui-enter var(--dur-fast) var(--ease-out) both;
+  pointer-events: none;
+}
+
+.sftp-dropzone-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  border: 2px dashed color-mix(in srgb, var(--section-accent) 65%, var(--border));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--section-accent) 8%, transparent);
+  color: var(--text);
+  text-align: center;
+}
+
+.sftp-dropzone-box strong {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--section-accent);
+}
+
+.sftp-dropzone-box small {
+  font-size: 10.5px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  max-width: 80%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

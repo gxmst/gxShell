@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Bot, Check, History, Link2, ListChecks, MessageSquarePlus, Play, RefreshCw, Send, Server, Settings2, Square, Stethoscope, X } from "lucide-react";
+import { Bot, Check, Copy, History, Link2, ListChecks, MessageSquarePlus, Play, RefreshCw, Send, Server, Settings2, Square, Stethoscope, X } from "lucide-react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { types } from "../../../wailsjs/go/models";
@@ -7,6 +7,7 @@ import { AiChat, AiContinueChat, AiExecuteTools, CancelAiChat, GetAiConfig, GetA
 import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import { t } from "../../i18n";
 import type { Tab, Toast } from "../../types";
+import { writeClipboardText } from "../../utils/clipboard";
 import { Label } from "../modals/ModalShell";
 
 type ToolCallData = {
@@ -764,6 +765,22 @@ export function AiPanel(props: {
                     </>
                   );
                 })()}
+
+                {message.role === "assistant" && message.content && !messageStreaming && (
+                  <div className="ai-msg-actions">
+                    <button
+                      className="mini-btn ai-copy-btn"
+                      onClick={() => {
+                        writeClipboardText(message.content)
+                          .then(() => props.onNotify(lang === "zh-CN" ? "已复制到剪贴板" : "Copied to clipboard", "success"))
+                          .catch(() => props.onNotify(lang === "zh-CN" ? "复制失败" : "Copy failed", "error"));
+                      }}
+                      title={lang === "zh-CN" ? "复制内容" : "Copy content"}
+                    >
+                      <Copy size={11} />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           );

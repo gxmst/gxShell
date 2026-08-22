@@ -19,8 +19,14 @@
   align-items: center;
   justify-content: center;
   flex: 1;
-  opacity: 0.55;
-  gap: 6px;
+  min-height: 140px;
+  gap: 8px;
+  padding: 24px 16px;
+  border: 1px dashed color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--panel-raised) 20%, transparent);
+  color: var(--muted);
+  text-align: center;
 }
 
 .container-list {
