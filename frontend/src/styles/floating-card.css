@@ -1,19 +1,14 @@
-/* Solid floating window chrome — not glass. Clear edge, opaque fill, real title bar. */
+/* Solid floating window chrome — sleek modern inspector panel. */
 
 .floating-card {
   position: fixed;
   z-index: 10050;
-  border-radius: 12px;
-  /* Hard edge: solid border + outer ring so it never blends into the terminal. */
-  border: 1px solid var(--border-strong);
-  outline: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
-  outline-offset: 0;
-  /* Fully opaque panel surface (no see-through mix). */
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   background: var(--panel-raised);
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--border) 90%, transparent),
-    0 12px 40px color-mix(in srgb, var(--shadow-color) 70%, transparent),
-    0 4px 12px color-mix(in srgb, var(--shadow-color) 45%, transparent);
+    0 16px 48px color-mix(in srgb, var(--shadow-color) 45%, transparent),
+    0 4px 14px color-mix(in srgb, var(--shadow-color) 25%, transparent);
   animation: fc-fade-in var(--dur-slow) var(--ease-out);
   display: flex;
   flex-direction: column;
@@ -21,9 +16,8 @@
   max-width: calc(100vw - 24px);
   overflow: hidden;
   box-sizing: border-box;
-  /* Explicitly no glass blur. */
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
 }
 
 @keyframes fc-fade-in {
@@ -31,23 +25,17 @@
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* Title bar / drag strip — denser band so the window has a clear "top edge". */
+/* Title bar / drag strip — minimalist grab affordance */
 .floating-card-drag-bar {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  height: 36px;
+  height: 32px;
   cursor: grab;
   z-index: 1;
-  border-radius: 12px 12px 0 0;
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--panel-soft) 88%, var(--panel-raised)),
-    var(--panel-soft)
-  );
-  border-bottom: 1px solid var(--border-strong);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
+  border-radius: 14px 14px 0 0;
+  background: transparent;
   touch-action: none;
   user-select: none;
 }
@@ -56,30 +44,35 @@
   cursor: grabbing;
 }
 
-/* Leave a visual grip so the header doesn't look empty. */
+/* Minimal pill grip indicator */
 .floating-card-drag-bar::after {
   content: "";
   position: absolute;
   left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 36px;
-  height: 4px;
+  top: 9px;
+  transform: translateX(-50%);
+  width: 32px;
+  height: 3.5px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--muted) 42%, transparent);
+  background: color-mix(in srgb, var(--muted) 35%, transparent);
   pointer-events: none;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.floating-card-drag-bar:hover::after {
+  background: color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
 .floating-card-close {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 7px;
+  right: 7px;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
   border: 1px solid transparent;
   color: var(--muted);
   background: color-mix(in srgb, var(--panel-raised) 60%, transparent);
@@ -98,14 +91,14 @@
 }
 
 .floating-card-close:active {
-  transform: scale(0.94);
+  transform: scale(0.92);
 }
 
 .floating-card-body {
   position: relative;
   z-index: 0;
-  padding: 14px;
-  padding-top: 44px;
+  padding: 12px 14px 14px;
+  padding-top: 26px;
   overflow-y: auto;
   flex: 1;
   min-height: 0;
