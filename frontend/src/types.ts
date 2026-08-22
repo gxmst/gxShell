@@ -132,6 +132,13 @@ export type NotifyOptions = {
   persist?: boolean;
   /** Show the short-lived toast (default: true). */
   toast?: boolean;
+  /**
+   * Whether this item should count towards the activity badge. Defaults to true
+   * for error and warning tones and false otherwise, so the badge means "there
+   * is something to deal with" rather than "something happened". Set it
+   * explicitly for an informational item that still needs to be noticed.
+   */
+  attention?: boolean;
   /** Auto-dismiss delay for the short-lived toast. */
   durationMs?: number;
 };

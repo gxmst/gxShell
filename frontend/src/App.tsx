@@ -50,6 +50,21 @@ import { BatchCommandDialog, type BatchCommandRequest } from "./components/modal
 import { sendBatchCommand, type BatchCommandOptions } from "./utils/batchCommand";
 import { ShortcutHelpDialog } from "./components/modals/ShortcutHelpDialog";
 
+// Sidebar panel width bounds. The rail is fixed chrome and is added on top of
+// this, so these numbers describe the panel alone (see theme.css). The lower
+// bound is where the settings panel's multi-column grids start to look cramped —
+// its container query breaks at 300px — and the upper bound is a fraction of the
+// viewport rather than a constant so a chosen width still yields to a small
+// window instead of crowding the terminal out.
+const SIDEBAR_PANEL_DEFAULT = 328;
+const SIDEBAR_PANEL_MIN = 240;
+const SIDEBAR_PANEL_MAX_VW = 0.32;
+
+function clampSidebarPanelWidth(value: number, viewportWidth: number): number {
+  const max = Math.max(SIDEBAR_PANEL_MIN, Math.round(viewportWidth * SIDEBAR_PANEL_MAX_VW));
+  return Math.round(Math.min(Math.max(value, SIDEBAR_PANEL_MIN), max));
+}
+
 function App() {
   const {
     toasts,
@@ -94,6 +109,10 @@ function App() {
   const [terminalSearch, setTerminalSearch] = useState("");
   const [terminalSearchResult, setTerminalSearchResult] = useState<{ id: string; index: number; count: number } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("gx:sidebarCollapsed", false);
+  const [sidebarPanelWidth, setSidebarPanelWidth] = useState(SIDEBAR_PANEL_DEFAULT);
+  const [sidebarResizing, setSidebarResizing] = useState(false);
+  const sidebarPanelWidthRef = useRef(sidebarPanelWidth);
+  sidebarPanelWidthRef.current = sidebarPanelWidth;
   const revealLocalDocumentWorkspace = useCallback(() => setSidebarCollapsed(false), [setSidebarCollapsed]);
   const [logViewer, setLogViewer] = useState<{ name: string; content: string } | null>(null);
   const [floatingTabIds, setFloatingTabIds] = usePersistedState<string[]>("gx:floatingTabIds", []);
@@ -691,6 +710,75 @@ function App() {
     window.setTimeout(() => { refitTerminal(tabId); refitTerminal(rightId); }, 120);
   }, [refitTerminal]);
 
+  // ── Sidebar width ─────────────────────────────────────────────────────────
+  // Stored in AppSettings.sidebarWidth, the same place the vertical split ratio
+  // lives, so the layout is restored per install rather than per browser profile.
+  useEffect(() => {
+    const stored = profileState.settings?.sidebarWidth;
+    if (!stored || stored <= 0) return;
+    setSidebarPanelWidth(clampSidebarPanelWidth(stored, window.innerWidth));
+  }, [profileState.settings?.sidebarWidth]);
+
+  // A window that shrinks past the stored width pulls the panel back in. The
+  // CSS clamp below does this for the rendered value on its own; re-clamping the
+  // state keeps the number the next drag starts from honest.
+  useEffect(() => {
+    const onResize = () => setSidebarPanelWidth((width) => clampSidebarPanelWidth(width, window.innerWidth));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  const finishSidebarResize = useCallback(() => {
+    // xterm reflows on a real size change only, so refit after the grid settles
+    // rather than on every pointer move — a reflow per pixel is far too costly.
+    window.setTimeout(() => {
+      for (const tab of tabsRef.current) refitTerminal(tab.id);
+    }, 60);
+    const settings = profileState.settings;
+    if (!settings) return;
+    const width = sidebarPanelWidthRef.current;
+    if (settings.sidebarWidth === width) return;
+    profileState.saveSettings(new types.AppSettings({ ...settings, sidebarWidth: width })).catch(() => {
+      // A failed write only costs the restored width next launch.
+    });
+  }, [profileState, refitTerminal]);
+
+  const beginSidebarResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const rail = document.querySelector<HTMLElement>(".left-rail");
+    const shell = document.querySelector<HTMLElement>(".app-shell");
+    if (!rail || !shell) return;
+    const railWidth = parseFloat(window.getComputedStyle(shell).getPropertyValue("--rail-width")) || 48;
+    const startX = event.clientX;
+    const startWidth = rail.getBoundingClientRect().width - railWidth;
+    const handle = event.currentTarget;
+    // Pointer capture retargets the move/up events to the handle, so the drag
+    // survives the cursor outracing the panel edge or leaving the window.
+    handle.setPointerCapture(event.pointerId);
+    setSidebarResizing(true);
+
+    const onMove = (moveEvent: PointerEvent) => {
+      setSidebarPanelWidth(clampSidebarPanelWidth(startWidth + (moveEvent.clientX - startX), window.innerWidth));
+    };
+    const onEnd = () => {
+      handle.removeEventListener("pointermove", onMove);
+      handle.removeEventListener("pointerup", onEnd);
+      handle.removeEventListener("pointercancel", onEnd);
+      try { handle.releasePointerCapture(event.pointerId); } catch { /* already released */ }
+      setSidebarResizing(false);
+      finishSidebarResize();
+    };
+    handle.addEventListener("pointermove", onMove);
+    handle.addEventListener("pointerup", onEnd);
+    handle.addEventListener("pointercancel", onEnd);
+    event.preventDefault();
+  }, [finishSidebarResize]);
+
+  const resetSidebarResize = useCallback(() => {
+    setSidebarPanelWidth(clampSidebarPanelWidth(SIDEBAR_PANEL_DEFAULT, window.innerWidth));
+    finishSidebarResize();
+  }, [finishSidebarResize]);
+
   // Runtime font changes are deliberately session-local: they update every
   // open xterm immediately without rewriting preferences until the user saves
   // the terminal settings. A small HUD makes the otherwise invisible action
@@ -1228,7 +1316,19 @@ function App() {
 
   return (
     <TransfersProvider resolveSessionId={resolveTransferSession}>
-    <div className="app-shell" onContextMenu={() => setCtxMenu(null)} data-theme={themeName} data-collapsed={sidebarCollapsed ? "true" : "false"} data-zen={zenMode ? "true" : "false"} data-maximized={windowMaximized ? "true" : "false"}>
+    <div
+      className="app-shell"
+      onContextMenu={() => setCtxMenu(null)}
+      data-theme={themeName}
+      data-collapsed={sidebarCollapsed ? "true" : "false"}
+      data-zen={zenMode ? "true" : "false"}
+      data-maximized={windowMaximized ? "true" : "false"}
+      data-resizing={sidebarResizing ? "true" : "false"}
+      // The clamp is what keeps a chosen width from crowding the terminal on a
+      // small window; it supersedes the narrow-window media queries that used to
+      // set this variable, since an inline value would always outrank them.
+      style={{ ["--sidebar-panel-width" as string]: `clamp(${SIDEBAR_PANEL_MIN}px, ${sidebarPanelWidth}px, ${SIDEBAR_PANEL_MAX_VW * 100}vw)` } as React.CSSProperties}
+    >
       {zenMode && (
         <button
           type="button"
@@ -1289,6 +1389,8 @@ function App() {
         <Sidebar
           collapsed={sidebarCollapsed}
           setCollapsed={setSidebarCollapsed}
+          onResizeStart={beginSidebarResize}
+          onResizeReset={resetSidebarResize}
           setCtxMenu={setCtxMenu}
           drawer={drawer}          setDrawer={requestDrawer}
           onSettingsDirtyChange={handleSettingsDirtyChange}

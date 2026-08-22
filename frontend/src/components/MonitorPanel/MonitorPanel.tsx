@@ -78,7 +78,7 @@ function MetricRow({ icon, label, value, detail, clickable, onClick }: { icon: J
       <div className={clsx("metric-icon", `metric-${tone}`)}>{icon}</div>
       <div className="metric-row-content">
         <div className="flex items-center justify-between text-[10.5px]">
-          <span className="font-medium text-text">{label}</span>
+          <span className="font-medium">{label}</span>
           <span className="truncate font-mono text-muted text-[10px] tabular-nums">{detail || `${safe.toFixed(0)}%`}</span>
         </div>
         <div className="meter w-full"><div className={clsx("meter-fill", `meter-${tone}`)} style={{ width: `${safe}%` }} /></div>

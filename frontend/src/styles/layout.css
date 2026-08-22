@@ -22,18 +22,59 @@
   grid-template-columns: var(--rail-width, 48px) minmax(0, 1fr);
 }
 
+/* Width changes are animated everywhere except under the hand that is making
+   them: a 320ms ease on every pointer move turns a drag into a rubber band. */
+.app-shell[data-resizing="true"] .workspace,
+.app-shell[data-resizing="true"] .left-rail > .side-content {
+  transition: none;
+}
+
+/* A drag that outruns the panel edge must not select text or leave the cursor
+   flicking between arrows on whatever it passes over. */
+.app-shell[data-resizing="true"] {
+  cursor: col-resize;
+  user-select: none;
+}
+
 /* Clip the rail and slide it out instead of display:none (which cannot animate).
    NOTE: Do NOT put transform / will-change:transform on this node — it creates a
    containing block for position:fixed descendants and used to trap floating
    transfer panels inside the half-width sidebar. Floats/modals now portal to
-   body; keep the rail free of transform containment as a second line of defense. */
+   body; keep the rail free of transform containment as a second line of defense.
+   position: relative is safe (it does not contain fixed descendants) and is what
+   anchors .rail-resizer to the panel's trailing edge. */
 .left-rail {
+  position: relative;
   overflow: hidden;
   min-width: 0;
   transition:
     opacity var(--dur-sidebar, 320ms) var(--ease),
     border-color var(--dur-sidebar, 320ms) var(--ease),
     box-shadow var(--dur-sidebar, 320ms) var(--ease);
+}
+
+/* The resize grip. It sits on top of the rail's own border-right rather than
+   next to it, so the affordance is the line the user already sees; the hit area
+   is widened well past the 1px line because a 1px target is not grabbable. */
+.rail-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 6;
+  width: 7px;
+  cursor: col-resize;
+  background: transparent;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.rail-resizer:hover,
+.app-shell[data-resizing="true"] .rail-resizer {
+  background: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in srgb, var(--accent) 55%, transparent)
+  );
 }
 
 .app-shell[data-collapsed="true"] .side-content {
@@ -49,38 +90,23 @@
   box-sizing: border-box;
 }
 
-/* Windows keeps an invisible resize border (~8px) around a maximized frameless window.
-   Compensate with subtle padding so edge controls are not cut off. */
-.app-shell[data-maximized="true"] .topbar {
-  padding-top: 4px;
-  padding-left: 4px;
-  padding-right: 4px;
-}
+/* Windows keeps an invisible resize border around a maximized frameless window.
+   Compensating for it here was tried and reverted: the overhang is DPI-scaled
+   (~8px at 100%, ~12px at 150%), so a hardcoded padding is wrong at every scale
+   except one, and the only visible effect on this build was the top bar's
+   contents jumping inward when the window maximized. The shell still sets
+   data-maximized on .app-shell — if clipping at the screen edges is ever
+   actually observed, fix it on the Go side (WM_NCCALCSIZE / window options)
+   where the real frame metrics are available, not with padding here. */
 
-.app-shell[data-maximized="true"] .left-rail {
-  padding-left: 2px;
-}
-
-.app-shell[data-maximized="true"] .terminal-status-bar {
-  padding-bottom: 4px;
-  padding-left: 4px;
-  padding-right: 4px;
-}
-
-/* Narrow windows: a tighter panel so the terminal stays primary. Only the panel
-   shrinks — the rail is fixed chrome — and --sidebar-width follows from it, so
-   the workspace track needs no separate override. */
-@media (max-width: 1100px) {
-  .app-shell {
-    --sidebar-panel-width: 300px;
-  }
-}
-
-@media (max-width: 900px) {
-  .app-shell {
-    --sidebar-panel-width: 280px;
-  }
-}
+/* Narrow windows used to get a tighter panel from two media queries here. App
+   now sets --sidebar-panel-width inline as clamp(240px, <chosen>, 32vw), which
+   does the same job continuously instead of in two steps — and has to, because
+   an inline custom property outranks any media query in this file, so the old
+   rules would have been dead the moment the width became draggable. The 32vw
+   ceiling is what keeps the terminal primary on a small window; the fallbacks
+   below the inline value still read 328px for anything rendered before App
+   mounts. */
 
 .panel,
 .command-row,

@@ -42,4 +42,37 @@ describe('ProfileModal shortcuts', () => {
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onSave.mock.calls[0][0]).toMatchObject({ host: 'example.test' });
   });
+
+  // Description has to stay a multiline control. An <input> silently strips CR/LF
+  // from its value, so swapping one in to compact the form would quietly discard
+  // the line breaks of any existing profile the moment it was reopened and saved.
+  it('keeps line breaks in the description field', () => {
+    const onSave = vi.fn();
+    // Mutate rather than spread: Profile is a class and spreading drops its
+    // convertValues method.
+    const profile = emptyProfile();
+    profile.description = 'first line\nsecond line';
+    render(
+      <ProfileModal
+        profile={profile}
+        profiles={[]}
+        language="en"
+        onClose={vi.fn()}
+        onSave={onSave}
+        onPickKey={async () => ''}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+      />,
+    );
+
+    const description = screen.getByLabelText('Description');
+    expect(description.tagName).toBe('TEXTAREA');
+    expect((description as HTMLTextAreaElement).value).toBe('first line\nsecond line');
+
+    fireEvent.change(screen.getByLabelText('Host'), { target: { value: 'example.test' } });
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0]).toMatchObject({ description: 'first line\nsecond line' });
+  });
 });

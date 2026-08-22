@@ -49,7 +49,12 @@ export function AppTopBar({ tabbar, language, onMaximizedChange }: { tabbar: Rea
   const onDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
     if (target.closest("button, a, input, select, textarea, .tab, .tab-close, .tab-action-dropdown, [role='menu'], [role='menuitem']")) return;
-    if (window.getComputedStyle(target).getPropertyValue("--wails-draggable").trim() === "no-drag") return;
+    // Require an explicit drag surface rather than merely the absence of
+    // no-drag: --wails-draggable inherits, so a control added to the top bar
+    // without opting out would otherwise maximise the window when
+    // double-clicked. Defaulting to "not a drag surface" keeps that mistake
+    // inert instead of surprising.
+    if (window.getComputedStyle(target).getPropertyValue("--wails-draggable").trim() !== "drag") return;
     try {
       ToggleMaximiseWindow().then(setMaximized, () => undefined);
     } catch {

@@ -367,7 +367,7 @@ func DefaultSettings() types.AppSettings {
 		MonitorEnabled:         true,
 		MonitorIntervalSec:     5,
 		ConnectionTimeout:      15,
-		SidebarWidth:           300,
+		SidebarWidth:           328,
 		SavePasswords:          false,
 		SmartHighlight:         true,
 		HighlightLevel:         "off",

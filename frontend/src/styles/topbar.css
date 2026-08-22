@@ -36,9 +36,15 @@
   --wails-draggable: drag;
 }
 
+/* Everything interactive opts back out. --wails-draggable inherits, so a
+   container that is left on `drag` hands its padding and gaps to the window
+   dragger — which is why the open dropdown panels are listed here too, not just
+   their buttons: pressing on a menu's heading or row gutter would otherwise
+   start dragging the window out from under the menu. */
 .topbar .tab,
 .topbar .tab-action,
 .topbar .tab-actions button,
+.topbar .tab-action-dropdown,
 .topbar .window-controls button {
   --wails-draggable: no-drag;
 }

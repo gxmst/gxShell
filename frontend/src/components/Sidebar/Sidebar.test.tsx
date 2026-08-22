@@ -160,4 +160,29 @@ describe("Sidebar shell", () => {
     expect(container.querySelectorAll(".srv-group")).toHaveLength(0);
     expect(container.querySelector(".empty-state")).not.toBeNull();
   });
+
+  // The grip is the panel's trailing edge, so it only exists while there is a
+  // panel to size. Collapsed, the rail's own toggle is the way back.
+  it("exposes the width grip only when a resize handler is wired and the panel is open", () => {
+    const onResizeStart = vi.fn();
+    const onResizeReset = vi.fn();
+
+    const bare = renderSidebar();
+    expect(bare.container.querySelector(".rail-resizer")).toBeNull();
+
+    const collapsed = renderSidebar({ collapsed: true, onResizeStart, onResizeReset });
+    expect(collapsed.container.querySelector(".rail-resizer")).toBeNull();
+
+    const { container } = renderSidebar({ onResizeStart, onResizeReset });
+    const grip = container.querySelector(".rail-resizer") as HTMLElement;
+    expect(grip).not.toBeNull();
+    expect(grip.getAttribute("role")).toBe("separator");
+    expect(grip.getAttribute("aria-orientation")).toBe("vertical");
+
+    fireEvent.pointerDown(grip);
+    expect(onResizeStart).toHaveBeenCalledTimes(1);
+
+    fireEvent.doubleClick(grip);
+    expect(onResizeReset).toHaveBeenCalledTimes(1);
+  });
 });

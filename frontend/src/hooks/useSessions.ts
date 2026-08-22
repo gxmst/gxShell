@@ -182,7 +182,9 @@ export function useSessions(options: UseSessionsOptions) {
       const runtime = rememberSessionInfo(info);
       connectingSessionProfiles.current.delete(info.id);
       setTabs((items) => items.map((tab) => tab.id === info.id ? { ...tab, ...runtime, state: "connected", error: undefined } : tab));
-      notifyRef.current(`${info.name} connected`, "success");
+      // No toast for the ordinary outcome: the tab's own state is the feedback,
+      // and App records every connection state change in the activity history
+      // already. Failures still toast, from terminal:error below.
     });
     const offDisconnected = EventsOn("terminal:disconnected", (info: types.SessionInfo) => {
       if (!acceptRuntimeEvent(info)) return;

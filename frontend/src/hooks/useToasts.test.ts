@@ -128,6 +128,50 @@ describe('useToasts', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  // The badge has to mean "there is something to deal with". Recording a
+  // successful connection is useful history, but counting it would make the
+  // number almost always noise — and then the one time it is a failure it gets
+  // dismissed along with the rest.
+  it('counts only attention-worthy activity towards the badge', () => {
+    const { result } = renderHook(() => useToasts());
+
+    act(() => result.current.recordActivity({ text: 'Connection ready', tone: 'success', category: 'connection', toast: false }));
+    act(() => result.current.recordActivity({ text: 'Connecting', tone: 'info', category: 'connection', toast: false }));
+    expect(result.current.activities).toHaveLength(2);
+    expect(result.current.unreadActivityCount).toBe(0);
+
+    act(() => result.current.recordActivity({ text: 'Connection failed', tone: 'error', category: 'connection', toast: false }));
+    expect(result.current.unreadActivityCount).toBe(1);
+
+    // An informational item can still opt in when it genuinely needs noticing.
+    act(() => result.current.recordActivity({ text: 'Update available', tone: 'info', category: 'update', attention: true, toast: false }));
+    expect(result.current.unreadActivityCount).toBe(2);
+  });
+
+  // A repeat must not resurrect a record the user already dealt with unless the
+  // repeat itself warrants attention. The dedupe key includes the tone, so this
+  // only ever compares like with like.
+  it('re-raises a read record only when the repeat warrants attention', () => {
+    const { result } = renderHook(() => useToasts());
+
+    act(() => result.current.recordActivity({ text: 'sync finished', tone: 'info', category: 'transfer', dedupeKey: 'sync', attention: true, toast: false }));
+    const informational = result.current.activities[0].id;
+    expect(result.current.unreadActivityCount).toBe(1);
+    act(() => result.current.markActivityRead(informational));
+
+    act(() => result.current.recordActivity({ text: 'sync finished', tone: 'info', category: 'transfer', dedupeKey: 'sync', toast: false }));
+    expect(result.current.activities).toHaveLength(1);
+    expect(result.current.activities[0]).toMatchObject({ occurrences: 2, unread: false });
+
+    act(() => result.current.recordActivity({ text: 'link down', tone: 'error', category: 'connection', dedupeKey: 'link', toast: false }));
+    const failure = result.current.activities[0].id;
+    act(() => result.current.markActivityRead(failure));
+    expect(result.current.unreadActivityCount).toBe(0);
+
+    act(() => result.current.recordActivity({ text: 'link still down', tone: 'error', category: 'connection', dedupeKey: 'link', toast: false }));
+    expect(result.current.activities[0]).toMatchObject({ text: 'link still down', occurrences: 2, unread: true });
+  });
+
   it('keeps informational legacy notify calls transient while the object API records activity', () => {
     const { result } = renderHook(() => useToasts());
 

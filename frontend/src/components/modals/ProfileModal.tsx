@@ -164,7 +164,7 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
             <div className="profile-cli-trust-hint">{t(lang, "cliTrustHint")}</div>
           </div>
         )}
-        <Label text={t(lang, "description")} className="col-span-2"><input className="input compact-input" value={draft.description} onChange={(e) => update({ description: e.target.value })} placeholder={lang === "zh-CN" ? "可选备注说明" : "Optional notes"} /></Label>
+        <Label text={t(lang, "description")} className="col-span-2"><textarea className="input compact-input min-h-[56px]" value={draft.description} onChange={(e) => update({ description: e.target.value })} placeholder={lang === "zh-CN" ? "可选备注说明" : "Optional notes"} /></Label>
       </div>
 
       <div className="profile-modal-tunnel-header">

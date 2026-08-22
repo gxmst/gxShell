@@ -64,6 +64,10 @@ function sameDocumentPath(left: string | undefined, right: string, remote: boole
 export function Sidebar(props: {
   collapsed: boolean;
   setCollapsed: (value: boolean | ((value: boolean) => boolean)) => void;
+  /** Starts a horizontal drag of the panel width. Owned by App, which holds the width. */
+  onResizeStart?: (event: React.PointerEvent<HTMLDivElement>) => void;
+  /** Restores the default panel width, bound to a double-click on the edge. */
+  onResizeReset?: () => void;
   setCtxMenu: (menu: AppContextMenu | null) => void;
   drawer: Drawer;
   setDrawer: (drawer: Drawer) => void;
@@ -350,6 +354,20 @@ export function Sidebar(props: {
 
   return (
     <aside className="left-rail" ref={sidebarEl}>
+      {/* The border between the panel and the terminal doubles as the resize
+          grip. Hidden while collapsed: there is no panel to size then, and the
+          rail's own toggle is what brings it back. */}
+      {props.onResizeStart && !props.collapsed && (
+        <div
+          className="rail-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label={lang === "zh-CN" ? "调整侧栏宽度" : "Resize sidebar"}
+          title={lang === "zh-CN" ? "拖动调整宽度，双击复位" : "Drag to resize, double-click to reset"}
+          onPointerDown={props.onResizeStart}
+          onDoubleClick={props.onResizeReset}
+        />
+      )}
       <nav className="activity-rail" aria-label={lang === "zh-CN" ? "主导航" : "Primary navigation"}>
         {(["connections", "files", "tools"] as PrimaryNav[]).map((item) => (
           <button

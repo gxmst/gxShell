@@ -113,7 +113,10 @@
   border-radius: 999px;
   background: var(--accent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent), 0 0 6px var(--accent);
-  animation: tab-pulse 2s ease-in-out infinite;
+  /* Draws attention when the output arrives, then settles. A terminal stays open
+     all day, so an infinite animation here would keep the compositor awake for
+     as long as any tab is unread — one permanently animating layer per dot. */
+  animation: tab-pulse 2s ease-in-out 3;
 }
 
 @keyframes tab-pulse {

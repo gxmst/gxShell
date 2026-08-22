@@ -160,6 +160,12 @@ export function useToasts(options: UseToastsOptions = {}): UseToastsResult {
     const generatedId = `a${++counter.current}`;
     const dedupeKey = activityDedupeKey(input, tone);
     let storedId = generatedId;
+    // The badge counts what needs handling, not everything that happened. A
+    // successful connection belongs in the history so it can be looked up, but
+    // marking it unread trains the eye to dismiss a number that is usually
+    // nothing — and then to miss the one time it is a failure. Callers can opt
+    // an informational item back in with `attention`.
+    const unread = input.attention ?? (tone === "error" || tone === "warning");
     const activity: ActivityRecord = {
       id: generatedId,
       timestamp: now,
@@ -171,7 +177,7 @@ export function useToasts(options: UseToastsOptions = {}): UseToastsResult {
       scope: input.scope,
       scopeLabel: input.scopeLabel,
       dedupeKey: input.dedupeKey,
-      unread: true,
+      unread,
       occurrences: 1,
       detail: input.detail,
       actions: input.actions,
@@ -190,7 +196,9 @@ export function useToasts(options: UseToastsOptions = {}): UseToastsResult {
             ...activity,
             id: previous.id,
             timestamp: now,
-            unread: true,
+            // A repeat re-raises an already-read record only when the repeat
+            // itself is worth attention.
+            unread: unread || previous.unread,
             occurrences: (previous.occurrences || 1) + 1,
           };
           return [merged, ...items.filter((_, itemIndex) => itemIndex !== index)].slice(0, maxActivities);
