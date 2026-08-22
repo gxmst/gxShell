@@ -313,7 +313,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
         </SettingsSection>
 
         <SettingsSection icon={<Activity size={15} />} title={zh ? "连接与自动化" : "Connections & automation"} description={zh ? "监控频率、连接保护和 CLI 接入" : "Monitoring cadence, connection safeguards and CLI access"}>
-          <div className="settings-grid settings-grid-three">
+          <div className="settings-grid">
             <SettingsField label={t(lang, "monitorInterval")}><input className="input compact-input" type="number" min={1} value={draft.monitorIntervalSec} onChange={(event) => update({ monitorIntervalSec: Number(event.target.value) })} /></SettingsField>
             <SettingsField label={t(lang, "timeout")}><input className="input compact-input" type="number" min={1} value={draft.connectionTimeout} onChange={(event) => update({ connectionTimeout: Number(event.target.value) })} /></SettingsField>
           </div>

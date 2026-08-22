@@ -31,123 +31,10 @@
   padding: 12px 11px 11px 12px;
 }
 
-.brand-row {
-  min-height: 48px;
-  margin: 0 0 8px;
-  padding: 6px 7px;
-  border: 1px solid color-mix(in srgb, var(--border) 74%, transparent);
-  border-radius: var(--radius-md);
-  background: linear-gradient(145deg, color-mix(in srgb, var(--panel-raised) 58%, transparent), color-mix(in srgb, var(--panel) 56%, transparent));
-  box-shadow: var(--hairline), 0 8px 24px color-mix(in srgb, var(--shadow-color) 14%, transparent);
-}
+/* The brand row, the nav pill strip and its aux chips are gone: the activity
+   rail in sidebar.css is the single navigation surface now, and the logo moved
+   to the app top bar. Their overrides used to live here. */
 
-.brand-mark {
-  width: 34px;
-  height: 34px;
-  flex-basis: 34px;
-  border-radius: 11px;
-  color: var(--accent);
-  background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 24%, transparent), color-mix(in srgb, var(--accent) 7%, transparent));
-  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 12%, transparent), 0 6px 18px color-mix(in srgb, var(--accent) 13%, transparent);
-}
-
-.brand-name { font-weight: 780; }
-.brand-meta { color: var(--muted-2); }
-
-.nav-strip {
-  padding: 4px;
-  border-radius: 13px;
-  background: color-mix(in srgb, var(--terminal-top) 58%, transparent);
-  border-color: color-mix(in srgb, var(--border) 82%, transparent);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent), 0 7px 20px color-mix(in srgb, var(--shadow-color) 10%, transparent);
-}
-
-.nav-chip,
-.nav-icon-chip {
-  height: 34px;
-  border-radius: 9px;
-}
-
-.nav-chip-active {
-  border-color: color-mix(in srgb, var(--section-accent) 38%, var(--border));
-  background: linear-gradient(180deg, color-mix(in srgb, var(--section-accent) 20%, var(--panel-raised)), color-mix(in srgb, var(--section-accent) 8%, var(--panel)));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 7%, transparent), 0 7px 18px color-mix(in srgb, var(--section-accent) 12%, transparent);
-}
-
-.drawer-hero {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 9px;
-  min-height: 62px;
-  margin: 9px 0 8px;
-  padding: 9px 9px 9px 10px;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--section-accent) 18%, var(--border));
-  border-radius: var(--radius-md);
-  background:
-    linear-gradient(135deg, color-mix(in srgb, var(--section-accent) 11%, var(--panel-raised)), color-mix(in srgb, var(--panel) 74%, transparent));
-  box-shadow: var(--hairline), 0 9px 25px color-mix(in srgb, var(--shadow-color) 16%, transparent);
-  animation: ui-enter var(--dur-panel) var(--ease-out) both;
-}
-
-.drawer-hero::after {
-  content: "";
-  position: absolute;
-  right: -26px;
-  top: -36px;
-  width: 100px;
-  height: 100px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--section-accent) 10%, transparent);
-  filter: blur(2px);
-  pointer-events: none;
-}
-
-.drawer-hero-icon {
-  position: relative;
-  z-index: 1;
-  display: inline-flex;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--border);
-  border-radius: 11px;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--panel-raised) 80%, transparent);
-  box-shadow: var(--hairline);
-}
-
-.drawer-hero-copy {
-  position: relative;
-  z-index: 1;
-  min-width: 0;
-  flex: 1;
-}
-
-.drawer-hero-title {
-  color: var(--text);
-  font-size: var(--text-md);
-  font-weight: 760;
-  letter-spacing: -.02em;
-}
-
-.drawer-hero-subtitle {
-  margin-top: 2px;
-  overflow: hidden;
-  color: var(--muted);
-  font-size: 9.5px;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.drawer-hero-actions,
 .panel-page-actions {
   position: relative;
   z-index: 1;
@@ -157,7 +44,6 @@
   pointer-events: auto;
 }
 
-.drawer-hero-btn,
 .panel-page-action {
   display: inline-flex;
   width: 27px;
@@ -173,7 +59,6 @@
   transition: color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 
-.drawer-hero-btn:hover,
 .panel-page-action:hover:not(:disabled),
 .panel-page-action.active {
   color: var(--section-accent);
@@ -182,25 +67,16 @@
   box-shadow: 0 5px 14px color-mix(in srgb, var(--section-accent) 10%, transparent);
 }
 
-.drawer-hero-btn:active,
 .panel-page-action:active { transform: scale(.92); }
 
-.drawer-hero-btn-primary,
 .panel-page-action-primary {
   color: var(--accent-contrast);
   border-color: color-mix(in srgb, var(--section-accent) 56%, transparent);
   background: var(--section-accent);
 }
 
-.group-tabs {
-  margin: 0 0 7px;
-  padding: 2px 1px 3px;
-}
-
-.group-tab-active {
-  color: var(--section-accent);
-  border-color: color-mix(in srgb, var(--section-accent) 38%, var(--border));
-  background: color-mix(in srgb, var(--section-accent) 11%, transparent);
+@media (max-width: 1050px) {
+  .panel-page-heading small { display: none; }
 }
 
 .server-list {
@@ -685,28 +561,12 @@
   background: var(--terminal);
 }
 
-.tabbar {
-  min-height: 44px;
-  padding: 7px 8px 0;
-  background: color-mix(in srgb, var(--terminal-top) 90%, transparent);
-  box-shadow: 0 8px 24px color-mix(in srgb, var(--shadow-color) 12%, transparent);
-  backdrop-filter: blur(12px);
-}
-
-.tab {
-  height: 36px;
-  border-radius: 11px 11px 0 0;
-  padding: 0 4px 0 10px;
-}
-
-.tab:hover {
-  background: color-mix(in srgb, var(--panel-raised) 62%, transparent);
-}
-
-.tab-active {
-  background: linear-gradient(180deg, color-mix(in srgb, var(--panel-raised) 62%, var(--terminal)), var(--terminal));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 4%, transparent);
-}
+/* The tab strip used to sit on top of the terminal, so it was skinned here as a
+   translucent, blurred folder bar. It now lives in the app top bar, where
+   terminal.css supplies the geometry and topbar.css the chrome. The old block
+   is gone rather than scoped: its min-height was 4px taller than the top bar,
+   which pushed the strip — z-index and all — over the first pixels of the
+   terminal, and its downward box-shadow and backdrop-filter painted into it. */
 
 .ctx-menu,
 .tab-action-dropdown {
@@ -1048,10 +908,4 @@
 .ai-input,
 .cmdk-input {
   caret-color: var(--accent);
-}
-
-@media (max-width: 1050px) {
-  .drawer-hero-subtitle,
-  .panel-page-heading small { display: none; }
-  .drawer-hero { min-height: 54px; }
 }

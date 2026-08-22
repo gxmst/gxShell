@@ -89,6 +89,14 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 22%, transparent);
 }
 
+/* Recording is the one toolbar state that is not merely "on": it is writing a
+   file, so it carries the danger colour instead of the accent-adjacent warn. */
+.tab-action.tab-action-rec {
+  color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 15%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bad) 24%, transparent);
+}
+
 .tab-dirty-dot {
   width: 6px;
   height: 6px;

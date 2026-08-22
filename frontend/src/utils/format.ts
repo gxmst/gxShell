@@ -15,6 +15,18 @@ export function normalizeAppTheme(theme?: string): string {
   return appThemes.includes(theme || "") ? theme || "Light" : "Light";
 }
 
+/**
+ * Parse the channels out of a computed CSS colour ("rgb(14, 18, 23)" or
+ * "rgb(14 18 23 / 100%)"). Used to hand the active theme's surface colour to
+ * the native window, which cannot read CSS variables.
+ */
+export function parseRgbColor(value: string): { r: number; g: number; b: number } | null {
+  const match = value.match(/(\d+(?:\.\d+)?)[,\s]+(\d+(?:\.\d+)?)[,\s]+(\d+(?:\.\d+)?)/);
+  if (!match) return null;
+  const channel = (raw: string) => Math.min(255, Math.max(0, Math.round(Number(raw))));
+  return { r: channel(match[1]), g: channel(match[2]), b: channel(match[3]) };
+}
+
 export function getTerminalTheme(settings: types.AppSettings) {
   const requested = settings.terminal.themeName || settings.themeName || "Light";
   return terminalThemes[requested] || terminalThemes[normalizeAppTheme(settings.themeName)] || terminalThemes["Light"];

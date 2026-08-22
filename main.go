@@ -49,7 +49,12 @@ func main() {
 			Assets:  assets,
 			Handler: app.DocumentAssetHandler(a),
 		},
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
+		// BackgroundColour must match the default theme's --bg (#0e1217). The
+		// native window background shows during startup and when resize reveals
+		// untracked regions; a colour that belongs to no theme flashes as a
+		// foreign band. SetWindowBackgroundColour keeps it in sync once the
+		// frontend is up and the active theme is known.
+		BackgroundColour: &options.RGBA{R: 14, G: 18, B: 23, A: 1},
 		DragAndDrop: &options.DragAndDrop{
 			EnableFileDrop: true,
 		},
@@ -62,6 +67,11 @@ func main() {
 				hooks.SecondInstanceLaunch(data.Args)
 			},
 		},
+		// Frameless: the app draws its own top bar (AppTopBar) so one strip
+		// spans the window instead of a native caption plus two app-level
+		// chrome bands. Drag regions and window buttons live in the frontend;
+		// see internal/app/app_window.go for the bound controls.
+		Frameless: true,
 		Bind: []interface{}{
 			a,
 		},

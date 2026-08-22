@@ -1,7 +1,14 @@
+/* The shell stacks the app top bar above the workspace. Sizing (100vh,
+   overflow hidden, background) lives on .app-shell in theme.css. */
+.app-shell {
+  display: flex;
+  flex-direction: column;
+}
+
 .workspace {
   display: grid;
   grid-template-columns: var(--sidebar-width, 328px) minmax(0, 1fr);
-  height: 100%;
+  flex: 1;
   min-height: 0;
   min-width: 0;
   /* Always transition so expand + collapse both animate smoothly. */
@@ -9,7 +16,10 @@
 }
 
 .app-shell[data-collapsed="true"] .workspace {
-  grid-template-columns: 0px minmax(0, 1fr);
+  /* Collapsing folds the panel away and leaves the activity rail: the rail is
+     what carries the toggle back, so hiding it too would make the collapse a
+     one-way trip. */
+  grid-template-columns: var(--rail-width, 48px) minmax(0, 1fr);
 }
 
 /* Clip the rail and slide it out instead of display:none (which cannot animate).
@@ -26,39 +36,23 @@
     box-shadow var(--dur-sidebar, 320ms) var(--ease);
 }
 
-.app-shell[data-collapsed="true"] .left-rail {
+.app-shell[data-collapsed="true"] .side-content {
   opacity: 0;
-  border-right-color: transparent;
-  box-shadow: none;
   pointer-events: none;
 }
 
-/* Keep inner content at full sidebar width while the rail clips — prevents
-   squashed layout during the collapse animation. */
-.left-rail > .side-content {
-  width: var(--sidebar-width, 328px);
-  min-width: var(--sidebar-width, 328px);
-  box-sizing: border-box;
-}
-
-/* Narrow windows: slightly tighter sidebar so the terminal stays primary. */
+/* Narrow windows: a tighter panel so the terminal stays primary. Only the panel
+   shrinks — the rail is fixed chrome — and --sidebar-width follows from it, so
+   the workspace track needs no separate override. */
 @media (max-width: 1100px) {
-  .app-shell:not([data-collapsed="true"]) .workspace {
-    grid-template-columns: 300px minmax(0, 1fr);
-  }
-  .left-rail > .side-content {
-    width: 300px;
-    min-width: 300px;
+  .app-shell {
+    --sidebar-panel-width: 300px;
   }
 }
 
 @media (max-width: 900px) {
-  .app-shell:not([data-collapsed="true"]) .workspace {
-    grid-template-columns: 280px minmax(0, 1fr);
-  }
-  .left-rail > .side-content {
-    width: 280px;
-    min-width: 280px;
+  .app-shell {
+    --sidebar-panel-width: 280px;
   }
 }
 
@@ -130,53 +124,6 @@
   background: var(--terminal);
 }
 
-/* Sidebar toggle affordance in the tab bar — spring in when the rail is gone. */
-.tab-action.sidebar-reveal {
-  animation: sidebar-reveal-in var(--dur-slow) var(--ease-spring) both;
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-
-.tab-action.sidebar-reveal:hover {
-  background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: var(--accent);
-}
-
-.tab-action.sidebar-reveal svg {
-  transition: transform var(--dur) var(--ease-out);
-}
-
-.tab-action.sidebar-reveal:hover svg {
-  transform: translateX(1px);
-}
-
-@keyframes sidebar-reveal-in {
-  from { opacity: 0; transform: scale(0.85) translateX(-4px); }
-  to   { opacity: 1; transform: scale(1) translateX(0); }
-}
-
-/* Collapse control in the brand row. */
-.sidebar-collapse-btn {
-  transition:
-    background var(--dur-fast) var(--ease),
-    border-color var(--dur-fast) var(--ease),
-    color var(--dur-fast) var(--ease),
-    transform var(--dur) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease) !important;
-}
-
-.sidebar-collapse-btn svg {
-  transition: transform var(--dur) var(--ease-out);
-}
-
-.sidebar-collapse-btn:hover svg {
-  transform: scale(1.08);
-}
-
-.sidebar-collapse-btn:active {
-  transform: scale(0.94);
-}
-
-.sidebar-collapse-btn:active svg {
-  transform: scale(0.92);
-}
+/* The tab bar no longer carries a sidebar affordance and the brand row is gone:
+   the activity rail is always visible and its bottom button is the only panel
+   toggle. */

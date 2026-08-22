@@ -1,12 +1,15 @@
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, Circle, Columns2, FileText, List, PanelLeft, Pin, PinOff, Plus, Radio, RefreshCw, Rows2, Server, Terminal, X } from "lucide-react";
+import { ChevronDown, Circle, Columns2, FileText, List, Pin, PinOff, Plus, Radio, RefreshCw, Rows2, Server, Terminal, X } from "lucide-react";
 import type { AutomationIndicator, SplitDirection, Tab } from "../../types";
 import { stateClass } from "../../utils/format";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
 
-export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSidebar, onActive, onClose, onReconnect, onTearOff, onReorder, onSplitToggle, onNewConnection, onNewLocal, onOpenMarkdown, onRename, onTogglePin, rightAccessory, broadcastInput, broadcastAvailable, onToggleBroadcast, recording, onToggleRecording, automationActivity, dirtyTabIds, language }: { tabs: Tab[]; activeTab: string; profiles: types.Profile[]; sidebarCollapsed: boolean; onToggleSidebar: () => void; onActive: (id: string) => void; onClose: (id: string) => void; onReconnect: (tab: Tab) => void; onTearOff?: (tab: Tab) => void; onReorder?: (draggedId: string, targetId: string) => void; onSplitToggle?: (tabId: string, direction: SplitDirection) => void; onNewConnection?: () => void; onNewLocal?: () => void; onOpenMarkdown?: () => void; onRename?: (tab: Tab) => void; onTogglePin?: (tab: Tab) => void; rightAccessory?: ReactNode; broadcastInput?: boolean; broadcastAvailable?: boolean; onToggleBroadcast?: () => void; recording?: boolean; onToggleRecording?: (id: string) => void; automationActivity?: Record<string, AutomationIndicator>; dirtyTabIds?: string[]; language?: string }) {
+// The tab strip. It is mounted inside AppTopBar, so it owns no window chrome
+// and no sidebar affordance: the activity rail is always visible and carries
+// the only panel toggle.
+export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconnect, onTearOff, onReorder, onSplitToggle, onNewConnection, onNewLocal, onOpenMarkdown, onRename, onTogglePin, rightAccessory, broadcastInput, broadcastAvailable, onToggleBroadcast, recording, onToggleRecording, automationActivity, dirtyTabIds, language }: { tabs: Tab[]; activeTab: string; profiles: types.Profile[]; onActive: (id: string) => void; onClose: (id: string) => void; onReconnect: (tab: Tab) => void; onTearOff?: (tab: Tab) => void; onReorder?: (draggedId: string, targetId: string) => void; onSplitToggle?: (tabId: string, direction: SplitDirection) => void; onNewConnection?: () => void; onNewLocal?: () => void; onOpenMarkdown?: () => void; onRename?: (tab: Tab) => void; onTogglePin?: (tab: Tab) => void; rightAccessory?: ReactNode; broadcastInput?: boolean; broadcastAvailable?: boolean; onToggleBroadcast?: () => void; recording?: boolean; onToggleRecording?: (id: string) => void; automationActivity?: Record<string, AutomationIndicator>; dirtyTabIds?: string[]; language?: string }) {
   const active = tabs.find((tab) => tab.id === activeTab);
   const lang = language || "en";
   const dragRef = useRef<{ tabId: string; startX: number; startY: number; active: boolean } | null>(null);
@@ -147,9 +150,6 @@ export function TabBar({ tabs, activeTab, profiles, sidebarCollapsed, onToggleSi
 
   return (
     <div className="tabbar" data-dragging={dragState ? "true" : "false"}>
-      {sidebarCollapsed && (
-        <button className="tab-action sidebar-reveal" aria-label={t(lang, "showSidebar")} onClick={onToggleSidebar} title={t(lang, "showSidebar")}><PanelLeft size={14} /></button>
-      )}
       <div className="tabs-scroll" ref={tabsScrollRef} role="tablist" aria-label={lang === "zh-CN" ? "打开的标签" : "Open tabs"}>
         {tabs.map((tab, index) => {
           const profile = profileByID.get(tab.profileId);

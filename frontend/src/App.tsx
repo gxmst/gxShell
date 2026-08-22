@@ -1,10 +1,10 @@
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { types } from "../wailsjs/go/models";
-import { AnswerKeyboardInteractive, CreateCommand, DeleteCommand, ExportProfiles, GetStartupFile, ImportOpenSSHConfig, ImportProfiles, IsRecording, ListCommands, OpenDataDir, ReadLogFile, RevokeCliTrust, SelectPrivateKey, SendCommandToTerminal, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/app/App";
+import { AnswerKeyboardInteractive, CreateCommand, DeleteCommand, ExportProfiles, GetStartupFile, ImportOpenSSHConfig, ImportProfiles, IsRecording, ListCommands, OpenDataDir, ReadLogFile, RevokeCliTrust, SelectPrivateKey, SendCommandToTerminal, SetWindowBackgroundColour, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/app/App";
 import { emptyProfile } from "./constants";
-import type { AutomationActivityEvent, AutomationActivityRecord, AutomationIndicator, CliApprovalEvent, Drawer, SplitPane, Tab } from "./types";
-import { normalizeAppTheme } from "./utils/format";
+import type { AutomationActivityEvent, AutomationActivityRecord, AutomationIndicator, CliApprovalEvent, Drawer, SplitDirection, SplitPane, Tab } from "./types";
+import { normalizeAppTheme, parseRgbColor } from "./utils/format";
 import { useToasts } from "./hooks/useToasts";
 import { useProfiles } from "./hooks/useProfiles";
 import { useTerminal, type AppContextMenu, type TerminalPasteRequest } from "./hooks/useTerminal";
@@ -15,6 +15,8 @@ import { useMarkdownTabs } from "./hooks/useMarkdownTabs";
 import { usePersistedState } from "./hooks/usePersistedState";
 import { useUpdateCheck } from "./hooks/useUpdateCheck";
 import { Sidebar } from "./components/Sidebar/Sidebar";
+import { AppTopBar } from "./components/AppTopBar/AppTopBar";
+import { TabBar } from "./components/TabBar/TabBar";
 import { TerminalArea } from "./components/TerminalArea/TerminalArea";
 import { FloatingTerminal } from "./components/FloatingTerminal/FloatingTerminal";
 import { ProfileModal } from "./components/modals/ProfileModal";
@@ -105,6 +107,7 @@ function App() {
   const [renameTabRequest, setRenameTabRequest] = useState<Tab | null>(null);
   const [activityCenterOpen, setActivityCenterOpen] = useState(false);
   const [zenMode, setZenMode] = useState(false);
+  const [windowMaximized, setWindowMaximized] = useState(false);
   const [fontSizeHud, setFontSizeHud] = useState<number | null>(null);
   const fontSizeHudTimer = useRef<number | null>(null);
   const [broadcastInput, setBroadcastInput] = useState(false);
@@ -659,6 +662,35 @@ function App() {
     });
   }, [sessions.setTabs]);
 
+  // Torn-off terminals live in their own windows, so the strip and every action
+  // that walks it must see the same membership.
+  const visibleTabs = useMemo(
+    () => sessions.tabs.filter((tab) => !floatingTabIds.includes(tab.id)),
+    [floatingTabIds, sessions.tabs],
+  );
+
+  // Split toggling moved up here with the tab strip. Toggling off refits both
+  // panes after the layout settles; toggling on picks the neighbour that is not
+  // already the active tab so the split never pairs a tab with itself.
+  const handleSplitToggle = useCallback((tabId: string, direction: SplitDirection) => {
+    const visible = tabsRef.current.filter((tab) => !floatingTabIdsRef.current.includes(tab.id));
+    const current = splitPaneRef.current;
+    const splitLive = !!current
+      && visible.some((tab) => tab.id === current.left)
+      && visible.some((tab) => tab.id === current.right);
+    if (splitLive && current) {
+      const { left, right } = current;
+      setSplitPane(null);
+      window.setTimeout(() => { refitTerminal(left); refitTerminal(right); }, 80);
+      return;
+    }
+    const other = visible.find((tab) => tab.id !== tabId && tab.id !== activeTabIdRef.current);
+    const rightId = other?.id || visible.find((tab) => tab.id !== tabId)?.id;
+    if (!rightId) return;
+    setSplitPane({ left: tabId, right: rightId, direction, ratio: 0.5 });
+    window.setTimeout(() => { refitTerminal(tabId); refitTerminal(rightId); }, 120);
+  }, [refitTerminal]);
+
   // Runtime font changes are deliberately session-local: they update every
   // open xterm immediately without rewriting preferences until the user saves
   // the terminal settings. A small HUD makes the otherwise invisible action
@@ -917,6 +949,22 @@ function App() {
 
   const themeName = normalizeAppTheme(profileState.settings?.themeName);
 
+  // The frameless window's own background shows before the webview paints and
+  // at the edges while a resize outruns it. No single hardcoded value can match
+  // six themes, so push the resolved --bg down after every theme change.
+  useEffect(() => {
+    const shell = document.querySelector<HTMLElement>(".app-shell");
+    if (!shell) return;
+    const colour = parseRgbColor(window.getComputedStyle(shell).backgroundColor);
+    if (!colour) return;
+    try {
+      // Absent until Wails injects its bindings, and absent entirely in tests.
+      SetWindowBackgroundColour(colour.r, colour.g, colour.b)?.catch?.(() => undefined);
+    } catch {
+      /* bindings not injected yet */
+    }
+  }, [themeName]);
+
   // Running a saved command first checks for <name> placeholders. If present, we
   // open the fill dialog and only send once the user resolves them; otherwise the
   // command is sent as-is. `send` performs the actual delivery on the resolved
@@ -1023,7 +1071,6 @@ function App() {
   useEffect(() => () => batchCommandAbort.current?.abort(), []);
 
   const handleNewConnection = useCallback(() => setProfileModal(emptyProfile()), []);
-  const handleToggleSidebar = useCallback(() => setSidebarCollapsed(v => !v), []);
   // From SFTP: jump the session terminal into the browsed directory and focus it.
   // OSC 7 is an enhancement here, not a prerequisite: a default server bash
   // never reports it, so requiring it would disable this action almost
@@ -1181,7 +1228,7 @@ function App() {
 
   return (
     <TransfersProvider resolveSessionId={resolveTransferSession}>
-    <div className="app-shell" onContextMenu={() => setCtxMenu(null)} data-theme={themeName} data-collapsed={sidebarCollapsed ? "true" : "false"} data-zen={zenMode ? "true" : "false"}>
+    <div className="app-shell" onContextMenu={() => setCtxMenu(null)} data-theme={themeName} data-collapsed={sidebarCollapsed ? "true" : "false"} data-zen={zenMode ? "true" : "false"} data-maximized={windowMaximized ? "true" : "false"}>
       {zenMode && (
         <button
           type="button"
@@ -1199,6 +1246,45 @@ function App() {
           <span>{fontSizeHud}px</span>
         </div>
       )}
+      <AppTopBar
+        language={profileState.settings?.language || "en"}
+        onMaximizedChange={setWindowMaximized}
+        tabbar={<TabBar
+          tabs={visibleTabs}
+          activeTab={sessions.activeTab}
+          profiles={profileState.profiles}
+          onActive={activateTab}
+          onClose={sessions.closeTab}
+          onReconnect={sessions.reconnectTab}
+          onTearOff={handleTearOff}
+          onReorder={sessions.reorderTabs}
+          onSplitToggle={handleSplitToggle}
+          onNewConnection={handleNewConnection}
+          onNewLocal={sessions.connectLocal}
+          onOpenMarkdown={handleOpenMarkdown}
+          onRename={setRenameTabRequest}
+          onTogglePin={togglePinTab}
+          broadcastInput={broadcastInput}
+          broadcastAvailable={connectedSshCount > 1}
+          onToggleBroadcast={handleToggleBroadcast}
+          recording={activeRecording}
+          onToggleRecording={toggleRecording}
+          automationActivity={automationActivity}
+          dirtyTabIds={dirtyTabIds}
+          language={profileState.settings?.language || "en"}
+          rightAccessory={<ActivityCenter
+            activities={activities}
+            unreadCount={unreadActivityCount}
+            locale={profileState.settings?.language || "en"}
+            open={activityCenterOpen}
+            onOpenChange={setActivityCenterOpen}
+            onMarkRead={markActivityRead}
+            onMarkAllRead={markAllActivitiesRead}
+            onDismiss={removeActivity}
+            onClear={clearActivities}
+          />}
+        />}
+      />
       <main className="workspace">
         <Sidebar
           collapsed={sidebarCollapsed}
@@ -1291,31 +1377,12 @@ function App() {
           getDimensions={activeTerminal.getDimensions}
           getCurrentDirectory={activeTerminal.getCurrentDirectory}
           onOpenCurrentDirectory={handleOpenCurrentDirectory}
-          sidebarCollapsed={sidebarCollapsed}
-          onToggleSidebar={handleToggleSidebar}
           onActive={activateTab}
           onClose={sessions.closeTab}
           onReconnect={sessions.reconnectTab}
           onNewConnection={handleNewConnection}
-          onNewLocal={sessions.connectLocal}
-          onReorder={sessions.reorderTabs}
-          onRenameTab={setRenameTabRequest}
-          onTogglePinTab={togglePinTab}
-          rightAccessory={<ActivityCenter
-            activities={activities}
-            unreadCount={unreadActivityCount}
-            locale={profileState.settings?.language || "en"}
-            open={activityCenterOpen}
-            onOpenChange={setActivityCenterOpen}
-            onMarkRead={markActivityRead}
-            onMarkAllRead={markAllActivitiesRead}
-            onDismiss={removeActivity}
-            onClear={clearActivities}
-          />}
-          onOpenMarkdown={handleOpenMarkdown}
           onOpenMarkdownFile={openMarkdownTarget}
           onNotify={notify}
-          onTearOff={handleTearOff}
           language={profileState.settings?.language || "en"}
           logViewer={logViewer}
           onCloseLogViewer={handleCloseLogViewer}
@@ -1326,10 +1393,6 @@ function App() {
           broadcastInput={broadcastInput}
           broadcastCount={connectedSshCount}
           onToggleBroadcast={handleToggleBroadcast}
-          activeRecording={activeRecording}
-          onToggleRecording={toggleRecording}
-          automationActivity={automationActivity}
-          dirtyTabIds={dirtyTabIds}
           onMarkdownDirtyChange={handleMarkdownDirtyChange}
         />
       </main>

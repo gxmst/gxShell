@@ -44,8 +44,13 @@
   --text-base: 13px;
   --text-lg: 15px;
 
-  /* Layout proportions. */
-  --sidebar-width: 328px;
+  /* Layout proportions. The activity rail is fixed chrome, so it is added to
+     the panel rather than taken out of it: only --sidebar-panel-width is tuned
+     (see the narrow-window queries in layout.css) and the total follows. */
+  --rail-width: 48px;
+  --sidebar-panel-width: 328px;
+  --sidebar-width: calc(var(--sidebar-panel-width) + var(--rail-width));
+  --topbar-height: 40px;
   --tab-height: 34px;
   --control-height: 28px;
   --dur-sidebar: 320ms;

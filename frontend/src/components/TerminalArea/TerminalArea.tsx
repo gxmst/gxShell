@@ -1,8 +1,7 @@
 import clsx from "clsx";
-import { lazy, memo, Suspense, useCallback, useMemo, useRef, type ReactNode } from "react";
+import { lazy, memo, Suspense, useCallback, useMemo, useRef } from "react";
 import { Plus, Radio, TerminalSquare, X } from "lucide-react";
-import type { AutomationIndicator, MarkdownOpenTarget, SplitPane, Tab } from "../../types";
-import { TabBar } from "../TabBar/TabBar";
+import type { MarkdownOpenTarget, SplitPane, Tab } from "../../types";
 import { TerminalStatusBar } from "./TerminalStatusBar";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
@@ -12,25 +11,20 @@ import { t } from "../../i18n";
 // off the startup path so the app only fetches them when a text file is opened.
 const MarkdownViewer = lazy(() => import("../MarkdownViewer/MarkdownViewer"));
 
+// The terminal surface only. The tab strip this component used to render moved
+// to the app-level top bar (AppTopBar), so what remains is: state banners, the
+// terminal stage with its split panes, the log-viewer overlay, the empty-state
+// card, and the status bar.
 export const TerminalArea = memo(function TerminalArea(props: {
   tabs: Tab[];
   activeTab: string;
   profiles: types.Profile[];
   terminalHosts: React.MutableRefObject<Record<string, HTMLDivElement | null>>;
-  sidebarCollapsed: boolean;
-  onToggleSidebar: () => void;
   onActive: (id: string) => void;
   onClose: (id: string) => void;
   onReconnect: (tab: Tab) => void;
   onNewConnection: () => void;
-  onNewLocal?: () => void;
-  onOpenMarkdown?: () => void;
   onOpenMarkdownFile?: (target: MarkdownOpenTarget) => void;
-  onTearOff?: (tab: Tab) => void;
-  onReorder?: (draggedId: string, targetId: string) => void;
-  onRenameTab?: (tab: Tab) => void;
-  onTogglePinTab?: (tab: Tab) => void;
-  rightAccessory?: ReactNode;
   language: string;
   logViewer?: { name: string; content: string } | null;
   onCloseLogViewer?: () => void;
@@ -42,10 +36,6 @@ export const TerminalArea = memo(function TerminalArea(props: {
   broadcastInput?: boolean;
   broadcastCount?: number;
   onToggleBroadcast?: () => void;
-  activeRecording?: boolean;
-  onToggleRecording?: (id: string) => void;
-  automationActivity?: Record<string, AutomationIndicator>;
-  dirtyTabIds?: string[];
   onMarkdownDirtyChange?: (id: string, dirty: boolean, save: () => Promise<boolean>) => void;
   getDimensions?: (id: string) => { cols: number; rows: number } | null;
   getCurrentDirectory?: (id: string) => { path: string; host?: string } | null;
@@ -122,28 +112,6 @@ export const TerminalArea = memo(function TerminalArea(props: {
 
   return (
     <section className="terminal-pane">
-      <TabBar tabs={visibleTabs} activeTab={props.activeTab} profiles={props.profiles} sidebarCollapsed={props.sidebarCollapsed} onToggleSidebar={props.onToggleSidebar} onActive={props.onActive} onClose={props.onClose} onReconnect={props.onReconnect} onTearOff={props.onTearOff} onReorder={props.onReorder} onNewConnection={props.onNewConnection} onNewLocal={props.onNewLocal} onOpenMarkdown={props.onOpenMarkdown} onRename={props.onRenameTab} onTogglePin={props.onTogglePinTab} rightAccessory={props.rightAccessory} language={lang} broadcastInput={props.broadcastInput} broadcastAvailable={(props.broadcastCount || 0) > 1} onToggleBroadcast={props.onToggleBroadcast} recording={props.activeRecording} onToggleRecording={props.onToggleRecording} automationActivity={props.automationActivity} dirtyTabIds={props.dirtyTabIds} onSplitToggle={(tabId, direction) => {
-        if (!props.onSplitChange) return;
-        if (isSplitVisible) {
-          const leftId = split!.left;
-          const rightId = split!.right;
-          props.onSplitChange(null);
-          setTimeout(() => {
-            props.refitTerminal?.(leftId);
-            props.refitTerminal?.(rightId);
-          }, 80);
-        } else {
-          const other = visibleTabs.find((t) => t.id !== tabId && t.id !== props.activeTab);
-          const rightId = other?.id || visibleTabs.find((t) => t.id !== tabId)?.id;
-          if (rightId) {
-            props.onSplitChange({ left: tabId, right: rightId, direction, ratio: 0.5 });
-            setTimeout(() => {
-              props.refitTerminal?.(tabId);
-              props.refitTerminal?.(rightId);
-            }, 120);
-          }
-        }
-      }} />
       {active && active.type !== "markdown" && (active.state === "connecting" || active.state === "reconnecting" || active.state === "restoring") && (
         <div className="terminal-state-banner terminal-state-connecting">
           <span>{active.state === "reconnecting"

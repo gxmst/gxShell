@@ -44,7 +44,7 @@ export function ShortcutHelpDialog(props: {
             </section>
           ))}
         </div>
-        <div className="dialog-actions"><button className="btn-primary" onClick={props.onClose}>{zh ? "完成" : "Done"}</button></div>
+        <div className="dialog-footer"><button className="btn-primary" onClick={props.onClose}>{zh ? "完成" : "Done"}</button></div>
       </div>
     </ModalShell>
   );

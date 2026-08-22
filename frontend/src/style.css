@@ -3,6 +3,7 @@
 @import "./styles/layout.css";
 @import "./styles/sidebar.css";
 @import "./styles/terminal.css";
+@import "./styles/topbar.css";
 @import "./styles/monitor.css";
 @import "./styles/sftp.css";
 @import "./styles/modal.css";
@@ -30,10 +31,8 @@
 .btn-danger,
 .icon-btn,
 .mini-btn,
-.nav-chip,
-.nav-icon-chip,
+.rail-btn,
 .tab-action,
-.group-tab,
 .subnav-chip {
   transition:
     background var(--dur-fast) var(--ease),
@@ -50,10 +49,8 @@
 .btn-danger:active,
 .icon-btn:active,
 .mini-btn:active,
-.nav-chip:active,
-.nav-icon-chip:active,
+.rail-btn:active,
 .tab-action:active:not(:disabled),
-.group-tab:active,
 .subnav-chip:active {
   /* A tiny press feedback, no exaggerated shrink. */
   transform: scale(0.985);

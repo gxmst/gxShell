@@ -287,3 +287,15 @@ export function WriteRemoteMarkdownFile(arg1:string,arg2:string,arg3:string):Pro
 export function WriteRemoteTextFile(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function WriteToTerminal(arg1:string,arg2:string):Promise<void>;
+
+// Window chrome for the frameless top bar (internal/app/app_window.go).
+
+export function CloseWindow():Promise<void>;
+
+export function IsWindowMaximised():Promise<boolean>;
+
+export function MinimiseWindow():Promise<void>;
+
+export function SetWindowBackgroundColour(arg1:number,arg2:number,arg3:number):Promise<void>;
+
+export function ToggleMaximiseWindow():Promise<boolean>;

@@ -56,7 +56,7 @@ export function BatchCommandDialog(props: {
           </div>
         )}
 
-        <div className="dialog-actions">
+        <div className="dialog-footer">
           <button className="btn-secondary" onClick={props.running ? props.onStop : props.onClose}>{props.running ? <Square size={12} /> : null}{props.running ? (zh ? "停止" : "Stop") : (zh ? "取消" : "Cancel")}</button>
           <button className="btn-primary" disabled={props.running || props.request.targets.length === 0 || !props.request.command} onClick={() => props.onStart({ mode, intervalMs, repeat })}><Send size={13} /> {zh ? "确认发送" : "Send"}</button>
         </div>

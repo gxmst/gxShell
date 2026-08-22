@@ -1,12 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { ArrowUpRight, Bot, Edit3, FileText, Folder, FolderOpen, MoreHorizontal, PanelLeftClose, Play, Plus, Search, Server, Settings, Star, Trash2, X, Zap } from "lucide-react";
+import { ArrowUpRight, Bot, ChevronRight, Edit3, FileText, Folder, FolderOpen, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Play, Plus, Search, Server, Settings, Star, Trash2, X, Zap } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { isWindowsPlatform } from "../../utils/clipboard";
 import { TraceRoute, PingHost, UpdateSettings } from "../../../wailsjs/go/app/App";
 import type { AutomationActivityRecord, AutomationIndicator, Drawer, RecentMarkdownItem, Tab, Toast } from "../../types";
 import type { AppContextMenu } from "../../hooks/useTerminal";
-import { AppIcon, drawerIcon } from "../../constants";
+import { drawerIcon } from "../../constants";
 import { stateClass } from "../../utils/format";
 import { t, navLabel } from "../../i18n";
 import { MonitorPanel } from "../MonitorPanel/MonitorPanel";
@@ -39,6 +39,9 @@ function DrawerFallback() {
 }
 
 const toolDrawers: Drawer[] = ["commands", "tunnels", "containers", "services", "firewall", "cron", "websites", "logs", "recordings"];
+
+const FOLDED_GROUPS_KEY = "gx:foldedServerGroups";
+const RECENT_SECTION_LIMIT = 8;
 
 function primaryForDrawer(drawer: Drawer): PrimaryNav | "ai" | "settings" {
   if (drawer === "monitor") return "connections";
@@ -113,9 +116,6 @@ export function Sidebar(props: {
   automationByProfile?: Record<string, AutomationIndicator>;
 }) {
   const lang = props.settings?.language || "en";
-  // GetAppInfo reports backend/version.Version, so there is no second literal to
-  // keep in sync here. Before appInfo resolves the label simply has no version.
-  const appVersion = props.appInfo.version || "";
   const [splitPct, setSplitPct] = useState(45);
   const dragRef = useRef({ active: false, startY: 0, startPct: 0 });
   const splitRef = useRef(splitPct);
@@ -123,7 +123,18 @@ export function Sidebar(props: {
 
   const [floats, setFloats] = useState<Record<FloatKey, boolean>>({ path: false, memory: false, cpu: false, disk: false, network: false });
 
-  const [activeGroup, setActiveGroup] = useState<string>("__all__");
+  // Folded server sections, persisted so the list looks the same next launch.
+  // Recent is folded by default: it is a shortcut whose rows also appear under
+  // their own group, so opening it duplicates them.
+  const [foldedGroups, setFoldedGroups] = useState<Set<string>>(() => {
+    try {
+      const parsed: unknown = JSON.parse(localStorage.getItem(FOLDED_GROUPS_KEY) || "null");
+      if (Array.isArray(parsed)) return new Set(parsed.filter((item): item is string => typeof item === "string"));
+    } catch {
+      /* unreadable storage falls back to the default fold */
+    }
+    return new Set(["__recent__"]);
+  });
   const [fileMode, setFileMode] = useState<FileMode>("remote");
   const activeDocumentRowRef = useRef<HTMLButtonElement>(null);
   const [aiMounted, setAiMounted] = useState(props.drawer === "ai");
@@ -144,32 +155,58 @@ export function Sidebar(props: {
     return () => cancelAnimationFrame(frame);
   }, [fileMode, props.active?.id, props.active?.filePath, props.active?.remotePath, props.drawer, props.markdownSiblings]);
 
-  const groups = useMemo(() => {
-    const set = new Set<string>();
-    props.profiles.forEach((p) => {
-      set.add(p.group || "");
-    });
-    return Array.from(set);
-  }, [props.profiles]);
-  const hasGroupTabs = props.profiles.length > 0;
-
   const lastConnectedValue = useCallback((profile: types.Profile) => {
     const value = Date.parse(String(profile.lastConnectedAt || ""));
     return Number.isFinite(value) && value > Date.UTC(1970, 0, 1) ? value : 0;
   }, []);
 
-  const filteredProfiles = useMemo(() => {
-    if (activeGroup === "__favorites__") return props.profiles.filter((profile) => profile.favorite);
-    if (activeGroup === "__recent__") {
-      return props.profiles
-        .filter((profile) => lastConnectedValue(profile) > 0)
-        .sort((left, right) => lastConnectedValue(right) - lastConnectedValue(left));
-    }
-    if (activeGroup === "__all__") {
-      return [...props.profiles].sort((left, right) => Number(right.favorite) - Number(left.favorite));
-    }
-    return props.profiles.filter((p) => (p.group || "") === activeGroup);
-  }, [props.profiles, activeGroup, lastConnectedValue]);
+  // Sections of the server list. Favorites and recent are shortcuts at the top;
+  // every profile also appears under its own group, so the list is never a
+  // filtered view the user has to reset to see everything.
+  const serverSections = useMemo(() => {
+    const sections: Array<{ key: string; label: string; profiles: types.Profile[] }> = [];
+    const favorites = props.profiles.filter((profile) => profile.favorite);
+    if (favorites.length) sections.push({ key: "__favorites__", label: t(lang, "favorites"), profiles: favorites });
+    const recent = props.profiles
+      .filter((profile) => lastConnectedValue(profile) > 0)
+      .sort((left, right) => lastConnectedValue(right) - lastConnectedValue(left))
+      .slice(0, RECENT_SECTION_LIMIT);
+    if (recent.length) sections.push({ key: "__recent__", label: t(lang, "recentConnections"), profiles: recent });
+
+    const byGroup = new Map<string, types.Profile[]>();
+    props.profiles.forEach((profile) => {
+      const key = profile.group || "";
+      const existing = byGroup.get(key);
+      if (existing) existing.push(profile);
+      else byGroup.set(key, [profile]);
+    });
+    // Named groups alphabetically; the unnamed default group sorts last.
+    Array.from(byGroup.keys())
+      .sort((left, right) => (left === "" ? 1 : right === "" ? -1 : left.localeCompare(right)))
+      .forEach((key) => sections.push({
+        key: `group:${key}`,
+        label: key || t(lang, "defaultGroup"),
+        profiles: (byGroup.get(key) || []).slice().sort((left, right) => (
+          Number(right.favorite) - Number(left.favorite)
+          || (left.name || left.host).localeCompare(right.name || right.host)
+        )),
+      }));
+    return sections;
+  }, [lang, lastConnectedValue, props.profiles]);
+
+  const toggleGroup = useCallback((key: string) => {
+    setFoldedGroups((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      try {
+        localStorage.setItem(FOLDED_GROUPS_KEY, JSON.stringify(Array.from(next)));
+      } catch {
+        /* storage can be unavailable; the fold still applies this session */
+      }
+      return next;
+    });
+  }, []);
 
   const openFloat = useCallback((key: FloatKey) => setFloats((prev) => ({ ...prev, [key]: true })), []);
   const closeFloat = useCallback((key: FloatKey) => setFloats((prev) => ({ ...prev, [key]: false })), []);
@@ -240,6 +277,18 @@ export function Sidebar(props: {
     if (nav === "files") props.setDrawer("sftp");
     if (nav === "tools") props.setDrawer(toolDrawers.includes(props.drawer) ? props.drawer : "commands");
   };
+  // Rail behaviour follows the established activity-bar idiom: clicking the
+  // section you are already in folds the panel away, clicking any other section
+  // switches to it and unfolds. Without the unfold, clicking the rail while
+  // collapsed would appear to do nothing.
+  const activateSection = (isActive: boolean, open: () => void) => {
+    if (isActive && !props.collapsed) {
+      props.setCollapsed(true);
+      return;
+    }
+    open();
+    if (props.collapsed) props.setCollapsed(false);
+  };
   const openProfileTools = (event: React.MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
@@ -254,120 +303,143 @@ export function Sidebar(props: {
     });
   };
 
+  // One server row. Extracted because a profile now renders in more than one
+  // section (favorites and recent are shortcuts into the same list).
+  const renderServerRow = (profile: types.Profile) => {
+    const automation = props.automationByProfile?.[profile.id];
+    const session = props.profileStates?.[profile.id];
+    const statusLabel = session?.state === "connected"
+      ? (lang === "zh-CN" ? "已连接" : "Connected")
+      : session?.state === "connecting" || session?.state === "reconnecting" || session?.state === "restoring"
+        ? t(lang, "connecting")
+        : session?.state === "error"
+          ? (lang === "zh-CN" ? "连接错误" : "Connection error")
+          : (lang === "zh-CN" ? "未连接" : "Not connected");
+    return (
+      <div key={profile.id} className={clsx("server-row group", automation && "server-row-automation")}>
+        <button type="button" className="server-row-main" aria-label={`${t(lang, "connect")} ${profile.name || profile.host}, ${statusLabel}`} onClick={() => props.onConnectProfile(profile)}>
+          <span className="server-avatar" title={session ? `${statusLabel} · ${session.count} ${lang === "zh-CN" ? "个会话" : (session.count === 1 ? "session" : "sessions")}${session.error ? ` · ${session.error}` : ""}` : statusLabel}><Server size={13} /><span className={clsx("status-dot", stateClass(session?.state || "disconnected"))} /></span>
+          <div className="server-row-text">
+            <div className="server-title-line">
+              <div className="server-title-group">
+                <div className="server-title">{profile.name || profile.host}</div>
+              </div>
+              {!!session?.count && <span className="server-session-count" title={statusLabel}>{session.count}</span>}
+              {automation && <span className={clsx("automation-badge", `automation-${automation.source}`, automation.phase === "started" && "automation-running", automation.phase === "failed" && "automation-failed")}>{automation.source.toUpperCase()}</span>}
+            </div>
+            <div className="server-subtitle">{profile.username}@{profile.host}:{profile.port}{profile.proxyJumpId && <ArrowUpRight size={10} className="inline ml-1 opacity-50" />}</div>
+          </div>
+        </button>
+        {props.onRevokeCliTrust && (
+          <CliTrustIndicator
+            profile={profile}
+            locale={lang}
+            revoking={props.revokingCliTrustID === profile.id}
+            onRevoke={props.onRevokeCliTrust}
+          />
+        )}
+        <div className="row-actions">
+          <button className={clsx("mini-btn", profile.favorite && "favorite-active")} aria-label={profile.favorite ? t(lang, "removeFavorite") : t(lang, "addFavorite")} onClick={(event) => { event.stopPropagation(); props.onToggleFavorite(profile); }} title={profile.favorite ? t(lang, "removeFavorite") : t(lang, "addFavorite")}><Star size={12} fill={profile.favorite ? "currentColor" : "none"} /></button>
+          <button className="mini-btn" aria-label={`${t(lang, "connect")} ${profile.name || profile.host}`} onClick={() => props.onConnectProfile(profile)} title={t(lang, "connect")}><Play size={13} /></button>
+          <button className="mini-btn" aria-label={`${t(lang, "editServer")} ${profile.name || profile.host}`} onClick={() => props.onEditProfile(profile)} title={t(lang, "editServer")}><Edit3 size={13} /></button>
+          <button className="mini-btn danger" aria-label={`${t(lang, "delete")} ${profile.name || profile.host}`} onClick={(e) => { e.stopPropagation(); props.onDeleteProfile(profile.id); }} title={t(lang, "delete")}><Trash2 size={12} /></button>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <aside className="left-rail" ref={sidebarEl}>
+      <nav className="activity-rail" aria-label={lang === "zh-CN" ? "主导航" : "Primary navigation"}>
+        {(["connections", "files", "tools"] as PrimaryNav[]).map((item) => (
+          <button
+            key={item}
+            type="button"
+            className={clsx("rail-btn", activePrimary === item && "rail-btn-active")}
+            aria-label={titleText[item]}
+            aria-current={activePrimary === item ? "page" : undefined}
+            title={titleText[item]}
+            onClick={() => activateSection(activePrimary === item, () => openPrimary(item))}
+          >
+            {item === "connections" ? <Server size={17} /> : item === "files" ? <Folder size={17} /> : drawerIcon("commands", 17)}
+          </button>
+        ))}
+        <span className="rail-spacer" />
+        <button
+          type="button"
+          className={clsx("rail-btn", props.drawer === "ai" && "rail-btn-active")}
+          aria-label={navLabel("ai", lang)}
+          aria-current={props.drawer === "ai" ? "page" : undefined}
+          title={navLabel("ai", lang)}
+          onClick={() => activateSection(props.drawer === "ai", () => props.setDrawer("ai"))}
+        >
+          <Bot size={17} />
+          {hasAutomationActivity && <span className="automation-nav-dot" />}
+        </button>
+        <button
+          type="button"
+          className={clsx("rail-btn", props.drawer === "settings" && "rail-btn-active")}
+          aria-label={navLabel("settings", lang)}
+          aria-current={props.drawer === "settings" ? "page" : undefined}
+          title={navLabel("settings", lang)}
+          onClick={() => activateSection(props.drawer === "settings", () => props.setDrawer("settings"))}
+        >
+          <Settings size={17} />
+        </button>
+        <button
+          type="button"
+          className="rail-btn"
+          aria-label={props.collapsed ? t(lang, "showSidebar") : t(lang, "collapse")}
+          aria-expanded={!props.collapsed}
+          title={props.collapsed ? t(lang, "showSidebar") : t(lang, "collapse")}
+          onClick={() => props.setCollapsed((value) => !value)}
+        >
+          {props.collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+        </button>
+      </nav>
       <section
         className={clsx("side-content", !isMonitor && "side-content-tool")}
         data-section={sectionKey}
-        style={isMonitor ? { gridTemplateRows: hasGroupTabs ? `auto auto auto auto ${splitPct}fr 6px ${100 - splitPct}fr` : `auto auto auto ${splitPct}fr 6px ${100 - splitPct}fr` } : { gridTemplateRows: "auto auto 1fr" }}
+        style={isMonitor ? ({ ["--side-split" as string]: `${splitPct}%` } as React.CSSProperties) : undefined}
       >
-        <div className="brand-row">
-          <div className="brand-mark"><AppIcon /></div>
-          <div className="min-w-0">
-            <div className="brand-name">gxShell</div>
-            <div className="brand-meta">{appVersion ? `v${appVersion} / ` : ""}Ctrl+K</div>
-          </div>
-          <button className="icon-btn sidebar-collapse-btn ml-auto" onClick={() => props.setCollapsed((value) => !value)} title={t(lang, "collapse")}><PanelLeftClose size={15} /></button>
-        </div>
-
-        <div className="nav-strip">
-          {(["connections", "files", "tools"] as PrimaryNav[]).map((item) => (
-            <button key={item} className={clsx("nav-chip", activePrimary === item && "nav-chip-active")} onClick={() => openPrimary(item)} title={titleText[item]}>
-              {item === "connections" ? <Server size={14} /> : item === "files" ? <Folder size={14} /> : drawerIcon("commands", 14)}
-              <span>{titleText[item]}</span>
-            </button>
-          ))}
-          <div className="nav-aux">
-            <button className={clsx("nav-icon-chip", props.drawer === "ai" && "nav-chip-active")} onClick={() => props.setDrawer("ai")} title={navLabel("ai", lang)}>
-              <Bot size={14} />
-              {hasAutomationActivity && <span className="automation-nav-dot" />}
-            </button>
-            <button className={clsx("nav-icon-chip", props.drawer === "settings" && "nav-chip-active")} onClick={() => props.setDrawer("settings")} title={navLabel("settings", lang)}>
-              <Settings size={14} />
-            </button>
-          </div>
-        </div>
-
         {activePrimary === "connections" && (
           <>
-            <div className="drawer-hero">
-              <div className="drawer-hero-icon"><Server size={16} /></div>
-              <div className="drawer-hero-copy">
-                <div className="drawer-hero-title">{t(lang, "servers")}</div>
-                <div className="drawer-hero-subtitle">{lang === "zh-CN" ? `${filteredProfiles.length} 个可用连接` : `${filteredProfiles.length} available connection${filteredProfiles.length === 1 ? "" : "s"}`}</div>
-              </div>
-              <div className="drawer-hero-actions">
-                <button className="drawer-hero-btn" onClick={props.onQuickConnect} title={t(lang, "quickConnect")}><Zap size={12} /></button>
-                <button className="drawer-hero-btn" onClick={props.onOpenSearch} title={t(lang, "search")}><Search size={12} /></button>
-                <button className="drawer-hero-btn" onClick={openProfileTools} title={t(lang, "profileTools")}><MoreHorizontal size={12} /></button>
-                <button className="drawer-hero-btn drawer-hero-btn-primary" onClick={props.onNewProfile} title={t(lang, "new")}><Plus size={12} /></button>
-              </div>
+            <div className="panel-head">
+              <span className="panel-head-title">{t(lang, "servers")}</span>
+              <span className="panel-head-count">{props.profiles.length}</span>
+              <span className="panel-head-spacer" />
+              <button type="button" className="icon-btn" onClick={props.onQuickConnect} aria-label={t(lang, "quickConnect")} title={t(lang, "quickConnect")}><Zap size={14} /></button>
+              <button type="button" className="icon-btn" onClick={props.onOpenSearch} aria-label={t(lang, "search")} title={t(lang, "search")}><Search size={14} /></button>
+              <button type="button" className="icon-btn" onClick={openProfileTools} aria-label={t(lang, "profileTools")} title={t(lang, "profileTools")}><MoreHorizontal size={14} /></button>
+              <button type="button" className="btn-primary panel-head-primary" onClick={props.onNewProfile} title={t(lang, "newConnection")}><Plus size={13} /> {t(lang, "new")}</button>
             </div>
-            {hasGroupTabs && (
-              <div className="group-tabs">
-                <button className={clsx("group-tab", activeGroup === "__all__" && "group-tab-active")} onClick={() => setActiveGroup("__all__")}>{t(lang, "allGroups")}</button>
-                <button className={clsx("group-tab", activeGroup === "__favorites__" && "group-tab-active")} onClick={() => setActiveGroup("__favorites__")}><Star size={10} /> {t(lang, "favorites")}</button>
-                <button className={clsx("group-tab", activeGroup === "__recent__" && "group-tab-active")} onClick={() => setActiveGroup("__recent__")}>{t(lang, "recentConnections")}</button>
-                {groups.map((g) => (
-                  <button key={g} className={clsx("group-tab", activeGroup === g && "group-tab-active")} onClick={() => setActiveGroup(g)}>{g || t(lang, "defaultGroup")}</button>
-                ))}
-              </div>
-            )}
             <div className="server-list">
-              {filteredProfiles.map((profile) => {
-                const automation = props.automationByProfile?.[profile.id];
-                const session = props.profileStates?.[profile.id];
-                const statusLabel = session?.state === "connected"
-                  ? (lang === "zh-CN" ? "已连接" : "Connected")
-                  : session?.state === "connecting"
-                    ? t(lang, "connecting")
-                    : session?.state === "error"
-                      ? (lang === "zh-CN" ? "连接错误" : "Connection error")
-                      : (lang === "zh-CN" ? "未连接" : "Not connected");
-                return (
-                <div key={profile.id} className={clsx("server-row group", automation && "server-row-automation")}>
-                  <button type="button" className="server-row-main" aria-label={`${t(lang, "connect")} ${profile.name || profile.host}, ${statusLabel}`} onClick={() => props.onConnectProfile(profile)}>
-                    <span className="server-avatar" title={session ? `${statusLabel} · ${session.count} ${lang === "zh-CN" ? "个会话" : (session.count === 1 ? "session" : "sessions")}${session.error ? ` · ${session.error}` : ""}` : statusLabel}><Server size={13} /><span className={clsx("status-dot", stateClass(session?.state || "disconnected"))} /></span>
-                    <div className="server-row-text">
-                      <div className="server-title-line">
-                        <div className="server-title-group">
-                          <div className="server-title">{profile.name || profile.host}</div>
-                        </div>
-                        {!!session?.count && <span className="server-session-count" title={statusLabel}>{session.count}</span>}
-                        {automation && <span className={clsx("automation-badge", `automation-${automation.source}`, automation.phase === "started" && "automation-running", automation.phase === "failed" && "automation-failed")}>{automation.source.toUpperCase()}</span>}
-                      </div>
-                      <div className="server-subtitle">{profile.username}@{profile.host}:{profile.port}{profile.proxyJumpId && <ArrowUpRight size={10} className="inline ml-1 opacity-50" />}</div>
-                    </div>
-                  </button>
-                  {props.onRevokeCliTrust && (
-                    <CliTrustIndicator
-                      profile={profile}
-                      locale={lang}
-                      revoking={props.revokingCliTrustID === profile.id}
-                      onRevoke={props.onRevokeCliTrust}
-                    />
-                  )}
-                  <div className="row-actions">
-                    <button className={clsx("mini-btn", profile.favorite && "favorite-active")} aria-label={profile.favorite ? t(lang, "removeFavorite") : t(lang, "addFavorite")} onClick={(event) => { event.stopPropagation(); props.onToggleFavorite(profile); }} title={profile.favorite ? t(lang, "removeFavorite") : t(lang, "addFavorite")}><Star size={12} fill={profile.favorite ? "currentColor" : "none"} /></button>
-                    <button className="mini-btn" aria-label={`${t(lang, "connect")} ${profile.name || profile.host}`} onClick={() => props.onConnectProfile(profile)} title={t(lang, "connect")}><Play size={13} /></button>
-                    <button className="mini-btn" aria-label={`${t(lang, "editServer")} ${profile.name || profile.host}`} onClick={() => props.onEditProfile(profile)} title={t(lang, "editServer")}><Edit3 size={13} /></button>
-                    <button className="mini-btn danger" aria-label={`${t(lang, "delete")} ${profile.name || profile.host}`} onClick={(e) => { e.stopPropagation(); props.onDeleteProfile(profile.id); }} title={t(lang, "delete")}><Trash2 size={12} /></button>
-                  </div>
+              {props.profiles.length === 0 ? (
+                <div className="empty-state">
+                  <div className="empty-state-icon"><Server size={22} /></div>
+                  <div className="empty-state-title">{t(lang, "emptyServersTitle")}</div>
+                  <div className="empty-state-text">{t(lang, "emptyServersHint")}</div>
+                  <button className="btn-primary empty-state-action" onClick={props.onNewProfile}><Plus size={13} /> {t(lang, "newConnection")}</button>
                 </div>
+              ) : serverSections.map((section) => {
+                const folded = foldedGroups.has(section.key);
+                return (
+                  <div key={section.key} className="srv-group">
+                    <button
+                      type="button"
+                      className="srv-group-head"
+                      aria-expanded={!folded}
+                      onClick={() => toggleGroup(section.key)}
+                      title={section.label}
+                    >
+                      <ChevronRight size={11} className={clsx("srv-group-chev", !folded && "srv-group-chev-open")} aria-hidden="true" />
+                      <span className="srv-group-title">{section.label}</span>
+                      <span className="srv-group-count">{section.profiles.length}</span>
+                    </button>
+                    {!folded && section.profiles.map((profile) => renderServerRow(profile))}
+                  </div>
                 );
               })}
-              {!filteredProfiles.length && (
-                props.profiles.length === 0 ? (
-                  <div className="empty-state">
-                    <div className="empty-state-icon"><Server size={22} /></div>
-                    <div className="empty-state-title">{t(lang, "emptyServersTitle")}</div>
-                    <div className="empty-state-text">{t(lang, "emptyServersHint")}</div>
-                    <button className="btn-primary empty-state-action" onClick={props.onNewProfile}><Plus size={13} /> {t(lang, "newConnection")}</button>
-                  </div>
-                ) : (
-                  <div className="empty">{activeGroup === "__favorites__" ? t(lang, "noFavorites") : activeGroup === "__recent__" ? t(lang, "noRecentConnections") : t(lang, "noServers")}</div>
-                )
-              )}
             </div>
 
             <div className="split-handle" onMouseDown={onDragStart} />

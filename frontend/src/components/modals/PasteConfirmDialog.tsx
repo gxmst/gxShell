@@ -36,7 +36,7 @@ export function PasteConfirmDialog({ request, language, onCancel, onConfirm }: {
         </div>
         {request.broadcastTargets <= 1 && <div className="paste-confirm-target">{targetLabel}</div>}
         <pre className="paste-confirm-preview">{request.risk.preview}</pre>
-        <div className="dialog-actions">
+        <div className="dialog-footer">
           <button className="btn-secondary" onClick={onCancel}>{zh ? "取消" : "Cancel"}</button>
           <button className="btn-primary" onClick={onConfirm}><ClipboardPaste size={13} /> {zh ? "仍然粘贴" : "Paste anyway"}</button>
         </div>

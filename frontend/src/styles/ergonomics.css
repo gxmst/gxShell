@@ -1,5 +1,7 @@
-/* Lightweight, reversible focus mode. Keep the tab strip and escape affordance
-   available so Zen mode never becomes a trap. */
+/* Lightweight, reversible focus mode. The top bar stays on screen — it owns
+   the window buttons, and Zen must never become a trap — but slims down to
+   drag space plus the caption controls: the tab strip and its actions hide,
+   and the brand makes room for the exit affordance. */
 .app-shell[data-zen="true"] .left-rail {
   display: none;
 }
@@ -8,14 +10,19 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
-.app-shell[data-zen="true"] .tabbar {
-  padding-left: 42px;
+.app-shell[data-zen="true"] .topbar .tabbar {
+  display: none;
+}
+
+.app-shell[data-zen="true"] .topbar-brand {
+  display: none;
 }
 
 .zen-mode-exit {
   position: fixed;
   z-index: 120;
-  top: 8px;
+  /* Sits where the brand normally is, optically centered in the top bar. */
+  top: 7px;
   left: 8px;
   display: inline-flex;
   align-items: center;

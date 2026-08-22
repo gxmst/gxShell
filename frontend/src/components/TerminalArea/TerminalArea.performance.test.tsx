@@ -3,7 +3,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TerminalArea } from './TerminalArea';
 import type { Tab } from '../../types';
 
-vi.mock('../TabBar/TabBar', () => ({ TabBar: () => null }));
 vi.mock('./TerminalStatusBar', () => ({ TerminalStatusBar: () => null }));
 
 describe('TerminalArea split dragging', () => {
@@ -26,8 +25,6 @@ describe('TerminalArea split dragging', () => {
         activeTab="left"
         profiles={[]}
         terminalHosts={{ current: {} }}
-        sidebarCollapsed={false}
-        onToggleSidebar={vi.fn()}
         onActive={vi.fn()}
         onClose={vi.fn()}
         onReconnect={vi.fn()}

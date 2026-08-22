@@ -1,0 +1,158 @@
+/* ── App top bar (frameless window chrome) ───────────────────────────────
+   One strip spans the window: brand, the tab bar lifted out of the terminal
+   pane, and the window buttons, replacing the native caption plus two
+   app-level chrome bands.
+
+   Drag: the whole bar carries --wails-draggable: drag. Custom properties
+   inherit, so interactive zones (the tab strip, the window buttons) must opt
+   out with an explicit non-"drag" value — otherwise clicking a tab would move
+   the window instead of activating it. */
+
+.topbar {
+  --wails-draggable: drag;
+  display: flex;
+  align-items: stretch;
+  height: var(--topbar-height, 40px);
+  flex: 0 0 var(--topbar-height, 40px);
+  gap: 2px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.topbar .tabbar,
+.topbar .window-controls {
+  --wails-draggable: no-drag;
+}
+
+/* The empty run of the tab strip is the window's drag surface — the same place
+   a browser or VS Code lets you grab the window. Opting the strip back in and
+   the tabs/actions back out keeps the flexible space draggable without a
+   dedicated spacer element competing for width. */
+.topbar .tabs-scroll {
+  --wails-draggable: drag;
+}
+
+.topbar .tab,
+.topbar .tab-actions {
+  --wails-draggable: no-drag;
+}
+
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  flex: 0 0 44px;
+  color: var(--accent);
+}
+
+/* Window buttons follow the native caption idiom, not the toolbar one: wide
+   hit targets, glyph-only, no radius, and close escalates to the system
+   danger red. cursor:default matches the platform caption, which is not a
+   clickable-looking control either. */
+.window-controls {
+  display: flex;
+  align-items: stretch;
+  /* auto, not a fixed gap: in Zen mode the tab strip is hidden, and without
+     this the buttons would slide to the left edge of the bar. */
+  margin-left: auto;
+}
+
+.window-controls button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: default;
+}
+
+.window-controls button:hover {
+  background: var(--panel-raised);
+  color: var(--text);
+}
+
+.window-controls button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: -3px;
+}
+
+.window-controls button.wc-close:hover {
+  background: #c42b1c;
+  color: #fff;
+}
+
+.window-controls svg {
+  width: 11px;
+  height: 11px;
+  stroke: currentColor;
+  stroke-width: 1;
+  fill: none;
+}
+
+/* ── Tab strip inside the top bar ─────────────────────────────────────────
+   The base .tab styles in terminal.css describe folder tabs that merged into
+   the terminal surface below. Up here they float on the bar, so the geometry
+   is re-skinned as centered chips; state signalling (fill + border, no glow)
+   is unchanged. Scoped to .topbar so nothing else that ever renders a .tabbar
+   inherits this shape. */
+
+/* The tab bar takes the whole middle: its own .tabs-scroll grows and its
+   .tab-actions cluster is flex-shrink:0, so the global actions land against
+   the window buttons and stay there no matter how many tabs are open. */
+.topbar .tabbar {
+  background: none;
+  border-bottom: 0;
+  padding: 0;
+  align-items: stretch;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 2px;
+}
+
+/* Tabs size to their content (with a sensible floor and ceiling) so a short
+   title never renders as a wide empty slab — the leftover width belongs to the
+   drag surface, not the tab. */
+.topbar .tabs-scroll {
+  flex: 1 1 auto;
+  align-items: center;
+}
+
+.topbar .tab {
+  height: 29px;
+  align-self: center;
+  flex: 0 1 auto;
+  min-width: 120px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  padding: 0 4px 0 10px;
+}
+
+/* Both states must read as controls in every theme. The active tab steps UP
+   from the bar (raised surface + strong border) instead of dropping into a
+   var(--bg) fill that matches the bar in light themes — combined with the old
+   fixed 180px basis that read as a borderless empty block. */
+.topbar .tab:hover {
+  background: color-mix(in srgb, var(--panel-raised) 52%, transparent);
+  border-color: var(--border);
+}
+
+.topbar .tab-active {
+  border-color: var(--border-strong);
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-sm);
+}
+
+.topbar .tab-actions {
+  padding: 0 2px;
+}
+
+/* Reserved: Windows keeps an invisible resize border around a maximized
+   frameless window. The shell sets data-maximized on .app-shell, so if content
+   is ever observed clipping at the screen edges while maximized, compensate
+   here (e.g. `.app-shell[data-maximized="true"] .topbar { padding: 0 8px }`)
+   instead of patching individual panes. */

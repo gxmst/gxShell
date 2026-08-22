@@ -569,3 +569,25 @@ export function WriteRemoteTextFile(arg1, arg2, arg3) {
 export function WriteToTerminal(arg1, arg2) {
   return window['go']['app']['App']['WriteToTerminal'](arg1, arg2);
 }
+
+// Window chrome for the frameless top bar (internal/app/app_window.go).
+
+export function CloseWindow() {
+  return window['go']['app']['App']['CloseWindow']();
+}
+
+export function IsWindowMaximised() {
+  return window['go']['app']['App']['IsWindowMaximised']();
+}
+
+export function MinimiseWindow() {
+  return window['go']['app']['App']['MinimiseWindow']();
+}
+
+export function SetWindowBackgroundColour(arg1, arg2, arg3) {
+  return window['go']['app']['App']['SetWindowBackgroundColour'](arg1, arg2, arg3);
+}
+
+export function ToggleMaximiseWindow() {
+  return window['go']['app']['App']['ToggleMaximiseWindow']();
+}
