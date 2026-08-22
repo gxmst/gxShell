@@ -300,8 +300,11 @@ func TestCredentialAlwaysCritical(t *testing.T) {
 }
 
 // TestTrustWindowScope is invariant 4: a trust window exists for unattended
-// low-risk work, so it may only ever cover T1. Every T3 command remains an
-// immediate, individual native confirmation regardless of trust.
+// low-risk work, so it covers T1 and the bounded-destruction half of T2. The
+// undecidable and external halves of T2 stay outside it — an audit trail cannot
+// compensate for a command nobody could read or an effect that already left the
+// machine — and every T3 command remains an immediate, individual native
+// confirmation regardless of trust.
 func TestTrustWindowScope(t *testing.T) {
 	cases := []struct {
 		command   string
@@ -312,7 +315,8 @@ func TestTrustWindowScope(t *testing.T) {
 		{"uptime", approvalNone, approvalNone, "T0 never prompts"},
 		{"mkdir -p /srv/app", approvalNone, approvalClick, "T1 is what the window is for"},
 		{"sed -i s/a/b/ src/main.go", approvalNone, approvalClick, "T1 in-place edit"},
-		{"rm -rf /srv/app/old", approvalClick, approvalClick, "T2 always asks"},
+		{"rm -rf /srv/app/old", approvalNone, approvalClick, "T2 with a resolved target is covered"},
+		{`rm -rf "$TARGET_DIR"`, approvalClick, approvalClick, "T2 undecidable always asks"},
 		{"git push origin feature", approvalClick, approvalClick, "T2 external always asks"},
 		{"rm -rf /etc", approvalClick, approvalClick, "T3-a always asks"},
 		{"systemctl stop sshd", approvalClick, approvalClick, "T3-b always asks"},

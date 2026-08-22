@@ -27,7 +27,8 @@ package app
 //
 //	T0 tierObserve      pure observation                  never prompts
 //	T1 tierRecoverable  local, scoped, recoverable change auto in trust window
-//	T2 tierBounded      bounded destruction / undecidable always one click
+//	T2 tierBounded      bounded destruction                auto in trust window;
+//	                    undecidable or external            always one click
 //	T3 tierCritical     irreversible / self-lock /        immediate click,
 //	                    credential / external            never batched
 //
@@ -35,7 +36,8 @@ package app
 //
 //  1. Anything it cannot statically resolve (command substitution, variable
 //     expansion, base64, eval, a pipe into a shell, an unknown binary) is
-//     floored at T2. Undecidable never means "probably fine".
+//     floored at T2 and, unlike the rest of T2, is never covered by a trust
+//     window. Undecidable never means "probably fine".
 //  2. A privilege wrapper (sudo/doas) is a risk amplifier, not a tier. It can
 //     only raise a classification, never lower it, and it removes the implicit
 //     "this would have failed on permissions anyway" assumption. `sudo
@@ -340,9 +342,11 @@ const (
 // requiredApproval maps a classification plus the profile's trust state onto a
 // confirmation strength.
 //
-// A trust window only ever covers T1. It deliberately does not cover T2 or T3:
-// its purpose is unattended low-risk work, not blanket authority. Every T3
-// request receives its own immediate native click and never joins a batch.
+// A trust window covers T1 outright and the bounded-destruction half of T2
+// (the tierBounded case spells out the two categories that stay outside it).
+// It deliberately does not cover T3: its purpose is unattended low-risk work,
+// not blanket authority. Every T3 request receives its own immediate native
+// click and never joins a batch.
 func (r riskAssessment) requiredApproval(trusted bool) approvalStrength {
 	switch r.Tier {
 	case tierObserve:
@@ -353,6 +357,22 @@ func (r riskAssessment) requiredApproval(trusted bool) approvalStrength {
 		}
 		return approvalClick
 	case tierBounded:
+		// A trust window covers bounded destruction: the blast radius is scoped
+		// and the audit trail can account for it after the fact, which is the
+		// bargain the window exists to make. Two halves of the tier are outside
+		// that bargain, both because an audit trail cannot compensate for them:
+		//
+		//   - undecidable — rule 1 above floors everything the classifier cannot
+		//     statically resolve at T2, so auto-approving the whole tier would
+		//     hand the window every obfuscated, substituted or piped-into-a-shell
+		//     command precisely because it could not be read, turning "I could
+		//     not tell" into "probably fine".
+		//   - external — the effect has already left this machine. A push or a
+		//     DNS change cannot be recalled once someone else has observed it,
+		//     so there is nothing for the audit record to undo.
+		if trusted && !r.hasCategory(riskUndecidable) && !r.hasCategory(riskExternal) {
+			return approvalNone
+		}
 		return approvalClick
 	default:
 		return approvalClick

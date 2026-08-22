@@ -250,11 +250,23 @@ func TestCliRiskTierAuthorization(t *testing.T) {
 	}
 
 	decision := app.authorizeCliProfileExecution(profile, "rm -rf /srv/app/old")
+	if !decision.Allowed || decision.Source != cliApprovalTimedTrust {
+		t.Fatal("trusted T2 request with a resolved target was not auto-approved by the trust window")
+	}
+	if got := atomic.LoadInt32(&batchCalls); got != 0 {
+		t.Fatalf("resolved T2 command opened %d batch dialogs, want 0", got)
+	}
+
+	// An undecidable command is floored at T2 by rule 1, and that half of the
+	// tier stays outside the trust window: the classifier prompts precisely
+	// because it could not read the command, so a window must not convert that
+	// into an approval.
+	decision = app.authorizeCliProfileExecution(profile, `rm -rf "$TARGET_DIR"`)
 	if !decision.Allowed || decision.Source != cliApprovalUser {
-		t.Fatal("trusted T2 request did not require and receive user approval")
+		t.Fatal("trusted but undecidable T2 request did not require and receive user approval")
 	}
 	if got := atomic.LoadInt32(&batchCalls); got != 1 {
-		t.Fatalf("T2 command opened %d batch dialogs, want 1", got)
+		t.Fatalf("undecidable T2 command opened %d batch dialogs, want 1", got)
 	}
 
 	decision = app.authorizeCliProfileExecution(profile, "rm -rf /etc")

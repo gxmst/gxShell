@@ -736,7 +736,10 @@ func (a *App) authorizeCliProfileRiskExecution(profile types.Profile, display, r
 	strength := assessment.requiredApproval(trusted)
 	if strength == approvalNone {
 		source := cliApprovalNotRequired
-		if trusted && assessment.Tier == tierRecoverable {
+		if trusted && assessment.Tier > tierObserve {
+			// T0 is allowed on its own merits whether or not a window is open;
+			// anything above it that skipped the prompt did so because of the
+			// window, and the audit record has to name that as the reason.
 			source = cliApprovalTimedTrust
 		}
 		return cliApprovalDecision{Allowed: true, Source: source, Strength: strength.String()}
