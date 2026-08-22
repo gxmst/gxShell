@@ -21,19 +21,42 @@
 }
 
 .modal {
-  width: min(680px, calc(100vw - 36px));
-  max-height: calc(100vh - 36px);
-  overflow: auto;
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(640px, calc(100vh - 40px));
+  overflow-y: auto;
+  overflow-x: hidden;
   border: 1px solid var(--border-strong);
   outline: 1px solid color-mix(in srgb, var(--text) 7%, transparent);
-  border-radius: var(--radius-lg);
+  border-radius: 14px;
   background: var(--panel-raised);
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent),
     var(--shadow-lg);
-  padding: 22px;
+  padding: 16px 20px 14px;
   animation: modal-in var(--dur-slow) var(--ease-out);
   backdrop-filter: none;
+  scrollbar-gutter: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.modal::-webkit-scrollbar {
+  width: 5px;
+}
+
+.modal::-webkit-scrollbar-track {
+  background: transparent;
+  margin-top: 14px;
+  margin-bottom: 14px;
+}
+
+.modal::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+}
+
+.modal::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-strong);
 }
 
 @keyframes modal-in {
@@ -42,8 +65,8 @@
 }
 
 .modal-compact {
-  width: min(400px, calc(100vw - 36px));
-  padding: 16px;
+  width: min(440px, calc(100vw - 32px));
+  padding: 14px 16px;
 }
 
 .paste-confirm {

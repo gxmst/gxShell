@@ -154,9 +154,9 @@ export function ModalShell({
   );
 }
 
-export function Label({ text, children }: { text: string; children: React.ReactNode }) {
+export function Label({ text, children, className }: { text: string; children: React.ReactNode; className?: string }) {
   return (
-    <label className="field-label">
+    <label className={clsx("field-label", className)}>
       <span className="field-label-text">{text}</span>
       {children}
     </label>

@@ -107,8 +107,10 @@ export function QuickConnectModal(props: {
           <Label text={t(lang, "passphrase")}><input className="input compact-input" type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></Label>
         </>}
         {authType === "agent" && <div className="col-span-2 text-[10px] text-muted leading-snug"><KeyRound size={11} className="inline mr-1" />{t(lang, "authAgentHint")}</div>}
-        <label className="check col-span-2"><input type="checkbox" disabled={!!savedProfile} checked={saveProfile} onChange={(event) => { setSaveProfile(event.target.checked); if (!event.target.checked) setRememberSecret(false); }} /> {t(lang, "saveConnection")}</label>
-        {saveProfile && authType !== "agent" && <label className="check col-span-2"><input type="checkbox" checked={rememberSecret} onChange={(event) => setRememberSecret(event.target.checked)} /> {t(lang, "savePassword")}</label>}
+        <div className="profile-modal-checks col-span-2">
+          <label className="check"><input type="checkbox" disabled={!!savedProfile} checked={saveProfile} onChange={(event) => { setSaveProfile(event.target.checked); if (!event.target.checked) setRememberSecret(false); }} /> {t(lang, "saveConnection")}</label>
+          {saveProfile && authType !== "agent" && <label className="check"><input type="checkbox" checked={rememberSecret} onChange={(event) => setRememberSecret(event.target.checked)} /> {t(lang, "savePassword")}</label>}
+        </div>
       </div>
       {error && <div className="profile-modal-error" role="alert">{error}</div>}
       <div className="profile-modal-footer">
