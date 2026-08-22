@@ -82,24 +82,24 @@
 .server-list {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 1px;
   padding: 1px 2px 2px 0;
 }
 
 .server-row {
-  min-height: 52px;
+  min-height: 38px;
   margin: 0;
-  padding: 8px 8px;
-  border-color: color-mix(in srgb, var(--border) 72%, transparent);
-  border-radius: 11px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--panel-raised) 48%, transparent), color-mix(in srgb, var(--panel) 46%, transparent));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 3%, transparent);
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  box-shadow: none;
 }
 
 .server-row:hover {
-  border-color: color-mix(in srgb, var(--section-accent) 28%, var(--border));
-  background: linear-gradient(135deg, color-mix(in srgb, var(--section-accent) 8%, var(--panel-raised)), color-mix(in srgb, var(--panel-raised) 64%, transparent));
-  box-shadow: var(--hairline), 0 8px 22px color-mix(in srgb, var(--shadow-color) 16%, transparent);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--panel-raised) 65%, transparent);
+  box-shadow: none;
 }
 
 .server-session-count {
