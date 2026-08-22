@@ -58,9 +58,10 @@ func main() {
 		DragAndDrop: &options.DragAndDrop{
 			EnableFileDrop: true,
 		},
-		OnStartup:  hooks.Startup,
-		OnDomReady: hooks.DomReady,
-		OnShutdown: hooks.Shutdown,
+		OnStartup:     hooks.Startup,
+		OnDomReady:    hooks.DomReady,
+		OnBeforeClose: hooks.BeforeClose,
+		OnShutdown:    hooks.Shutdown,
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: "gxshell-2f6c1d8a-single-instance",
 			OnSecondInstanceLaunch: func(data options.SecondInstanceData) {

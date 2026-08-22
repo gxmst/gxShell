@@ -143,6 +143,10 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
           <Label text={t(lang, "passphrase")}><input className="input compact-input" type="password" value={draft.privateKeyPassphrase || ""} onChange={(e) => update({ privateKeyPassphrase: e.target.value })} /></Label>
         </>}
         {draft.authType === "agent" && <div className="col-span-2 text-[10px] text-muted leading-snug">{t(lang, "authAgentHint")}</div>}
+        {/* Jump hosts exclude each other: a profile that itself jumps cannot be
+            someone else's jump, so the option list filters both self-reference
+            and chains (which would also cycle). */}
+        <Label text={t(lang, "proxyJump")}><select className="input compact-input" value={draft.proxyJumpId || ""} onChange={(e) => update({ proxyJumpId: e.target.value })}><option value="">— {t(lang, "none")} —</option>{(props.profiles || []).filter((p) => p.id !== draft.id && !p.proxyJumpId).map((p) => <option key={p.id} value={p.id}>{p.name} ({p.host})</option>)}</select></Label>
         <div className="profile-modal-checks col-span-2">
           <label className="check"><input type="checkbox" checked={draft.favorite} onChange={(e) => update({ favorite: e.target.checked })} /> {t(lang, "favorite")}</label>
           <label className="check"><input type="checkbox" checked={draft.cliEnabled || false} onChange={(e) => update({ cliEnabled: e.target.checked, ...(!e.target.checked ? { cliTrustUntil: undefined } : {}) })} /> {t(lang, "cliServerAccess")}</label>

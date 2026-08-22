@@ -177,7 +177,7 @@ export function ActivityCenter({
                   )}
                 </div>
                 <div className="activity-item-row-actions" onClick={(event) => event.stopPropagation()}>
-                  {activity.unread && onMarkRead && <button type="button" className="activity-center-icon-button" title={t(locale, "notificationMarkAllRead")} aria-label={t(locale, "notificationMarkAllRead")} onClick={() => onMarkRead(activity.id)}><Check size={12} /></button>}
+                  {activity.unread && onMarkRead && <button type="button" className="activity-center-icon-button" title={t(locale, "notificationMarkRead")} aria-label={t(locale, "notificationMarkRead")} onClick={() => onMarkRead(activity.id)}><Check size={12} /></button>}
                   {onDismiss && <button type="button" className="activity-center-icon-button" title={t(locale, "notificationDismiss")} aria-label={t(locale, "notificationDismiss")} onClick={() => onDismiss(activity.id)}><X size={12} /></button>}
                 </div>
               </article>

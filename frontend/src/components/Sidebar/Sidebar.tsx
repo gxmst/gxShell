@@ -68,6 +68,12 @@ export function Sidebar(props: {
   onResizeStart?: (event: React.PointerEvent<HTMLDivElement>) => void;
   /** Restores the default panel width, bound to a double-click on the edge. */
   onResizeReset?: () => void;
+  /** Keyboard resize: applied as a width delta in pixels (negative narrows). */
+  onResizeAdjust?: (delta: number) => void;
+  /** Current panel width and its clamp bounds, for the separator's aria-value*. */
+  panelWidth?: number;
+  panelWidthMin?: number;
+  panelWidthMax?: number;
   setCtxMenu: (menu: AppContextMenu | null) => void;
   drawer: Drawer;
   setDrawer: (drawer: Drawer) => void;
@@ -357,15 +363,34 @@ export function Sidebar(props: {
       {/* The border between the panel and the terminal doubles as the resize
           grip. Hidden while collapsed: there is no panel to size then, and the
           rail's own toggle is what brings it back. */}
-      {props.onResizeStart && !props.collapsed && (
+      {props.onResizeStart && props.onResizeAdjust && !props.collapsed && (
         <div
           className="rail-resizer"
           role="separator"
           aria-orientation="vertical"
           aria-label={lang === "zh-CN" ? "调整侧栏宽度" : "Resize sidebar"}
           title={lang === "zh-CN" ? "拖动调整宽度，双击复位" : "Drag to resize, double-click to reset"}
+          tabIndex={0}
+          aria-valuenow={props.panelWidth}
+          aria-valuemin={props.panelWidthMin}
+          aria-valuemax={props.panelWidthMax}
           onPointerDown={props.onResizeStart}
           onDoubleClick={props.onResizeReset}
+          onKeyDown={(event) => {
+            if (!props.onResizeAdjust) return;
+            const RESIZE_STEP = 16;
+            // Home/End target the clamp bounds, so they need the current value
+            // to express the jump as the delta API the App-side handler takes.
+            const target = event.key === "Home" ? props.panelWidthMin : event.key === "End" ? props.panelWidthMax : undefined;
+            const delta = target !== undefined && props.panelWidth !== undefined
+              ? target - props.panelWidth
+              : event.key === "ArrowLeft" ? -RESIZE_STEP
+              : event.key === "ArrowRight" ? RESIZE_STEP
+              : 0;
+            if (delta === 0) return;
+            event.preventDefault();
+            props.onResizeAdjust(delta);
+          }}
         />
       )}
       <nav className="activity-rail" aria-label={lang === "zh-CN" ? "主导航" : "Primary navigation"}>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { CloseWindow, IsWindowMaximised, MinimiseWindow, ToggleMaximiseWindow } from "../../../wailsjs/go/app/App";
+import { IsWindowMaximised, MinimiseWindow, RequestCloseWindow, ToggleMaximiseWindow } from "../../../wailsjs/go/app/App";
 import { AppIcon } from "../../constants";
 import { t } from "../../i18n";
 
@@ -69,7 +69,11 @@ export function AppTopBar({ tabbar, language, onMaximizedChange }: { tabbar: Rea
     try { ToggleMaximiseWindow().then(setMaximized, () => undefined); } catch { /* bindings not injected yet */ }
   };
   const close = () => {
-    try { CloseWindow(); } catch { /* bindings not injected yet */ }
+    // Route through the unsaved-work gate in App rather than quitting
+    // directly: RequestCloseWindow re-emits app:close-requested, the same
+    // event the native close paths produce, and the confirmed path calls
+    // CloseWindow.
+    try { RequestCloseWindow(); } catch { /* bindings not injected yet */ }
   };
 
   return (

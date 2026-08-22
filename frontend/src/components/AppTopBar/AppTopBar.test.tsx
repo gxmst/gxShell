@@ -6,6 +6,7 @@ const bindings = vi.hoisted(() => ({
   close: vi.fn(),
   isMaximised: vi.fn(),
   minimise: vi.fn(),
+  requestClose: vi.fn(),
   toggleMaximise: vi.fn(),
 }));
 
@@ -13,6 +14,7 @@ vi.mock("../../../wailsjs/go/app/App", () => ({
   CloseWindow: bindings.close,
   IsWindowMaximised: bindings.isMaximised,
   MinimiseWindow: bindings.minimise,
+  RequestCloseWindow: bindings.requestClose,
   ToggleMaximiseWindow: bindings.toggleMaximise,
 }));
 
@@ -22,6 +24,7 @@ describe("AppTopBar", () => {
     bindings.minimise.mockReset();
     bindings.isMaximised.mockReset();
     bindings.isMaximised.mockResolvedValue(false);
+    bindings.requestClose.mockReset();
     bindings.toggleMaximise.mockReset();
     bindings.toggleMaximise.mockResolvedValue(true);
   });
@@ -38,8 +41,11 @@ describe("AppTopBar", () => {
     // follow-up query.
     await waitFor(() => expect(screen.getByRole("button", { name: "Restore" })).toBeInTheDocument());
 
+    // Close goes through the unsaved-work gate (RequestCloseWindow), never
+    // straight to the quitting binding.
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    expect(bindings.close).toHaveBeenCalledTimes(1);
+    expect(bindings.requestClose).toHaveBeenCalledTimes(1);
+    expect(bindings.close).not.toHaveBeenCalled();
   });
 
   it("reports maximized changes so the shell can compensate for the frame", async () => {

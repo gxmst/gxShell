@@ -370,6 +370,10 @@ export function RenameRemoteFile(arg1, arg2, arg3) {
   return window['go']['app']['App']['RenameRemoteFile'](arg1, arg2, arg3);
 }
 
+export function RequestCloseWindow() {
+  return window['go']['app']['App']['RequestCloseWindow']();
+}
+
 export function ResetAiUsage() {
   return window['go']['app']['App']['ResetAiUsage']();
 }

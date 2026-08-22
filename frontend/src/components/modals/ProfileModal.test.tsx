@@ -75,4 +75,47 @@ describe('ProfileModal shortcuts', () => {
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onSave.mock.calls[0][0]).toMatchObject({ description: 'first line\nsecond line' });
   });
+
+  // The full editor is the only place a saved profile's jump can be viewed,
+  // changed, or cleared — a compact-layout pass once deleted the selector,
+  // leaving the jump settable only at creation time. The option list must also
+  // exclude self-reference and profiles that jump themselves (chains cycle).
+  it('edits the proxy jump without offering self-reference or chains', () => {
+    const onSave = vi.fn();
+    const editing = emptyProfile();
+    editing.id = 'p-self';
+    editing.name = 'Self';
+    editing.host = 'self.test';
+    const plain = emptyProfile();
+    plain.id = 'p-plain';
+    plain.name = 'Plain';
+    plain.host = 'plain.test';
+    const jumper = emptyProfile();
+    jumper.id = 'p-jump';
+    jumper.name = 'Jumper';
+    jumper.host = 'jump.test';
+    jumper.proxyJumpId = 'p-plain';
+
+    render(
+      <ProfileModal
+        profile={editing}
+        profiles={[editing, plain, jumper]}
+        language="en"
+        onClose={vi.fn()}
+        onSave={onSave}
+        onPickKey={async () => ''}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+      />,
+    );
+
+    const select = screen.getByLabelText('Proxy Jump') as HTMLSelectElement;
+    expect(Array.from(select.options).map((option) => option.value)).toEqual(['', 'p-plain']);
+
+    fireEvent.change(select, { target: { value: 'p-plain' } });
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0]).toMatchObject({ proxyJumpId: 'p-plain' });
+  });
 });

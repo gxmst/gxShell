@@ -138,6 +138,12 @@ export function useSessions(options: UseSessionsOptions) {
   // disconnect does not trigger a reconnect.
   const autoReconnect = useRef<Record<string, { attempts: number; timer: number }>>({});
   const userClosing = useRef<Set<string>>(new Set());
+  // Session ids whose backend-owned reconnect this renderer observed on a live
+  // tab. The cli-session-replaced handler consumes the record to tell a
+  // user-closed tab (tab gone, record present: honor the close, disconnect the
+  // unclaimed replacement) from a session this renderer never showed (reload
+  // race: keep the session visible rather than killing live CLI work).
+  const recoveringTabs = useRef<Set<string>>(new Set());
   const scheduleAutoReconnectRef = useRef<(tabId: string) => void>(() => undefined);
 
   const clearAutoReconnect = useCallback((tabId: string) => {
@@ -230,6 +236,11 @@ export function useSessions(options: UseSessionsOptions) {
       // The backend owns this reconnect. Suppress the normal disconnected
       // event path so it cannot start a second connection in parallel.
       userClosing.current.add(payload.sessionId);
+      // Record that this renderer showed a live tab for the reconnect — see
+      // recoveringTabs above for how the replaced handler consumes it.
+      if (tabsRef.current.some((tab) => tab.id === payload.sessionId)) {
+        recoveringTabs.current.add(payload.sessionId);
+      }
       setTabs((items) => items.map((tab) => tab.id === payload.sessionId
         ? { ...tab, state: "reconnecting", error: undefined }
         : tab));
@@ -239,7 +250,20 @@ export function useSessions(options: UseSessionsOptions) {
       if (!payload?.oldSessionId || !info?.id || !acceptRuntimeEvent(info)) return;
       const runtime = rememberSessionInfo(info);
       clearAutoReconnect(payload.oldSessionId);
+      userClosing.current.delete(payload.oldSessionId);
       disposeTerminalRef.current(payload.oldSessionId);
+      // This renderer showed the old tab as reconnecting and it is gone now:
+      // the user closed it while the backend owned the reconnect. Honor the
+      // close instead of resurrecting the tab, and disconnect the replacement
+      // unless another tab already claimed it. Without that recoveringTabs
+      // record the old id never had a tab here — a renderer reload, most
+      // likely — and the session must stay visible.
+      if (recoveringTabs.current.delete(payload.oldSessionId)
+        && !tabsRef.current.some((tab) => tab.id === payload.oldSessionId)
+        && !tabsRef.current.some((tab) => tab.id === info.id)) {
+        void Disconnect(info.id).catch(() => undefined);
+        return;
+      }
       const profile = profilesRef.current.find((item) => item.id === info.profileId);
       setTabs((items) => {
         const oldTab = items.find((tab) => tab.id === payload.oldSessionId);
@@ -446,9 +470,11 @@ export function useSessions(options: UseSessionsOptions) {
       const runtime = rememberSessionInfo(info);
       if (staleTab) {
         disposeTerminalRef.current(staleTab.id);
-        setTabs((items) => items.map((tab) => tab.id === staleTab.id
-          ? { ...tab, id: info.id, ...runtime, title: tab.customTitle ? tab.title : tabTitle(profile, info.name), state: info.state, error: undefined }
-          : tab));
+        setTabs((items) => items
+          .filter((tab) => tab.id !== info.id || tab.id === staleTab.id)
+          .map((tab) => tab.id === staleTab.id
+            ? { ...tab, id: info.id, ...runtime, title: tab.customTitle ? tab.title : tabTitle(profile, info.name), state: info.state, error: undefined }
+            : tab));
         setActiveTab(info.id);
       } else {
         await appendSession(profile, info);
@@ -466,7 +492,14 @@ export function useSessions(options: UseSessionsOptions) {
     if (oldID !== info.id) disposeTerminalRef.current(oldID);
     const profile = profilesRef.current.find((item) => item.id === info.profileId);
     const runtime = rememberSessionInfo(info);
-    setTabs((items) => items.map((tab) => tab.id === oldID ? { ...tab, id: info.id, ...runtime, title: tab.customTitle ? tab.title : tabTitle(profile, info.name), state: info.state, error: undefined } : tab));
+    setTabs((items) => {
+      // A concurrent CLI attach can already represent info.id — the backend
+      // reuses a healthy session for the same profile. Drop that tab rather
+      // than producing two tabs with one session id: the survivor adopts the
+      // session's terminal, which is keyed by id.
+      const withoutDuplicate = items.filter((tab) => tab.id !== info.id || tab.id === oldID);
+      return withoutDuplicate.map((tab) => tab.id === oldID ? { ...tab, id: info.id, ...runtime, title: tab.customTitle ? tab.title : tabTitle(profile, info.name), state: info.state, error: undefined } : tab);
+    });
     setActiveTab(info.id);
     return true;
   }, [discardUnclaimedSession, rememberSessionInfo]);
@@ -680,9 +713,14 @@ export function useSessions(options: UseSessionsOptions) {
         }
         const runtime = rememberSessionInfo(info);
         // Replace the old tab id in place so ordering and active state persist.
-        setTabs((items) => items.map((item) => item.id === tabId
-          ? { ...item, id: info.id, ...runtime, title: item.customTitle ? item.title : tabTitle(profile, info.name), state: info.state, error: undefined }
-          : item));
+        // The same-session-id dedupe as replaceReconnectedTab: a concurrent CLI
+        // attach may already show info.id on the strip.
+        setTabs((items) => {
+          const withoutDuplicate = items.filter((item) => item.id !== info.id || item.id === tabId);
+          return withoutDuplicate.map((item) => item.id === tabId
+            ? { ...item, id: info.id, ...runtime, title: item.customTitle ? item.title : tabTitle(profile, info.name), state: info.state, error: undefined }
+            : item);
+        });
         setActiveTab((current) => current === tabId ? info.id : current);
         clearAutoReconnect(tabId);
         await reloadRef.current();

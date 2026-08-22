@@ -166,23 +166,51 @@ describe("Sidebar shell", () => {
   it("exposes the width grip only when a resize handler is wired and the panel is open", () => {
     const onResizeStart = vi.fn();
     const onResizeReset = vi.fn();
+    const onResizeAdjust = vi.fn();
 
     const bare = renderSidebar();
     expect(bare.container.querySelector(".rail-resizer")).toBeNull();
 
-    const collapsed = renderSidebar({ collapsed: true, onResizeStart, onResizeReset });
+    const collapsed = renderSidebar({ collapsed: true, onResizeStart, onResizeReset, onResizeAdjust });
     expect(collapsed.container.querySelector(".rail-resizer")).toBeNull();
 
-    const { container } = renderSidebar({ onResizeStart, onResizeReset });
+    const { container } = renderSidebar({
+      onResizeStart,
+      onResizeReset,
+      onResizeAdjust,
+      panelWidth: 328,
+      panelWidthMin: 240,
+      panelWidthMax: 480,
+    });
     const grip = container.querySelector(".rail-resizer") as HTMLElement;
     expect(grip).not.toBeNull();
     expect(grip.getAttribute("role")).toBe("separator");
     expect(grip.getAttribute("aria-orientation")).toBe("vertical");
+    // The grip is the only resize affordance, so it has to be reachable and
+    // operable without a pointer: a tab stop, slider value semantics, and
+    // arrow/Home/End keys driving the same width the drag would.
+    expect(grip.tabIndex).toBe(0);
+    expect(grip.getAttribute("aria-valuenow")).toBe("328");
+    expect(grip.getAttribute("aria-valuemin")).toBe("240");
+    expect(grip.getAttribute("aria-valuemax")).toBe("480");
 
     fireEvent.pointerDown(grip);
     expect(onResizeStart).toHaveBeenCalledTimes(1);
 
     fireEvent.doubleClick(grip);
     expect(onResizeReset).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyDown(grip, { key: "ArrowRight" });
+    expect(onResizeAdjust).toHaveBeenLastCalledWith(16);
+    fireEvent.keyDown(grip, { key: "ArrowLeft" });
+    expect(onResizeAdjust).toHaveBeenLastCalledWith(-16);
+    fireEvent.keyDown(grip, { key: "Home" });
+    expect(onResizeAdjust).toHaveBeenLastCalledWith(240 - 328);
+    fireEvent.keyDown(grip, { key: "End" });
+    expect(onResizeAdjust).toHaveBeenLastCalledWith(480 - 328);
+    // Unrelated keys must not resize (or scroll — preventDefault is only for
+    // handled keys).
+    fireEvent.keyDown(grip, { key: "Enter" });
+    expect(onResizeAdjust).toHaveBeenCalledTimes(4);
   });
 });

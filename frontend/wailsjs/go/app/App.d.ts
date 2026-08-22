@@ -188,6 +188,8 @@ export function RemoveTunnelRule(arg1:string,arg2:string):Promise<void>;
 
 export function RenameRemoteFile(arg1:string,arg2:string,arg3:string):Promise<void>;
 
+export function RequestCloseWindow():Promise<void>;
+
 export function ResetAiUsage():Promise<void>;
 
 export function ResizeTerminal(arg1:string,arg2:number,arg3:number):Promise<void>;

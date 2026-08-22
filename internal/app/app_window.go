@@ -46,10 +46,33 @@ func (a *App) IsWindowMaximised() bool {
 	return runtime.WindowIsMaximised(ctx)
 }
 
-// CloseWindow quits the app. The runtime has no per-window close call, and
-// Quit is exactly what the removed native caption close button did: the app
-// is single-window, so quitting and closing coincide.
+// requestFrontendClose routes a close intent through the renderer so unsaved
+// work can be confirmed there. Every close path must pass the same gate, or
+// the confirmation would only protect the top-bar button and Alt+F4 would
+// bypass it.
+func (a *App) requestFrontendClose() {
+	ctx := a.ctx.Get()
+	if ctx == nil {
+		return
+	}
+	runtime.EventsEmit(ctx, "app:close-requested")
+}
+
+// RequestCloseWindow asks the renderer to close. The frontend checks unsaved
+// documents, dirty settings, and open editors, confirms with the user when
+// needed, and finishes with CloseWindow. The top-bar close button calls this
+// rather than quitting directly.
+func (a *App) RequestCloseWindow() {
+	a.requestFrontendClose()
+}
+
+// CloseWindow quits the app. It is the confirmed exit: callers should only
+// reach it after the unsaved-work gate (app:close-requested) has passed, and
+// forceClose makes Wails' Quit — which consults OnBeforeClose too — terminal.
+// The runtime has no per-window close call, and the app is single-window, so
+// quitting and closing coincide.
 func (a *App) CloseWindow() {
+	a.forceClose.Store(true)
 	ctx := a.ctx.Get()
 	if ctx == nil {
 		return

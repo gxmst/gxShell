@@ -69,6 +69,7 @@
 }
 
 .rail-resizer:hover,
+.rail-resizer:focus-visible,
 .app-shell[data-resizing="true"] .rail-resizer {
   background: linear-gradient(
     to right,

@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { types } from "../wailsjs/go/models";
-import { AnswerKeyboardInteractive, CreateCommand, DeleteCommand, ExportProfiles, GetStartupFile, ImportOpenSSHConfig, ImportProfiles, IsRecording, ListCommands, OpenDataDir, ReadLogFile, RevokeCliTrust, SelectPrivateKey, SendCommandToTerminal, SetWindowBackgroundColour, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/app/App";
+import { AnswerKeyboardInteractive, CloseWindow, CreateCommand, DeleteCommand, ExportProfiles, GetStartupFile, ImportOpenSSHConfig, ImportProfiles, IsRecording, ListCommands, OpenDataDir, ReadLogFile, RevokeCliTrust, SelectPrivateKey, SendCommandToTerminal, SetWindowBackgroundColour, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/app/App";
 import { emptyProfile } from "./constants";
 import type { AutomationActivityEvent, AutomationActivityRecord, AutomationIndicator, CliApprovalEvent, Drawer, SplitDirection, SplitPane, Tab } from "./types";
 import { normalizeAppTheme, parseRgbColor } from "./utils/format";
@@ -629,14 +629,34 @@ function App() {
     Object.values(automationClearTimers.current).forEach((timer) => window.clearTimeout(timer));
   }, []);
 
+  // The close gate. Wails routes every close path — the top-bar button,
+  // Alt+F4, the taskbar — through app:close-requested, because a DOM
+  // beforeunload cannot reliably intercept a native quit; the confirmed path
+  // finishes with CloseWindow, which quits without re-entering the gate. The
+  // profile editor counts as unsaved even when its draft happens to be clean:
+  // the draft lives only in modal state, and one redundant confirm beats
+  // silently dropping an edit session.
+  const [quitConfirmOpen, setQuitConfirmOpen] = useState(false);
+  const quitConfirmOpenRef = useRef(false);
+  const profileModalRef = useRef(profileModal);
+  profileModalRef.current = profileModal;
   useEffect(() => {
-    const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (Object.keys(dirtyDocumentsRef.current).length === 0 && !settingsDirtyRef.current.dirty) return;
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", onBeforeUnload);
-    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+    const offCloseRequest = EventsOn("app:close-requested", () => {
+      const hasUnsavedWork =
+        Object.keys(dirtyDocumentsRef.current).length > 0 ||
+        settingsDirtyRef.current.dirty ||
+        profileModalRef.current !== null;
+      if (!hasUnsavedWork) {
+        CloseWindow();
+        return;
+      }
+      // Repeated requests while the dialog is up (a second Alt+F4) must not
+      // stack prompts or quit behind the user's back.
+      if (quitConfirmOpenRef.current) return;
+      quitConfirmOpenRef.current = true;
+      setQuitConfirmOpen(true);
+    });
+    return () => offCloseRequest();
   }, []);
 
   // Keyboard tab navigation walks the tab strip, so it has to see the same order
@@ -728,7 +748,12 @@ function App() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  const finishSidebarResize = useCallback(() => {
+  // width, when given, is the value the caller already committed with
+  // setSidebarPanelWidth in the same tick — React state updates are batched,
+  // so reading sidebarPanelWidthRef right after setting state still yields the
+  // pre-change width (the double-click reset would otherwise persist nothing,
+  // or the stale value).
+  const finishSidebarResize = useCallback((width?: number) => {
     // xterm reflows on a real size change only, so refit after the grid settles
     // rather than on every pointer move — a reflow per pixel is far too costly.
     window.setTimeout(() => {
@@ -736,9 +761,9 @@ function App() {
     }, 60);
     const settings = profileState.settings;
     if (!settings) return;
-    const width = sidebarPanelWidthRef.current;
-    if (settings.sidebarWidth === width) return;
-    profileState.saveSettings(new types.AppSettings({ ...settings, sidebarWidth: width })).catch(() => {
+    const effective = width ?? sidebarPanelWidthRef.current;
+    if (settings.sidebarWidth === effective) return;
+    profileState.saveSettings(new types.AppSettings({ ...settings, sidebarWidth: effective })).catch(() => {
       // A failed write only costs the restored width next launch.
     });
   }, [profileState, refitTerminal]);
@@ -775,8 +800,21 @@ function App() {
   }, [finishSidebarResize]);
 
   const resetSidebarResize = useCallback(() => {
-    setSidebarPanelWidth(clampSidebarPanelWidth(SIDEBAR_PANEL_DEFAULT, window.innerWidth));
-    finishSidebarResize();
+    const width = clampSidebarPanelWidth(SIDEBAR_PANEL_DEFAULT, window.innerWidth);
+    setSidebarPanelWidth(width);
+    // Pass the target width explicitly: the ref still holds the pre-reset
+    // value until the next render, and a plain finishSidebarResize() would
+    // persist that stale value instead of the default.
+    finishSidebarResize(width);
+  }, [finishSidebarResize]);
+
+  // Keyboard resize (see the rail resizer in Sidebar): compute from the ref,
+  // commit, and persist in one step — same contract as finishing a drag.
+  const adjustSidebarWidth = useCallback((delta: number) => {
+    const max = Math.max(SIDEBAR_PANEL_MIN, Math.round(window.innerWidth * SIDEBAR_PANEL_MAX_VW));
+    const width = Math.round(Math.min(Math.max(sidebarPanelWidthRef.current + delta, SIDEBAR_PANEL_MIN), max));
+    setSidebarPanelWidth(width);
+    finishSidebarResize(width);
   }, [finishSidebarResize]);
 
   // Runtime font changes are deliberately session-local: they update every
@@ -1391,6 +1429,10 @@ function App() {
           setCollapsed={setSidebarCollapsed}
           onResizeStart={beginSidebarResize}
           onResizeReset={resetSidebarResize}
+          onResizeAdjust={adjustSidebarWidth}
+          panelWidth={sidebarPanelWidth}
+          panelWidthMin={SIDEBAR_PANEL_MIN}
+          panelWidthMax={Math.max(SIDEBAR_PANEL_MIN, Math.round(window.innerWidth * SIDEBAR_PANEL_MAX_VW))}
           setCtxMenu={setCtxMenu}
           drawer={drawer}          setDrawer={requestDrawer}
           onSettingsDirtyChange={handleSettingsDirtyChange}
@@ -1609,6 +1651,16 @@ function App() {
           setDeleteCommandRequest(null);
           notify(profileState.settings?.language === "zh-CN" ? "命令模板已删除" : "Command template deleted", "success");
         }}
+      />}
+      {quitConfirmOpen && <ConfirmDialog
+        locale={profileState.settings?.language || "en"}
+        title={profileState.settings?.language === "zh-CN" ? "退出 gxShell？" : "Quit gxShell?"}
+        body={profileState.settings?.language === "zh-CN"
+          ? "存在未保存的文档、设置或配置编辑，退出将丢失这些更改。"
+          : "There are unsaved documents, settings, or profile edits. Quitting will discard them."}
+        confirmText={profileState.settings?.language === "zh-CN" ? "退出" : "Quit"}
+        onClose={() => { quitConfirmOpenRef.current = false; setQuitConfirmOpen(false); }}
+        onConfirm={() => CloseWindow()}
       />}
       {commandVars && <CommandVarsDialog commandName={commandVars.commandName} template={commandVars.template} placeholders={commandVars.placeholders} locale={profileState.settings?.language || "en"} onClose={() => setCommandVars(null)} onSubmit={(resolved) => { const send = commandVars.send; setCommandVars(null); send(resolved); }} />}
       {sessions.secretRequest && <SecretModal request={sessions.secretRequest} language={profileState.settings?.language || "en"} onClose={sessions.cancelSecretRequest} onSubmit={async (password, passphrase) => { const request = sessions.secretRequest; if (!request) return; await sessions.submitSecret(request, password, passphrase); sessions.setSecretRequest(null); }} />}

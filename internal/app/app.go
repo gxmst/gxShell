@@ -58,17 +58,23 @@ func (c *appContext) Get() context.Context {
 
 // App is the main application struct that coordinates all managers.
 type App struct {
-	ctx     appContext
-	store   *config.Store
-	log     *logger.Logger
-	ssh     *sshmanager.Manager
-	sftp    *sftpmanager.Manager
-	monitor *monitor.Manager
-	secrets *secrets.Store
-	net     *network.Manager
-	tunnels *tunnel.Manager
-	ai      *ai.Manager
-	docker  *docker.Manager
+	ctx   appContext
+	store *config.Store
+	log   *logger.Logger
+	// The close gate. beforeClose turns every close path (top-bar button,
+	// Alt+F4, taskbar) into an app:close-requested event so the renderer can
+	// confirm unsaved work; CloseWindow is the one path that already passed
+	// that confirmation and sets forceClose so Quit is not re-gated.
+	domReadyFired atomic.Bool
+	forceClose    atomic.Bool
+	ssh           *sshmanager.Manager
+	sftp          *sftpmanager.Manager
+	monitor       *monitor.Manager
+	secrets       *secrets.Store
+	net           *network.Manager
+	tunnels       *tunnel.Manager
+	ai            *ai.Manager
+	docker        *docker.Manager
 	// services/firewall manage remote systemd units and the remote firewall
 	// over the same SSH exec channel as docker (no remote agent).
 	services  *services.Manager
@@ -329,6 +335,7 @@ func (a *App) startup(ctx context.Context) {
 // domReady is called when the frontend is ready.
 func (a *App) domReady(ctx context.Context) {
 	a.ctx.Set(ctx)
+	a.domReadyFired.Store(true)
 	runtime.WindowCenter(ctx)
 
 	runtime.OnFileDrop(ctx, func(_ int, _ int, paths []string) {
@@ -379,6 +386,23 @@ func (a *App) domReady(ctx context.Context) {
 		})
 		a.setPendingOpenFile(allowed)
 	}
+}
+
+// beforeClose gates the native close paths (Alt+F4, taskbar close) on the same
+// unsaved-work confirmation the top-bar button goes through: block the close
+// and ask the renderer, which finishes with CloseWindow when the user
+// confirms. Wails' Quit also consults this hook, so CloseWindow raises
+// forceClose first to make the confirmed quit terminal. Before domReady there
+// is no renderer to ask — and nothing to lose yet — so early closes proceed.
+func (a *App) beforeClose(_ context.Context) bool {
+	if a.forceClose.Load() {
+		return false
+	}
+	if !a.domReadyFired.Load() {
+		return false
+	}
+	a.requestFrontendClose()
+	return true
 }
 
 // setPendingOpenFile stores an authorized document awaiting a frontend that may

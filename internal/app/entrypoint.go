@@ -28,6 +28,7 @@ import "context"
 type Hooks struct {
 	Startup              func(ctx context.Context)
 	DomReady             func(ctx context.Context)
+	BeforeClose          func(ctx context.Context) (prevent bool)
 	Shutdown             func(ctx context.Context)
 	SecondInstanceLaunch func(args []string)
 }
@@ -38,6 +39,7 @@ func NewHooks(a *App) Hooks {
 	return Hooks{
 		Startup:              a.startup,
 		DomReady:             a.domReady,
+		BeforeClose:          a.beforeClose,
 		Shutdown:             a.shutdown,
 		SecondInstanceLaunch: a.handleSecondInstanceLaunch,
 	}

@@ -298,3 +298,115 @@ describe("useSessions workspace restore", () => {
     expect(calls).toEqual(["connect:1", "disconnect:session-1", "connect:2", "disconnect:session-1", "disconnect:session-2"]);
   });
 });
+
+describe("CLI session replacement", () => {
+  beforeEach(() => {
+    const values = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, String(value)); },
+      removeItem: (key: string) => { values.delete(key); },
+      clear: () => { values.clear(); },
+      key: (index: number) => Array.from(values.keys())[index] ?? null,
+      get length() { return values.size; },
+    });
+    appMocks.connect.mockReset();
+    appMocks.connectQuick.mockReset();
+    appMocks.disconnect.mockReset();
+    appMocks.disconnect.mockResolvedValue(undefined);
+    appMocks.stopMonitor.mockReset();
+    appMocks.stopMonitor.mockResolvedValue(undefined);
+    appMocks.listSessions.mockReset();
+    appMocks.listSessions.mockResolvedValue([]);
+    appMocks.events.clear();
+  });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  const renderSessions = (profileId: string) => {
+    const notify = vi.fn();
+    const profile = makeProfile(profileId);
+    return {
+      notify,
+      profile,
+      ...renderHook(() => useSessions({
+        profiles: [profile],
+        notify,
+        reload: vi.fn(async () => undefined),
+        disposeTerminal: vi.fn(),
+        restoreWorkspace: false,
+        language: "en",
+      })),
+    };
+  };
+
+  const replacement = (profileId: string) => new types.SessionInfo({
+    id: "new-1",
+    profileId,
+    name: profileId,
+    state: "connected",
+  });
+
+  // The backend owns a CLI reconnect; the user closes the tab while it is in
+  // flight. The replacement must not resurrect the closed tab, and the new
+  // session — which nothing claims — must be disconnected rather than leaked.
+  it("honors a close issued while the backend owned the reconnect", async () => {
+    const { result } = renderSessions("one");
+    await waitFor(() => expect(appMocks.events.has("terminal:cli-session-replaced")).toBe(true));
+
+    act(() => {
+      result.current.setTabs([{ id: "old-1", profileId: "one", title: "one", state: "connected" }]);
+    });
+    act(() => {
+      appMocks.events.get("terminal:cli-session-recovering")?.({ sessionId: "old-1" });
+    });
+    await waitFor(() => expect(result.current.tabs[0]?.state).toBe("reconnecting"));
+
+    await act(async () => { await result.current.closeTab("old-1"); });
+    expect(result.current.tabs).toHaveLength(0);
+
+    act(() => {
+      appMocks.events.get("terminal:cli-session-replaced")?.({ oldSessionId: "old-1", session: replacement("one") });
+    });
+
+    expect(result.current.tabs).toHaveLength(0);
+    await waitFor(() => expect(appMocks.disconnect).toHaveBeenCalledWith("new-1"));
+  });
+
+  // A renderer reload never saw the recovering tab, so the same replacement
+  // event is the only thing making the session visible. Killing it there would
+  // disconnect live CLI work on a reload.
+  it("keeps the replacement visible when this renderer never showed the old tab", async () => {
+    const { result } = renderSessions("one");
+    await waitFor(() => expect(appMocks.events.has("terminal:cli-session-replaced")).toBe(true));
+
+    act(() => {
+      appMocks.events.get("terminal:cli-session-replaced")?.({ oldSessionId: "old-1", session: replacement("one") });
+    });
+
+    expect(result.current.tabs).toHaveLength(1);
+    expect(result.current.tabs[0]?.id).toBe("new-1");
+    expect(appMocks.disconnect).not.toHaveBeenCalledWith("new-1");
+  });
+
+  // The backend reuses a healthy session for the same profile, so a concurrent
+  // CLI attach can already represent the replacement id on the strip. Renaming
+  // the old tab onto it must not leave two tabs sharing one session id.
+  it("collapses a duplicate when the replacement id is already on the strip", async () => {
+    const { result } = renderSessions("one");
+    await waitFor(() => expect(appMocks.events.has("terminal:cli-session-replaced")).toBe(true));
+
+    act(() => {
+      result.current.setTabs([
+        { id: "old-1", profileId: "one", title: "one", state: "reconnecting" },
+        { id: "new-1", profileId: "one", title: "one", state: "connected" },
+      ]);
+    });
+    act(() => {
+      appMocks.events.get("terminal:cli-session-replaced")?.({ oldSessionId: "old-1", session: replacement("one") });
+    });
+
+    expect(result.current.tabs).toHaveLength(1);
+    expect(result.current.tabs[0]?.id).toBe("new-1");
+  });
+});
