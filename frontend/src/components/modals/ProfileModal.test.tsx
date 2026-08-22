@@ -118,4 +118,60 @@ describe('ProfileModal shortcuts', () => {
     expect(onSave).toHaveBeenCalledTimes(1);
     expect(onSave.mock.calls[0][0]).toMatchObject({ proxyJumpId: 'p-plain' });
   });
+
+  it('does not let a profile already used as a jump host start a second hop', () => {
+    const jump = emptyProfile();
+    jump.id = 'p-jump';
+    jump.name = 'Jump';
+    jump.host = 'jump.test';
+    const target = emptyProfile();
+    target.id = 'p-target';
+    target.name = 'Target';
+    target.host = 'target.test';
+    target.proxyJumpId = jump.id;
+    const edge = emptyProfile();
+    edge.id = 'p-edge';
+    edge.name = 'Edge';
+    edge.host = 'edge.test';
+
+    render(
+      <ProfileModal
+        profile={jump}
+        profiles={[jump, target, edge]}
+        language="en"
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onPickKey={async () => ''}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+      />,
+    );
+
+    const select = screen.getByLabelText('Proxy Jump') as HTMLSelectElement;
+    expect(select).toBeDisabled();
+    expect(select).toHaveAttribute('title', expect.stringContaining('one jump hop'));
+  });
+
+  it('reports only real edits as dirty and clears the state on unmount', () => {
+    const onDirtyChange = vi.fn();
+    const view = render(
+      <ProfileModal
+        profile={emptyProfile()}
+        profiles={[]}
+        language="en"
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+        onPickKey={async () => ''}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onDirtyChange={onDirtyChange}
+      />,
+    );
+
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+    fireEvent.change(screen.getByLabelText('Host'), { target: { value: 'edited.test' } });
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    view.unmount();
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
 });

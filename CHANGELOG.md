@@ -3,6 +3,26 @@
 All notable gxShell changes are documented here. Release notes are generated
 from the version section in this file.
 
+## [1.6.0] - 2026-08-22
+
+### English
+
+- Redesigned the Windows desktop shell with a frameless top bar, activity rail, clearer content hierarchy, compact modals, a resizable persisted sidebar, and keyboard-accessible sizing controls.
+- Added an Activity Center with deduplicated failure history and attention-only badges, plus a fuzzy command palette with MRU ordering, richer searchable metadata, and more consistent connection-state feedback.
+- Improved terminal workflows with multiline-paste protection, safer batch-command previews, OSC 7-aware SFTP navigation, and generation-aware reconnect ownership that avoids duplicate tabs and preserves terminal buffers.
+- Refined SFTP transfers with clearer conflict handling, accurate paused byte counts, smoother progress reporting, and better transfer and monitor layouts.
+- Expanded time-limited CLI trust to cover bounded local T2 operations while retaining native approval for undecidable, external, credential, self-locking, and all T3 commands. Classification now catches compound working-directory deletes, broad `find`, firewall flushes, cluster-wide deletes, and cloud-side mutations.
+- Unified native close handling for the title bar, Alt+F4, and taskbar exits; unsaved documents, settings, server profiles, and command templates are protected. Proxy Jump profiles are also validated against unsupported multi-hop chains.
+
+### 中文
+
+- 重新设计 Windows 桌面框架，加入无边框顶栏、活动侧轨、更清晰的内容层级、紧凑弹窗、可持久化调整的侧栏，以及支持键盘操作的尺寸调节控件。
+- 新增活动中心，对重复失败进行归并记录并仅在需要处理时显示角标；命令面板支持模糊搜索、最近使用排序、更完整的检索字段和更一致的连接状态反馈。
+- 改进终端工作流：增加多行粘贴保护、更安全的批量命令预览、基于 OSC 7 的 SFTP 目录跳转，以及带运行代次隔离的重连归属管理，避免重复标签并保留终端缓冲区。
+- 优化 SFTP 传输的冲突处理、暂停时字节统计、进度上报，以及传输中心和监控面板的布局与反馈。
+- 限时 CLI 信任扩展为可自动放行服务器内影响局部的 T2 操作；无法判断、跨系统、凭据、可能断联及所有 T3 命令仍需原生确认。分类器现在能识别复合工作目录删除、宽范围 `find`、防火墙清空、集群级删除和云端变更。
+- 顶栏关闭、Alt+F4 与任务栏退出统一经过原生关闭门禁，未保存的文档、设置、服务器配置和命令模板都会得到保护；跳板机配置也会阻止不受支持的多跳链路。
+
 ## [1.5.6] - 2026-08-19
 
 ### English
@@ -95,6 +115,7 @@ from the version section in this file.
 - 全局搜索覆盖连接、已打开标签、命令和工作区操作；终端搜索增加清晰的匹配计数与导航。
 - 工作区恢复改为显式开关，并增加顶层错误兜底、辅助功能和键盘交互改进。
 
+[1.6.0]: https://github.com/gxmst/gxShell/releases/tag/v1.6.0
 [1.5.6]: https://github.com/gxmst/gxShell/releases/tag/v1.5.6
 [1.5.4]: https://github.com/gxmst/gxShell/releases/tag/v1.5.4
 [1.5.3]: https://github.com/gxmst/gxShell/releases/tag/v1.5.3

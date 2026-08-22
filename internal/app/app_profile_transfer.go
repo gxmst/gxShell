@@ -375,6 +375,11 @@ func (a *App) mergeImportedProfiles(candidates []profileImportCandidate) (map[st
 			existing[pending.index].ProxyJumpID = ""
 		}
 	}
+	importedProfileIndexes := make(map[int]bool, len(proxies))
+	for _, pending := range proxies {
+		importedProfileIndexes[pending.index] = true
+	}
+	normalizeImportedProxyJumps(existing, importedProfileIndexes)
 	// Preserve existing CLI aliases as authoritative and disable only later
 	// conflicting imports, rather than persisting a library the CLI cannot use.
 	aliases := map[string]bool{}

@@ -49,6 +49,9 @@ func (a *App) CreateProfile(profile types.Profile) (types.Profile, error) {
 	if err := validateProfileCliSettings(profile, profiles); err != nil {
 		return types.Profile{}, err
 	}
+	if err := validateProfileProxyJump(profile, profiles); err != nil {
+		return types.Profile{}, err
+	}
 	trustChanged := cliTrustNeedsConfirmation(types.Profile{}, profile, now)
 	if trustChanged && !a.confirmCliProfileTrust(profile) {
 		return types.Profile{}, errors.New("CLI full-trust activation was not confirmed")
@@ -93,6 +96,9 @@ func (a *App) updateProfileLocked(profile types.Profile) (types.Profile, error) 
 			profile.UpdatedAt = time.Now()
 			normalizeProfile(&profile)
 			if err := validateProfileCliSettings(profile, profiles); err != nil {
+				return types.Profile{}, err
+			}
+			if err := validateProfileProxyJump(profile, profiles); err != nil {
 				return types.Profile{}, err
 			}
 			trustChanged := cliTrustNeedsConfirmation(previous, profile, time.Now())
@@ -144,11 +150,11 @@ func (a *App) confirmCliProfileTrust(profile types.Profile) bool {
 	alias := profile.CliAlias
 	until := profile.CliTrustUntil.Local().Format("2006-01-02 15:04:05")
 	title := "Enable time-limited CLI automation trust?"
-	message := "Until " + until + ", processes with the local gxShell CLI token may run T1 scoped, recoverable changes on " + alias + " without another prompt. T2 and T3 commands still require native approval, and every T3 command is confirmed separately. Trusted remote-to-remote copies may also skip their prompt.\n\n" +
+	message := "Until " + until + ", processes with the local gxShell CLI token may run scoped T1 changes and bounded local T2 operations on " + alias + " without another prompt. Undecidable, external, credential, self-locking, and critical commands still require native approval; every T3 command is confirmed separately. Trusted remote-to-remote copies may also skip their prompt.\n\n" +
 		"Scripts, build tools, and interpreters can run arbitrary code, so this classifier is not a sandbox. Only enable automation trust for a controlled workflow whose code and dependencies you accept. Local file transfers, secret changes, and tunnels still require confirmation.\n\nEnable automation trust for this server?"
 	if zh {
 		title = "开启限时 CLI 自动化信任？"
-		message = "在 " + until + " 前，持有本机 gxShell CLI token 的进程可以在 " + alias + " 上无提示执行 T1 级、范围明确且可恢复的变更。T2 和 T3 命令仍需原生框授权，每条 T3 命令都必须单独确认。受信任服务器之间的远程复制也可以跳过确认。\n\n" +
+		message = "在 " + until + " 前，持有本机 gxShell CLI token 的进程可以在 " + alias + " 上无提示执行范围明确的 T1 变更和服务器内影响局部的 T2 操作。无法判断、跨系统、凭据、可能断联及高危命令仍需原生框授权，每条 T3 命令都必须单独确认。受信任服务器之间的远程复制也可以跳过确认。\n\n" +
 			"脚本、构建工具和解释器都能执行任意代码，风险分类器不是沙箱。只有在你认可工作流代码及依赖时才开启自动化信任。本地文件传输、secret 变更和隧道仍需确认。\n\n是否为这台服务器开启自动化信任？"
 	}
 	a.nativeDialogMu.Lock()

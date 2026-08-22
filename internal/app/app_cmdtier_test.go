@@ -13,7 +13,8 @@ package app
 //  1. an undecidable command is never below T2
 //  2. a privilege wrapper never lowers a tier
 //  3. a credential reference is always T3 with the credential category
-//  4. a trust window never covers T2 or T3
+//  4. a trust window covers only scoped local T2, never undecidable/external
+//     T2 or any T3 command
 
 import (
 	"strings"
@@ -77,6 +78,7 @@ func TestClassifyCommandTiers(t *testing.T) {
 		{"docker exec app sh -c 'ls'", tierBounded, riskUndecidable, "command inside a container is not analysed"},
 		{"tar -xzf release.tar.gz", tierBounded, riskUndecidable, "archive chooses its own paths"},
 		{"find /srv -name '*.tmp' -delete", tierBounded, riskDestructive, "find can delete"},
+		{"aws s3api delete-object --bucket assets --key old", tierBounded, riskExternal, "cloud deletion remains T2 but never inherits local trust"},
 		{"npm run deploy", tierBounded, riskUndecidable, "package script is arbitrary code"},
 		{"curl -X DELETE https://example.test/resource", tierBounded, riskUndecidable, "network requests can mutate external state"},
 		{"scp ./artifact host:/srv/app", tierBounded, riskUndecidable, "network copies are not a local recoverable change"},
@@ -102,6 +104,9 @@ func TestClassifyCommandTiers(t *testing.T) {
 		{"shred -u /srv/secret.db", tierCritical, riskIrreversible, "overwrites data irrecoverably"},
 		{"rm -rf /", tierCritical, riskIrreversible, "filesystem root"},
 		{"rm -rf /etc", tierCritical, riskIrreversible, "critical system path"},
+		{"cd / && rm -rf etc", tierCritical, riskIrreversible, "relative delete is resolved against an earlier cd"},
+		{"cd /srv/app && rm -rf ../../etc", tierCritical, riskIrreversible, "relative parent traversal is resolved against an earlier cd"},
+		{"find / -delete", tierCritical, riskIrreversible, "find delete across the filesystem root"},
 		{"sudo -u root rm -rf /etc", tierCritical, riskIrreversible, "sudo option values must not hide the wrapped command"},
 		{"timeout 5s rm -rf /etc", tierCritical, riskIrreversible, "timeout duration must not hide the wrapped command"},
 		{`echo '\'; rm -rf /etc`, tierCritical, riskIrreversible, "a literal backslash in single quotes must not hide a later segment"},
@@ -119,6 +124,7 @@ func TestClassifyCommandTiers(t *testing.T) {
 		{"systemctl stop sshd", tierCritical, riskSelfLock, "stops the service providing access"},
 		{"systemctl restart ssh", tierCritical, riskSelfLock, "restart applies whatever config is on disk now"},
 		{"iptables -F", tierCritical, riskSelfLock, "flushes firewall rules"},
+		{"nft flush ruleset", tierCritical, riskSelfLock, "flushes the complete nftables ruleset"},
 		{"iptables -P INPUT DROP", tierCritical, riskSelfLock, "default-deny policy"},
 		{"userdel deploy", tierCritical, riskSelfLock, "deletes an account"},
 		{"passwd root", tierCritical, riskSelfLock, "changes the root password"},
@@ -152,6 +158,7 @@ func TestClassifyCommandTiers(t *testing.T) {
 		{"npm publish", tierCritical, riskPublish, "public and permanent"},
 		{"docker push registry.example/app:1", tierCritical, riskExternal, "publishes an image"},
 		{"terraform apply -auto-approve", tierCritical, riskExternal, "applies infrastructure changes"},
+		{"kubectl delete pods --all -A", tierCritical, riskExternal, "deletes workloads across the cluster"},
 		{"aws s3 rb s3://bucket", tierCritical, riskIrreversible, "removes a bucket"},
 		{"aws ec2 terminate-instances --instance-ids i-1", tierCritical, riskIrreversible, "terminates instances"},
 	}
@@ -316,8 +323,14 @@ func TestTrustWindowScope(t *testing.T) {
 		{"mkdir -p /srv/app", approvalNone, approvalClick, "T1 is what the window is for"},
 		{"sed -i s/a/b/ src/main.go", approvalNone, approvalClick, "T1 in-place edit"},
 		{"rm -rf /srv/app/old", approvalNone, approvalClick, "T2 with a resolved target is covered"},
+		{"find /srv/app -name '*.tmp' -delete", approvalNone, approvalClick, "scoped local T2 remains covered"},
 		{`rm -rf "$TARGET_DIR"`, approvalClick, approvalClick, "T2 undecidable always asks"},
 		{"git push origin feature", approvalClick, approvalClick, "T2 external always asks"},
+		{"aws s3api delete-object --bucket assets --key old", approvalClick, approvalClick, "remote cloud deletion always asks"},
+		{"cd / && rm -rf etc", approvalClick, approvalClick, "compound critical path always asks"},
+		{"find / -delete", approvalClick, approvalClick, "filesystem-wide find delete always asks"},
+		{"nft flush ruleset", approvalClick, approvalClick, "firewall flush always asks"},
+		{"kubectl delete pods --all -A", approvalClick, approvalClick, "cluster-wide delete always asks"},
 		{"rm -rf /etc", approvalClick, approvalClick, "T3-a always asks"},
 		{"systemctl stop sshd", approvalClick, approvalClick, "T3-b always asks"},
 		{"cat /root/.aws/credentials", approvalClick, approvalClick, "T3-c always asks"},

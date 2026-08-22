@@ -72,11 +72,11 @@ func (a *App) RequestCloseWindow() {
 // The runtime has no per-window close call, and the app is single-window, so
 // quitting and closing coincide.
 func (a *App) CloseWindow() {
-	a.forceClose.Store(true)
 	ctx := a.ctx.Get()
 	if ctx == nil {
 		return
 	}
+	a.forceClose.Store(true)
 	runtime.Quit(ctx)
 }
 

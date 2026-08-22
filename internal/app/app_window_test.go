@@ -22,6 +22,9 @@ func TestWindowControlsAreNoOpsWithoutContext(t *testing.T) {
 	if a.IsWindowMaximised() {
 		t.Fatal("IsWindowMaximised without a context should report false")
 	}
+	if a.forceClose.Load() {
+		t.Fatal("CloseWindow without a context must not arm the confirmed-close bypass")
+	}
 }
 
 // The close gate has three states, each load-bearing: before domReady there is
@@ -41,8 +44,8 @@ func TestBeforeCloseGateStates(t *testing.T) {
 		t.Fatal("close after domReady should be blocked pending the renderer's unsaved-work check")
 	}
 
-	a.CloseWindow()
+	a.forceClose.Store(true)
 	if a.beforeClose(context.Background()) {
-		t.Fatal("the confirmed quit from CloseWindow must not be blocked again")
+		t.Fatal("a confirmed quit must not be blocked again")
 	}
 }

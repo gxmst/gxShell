@@ -101,6 +101,69 @@ func TestDuplicateProfileRequiresCredentialsToBeEnteredAgain(t *testing.T) {
 	}
 }
 
+func TestUpdateProfileRejectsNestedProxyJump(t *testing.T) {
+	app := newProfileTestApp(t)
+	profiles := []types.Profile{
+		{ID: "app", Name: "app", Host: "app.test", Port: 22, Username: "root", ProxyJumpID: "jump"},
+		{ID: "jump", Name: "jump", Host: "jump.test", Port: 22, Username: "root"},
+		{ID: "edge", Name: "edge", Host: "edge.test", Port: 22, Username: "root"},
+	}
+	if err := app.store.SaveProfiles(profiles); err != nil {
+		t.Fatal(err)
+	}
+
+	jump := profiles[1]
+	jump.ProxyJumpID = "edge"
+	if _, err := app.UpdateProfile(jump); err == nil {
+		t.Fatal("profile used as a jump host was allowed to use another jump host")
+	}
+
+	appProfile := profiles[0]
+	appProfile.ProxyJumpID = "missing"
+	if _, err := app.UpdateProfile(appProfile); err == nil {
+		t.Fatal("missing jump host reference was accepted")
+	}
+}
+
+func TestNormalizeImportedProxyJumpsKeepsOnlyOneHop(t *testing.T) {
+	profiles := []types.Profile{
+		{ID: "app", ProxyJumpID: "jump"},
+		{ID: "jump", ProxyJumpID: "edge"},
+		{ID: "edge"},
+		{ID: "self", ProxyJumpID: "self"},
+		{ID: "missing-ref", ProxyJumpID: "missing"},
+	}
+
+	normalizeImportedProxyJumps(profiles, map[int]bool{0: true, 1: true, 3: true, 4: true})
+
+	if profiles[0].ProxyJumpID != "" {
+		t.Fatalf("outer nested jump was not cleared: %q", profiles[0].ProxyJumpID)
+	}
+	if profiles[1].ProxyJumpID != "edge" {
+		t.Fatalf("usable inner jump was not preserved: %q", profiles[1].ProxyJumpID)
+	}
+	if profiles[3].ProxyJumpID != "" || profiles[4].ProxyJumpID != "" {
+		t.Fatal("self or missing imported jump reference was not cleared")
+	}
+}
+
+func TestNormalizeImportedProxyJumpsPreservesExistingRelationship(t *testing.T) {
+	profiles := []types.Profile{
+		{ID: "app", ProxyJumpID: "jump"},
+		{ID: "jump", ProxyJumpID: "edge"},
+		{ID: "edge"},
+	}
+
+	normalizeImportedProxyJumps(profiles, map[int]bool{1: true})
+
+	if profiles[0].ProxyJumpID != "jump" {
+		t.Fatalf("import changed an existing jump relationship: %q", profiles[0].ProxyJumpID)
+	}
+	if profiles[1].ProxyJumpID != "" {
+		t.Fatalf("conflicting imported nested jump was not cleared: %q", profiles[1].ProxyJumpID)
+	}
+}
+
 type appMonitorExecutor struct {
 	calls chan string
 }

@@ -135,6 +135,74 @@ func validateProfileCliSettings(profile types.Profile, profiles []types.Profile)
 	return nil
 }
 
+// validateProfileProxyJump keeps the stored graph within the one-hop contract
+// implemented by Connect. A profile may either use a jump host or serve as one,
+// but not both; accepting a longer chain here would save successfully and then
+// fail only when the user tried to connect.
+func validateProfileProxyJump(profile types.Profile, profiles []types.Profile) error {
+	jumpID := strings.TrimSpace(profile.ProxyJumpID)
+	if jumpID == "" {
+		return nil
+	}
+	if jumpID == profile.ID {
+		return errors.New("a profile cannot use itself as a jump host")
+	}
+	var jumpProfile *types.Profile
+	for i := range profiles {
+		existing := &profiles[i]
+		if existing.ID == jumpID {
+			jumpProfile = existing
+		}
+		if existing.ID != profile.ID && existing.ProxyJumpID == profile.ID {
+			return errors.New("a profile used as a jump host cannot use another jump host")
+		}
+	}
+	if jumpProfile == nil {
+		return errors.New("jump host profile not found")
+	}
+	if strings.TrimSpace(jumpProfile.ProxyJumpID) != "" {
+		return errors.New("nested proxy jumps are not supported")
+	}
+	return nil
+}
+
+// normalizeImportedProxyJumps repairs only profiles touched by the current
+// import. Existing relationships win: importing B -> C must not silently erase
+// an existing A -> B. Among imported edges, the inner usable hop is retained
+// and any outer edge that would require nesting is cleared.
+func normalizeImportedProxyJumps(profiles []types.Profile, imported map[int]bool) {
+	ids := make(map[string]bool, len(profiles))
+	for i := range profiles {
+		ids[profiles[i].ID] = true
+	}
+	for i := range imported {
+		jumpID := strings.TrimSpace(profiles[i].ProxyJumpID)
+		if jumpID == profiles[i].ID || !ids[jumpID] {
+			profiles[i].ProxyJumpID = ""
+		}
+	}
+	referencedByExisting := make(map[string]bool, len(profiles))
+	for i := range profiles {
+		if !imported[i] && profiles[i].ProxyJumpID != "" {
+			referencedByExisting[profiles[i].ProxyJumpID] = true
+		}
+	}
+	for i := range imported {
+		if referencedByExisting[profiles[i].ID] {
+			profiles[i].ProxyJumpID = ""
+		}
+	}
+	targetUsesJump := make(map[string]bool, len(profiles))
+	for i := range profiles {
+		targetUsesJump[profiles[i].ID] = profiles[i].ProxyJumpID != ""
+	}
+	for i := range imported {
+		if targetUsesJump[profiles[i].ProxyJumpID] {
+			profiles[i].ProxyJumpID = ""
+		}
+	}
+}
+
 func cliProfileTrustActive(profile types.Profile, now time.Time) bool {
 	return profile.CliEnabled && !profile.CliTrustUntil.IsZero() && profile.CliTrustUntil.After(now)
 }

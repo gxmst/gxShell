@@ -50,6 +50,7 @@ package app
 
 import (
 	"fmt"
+	"path"
 	"strings"
 )
 
@@ -510,12 +511,115 @@ func classifyCommandInto(assessment *riskAssessment, command string, offset, dep
 		})
 	}
 
+	classifyCompoundWorkingDirectory(assessment, command, offset)
+
 	for _, span := range shellSegmentRanges(command) {
 		text := command[span[0]:span[1]]
 		if strings.TrimSpace(text) == "" {
 			continue
 		}
 		classifySegment(assessment, text, offset+span[0], depth, privileged)
+	}
+}
+
+// classifyCompoundWorkingDirectory closes the gap between path classification
+// and shell state. A relative target is normally scoped to an unknown remote
+// cwd, but after an explicit `cd /...` in the same shell program it can be
+// resolved. Without this pass, `cd / && rm -rf etc` looked like an ordinary
+// bounded delete even though it removes /etc.
+func classifyCompoundWorkingDirectory(assessment *riskAssessment, command string, offset int) {
+	cwd := ""
+	lastEnd := -1
+	for _, span := range shellSegmentRanges(command) {
+		segment := command[span[0]:span[1]]
+		if strings.TrimSpace(segment) == "" {
+			continue
+		}
+		if lastEnd >= 0 && !workingDirectoryFlowsAcross(command[lastEnd:span[0]]) {
+			cwd = ""
+		}
+		lastEnd = span[1]
+
+		tokens := tokenizeCommand(segment)
+		if len(tokens) == 0 {
+			continue
+		}
+		for i := range tokens {
+			tokens[i].Start += offset + span[0]
+			tokens[i].End += offset + span[0]
+		}
+		index, privileged, _ := skipPrivilegeWrappers(tokens)
+		if index >= len(tokens) {
+			cwd = ""
+			continue
+		}
+		verbToken := tokens[index]
+		verb := shellCommandName(verbToken.Text)
+		ctx := &segmentCtx{
+			assessment: assessment,
+			verb:       verb,
+			verbToken:  verbToken,
+			args:       tokens[index+1:],
+			privileged: privileged,
+		}
+
+		if verb == "cd" {
+			operands := ctx.operands()
+			if len(operands) == 0 || strings.ContainsAny(operands[0].Text, "$`") {
+				cwd = ""
+				continue
+			}
+			target := operands[0].Text
+			if strings.HasPrefix(target, "/") {
+				cwd = path.Clean(target)
+			} else if cwd != "" && !strings.HasPrefix(target, "~") {
+				cwd = path.Join(cwd, target)
+			} else {
+				cwd = ""
+			}
+			continue
+		}
+		if cwd == "" {
+			continue
+		}
+
+		var targets []cmdToken
+		switch verb {
+		case "rm", "rmdir":
+			targets = ctx.operands()
+		case "find":
+			if strings.Contains(strings.ToLower(ctx.joinedArgs()), "-delete") {
+				targets = findSearchRoots(ctx.args)
+			}
+		}
+		for i := range targets {
+			token := targets[i]
+			if strings.HasPrefix(token.Text, "/") || strings.HasPrefix(token.Text, "~") || strings.ContainsAny(token.Text, "$`") {
+				continue
+			}
+			addResolvedDestructivePathFinding(ctx, path.Join(cwd, token.Text), &token)
+		}
+	}
+}
+
+func workingDirectoryFlowsAcross(separator string) bool {
+	trimmed := strings.TrimSpace(separator)
+	if trimmed == "" || trimmed == ";" || trimmed == "&&" {
+		return true
+	}
+	// A newline is a sequence operator just like ';'. Pipes, `||`, and a
+	// background `&` execute in a context where the previous cd is not known to
+	// affect the next command.
+	return strings.Trim(trimmed, "\r\n;") == ""
+}
+
+func addResolvedDestructivePathFinding(c *segmentCtx, resolved string, token *cmdToken) {
+	verdict := classifyTargetPath(resolved)
+	switch verdict.Class {
+	case pathFilesystemRoot, pathBlockDevice, pathHomeRoot, pathSystemConfig, pathServicePayload:
+		c.add(tierCritical, riskIrreversible, "destructive target resolves to a critical path", verdict.Display, token)
+	case pathCredentialStore, pathSSHDir, pathBootPersistence:
+		c.add(tierCritical, riskSelfLock, "destructive target resolves to credentials or access configuration", verdict.Display, token)
 	}
 }
 
@@ -776,7 +880,7 @@ func skipPrivilegeWrappers(tokens []cmdToken) (int, bool, bool) {
 				"-C": true, "--close-from": true, "-T": true, "--command-timeout": true,
 				"-r": true, "--role": true, "-t": true, "--type": true,
 				"-D": true, "--chdir": true,
-			}, map[string]bool{"-E": true, "--preserve-env": true})
+			}, map[string]bool{"-E": true, "--preserve-env": true, "-D": true, "--chdir": true})
 			opaqueContext = opaqueContext || risky
 			continue
 		case "doas":
@@ -1099,8 +1203,8 @@ var boundedVerbs = map[string]string{
 	"swapoff":  "disables swap", "umount": "unmounts a filesystem",
 	"mount": "mounts a filesystem", "modprobe": "loads a kernel module",
 	"sysctl": "changes kernel parameters", "insmod": "loads a kernel module",
-	"rmmod": "unloads a kernel module", "nft": "changes firewall rules",
-	"ufw": "changes firewall rules", "firewall-cmd": "changes firewall rules",
+	"rmmod": "unloads a kernel module",
+	"ufw":   "changes firewall rules", "firewall-cmd": "changes firewall rules",
 	"nc": "opens a raw network connection", "ncat": "opens a raw network connection",
 	"socat": "relays a network connection", "ssh": "connects onward to another host",
 	"telnet": "opens a raw network connection",
@@ -1165,6 +1269,7 @@ var verbHandlers = map[string]func(*segmentCtx){
 	"yarn":       classifyPackage,
 	"iptables":   classifyFirewall,
 	"ip6tables":  classifyFirewall,
+	"nft":        classifyNft,
 	"find":       classifyFind,
 	"tar":        classifyTar,
 	"mysql":      classifyDatabase,
@@ -1930,11 +2035,62 @@ func classifyFirewall(c *segmentCtx) {
 	}
 }
 
+func classifyNft(c *segmentCtx) {
+	args := c.joinedArgs()
+	lower := strings.ToLower(args)
+	sub := c.subcommand()
+	switch {
+	case sub == "list" || sub == "monitor":
+		c.add(tierObserve, riskObserve, "lists firewall rules", args, nil)
+	case sub == "flush" && strings.Contains(lower, "ruleset"):
+		c.add(tierCritical, riskSelfLock, "flushes the complete firewall ruleset", args, nil)
+	case sub == "add", sub == "insert", sub == "replace", sub == "delete", sub == "flush":
+		c.add(tierBounded, riskExposure, "changes firewall rules", args, nil)
+	default:
+		c.add(tierBounded, riskUndecidable, "unrecognised nft operation", args, nil)
+	}
+}
+
+func findSearchRoots(args []cmdToken) []cmdToken {
+	roots := make([]cmdToken, 0, 2)
+	for _, token := range args {
+		text := token.Text
+		if text == "--" {
+			continue
+		}
+		if strings.HasPrefix(text, "-") || text == "!" || text == "(" {
+			break
+		}
+		roots = append(roots, token)
+	}
+	return roots
+}
+
 func classifyFind(c *segmentCtx) {
 	args := c.joinedArgs()
 	lower := strings.ToLower(args)
 	switch {
 	case strings.Contains(lower, "-delete"):
+		roots := findSearchRoots(c.args)
+		if len(roots) == 0 {
+			c.add(tierBounded, riskUndecidable, "find delete has no explicit search root", args, nil)
+		}
+		for i := range roots {
+			root := roots[i]
+			verdict := classifyTargetPath(root.Text)
+			switch verdict.Class {
+			case pathFilesystemRoot, pathHomeRoot, pathSystemConfig, pathServicePayload:
+				c.add(tierCritical, riskIrreversible, "deletes matches across a critical search root", verdict.Display, &root)
+			case pathCredentialStore, pathSSHDir, pathBootPersistence:
+				c.add(tierCritical, riskSelfLock, "deletes matches from credentials or access configuration", verdict.Display, &root)
+			case pathUnresolvable:
+				c.add(tierBounded, riskUndecidable, "find delete search root cannot be resolved", verdict.Display, &root)
+			default:
+				if root.Text == "." {
+					c.add(tierBounded, riskUndecidable, "find delete search root depends on the remote working directory", root.Text, &root)
+				}
+			}
+		}
 		c.add(tierBounded, riskDestructive, "deletes matching files", args, nil)
 	case strings.Contains(lower, "-exec"), strings.Contains(lower, "-execdir"), strings.Contains(lower, "-ok"):
 		c.add(tierBounded, riskUndecidable, "runs a command per matching file", args, nil)
@@ -2003,6 +2159,10 @@ func classifyKubectl(c *segmentCtx) {
 	case "get", "describe", "logs", "explain", "top", "version", "config", "api-resources":
 		c.add(tierObserve, riskObserve, "reads cluster state", args, nil)
 	case "delete":
+		if c.hasFlag("--all", "--all-namespaces", "-A") {
+			c.add(tierCritical, riskExternal, "deletes cluster resources across a broad scope", args, nil)
+			return
+		}
 		if strings.Contains(lower, "namespace") || strings.Contains(lower, " ns ") || strings.Contains(lower, "pvc") || strings.Contains(lower, "persistentvolume") {
 			c.add(tierCritical, riskIrreversible, "deletes a namespace or persistent volume", args, nil)
 			return
@@ -2070,7 +2230,7 @@ func classifyAWS(c *segmentCtx) {
 	case strings.Contains(lower, "change-resource-record-sets"), strings.Contains(lower, "route53"):
 		c.add(tierCritical, riskExternal, "changes public DNS records", args, nil)
 	case strings.Contains(lower, " rm "), strings.Contains(lower, "delete"), strings.Contains(lower, "remove"):
-		c.add(tierBounded, riskDestructive, "deletes cloud resources", args, nil)
+		c.add(tierBounded, riskExternal, "deletes cloud resources", args, nil)
 	case strings.Contains(lower, " ls "), strings.Contains(lower, "describe"), strings.Contains(lower, "list"), strings.Contains(lower, "get"):
 		c.add(tierObserve, riskObserve, "reads cloud state", args, nil)
 	default:

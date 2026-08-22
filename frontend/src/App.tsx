@@ -633,19 +633,22 @@ function App() {
   // Alt+F4, the taskbar — through app:close-requested, because a DOM
   // beforeunload cannot reliably intercept a native quit; the confirmed path
   // finishes with CloseWindow, which quits without re-entering the gate. The
-  // profile editor counts as unsaved even when its draft happens to be clean:
-  // the draft lives only in modal state, and one redundant confirm beats
-  // silently dropping an edit session.
+  // Both modal editors report their actual dirty state; merely opening an
+  // editor is not unsaved work, while a command-template draft is protected in
+  // the same way as a profile draft.
   const [quitConfirmOpen, setQuitConfirmOpen] = useState(false);
   const quitConfirmOpenRef = useRef(false);
-  const profileModalRef = useRef(profileModal);
-  profileModalRef.current = profileModal;
+  const profileDirtyRef = useRef(false);
+  const commandDirtyRef = useRef(false);
+  const handleProfileDirtyChange = useCallback((dirty: boolean) => { profileDirtyRef.current = dirty; }, []);
+  const handleCommandDirtyChange = useCallback((dirty: boolean) => { commandDirtyRef.current = dirty; }, []);
   useEffect(() => {
     const offCloseRequest = EventsOn("app:close-requested", () => {
       const hasUnsavedWork =
         Object.keys(dirtyDocumentsRef.current).length > 0 ||
         settingsDirtyRef.current.dirty ||
-        profileModalRef.current !== null;
+        profileDirtyRef.current ||
+        commandDirtyRef.current;
       if (!hasUnsavedWork) {
         CloseWindow();
         return;
@@ -1608,7 +1611,7 @@ function App() {
           setRenameTabRequest(null);
         }}
       />}
-      {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={(id) => setDeleteProfileRequest({ id, name: profileModal.name || profileModal.host, closeEditor: true })} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify(t(profileState.settings?.language || "en", "profileCopied"), "info"); }} />}
+      {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={(id) => setDeleteProfileRequest({ id, name: profileModal.name || profileModal.host, closeEditor: true })} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify(t(profileState.settings?.language || "en", "profileCopied"), "info"); }} onDirtyChange={handleProfileDirtyChange} />}
       {quickConnectOpen && <QuickConnectModal
         language={profileState.settings?.language || "en"}
         onClose={() => setQuickConnectOpen(false)}
@@ -1623,7 +1626,7 @@ function App() {
           else await sessions.connectProfileWithSecrets(profile, profile.password || "", profile.privateKeyPassphrase || "");
         }}
       />}
-      {commandModal && <CommandModal command={commandModal} language={profileState.settings?.language || "en"} onClose={() => setCommandModal(null)} onSave={saveCommand} />}
+      {commandModal && <CommandModal command={commandModal} language={profileState.settings?.language || "en"} onClose={() => setCommandModal(null)} onSave={saveCommand} onDirtyChange={handleCommandDirtyChange} />}
       {deleteProfileRequest && <ConfirmDialog
         locale={profileState.settings?.language || "en"}
         title={profileState.settings?.language === "zh-CN" ? "删除服务器配置？" : "Delete server profile?"}
@@ -1656,8 +1659,8 @@ function App() {
         locale={profileState.settings?.language || "en"}
         title={profileState.settings?.language === "zh-CN" ? "退出 gxShell？" : "Quit gxShell?"}
         body={profileState.settings?.language === "zh-CN"
-          ? "存在未保存的文档、设置或配置编辑，退出将丢失这些更改。"
-          : "There are unsaved documents, settings, or profile edits. Quitting will discard them."}
+          ? "存在未保存的文档、设置、服务器配置或命令模板，退出将丢失这些更改。"
+          : "There are unsaved documents, settings, server profiles, or command templates. Quitting will discard them."}
         confirmText={profileState.settings?.language === "zh-CN" ? "退出" : "Quit"}
         onClose={() => { quitConfirmOpenRef.current = false; setQuitConfirmOpen(false); }}
         onConfirm={() => CloseWindow()}

@@ -1,11 +1,11 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Command, Save } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
 import { DialogHeader, ModalShell, Label } from "./ModalShell";
 import { ConfirmDialog } from "./ConfirmDialog";
 
-export function CommandModal({ command, language, onClose, onSave }: { command: types.CommandTemplate; language: string; onClose: () => void; onSave: (command: types.CommandTemplate) => void | Promise<void> }) {
+export function CommandModal({ command, language, onClose, onSave, onDirtyChange }: { command: types.CommandTemplate; language: string; onClose: () => void; onSave: (command: types.CommandTemplate) => void | Promise<void>; onDirtyChange?: (dirty: boolean) => void }) {
   const lang = language;
   const [draft, setDraft] = useState(new types.CommandTemplate(command));
   const [busy, setBusy] = useState(false);
@@ -13,6 +13,12 @@ export function CommandModal({ command, language, onClose, onSave }: { command: 
   const [error, setError] = useState("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(new types.CommandTemplate(command)), [command, draft]);
+  const onDirtyChangeRef = useRef(onDirtyChange);
+  onDirtyChangeRef.current = onDirtyChange;
+  useEffect(() => {
+    onDirtyChangeRef.current?.(dirty);
+  }, [dirty]);
+  useEffect(() => () => onDirtyChangeRef.current?.(false), []);
   const update = (patch: any) => setDraft(new types.CommandTemplate({ ...draft, ...patch }));
   const requestClose = () => {
     if (savingRef.current) return;
