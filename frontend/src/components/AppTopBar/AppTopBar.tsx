@@ -48,7 +48,8 @@ export function AppTopBar({ tabbar, language, onMaximizedChange }: { tabbar: Rea
 
   const onDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
-    if (window.getComputedStyle(target).getPropertyValue("--wails-draggable").trim() !== "drag") return;
+    if (target.closest("button, a, input, select, textarea, .tab, .tab-close, .tab-action-dropdown, [role='menu'], [role='menuitem']")) return;
+    if (window.getComputedStyle(target).getPropertyValue("--wails-draggable").trim() === "no-drag") return;
     try {
       ToggleMaximiseWindow().then(setMaximized, () => undefined);
     } catch {

@@ -66,6 +66,21 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
     activeElement?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }, [activeTab, tabs.length]);
 
+  useEffect(() => {
+    const host = tabsScrollRef.current;
+    if (!host) return;
+    const onWheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && host.scrollWidth > host.clientWidth) {
+        e.preventDefault();
+        host.scrollLeft += e.deltaY;
+      }
+    };
+    host.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      host.removeEventListener("wheel", onWheel);
+    };
+  }, []);
+
   const activateTabByIndex = useCallback((index: number) => {
     const tab = tabs[index];
     if (!tab) return;

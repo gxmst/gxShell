@@ -98,6 +98,8 @@
   padding: 10px 0 8px;
   border-right: 1px solid var(--border);
   background: color-mix(in srgb, var(--panel) 72%, var(--bg));
+  position: relative;
+  overflow: visible;
 }
 
 .rail-btn {
@@ -136,11 +138,12 @@
   content: "";
   position: absolute;
   left: -6px;
-  top: 9px;
-  bottom: 9px;
-  width: 2.5px;
-  border-radius: 2px;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
   background: var(--accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .rail-spacer {

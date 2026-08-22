@@ -20,7 +20,10 @@
   user-select: none;
 }
 
-.topbar .tabbar,
+.topbar .tabbar {
+  --wails-draggable: drag;
+}
+
 .topbar .window-controls {
   --wails-draggable: no-drag;
 }
@@ -34,7 +37,9 @@
 }
 
 .topbar .tab,
-.topbar .tab-actions {
+.topbar .tab-action,
+.topbar .tab-actions button,
+.topbar .window-controls button {
   --wails-draggable: no-drag;
 }
 
@@ -151,8 +156,22 @@
   padding: 0 2px;
 }
 
-/* Reserved: Windows keeps an invisible resize border around a maximized
-   frameless window. The shell sets data-maximized on .app-shell, so if content
-   is ever observed clipping at the screen edges while maximized, compensate
-   here (e.g. `.app-shell[data-maximized="true"] .topbar { padding: 0 8px }`)
-   instead of patching individual panes. */
+@media (max-width: 1150px) {
+  .topbar .tab {
+    min-width: 90px;
+  }
+}
+
+@media (max-width: 960px) {
+  .topbar .tab {
+    min-width: 72px;
+    padding: 0 2px 0 6px;
+  }
+  .topbar .window-controls button {
+    width: 40px;
+  }
+  .topbar-brand {
+    width: 36px;
+    flex: 0 0 36px;
+  }
+}

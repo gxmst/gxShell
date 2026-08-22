@@ -41,6 +41,32 @@
   pointer-events: none;
 }
 
+/* Keep inner content at full panel width while the rail clips — prevents
+   squashed layout and distorted wrapping during the collapse animation. */
+.left-rail > .side-content {
+  width: var(--sidebar-panel-width, 328px);
+  min-width: var(--sidebar-panel-width, 328px);
+  box-sizing: border-box;
+}
+
+/* Windows keeps an invisible resize border (~8px) around a maximized frameless window.
+   Compensate with subtle padding so edge controls are not cut off. */
+.app-shell[data-maximized="true"] .topbar {
+  padding-top: 4px;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.app-shell[data-maximized="true"] .left-rail {
+  padding-left: 2px;
+}
+
+.app-shell[data-maximized="true"] .terminal-status-bar {
+  padding-bottom: 4px;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
 /* Narrow windows: a tighter panel so the terminal stays primary. Only the panel
    shrinks — the rail is fixed chrome — and --sidebar-width follows from it, so
    the workspace track needs no separate override. */
