@@ -43,7 +43,7 @@ import { PasteConfirmDialog } from "./components/modals/PasteConfirmDialog";
 import { sameTerminalPasteTargets, terminalPasteTargets } from "./utils/terminalPaste";
 import { TextInputDialog } from "./components/modals/TextInputDialog";
 import { ActivityCenter } from "./components/ActivityCenter/ActivityCenter";
-import { detectOsFromText, saveStoredServerOs, type ServerOsType } from "./components/common/ServerOsIcon";
+import { detectOsFromText, isValidOsType, saveStoredServerOs, type ServerOsType } from "./components/common/ServerOsIcon";
 import { parsePaletteQuery } from "./utils/paletteSearch";
 import { createDefaultActionRegistry, type ActionContext } from "./actions/actionRegistry";
 import { PanelLeftOpen, Type as TypeIcon } from "lucide-react";
@@ -523,10 +523,10 @@ function App() {
 
   useEffect(() => {
     const offMonitor = EventsOn("monitor:update", (metrics: types.Metrics) => {
-      if (!metrics?.sessionId || !metrics?.os) return;
+      if (!metrics?.sessionId || !isValidOsType(metrics.os)) return;
       const tab = tabsRef.current.find((t) => t.id === metrics.sessionId);
       if (tab?.profileId && !detectedOsProfilesRef.current.has(tab.profileId)) {
-        const os = metrics.os as ServerOsType;
+        const os = metrics.os;
         detectedOsProfilesRef.current.add(tab.profileId);
         saveStoredServerOs(tab.profileId, os);
         setDetectedOsMap((prev) => prev[tab.profileId!] === os ? prev : { ...prev, [tab.profileId!]: os });

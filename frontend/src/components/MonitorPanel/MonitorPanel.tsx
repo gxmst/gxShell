@@ -41,7 +41,7 @@ export function MonitorPanel({
       <div
         className="monitor-compact-bar"
         onClick={onExpand}
-        title={lang === "zh-CN" ? "点击展开监控面板" : "Click to expand monitor panel"}
+        title={t(lang, "expandMonitor")}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {

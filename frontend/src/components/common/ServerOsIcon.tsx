@@ -106,8 +106,8 @@ export function detectServerOs(profile: types.Profile, runtimeOs?: ServerOsType)
   return "server";
 }
 
-function isValidOsType(val: string): val is ServerOsType {
-  return [
+export function isValidOsType(val: string | undefined): val is ServerOsType {
+  return !!val && [
     "ubuntu", "debian", "centos", "redhat", "rocky", "alpine",
     "arch", "windows", "macos", "docker", "freebsd", "linux", "server",
   ].includes(val);
