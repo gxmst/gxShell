@@ -24,6 +24,9 @@ frontend/package.json.md5
 # Vite build temp files
 frontend/vite.config.ts.timestamp-*.mjs
 
+# TypeScript incremental build artifacts
+*.tsbuildinfo
+
 # Ad-hoc scratch scripts and pasted screenshots. These accumulate at the repo
 # root while debugging unrelated things and are never part of a commit. The
 # leading slash keeps this to the root: icons and doc assets live in
