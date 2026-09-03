@@ -102,21 +102,6 @@
   box-shadow: none;
 }
 
-.server-session-count {
-  display: inline-flex;
-  min-width: 17px;
-  height: 17px;
-  align-items: center;
-  justify-content: center;
-  padding: 0 5px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--panel-raised) 70%, transparent);
-  font-size: 9px;
-  font-weight: 700;
-  line-height: 1;
-}
 
 .mini-btn.favorite-active {
   color: #e3a928;
@@ -126,9 +111,9 @@
 .server-avatar {
   position: relative;
   display: inline-flex;
-  width: 26px;
-  height: 26px;
-  flex: 0 0 26px;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border);

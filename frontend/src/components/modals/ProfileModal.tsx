@@ -157,6 +157,31 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
           title={usedAsJumpHost ? t(lang, "proxyJumpOneHopHint") : undefined}
           onChange={(e) => update({ proxyJumpId: e.target.value })}
         ><option value="">— {t(lang, "none")} —</option>{(!usedAsJumpHost ? (props.profiles || []) : []).filter((p) => p.id !== draft.id && !p.proxyJumpId).map((p) => <option key={p.id} value={p.id}>{p.name} ({p.host})</option>)}</select></Label>
+        <Label text={t(lang, "serverOs")}>
+          <select
+            className="input compact-input"
+            value={(draft.tags || []).find((t) => t.toLowerCase().startsWith("os:"))?.slice(3)?.toLowerCase() || ""}
+            onChange={(e) => {
+              const val = e.target.value;
+              const otherTags = (draft.tags || []).filter((t) => !t.toLowerCase().startsWith("os:"));
+              update({ tags: val ? [...otherTags, `os:${val}`] : otherTags });
+            }}
+          >
+            <option value="">{t(lang, "osAuto")}</option>
+            <option value="ubuntu">Ubuntu</option>
+            <option value="debian">Debian</option>
+            <option value="centos">CentOS</option>
+            <option value="redhat">Red Hat / Fedora</option>
+            <option value="rocky">Rocky / AlmaLinux</option>
+            <option value="alpine">Alpine Linux</option>
+            <option value="arch">Arch Linux</option>
+            <option value="windows">Windows Server</option>
+            <option value="macos">macOS</option>
+            <option value="docker">Docker</option>
+            <option value="freebsd">FreeBSD</option>
+            <option value="linux">Generic Linux</option>
+          </select>
+        </Label>
         <div className="profile-modal-checks col-span-2">
           <label className="check"><input type="checkbox" checked={draft.favorite} onChange={(e) => update({ favorite: e.target.checked })} /> {t(lang, "favorite")}</label>
           <label className="check"><input type="checkbox" checked={draft.cliEnabled || false} onChange={(e) => update({ cliEnabled: e.target.checked, ...(!e.target.checked ? { cliTrustUntil: undefined } : {}) })} /> {t(lang, "cliServerAccess")}</label>

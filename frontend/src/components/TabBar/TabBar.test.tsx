@@ -66,6 +66,25 @@ describe("TabBar overflow", () => {
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
+  it("keeps terminal tools and other action menus mutually exclusive", () => {
+    render(
+      <TabBar
+        tabs={tabs.slice(0, 3)}
+        activeTab="tab-1"
+        profiles={[]}
+        onActive={vi.fn()}
+        onClose={vi.fn()}
+        onReconnect={vi.fn()}
+        language="en"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Terminal tools" }));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "All tabs" }));
+    expect(screen.getAllByRole("menu")).toHaveLength(1);
+  });
+
   it("surfaces unread output and exposes rename, pin, and middle-click close actions", () => {
     const tab = { ...tabs[0], unread: true };
     const onClose = vi.fn();

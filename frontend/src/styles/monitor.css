@@ -1,3 +1,49 @@
+.monitor-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.monitor-panel .current-card {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-raised) 60%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  box-shadow: var(--hairline);
+}
+
+.monitor-compact-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 9px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--panel-raised) 65%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.monitor-compact-bar:hover {
+  background: var(--panel-raised);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  box-shadow: var(--shadow-sm);
+}
+
+.compact-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--terminal-top) 40%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+}
+
 .metric-row {
   display: flex;
   gap: 8px;
@@ -27,13 +73,13 @@
   flex-direction: column;
   min-width: 0;
   flex: 1;
-  gap: 3px;
+  gap: 4px;
 }
 
 .metric-icon {
   display: inline-flex;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-xs);
@@ -46,11 +92,11 @@
 .metric-icon.metric-bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); border-color: color-mix(in srgb, var(--bad) 16%, transparent); }
 
 .meter {
-  height: 3.5px;
+  height: 5px;
   overflow: hidden;
   border-radius: 999px;
   background: color-mix(in srgb, var(--muted-2) 18%, transparent);
-  box-shadow: none;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.05);
 }
 
 .meter-fill {
@@ -86,21 +132,22 @@
 .compact-chip-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px;
-  padding: 3px 0;
+  gap: 5px;
+  padding: 4px 0;
 }
 
 .compact-chip-grid {
-  gap: 3px;
+  gap: 4px;
 }
 
-.mini-metric {
+.monitor-panel .mini-metric {
   min-width: 0;
   border-radius: var(--radius-xs);
-  padding: 3px 6px;
-  border: 1px solid transparent;
-  background: transparent;
-  transition: background var(--dur-fast) var(--ease);
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  background: color-mix(in srgb, var(--panel-raised) 45%, transparent);
+  box-shadow: var(--hairline);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
 
 .mini-metric-clickable {
@@ -109,7 +156,8 @@
 }
 
 .mini-metric-clickable:hover {
-  background: color-mix(in srgb, var(--panel-raised) 55%, transparent);
+  background: color-mix(in srgb, var(--panel-raised) 75%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border));
 }
 
 .mini-metric-clickable:active {

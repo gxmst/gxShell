@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { IsWindowMaximised, MinimiseWindow, RequestCloseWindow, ToggleMaximiseWindow } from "../../../wailsjs/go/app/App";
+import { GetVersion, IsWindowMaximised, MinimiseWindow, RequestCloseWindow, ToggleMaximiseWindow } from "../../../wailsjs/go/app/App";
 import { AppIcon } from "../../constants";
 import { t } from "../../i18n";
 
@@ -15,6 +15,7 @@ import { t } from "../../i18n";
 export function AppTopBar({ tabbar, language, onMaximizedChange }: { tabbar: ReactNode; language: string; onMaximizedChange?: (maximized: boolean) => void }) {
   const lang = language;
   const [maximized, setMaximized] = useState(false);
+  const [version, setVersion] = useState("");
   const syncTimer = useRef(0);
   // The maximized state can change outside the app too (Win+Up, snap layouts,
   // dragging to a screen edge), so re-query after every window resize. The
@@ -45,6 +46,14 @@ export function AppTopBar({ tabbar, language, onMaximizedChange }: { tabbar: Rea
   useEffect(() => {
     onMaximizedChange?.(maximized);
   }, [maximized, onMaximizedChange]);
+
+  useEffect(() => {
+    try {
+      GetVersion().then(setVersion, () => undefined);
+    } catch {
+      /* bindings not injected yet */
+    }
+  }, []);
 
   const onDoubleClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
@@ -78,7 +87,13 @@ export function AppTopBar({ tabbar, language, onMaximizedChange }: { tabbar: Rea
 
   return (
     <header className="topbar" onDoubleClick={onDoubleClick}>
-      <div className="topbar-brand" aria-hidden="true"><AppIcon /></div>
+      <div className="topbar-brand" aria-hidden="true">
+        <AppIcon />
+        <div className="topbar-brand-meta">
+          <span className="topbar-brand-title">gxShell</span>
+          {version && <span className="topbar-brand-version">v{version}</span>}
+        </div>
+      </div>
       {tabbar}
       <div className="window-controls">
         <button type="button" aria-label={t(lang, "minimizeWindow")} title={t(lang, "minimizeWindow")} onClick={minimise}>

@@ -7,6 +7,7 @@ vi.mock("../../../wailsjs/go/app/App", () => ({
   PingHost: vi.fn(),
   TraceRoute: vi.fn(),
   UpdateSettings: vi.fn(() => Promise.resolve()),
+  GetLatestMetrics: vi.fn(() => Promise.resolve(undefined)),
 }));
 
 vi.mock("../../../wailsjs/runtime/runtime", () => ({
@@ -152,6 +153,20 @@ describe("Sidebar shell", () => {
 
     fireEvent.click(header);
     expect(prod.querySelectorAll(".server-row")).toHaveLength(2);
+  });
+
+  it("keeps the monitor summary inside the current-server block when folded", () => {
+    const { container } = renderSidebar({
+      active: { id: "session-1", profileId: "web-1", title: "web-1", state: "connected", type: "ssh" },
+    });
+
+    expect(container.querySelector(".monitor-compact-bar")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Collapse monitor" }));
+
+    expect(container.querySelector(".side-content-monitor-collapsed")).not.toBeNull();
+    expect(container.querySelector(".current-server-block-collapsed")).not.toBeNull();
+    expect(container.querySelector(".monitor-compact-bar")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Expand monitor" })).toBeInTheDocument();
   });
 
   it("offers an empty state instead of empty sections when there are no profiles", () => {

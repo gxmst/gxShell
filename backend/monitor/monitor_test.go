@@ -279,3 +279,21 @@ GX_END_PROC_9b7c2d`
 		t.Errorf("MemoryTotalMB = %d, want 16000", m.MemoryTotalMB)
 	}
 }
+
+func TestParseOS(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "rocky takes precedence over rhel compatibility", input: "NAME=\"Rocky Linux\"\nID_LIKE=\"rhel centos fedora\"", want: "rocky"},
+		{name: "alma takes precedence over rhel compatibility", input: "NAME=\"AlmaLinux\"\nID_LIKE=\"rhel centos fedora\"", want: "rocky"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseOS(tt.input); got != tt.want {
+				t.Fatalf("parseOS(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}

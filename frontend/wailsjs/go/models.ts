@@ -601,6 +601,7 @@ export namespace types {
 	    sessionId: string;
 	    online: boolean;
 	    host: string;
+	    os?: string;
 	    uptime: string;
 	    loadAverage: string;
 	    cpuPercent: number;
@@ -629,6 +630,7 @@ export namespace types {
 	        this.sessionId = source["sessionId"];
 	        this.online = source["online"];
 	        this.host = source["host"];
+	        this.os = source["os"];
 	        this.uptime = source["uptime"];
 	        this.loadAverage = source["loadAverage"];
 	        this.cpuPercent = source["cpuPercent"];

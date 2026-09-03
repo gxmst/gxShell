@@ -43,6 +43,7 @@ import { PasteConfirmDialog } from "./components/modals/PasteConfirmDialog";
 import { sameTerminalPasteTargets, terminalPasteTargets } from "./utils/terminalPaste";
 import { TextInputDialog } from "./components/modals/TextInputDialog";
 import { ActivityCenter } from "./components/ActivityCenter/ActivityCenter";
+import { detectOsFromText, saveStoredServerOs, type ServerOsType } from "./components/common/ServerOsIcon";
 import { parsePaletteQuery } from "./utils/paletteSearch";
 import { createDefaultActionRegistry, type ActionContext } from "./actions/actionRegistry";
 import { PanelLeftOpen, Type as TypeIcon } from "lucide-react";
@@ -130,6 +131,8 @@ function App() {
   const [fontSizeHud, setFontSizeHud] = useState<number | null>(null);
   const fontSizeHudTimer = useRef<number | null>(null);
   const [broadcastInput, setBroadcastInput] = useState(false);
+  const [detectedOsMap, setDetectedOsMap] = useState<Record<string, ServerOsType>>({});
+  const detectedOsProfilesRef = useRef<Set<string>>(new Set());
   // Session ids currently recording. Backend owns the real state; this mirror
   // drives the TabBar toggle. Cleared for a session when it stops or closes.
   const [recordingIds, setRecordingIds] = useState<string[]>([]);
@@ -488,6 +491,15 @@ function App() {
     const offData = EventsOn("terminal:data", (payload: { sessionId: string; data: string; runtimeId?: string; generation?: number }) => {
       if (!sessions.isCurrentRuntimeEvent(payload)) return;
       writeOutput(payload.sessionId, payload.data);
+      const tab = tabsRef.current.find((t) => t.id === payload.sessionId);
+      if (tab?.profileId && !detectedOsProfilesRef.current.has(tab.profileId)) {
+        const detected = detectOsFromText(payload.data);
+        if (detected && detected !== "server") {
+          detectedOsProfilesRef.current.add(tab.profileId);
+          saveStoredServerOs(tab.profileId, detected);
+          setDetectedOsMap((prev) => prev[tab.profileId!] === detected ? prev : { ...prev, [tab.profileId!]: detected });
+        }
+      }
       const split = splitPaneRef.current;
       const visibleInWorkspace = payload.sessionId === activeTabIdRef.current
         || split?.left === payload.sessionId
@@ -508,6 +520,20 @@ function App() {
     });
     return () => offData();
   }, [sessions.isCurrentRuntimeEvent, sessions.setTabs, writeOutput]);
+
+  useEffect(() => {
+    const offMonitor = EventsOn("monitor:update", (metrics: types.Metrics) => {
+      if (!metrics?.sessionId || !metrics?.os) return;
+      const tab = tabsRef.current.find((t) => t.id === metrics.sessionId);
+      if (tab?.profileId && !detectedOsProfilesRef.current.has(tab.profileId)) {
+        const os = metrics.os as ServerOsType;
+        detectedOsProfilesRef.current.add(tab.profileId);
+        saveStoredServerOs(tab.profileId, os);
+        setDetectedOsMap((prev) => prev[tab.profileId!] === os ? prev : { ...prev, [tab.profileId!]: os });
+      }
+    });
+    return () => offMonitor();
+  }, []);
 
   const clearVisibleUnread = useCallback(() => {
     if (document.visibilityState !== "visible" || !document.hasFocus()) return;
@@ -1513,6 +1539,7 @@ function App() {
           activeTabId={sessions.activeTab}
           tabs={sessions.tabs}
           profileStates={profileStates}
+          detectedOsMap={detectedOsMap}
           activityHistory={activityHistory}
           automationByProfile={automationByProfile}
         />

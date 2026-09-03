@@ -177,6 +177,7 @@ type Metrics struct {
 	SessionID       string        `json:"sessionId"`
 	Online          bool          `json:"online"`
 	Host            string        `json:"host"`
+	OS              string        `json:"os,omitempty"`
 	Uptime          string        `json:"uptime"`
 	LoadAverage     string        `json:"loadAverage"`
 	CPUPercent      float64       `json:"cpuPercent"`

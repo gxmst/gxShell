@@ -4,6 +4,7 @@ import { AppTopBar } from "./AppTopBar";
 
 const bindings = vi.hoisted(() => ({
   close: vi.fn(),
+  getVersion: vi.fn(() => Promise.resolve("1.6.1")),
   isMaximised: vi.fn(),
   minimise: vi.fn(),
   requestClose: vi.fn(),
@@ -12,6 +13,7 @@ const bindings = vi.hoisted(() => ({
 
 vi.mock("../../../wailsjs/go/app/App", () => ({
   CloseWindow: bindings.close,
+  GetVersion: bindings.getVersion,
   IsWindowMaximised: bindings.isMaximised,
   MinimiseWindow: bindings.minimise,
   RequestCloseWindow: bindings.requestClose,

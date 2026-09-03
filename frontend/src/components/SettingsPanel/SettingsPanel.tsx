@@ -3,17 +3,19 @@ import { Activity, Database, Download, FileText, HardDrive, Palette, RefreshCw, 
 import { CheckForUpdate, ExportHistory, GetVersion, IsTextContextMenuRegistered, RegisterTextContextMenu, UnregisterTextContextMenu } from "../../../wailsjs/go/app/App";
 import { BrowserOpenURL } from "../../../wailsjs/runtime/runtime";
 import { types, version as versionModel } from "../../../wailsjs/go/models";
-import { appThemes, fontPresets, terminalThemes } from "../../constants";
+import { appThemes, fontPresets, terminalThemes, themeDisplayName } from "../../constants";
 import { normalizeAppTheme } from "../../utils/format";
 import { normalizeFontSize, normalizeLineHeight, normalizeScrollbackLines } from "../../utils/terminalSettings";
 import { t } from "../../i18n";
 import { KnownHostsManager } from "./KnownHostsManager";
 
 const themePreview: Record<string, { bg: string; surface: string; accent: string }> = {
-  Light: { bg: "#e8edf4", surface: "#f8fafd", accent: "#2563eb" },
+  Light: { bg: "#e8edf4", surface: "#ffffff", accent: "#2563eb" },
+  "Yuzu Study": { bg: "#fcf7ed", surface: "#ffffff", accent: "#b4692c" },
+  "Sakura Mist": { bg: "#faf0f4", surface: "#ffffff", accent: "#d44d7d" },
+  "Matcha Green": { bg: "#edf6f0", surface: "#ffffff", accent: "#16a34a" },
   Dark: { bg: "#0e1217", surface: "#212a35", accent: "#4d90d6" },
   "Deep Blue": { bg: "#04101f", surface: "#123862", accent: "#5cbcff" },
-  "Yuzu Study": { bg: "#fcf7ed", surface: "#f3e8d6", accent: "#a9743f" },
   "Ember Terminal": { bg: "#0a0b09", surface: "#273022", accent: "#a3e635" },
   "Twilight Amber": { bg: "#120d09", surface: "#3a281c", accent: "#ffb86b" },
 };
@@ -235,7 +237,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
               <select className="input compact-input" value={draft.language || "en"} onChange={(event) => update({ language: event.target.value })}><option value="en">English</option><option value="zh-CN">简体中文</option></select>
             </SettingsField>
             <SettingsField label={t(lang, "theme")}>
-              <select className="input compact-input" value={normalizeAppTheme(draft.themeName)} onChange={(event) => setAppTheme(event.target.value)}>{appThemes.map((theme) => <option key={theme}>{theme}</option>)}</select>
+              <select className="input compact-input" value={normalizeAppTheme(draft.themeName)} onChange={(event) => setAppTheme(event.target.value)}>{appThemes.map((theme) => <option key={theme} value={theme}>{themeDisplayName(theme, lang)}</option>)}</select>
             </SettingsField>
           </div>
           <div className="theme-picker" role="list" aria-label={t(lang, "theme")}>
@@ -243,9 +245,9 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
               const preview = themePreview[theme] || themePreview.Dark;
               const selected = normalizeAppTheme(draft.themeName) === theme;
               return (
-                <button key={theme} type="button" className={selected ? "theme-choice theme-choice-active" : "theme-choice"} onClick={() => setAppTheme(theme)} title={theme}>
+                <button key={theme} type="button" className={selected ? "theme-choice theme-choice-active" : "theme-choice"} onClick={() => setAppTheme(theme)} title={themeDisplayName(theme, lang)}>
                   <span className="theme-choice-preview" style={{ background: preview.bg }}><span style={{ background: preview.surface }} /><i style={{ background: preview.accent }} /></span>
-                  <span>{theme}</span>
+                  <span>{themeDisplayName(theme, lang)}</span>
                 </button>
               );
             })}
@@ -254,7 +256,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
 
         <SettingsSection icon={<TerminalSquare size={15} />} title={zh ? "终端" : "Terminal"} description={zh ? "字体、颜色和输出显示方式" : "Typography, colors and output rendering"}>
           <div className="settings-grid">
-            <SettingsField label={t(lang, "termTheme")}><select className="input compact-input" value={draft.terminal.themeName} onChange={(event) => updateTerm({ themeName: event.target.value })}>{Object.keys(terminalThemes).map((theme) => <option key={theme}>{theme}</option>)}</select></SettingsField>
+            <SettingsField label={t(lang, "termTheme")}><select className="input compact-input" value={draft.terminal.themeName} onChange={(event) => updateTerm({ themeName: event.target.value })}>{Object.keys(terminalThemes).map((theme) => <option key={theme} value={theme}>{themeDisplayName(theme, lang)}</option>)}</select></SettingsField>
             <SettingsField label={t(lang, "size")}><input className="input compact-input" type="number" min={9} max={30} value={draft.terminal.fontSize} onChange={(event) => { const value = event.currentTarget.valueAsNumber; if (Number.isFinite(value)) updateTerm({ fontSize: value }); }} onBlur={() => updateTerm({ fontSize: normalizeFontSize(draft.terminal.fontSize) })} /></SettingsField>
             <SettingsField label={t(lang, "lineHeightLabel")}>
               <input

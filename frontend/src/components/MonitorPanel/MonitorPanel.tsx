@@ -6,13 +6,74 @@ import { formatBytes, stateClass } from "../../utils/format";
 import { useSessionMetrics } from "../../hooks/useSessionMetrics";
 import { t } from "../../i18n";
 
-export function MonitorPanel({ active, locale, onStart, onCpuClick, onPingClick, onDiskClick, onMemClick, onNetworkClick }: { active?: Tab; locale?: string; onStart: () => void; onCpuClick?: () => void; onPingClick?: () => void; onDiskClick?: () => void; onMemClick?: () => void; onNetworkClick?: () => void }) {
+export function MonitorPanel({
+  active,
+  locale,
+  collapsed,
+  onExpand,
+  onStart,
+  onCpuClick,
+  onPingClick,
+  onDiskClick,
+  onMemClick,
+  onNetworkClick,
+}: {
+  active?: Tab;
+  locale?: string;
+  collapsed?: boolean;
+  onExpand?: () => void;
+  onStart: () => void;
+  onCpuClick?: () => void;
+  onPingClick?: () => void;
+  onDiskClick?: () => void;
+  onMemClick?: () => void;
+  onNetworkClick?: () => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   // Subscribes to monitor:update itself so each collection tick re-renders
   // only this panel, not the whole Sidebar tree it lives in.
   const metrics = useSessionMetrics(active?.id);
   const lang = locale || "en";
   if (!active) return <div className="empty compact">{t(lang, "openTerminal")}</div>;
+
+  if (collapsed) {
+    return (
+      <div
+        className="monitor-compact-bar"
+        onClick={onExpand}
+        title={lang === "zh-CN" ? "点击展开监控面板" : "Click to expand monitor panel"}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onExpand?.();
+          }
+        }}
+      >
+        <div className="flex items-center gap-1.5 min-w-0 flex-1">
+          <span className={clsx("status-dot shrink-0", stateClass(active.state))} />
+          <span className="truncate text-[11px] font-medium text-text">{active.title}</span>
+        </div>
+        {metrics && (
+          <div className="flex items-center gap-1.5 shrink-0 text-[10px] font-mono">
+            <span className={clsx("compact-pill", metrics.cpuPercent >= 85 ? "text-bad" : metrics.cpuPercent >= 60 ? "text-warn" : "text-ok")}>
+              CPU {metrics.cpuPercent.toFixed(0)}%
+            </span>
+            <span className={clsx("compact-pill", metrics.memoryPercent >= 85 ? "text-bad" : metrics.memoryPercent >= 60 ? "text-warn" : "text-muted")}>
+              MEM {metrics.memoryPercent.toFixed(0)}%
+            </span>
+            {metrics.latencyMs != null && (
+              <span className={clsx("compact-pill", metrics.latencyMs < 80 ? "text-ok" : metrics.latencyMs < 200 ? "text-warn" : "text-bad")}>
+                {metrics.latencyMs}ms
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="monitor-panel">
       <div className="current-card">

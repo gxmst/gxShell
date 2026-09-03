@@ -121,7 +121,7 @@ func (a *App) shouldAnnounceUpdate(result version.CheckResult) bool {
 		return false
 	}
 	// A skip covers that version and anything older, so a user who skipped 1.5.0
-	// is still told about 1.6.0.
+	// is still told about 1.6.1.
 	if current.UpdateSkippedVersion != "" &&
 		version.Compare(current.UpdateSkippedVersion, result.Latest.Version) >= 0 {
 		return false

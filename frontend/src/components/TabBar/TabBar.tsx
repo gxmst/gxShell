@@ -25,29 +25,33 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
 
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
+  const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [contextTabId, setContextTabId] = useState("");
   const actionsRef = useRef<HTMLDivElement>(null);
   const newMenuButtonRef = useRef<HTMLButtonElement>(null);
   const tabsMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const toolsMenuButtonRef = useRef<HTMLButtonElement>(null);
   const tabsScrollRef = useRef<HTMLDivElement>(null);
   const profileByID = useMemo(() => new Map(profiles.map((profile) => [profile.id, profile])), [profiles]);
   const dirtySet = useMemo(() => new Set(dirtyTabIds || []), [dirtyTabIds]);
 
   useEffect(() => {
-    if (!newMenuOpen && !tabsMenuOpen && !contextTabId) return;
+    if (!newMenuOpen && !tabsMenuOpen && !toolsMenuOpen && !contextTabId) return;
     const close = (e: MouseEvent) => {
       if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) {
         setNewMenuOpen(false);
         setTabsMenuOpen(false);
+        setToolsMenuOpen(false);
         setContextTabId("");
       }
     };
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.preventDefault();
-      const returnFocus = tabsMenuOpen ? tabsMenuButtonRef.current : newMenuButtonRef.current;
+      const returnFocus = toolsMenuOpen ? toolsMenuButtonRef.current : tabsMenuOpen ? tabsMenuButtonRef.current : newMenuButtonRef.current;
       setNewMenuOpen(false);
       setTabsMenuOpen(false);
+      setToolsMenuOpen(false);
       window.requestAnimationFrame(() => returnFocus?.focus());
     };
     window.addEventListener("click", close);
@@ -56,7 +60,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
       window.removeEventListener("click", close);
       window.removeEventListener("keydown", closeOnEscape);
     };
-  }, [contextTabId, newMenuOpen, tabsMenuOpen]);
+  }, [contextTabId, newMenuOpen, tabsMenuOpen, toolsMenuOpen]);
 
   useEffect(() => {
     const host = tabsScrollRef.current;
@@ -169,7 +173,8 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
         {tabs.map((tab, index) => {
           const profile = profileByID.get(tab.profileId);
           const automation = automationActivity?.[tab.id];
-          const full = profile ? `${profile.username}@${profile.host}:${profile.port}` : tab.title;
+          const hostInfo = profile ? `${profile.username}@${profile.host}:${profile.port}` : "";
+          const full = hostInfo ? (profile?.name ? `${profile.name}\n${hostInfo}` : hostInfo) : tab.title;
           const tooltip = tab.error ? `${full}\n${tab.error}` : full;
           const isDragging = dragState?.draggedId === tab.id;
           const isDragOver = dragState?.overId === tab.id;
@@ -192,6 +197,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
                 event.stopPropagation();
                 setNewMenuOpen(false);
                 setTabsMenuOpen(false);
+                setToolsMenuOpen(false);
                 setContextTabId(tab.id);
               }}
             >
@@ -215,7 +221,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
       </div>
       <div className="tab-actions" ref={actionsRef}>
         {tabs.length > 1 && <div className="relative">
-          <button ref={tabsMenuButtonRef} className="tab-action" aria-label={lang === "zh-CN" ? "全部标签" : "All tabs"} aria-haspopup="menu" aria-expanded={tabsMenuOpen} onClick={(event) => { event.stopPropagation(); setNewMenuOpen(false); setTabsMenuOpen((value) => !value); }} title={lang === "zh-CN" ? "全部标签" : "All tabs"}>
+          <button ref={tabsMenuButtonRef} className="tab-action" aria-label={lang === "zh-CN" ? "全部标签" : "All tabs"} aria-haspopup="menu" aria-expanded={tabsMenuOpen} onClick={(event) => { event.stopPropagation(); setNewMenuOpen(false); setToolsMenuOpen(false); setTabsMenuOpen((value) => !value); }} title={lang === "zh-CN" ? "全部标签" : "All tabs"}>
             <List size={14} />
           </button>
           {tabsMenuOpen && <div className="tab-action-dropdown tab-overflow-dropdown" role="menu" onClick={(event) => event.stopPropagation()}>
@@ -236,7 +242,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
           </div>}
         </div>}
         <div className="relative">
-          <button ref={newMenuButtonRef} className="tab-action" aria-label={t(lang, "new")} aria-haspopup="menu" aria-expanded={newMenuOpen} onClick={(e) => { e.stopPropagation(); setTabsMenuOpen(false); setNewMenuOpen((v) => !v); }} title={t(lang, "new")}>
+          <button ref={newMenuButtonRef} className="tab-action" aria-label={t(lang, "new")} aria-haspopup="menu" aria-expanded={newMenuOpen} onClick={(e) => { e.stopPropagation(); setTabsMenuOpen(false); setToolsMenuOpen(false); setNewMenuOpen((v) => !v); }} title={t(lang, "new")}>
             <Plus size={14} />
             <ChevronDown size={10} className="opacity-50 ml-px" />
           </button>
@@ -257,11 +263,81 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
             </div>
           )}
         </div>
-        <button className="tab-action" aria-label={t(lang, "splitHorizontal")} disabled={!active || tabs.length < 2} onClick={() => active && onSplitToggle?.(active.id, "horizontal")} title={t(lang, "splitHorizontal")}><Columns2 size={14} /></button>
-        <button className="tab-action" aria-label={t(lang, "splitVertical")} disabled={!active || tabs.length < 2} onClick={() => active && onSplitToggle?.(active.id, "vertical")} title={t(lang, "splitVertical")}><Rows2 size={14} /></button>
-        <button className={clsx("tab-action", broadcastInput && "tab-action-on")} aria-label={t(lang, "broadcastToggle")} disabled={!broadcastAvailable && !broadcastInput} onClick={() => onToggleBroadcast?.()} title={t(lang, "broadcastToggle")}><Radio size={14} /></button>
-        <button className={clsx("tab-action", recording && "tab-action-rec")} aria-label={t(lang, recording ? "stopRecording" : "startRecording")} disabled={!active || active.local || active.type === "markdown" || active.state !== "connected"} onClick={() => active && onToggleRecording?.(active.id)} title={t(lang, recording ? "stopRecording" : "startRecording")}><Circle size={14} fill={recording ? "currentColor" : "none"} /></button>
-        <button className="tab-action" aria-label={t(lang, "reconnect")} disabled={!active || active.local || active.type === "markdown"} onClick={() => active && onReconnect(active)} title={t(lang, "reconnect")}><RefreshCw size={14} /></button>
+        <div className="relative">
+          <button
+            ref={toolsMenuButtonRef}
+            className={clsx("tab-action tab-tools-toggle", toolsMenuOpen && "tab-action-on")}
+            aria-label={t(lang, "terminalTools")}
+            aria-haspopup="menu"
+            aria-expanded={toolsMenuOpen}
+            onClick={(e) => {
+              e.stopPropagation();
+              setTabsMenuOpen(false);
+              setNewMenuOpen(false);
+              setToolsMenuOpen((v) => !v);
+            }}
+            title={t(lang, "terminalTools")}
+          >
+            <ChevronDown size={12} className={clsx("tab-tools-arrow", toolsMenuOpen && "tab-tools-arrow-open")} />
+            {(broadcastInput || recording) && <span className="tab-tools-active-dot" />}
+          </button>
+          {toolsMenuOpen && (
+            <div className="tab-action-dropdown tab-tools-popup" role="menu" onClick={(e) => e.stopPropagation()}>
+              <button
+                className="tab-action-item"
+                role="menuitem"
+                disabled={!active || tabs.length < 2}
+                onClick={() => { setToolsMenuOpen(false); if (active) onSplitToggle?.(active.id, "horizontal"); }}
+                title={t(lang, "splitHorizontal")}
+              >
+                <Columns2 size={13} />
+                <span>{t(lang, "splitHorizontal")}</span>
+              </button>
+              <button
+                className="tab-action-item"
+                role="menuitem"
+                disabled={!active || tabs.length < 2}
+                onClick={() => { setToolsMenuOpen(false); if (active) onSplitToggle?.(active.id, "vertical"); }}
+                title={t(lang, "splitVertical")}
+              >
+                <Rows2 size={13} />
+                <span>{t(lang, "splitVertical")}</span>
+              </button>
+              <button
+                className={clsx("tab-action-item", broadcastInput && "active")}
+                role="menuitem"
+                disabled={!broadcastAvailable && !broadcastInput}
+                onClick={() => { setToolsMenuOpen(false); onToggleBroadcast?.(); }}
+                title={t(lang, "broadcastToggle")}
+              >
+                <Radio size={13} />
+                <span>{t(lang, "broadcastToggle")}</span>
+                {broadcastInput && <span className="tab-tools-state-on">{lang === "zh-CN" ? "开启" : "ON"}</span>}
+              </button>
+              <button
+                className="tab-action-item"
+                role="menuitem"
+                disabled={!active || active.local || active.type === "markdown" || active.state !== "connected"}
+                onClick={() => { setToolsMenuOpen(false); if (active) onToggleRecording?.(active.id); }}
+                title={t(lang, recording ? "stopRecording" : "startRecording")}
+              >
+                <Circle size={13} fill={recording ? "currentColor" : "none"} />
+                <span>{t(lang, recording ? "stopRecording" : "startRecording")}</span>
+                {recording && <span className="tab-tools-state-rec">{lang === "zh-CN" ? "录制中" : "REC"}</span>}
+              </button>
+              <button
+                className="tab-action-item"
+                role="menuitem"
+                disabled={!active || active.local || active.type === "markdown"}
+                onClick={() => { setToolsMenuOpen(false); if (active) onReconnect(active); }}
+                title={t(lang, "reconnect")}
+              >
+                <RefreshCw size={13} />
+                <span>{t(lang, "reconnect")}</span>
+              </button>
+            </div>
+          )}
+        </div>
         {rightAccessory}
       </div>
     </div>

@@ -23,6 +23,10 @@
   gap: 0;
 }
 
+.side-content.side-content-monitor-collapsed {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
 /* Every other section renders one full-height body. */
 .side-content-tool {
   grid-template-rows: minmax(0, 1fr);
@@ -679,8 +683,63 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  margin-top: 8px;
+  margin-top: 6px;
   padding-top: 2px;
+}
+
+.current-server-block-collapsed {
+  margin-top: 4px;
+}
+
+.current-server-title-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 3px;
+}
+
+.current-server-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-xs);
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.current-server-toggle-btn:hover {
+  background: color-mix(in srgb, var(--panel-raised) 70%, transparent);
+  color: var(--text);
+}
+
+.current-server-toggle-icon {
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.current-server-toggle-collapsed {
+  transform: rotate(-90deg);
+}
+
+.server-session-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .text-button {
@@ -718,6 +777,8 @@
   padding: 4px 6px;
   border: 1px solid transparent;
   background: transparent;
+  position: relative;
+  overflow: hidden;
   transition:
     background var(--dur-fast) var(--ease),
     border-color var(--dur-fast) var(--ease);
@@ -742,6 +803,7 @@
   flex: 1;
   align-items: center;
   gap: 9px;
+  padding-right: 90px;
   color: inherit;
   cursor: pointer;
   text-align: left;
@@ -751,6 +813,34 @@
   border-radius: var(--radius-xs);
   outline: 2px solid color-mix(in srgb, var(--accent) 68%, transparent);
   outline-offset: 2px;
+}
+
+.server-avatar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
+  flex-shrink: 0;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--panel-raised) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  color: var(--muted);
+}
+
+.server-avatar svg {
+  flex-shrink: 0;
+}
+
+.server-avatar .status-dot {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--panel);
 }
 
 .server-row-text {
@@ -876,30 +966,65 @@
   overflow: hidden;
   color: var(--muted);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 10px;
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.server-sub-user {
+  color: var(--muted-2);
+}
+
+.server-sub-host {
+  color: var(--text);
+  font-weight: 550;
+}
+
+.server-sub-port {
+  color: var(--muted);
+}
+
+.server-favorite-indicator {
+  margin-left: 2px;
+  color: #f59e0b;
+  fill: #f59e0b;
+  flex-shrink: 0;
+  opacity: 0.85;
 }
 
 .row-actions {
+  position: absolute;
+  right: 4px;
+  top: 4px;
   display: flex;
   align-items: center;
   gap: 2px;
-}
-
-.row-actions .mini-btn:not(.favorite-active) {
+  padding: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
   opacity: 0;
-  transition: opacity var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease);
 }
 
-.server-row:hover .row-actions .mini-btn,
-.server-row:focus-within .row-actions .mini-btn {
+.server-row:hover .row-actions,
+.server-row:focus-within .row-actions {
   opacity: 1;
+  pointer-events: auto;
+}
+
+.row-actions .mini-btn {
+  opacity: 1;
+  background: color-mix(in srgb, var(--panel-raised) 72%, transparent);
+  border-color: color-mix(in srgb, var(--border) 68%, transparent);
+  box-shadow: var(--hairline);
 }
 
 .row-actions .mini-btn.favorite-active {
-  opacity: 0.88;
+  color: #f59e0b;
 }
 
 .subnav-strip {

@@ -163,6 +163,7 @@ func (m *Manager) collectAndEmit(sessionID string, run *poller) {
 	}
 	start := time.Now()
 	script := `gx_section() { printf 'GX_BEGIN_%s_9b7c2d\n' "$1"; sh -c "$2"; printf 'GX_END_%s_9b7c2d\n' "$1"; }
+	gx_section OS 'LC_ALL=C cat /etc/os-release 2>/dev/null || LC_ALL=C uname -s 2>/dev/null'
 	gx_section UPTIME 'LC_ALL=C uptime -p 2>/dev/null || LC_ALL=C uptime 2>/dev/null'
 	gx_section LOAD 'LC_ALL=C cat /proc/loadavg 2>/dev/null'
 	gx_section MEM 'LC_ALL=C cat /proc/meminfo 2>/dev/null'
@@ -216,8 +217,44 @@ func (m *Manager) collectAndEmit(sessionID string, run *poller) {
 	}
 }
 
+func parseOS(text string) string {
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "ubuntu") {
+		return "ubuntu"
+	}
+	if strings.Contains(lower, "debian") {
+		return "debian"
+	}
+	if strings.Contains(lower, "rocky") || strings.Contains(lower, "alma") {
+		return "rocky"
+	}
+	if strings.Contains(lower, "centos") {
+		return "centos"
+	}
+	if strings.Contains(lower, "alpine") {
+		return "alpine"
+	}
+	if strings.Contains(lower, "arch") {
+		return "arch"
+	}
+	if strings.Contains(lower, "fedora") || strings.Contains(lower, "red hat") || strings.Contains(lower, "rhel") {
+		return "redhat"
+	}
+	if strings.Contains(lower, "darwin") {
+		return "macos"
+	}
+	if strings.Contains(lower, "freebsd") {
+		return "freebsd"
+	}
+	if strings.Contains(lower, "linux") {
+		return "linux"
+	}
+	return ""
+}
+
 func parseMetrics(sessionID, out string) types.Metrics {
 	metrics := types.Metrics{SessionID: sessionID}
+	metrics.OS = parseOS(section(out, "OS"))
 	metrics.Uptime = strings.TrimSpace(section(out, "UPTIME"))
 	load := strings.Fields(section(out, "LOAD"))
 	if len(load) >= 3 {

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { ArrowUpRight, Bot, ChevronRight, Edit3, FileText, Folder, FolderOpen, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Play, Plus, Search, Server, Settings, Star, Trash2, X, Zap } from "lucide-react";
+import { ArrowUpRight, Bot, ChevronDown, ChevronRight, Edit3, FileText, Folder, FolderOpen, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Play, Plus, Search, Server, Settings, Star, Trash2, X, Zap } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { isWindowsPlatform } from "../../utils/clipboard";
 import { TraceRoute, PingHost, UpdateSettings } from "../../../wailsjs/go/app/App";
@@ -14,6 +14,7 @@ import { NetworkPathCard } from "../NetworkPathCard/NetworkPathCard";
 import { MemoryCard } from "../MemoryCard/MemoryCard";
 import { MonitorDetailCard, type MonitorDetailKind } from "../MonitorDetailCard/MonitorDetailCard";
 import { CliTrustIndicator } from "../CliTrustIndicator/CliTrustIndicator";
+import { ServerOsIcon, detectServerOs, type ServerOsType } from "../common/ServerOsIcon";
 
 type FloatKey = "path" | "memory" | MonitorDetailKind;
 type PrimaryNav = "connections" | "files" | "tools";
@@ -41,6 +42,7 @@ function DrawerFallback() {
 const toolDrawers: Drawer[] = ["commands", "tunnels", "containers", "services", "firewall", "cron", "websites", "logs", "recordings"];
 
 const FOLDED_GROUPS_KEY = "gx:foldedServerGroups";
+const MONITOR_COLLAPSED_KEY = "gx:monitorCollapsed";
 const RECENT_SECTION_LIMIT = 8;
 
 function primaryForDrawer(drawer: Drawer): PrimaryNav | "ai" | "settings" {
@@ -122,6 +124,7 @@ export function Sidebar(props: {
   activeTabId: string;
   tabs: Tab[];
   profileStates?: Record<string, { state: string; count: number; error?: string }>;
+  detectedOsMap?: Record<string, ServerOsType>;
   activityHistory?: AutomationActivityRecord[];
   automationByProfile?: Record<string, AutomationIndicator>;
 }) {
@@ -145,6 +148,26 @@ export function Sidebar(props: {
     }
     return new Set(["__recent__"]);
   });
+  const [monitorCollapsed, setMonitorCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(MONITOR_COLLAPSED_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleMonitorCollapsed = useCallback(() => {
+    setMonitorCollapsed((previous) => {
+      const next = !previous;
+      try {
+        localStorage.setItem(MONITOR_COLLAPSED_KEY, String(next));
+      } catch {
+        /* storage may be unavailable */
+      }
+      return next;
+    });
+  }, []);
+
   const [fileMode, setFileMode] = useState<FileMode>("remote");
   const activeDocumentRowRef = useRef<HTMLButtonElement>(null);
   const [aiMounted, setAiMounted] = useState(props.drawer === "ai");
@@ -318,6 +341,7 @@ export function Sidebar(props: {
   const renderServerRow = (profile: types.Profile) => {
     const automation = props.automationByProfile?.[profile.id];
     const session = props.profileStates?.[profile.id];
+    const osType = detectServerOs(profile, props.detectedOsMap?.[profile.id]);
     const statusLabel = session?.state === "connected"
       ? (lang === "zh-CN" ? "已连接" : "Connected")
       : session?.state === "connecting" || session?.state === "reconnecting" || session?.state === "restoring"
@@ -325,19 +349,36 @@ export function Sidebar(props: {
         : session?.state === "error"
           ? (lang === "zh-CN" ? "连接错误" : "Connection error")
           : (lang === "zh-CN" ? "未连接" : "Not connected");
+    const sessionCountTitle = session?.count
+      ? (lang === "zh-CN" ? `${session.count} 个活动会话` : `${session.count} ${session.count === 1 ? "active session" : "active sessions"}`)
+      : undefined;
+    const fullTarget = `${profile.username}@${profile.host}:${profile.port}`;
     return (
-      <div key={profile.id} className={clsx("server-row group", automation && "server-row-automation")}>
+      <div
+        key={profile.id}
+        className={clsx("server-row group", automation && "server-row-automation")}
+        title={`${profile.name ? `${profile.name}\n` : ""}${fullTarget} (${statusLabel})`}
+      >
         <button type="button" className="server-row-main" aria-label={`${t(lang, "connect")} ${profile.name || profile.host}, ${statusLabel}`} onClick={() => props.onConnectProfile(profile)}>
-          <span className="server-avatar" title={session ? `${statusLabel} · ${session.count} ${lang === "zh-CN" ? "个会话" : (session.count === 1 ? "session" : "sessions")}${session.error ? ` · ${session.error}` : ""}` : statusLabel}><Server size={13} /><span className={clsx("status-dot", stateClass(session?.state || "disconnected"))} /></span>
+          <span className="server-avatar" title={session ? `${statusLabel} · ${session.count} ${lang === "zh-CN" ? "个会话" : (session.count === 1 ? "session" : "sessions")}${session.error ? ` · ${session.error}` : ""}` : statusLabel}>
+            <ServerOsIcon os={osType} size={20} />
+            <span className={clsx("status-dot", stateClass(session?.state || "disconnected"))} />
+          </span>
           <div className="server-row-text">
             <div className="server-title-line">
               <div className="server-title-group">
                 <div className="server-title">{profile.name || profile.host}</div>
+                {!!session?.count && <span className="server-session-count" title={sessionCountTitle}>{session.count}</span>}
+                {profile.favorite && <Star size={10} className="server-favorite-indicator" />}
               </div>
-              {!!session?.count && <span className="server-session-count" title={statusLabel}>{session.count}</span>}
               {automation && <span className={clsx("automation-badge", `automation-${automation.source}`, automation.phase === "started" && "automation-running", automation.phase === "failed" && "automation-failed")}>{automation.source.toUpperCase()}</span>}
             </div>
-            <div className="server-subtitle">{profile.username}@{profile.host}:{profile.port}{profile.proxyJumpId && <ArrowUpRight size={10} className="inline ml-1 opacity-50" />}</div>
+            <div className="server-subtitle" title={fullTarget}>
+              <span className="server-sub-user">{profile.username}@</span>
+              <span className="server-sub-host">{profile.host}</span>
+              {profile.port !== 22 && <span className="server-sub-port">:{profile.port}</span>}
+              {profile.proxyJumpId && <ArrowUpRight size={10} className="inline ml-1 opacity-50" />}
+            </div>
           </div>
         </button>
         {props.onRevokeCliTrust && (
@@ -441,9 +482,9 @@ export function Sidebar(props: {
         </button>
       </nav>
       <section
-        className={clsx("side-content", !isMonitor && "side-content-tool")}
+        className={clsx("side-content", !isMonitor && "side-content-tool", isMonitor && monitorCollapsed && "side-content-monitor-collapsed")}
         data-section={sectionKey}
-        style={isMonitor ? ({ ["--side-split" as string]: `${splitPct}%` } as React.CSSProperties) : undefined}
+        style={isMonitor && !monitorCollapsed ? ({ ["--side-split" as string]: `${splitPct}%` } as React.CSSProperties) : undefined}
       >
         {activePrimary === "connections" && (
           <>
@@ -485,16 +526,30 @@ export function Sidebar(props: {
               })}
             </div>
 
-            <div className="split-handle" onMouseDown={onDragStart} />
+            {!monitorCollapsed && <div className="split-handle" onMouseDown={onDragStart} />}
 
-            <div className="current-server-block">
-              <div className="section-title subtle">
+            <div className={clsx("current-server-block", monitorCollapsed && "current-server-block-collapsed")}>
+              <div className="section-title subtle current-server-title-bar">
                 <span>{t(lang, "currentServer")}</span>
+                <button
+                  type="button"
+                  className="current-server-toggle-btn"
+                  onClick={toggleMonitorCollapsed}
+                  title={t(lang, monitorCollapsed ? "expandMonitor" : "collapseMonitor")}
+                  aria-label={t(lang, monitorCollapsed ? "expandMonitor" : "collapseMonitor")}
+                >
+                  <ChevronDown size={13} className={clsx("current-server-toggle-icon", monitorCollapsed && "current-server-toggle-collapsed")} />
+                </button>
               </div>
               <div className="tool-body">
                 <MonitorPanel
                   active={props.active}
                   locale={lang}
+                  collapsed={monitorCollapsed}
+                  onExpand={() => {
+                    setMonitorCollapsed(false);
+                    try { localStorage.setItem(MONITOR_COLLAPSED_KEY, "false"); } catch {}
+                  }}
                   onStart={props.onStartMonitor}
                   onCpuClick={props.active ? () => openFloat("cpu") : undefined}
                   onPingClick={props.active ? () => openFloat("path") : undefined}
