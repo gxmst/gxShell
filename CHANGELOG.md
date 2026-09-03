@@ -3,6 +3,20 @@
 All notable gxShell changes are documented here. Release notes are generated
 from the version section in this file.
 
+## [1.6.1] - 2026-09-03
+
+### English
+
+- Fixed frontend dependency lockfile consistency, mutually exclusive TabBar menus, and Rocky/AlmaLinux OS detection.
+- Refined server-row actions and operating-system icons for clearer visual separation and easier scanning.
+- Unified the application, frontend, CLI, and release metadata version at 1.6.1.
+
+### 中文
+
+- 修复前端依赖锁文件一致性、TabBar 下拉菜单互斥逻辑，以及 Rocky/AlmaLinux 系统识别顺序。
+- 调整服务器行操作按钮和操作系统图标，增强视觉区分并提升扫描效率。
+- 将应用、前端、CLI 与发布元数据版本统一为 1.6.1。
+
 ## [1.6.0] - 2026-08-22
 
 ### English
