@@ -803,7 +803,6 @@
   flex: 1;
   align-items: center;
   gap: 9px;
-  padding-right: 90px;
   color: inherit;
   cursor: pointer;
   text-align: left;
@@ -824,9 +823,9 @@
   height: 30px;
   flex-basis: 30px;
   flex-shrink: 0;
-  border-radius: var(--radius-xs);
-  background: color-mix(in srgb, var(--panel-raised) 80%, transparent);
-  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel-raised) 70%, transparent);
+  border: 1px solid var(--border);
   color: var(--muted);
 }
 
@@ -841,6 +840,7 @@
   width: 8px;
   height: 8px;
   border: 2px solid var(--panel);
+  box-sizing: content-box;
 }
 
 .server-row-text {
@@ -853,6 +853,10 @@
   min-width: 0;
   align-items: center;
   gap: 6px;
+  /* Reserve room for the hover-only .row-actions (4 mini-btns + gaps + right
+     offset) on the title line only, so the subtitle keeps the full row width
+     and hosts a complete address. */
+  padding-right: 90px;
 }
 
 .server-title-group {
