@@ -9,12 +9,14 @@ from the version section in this file.
 
 - Fixed frontend dependency lockfile consistency, mutually exclusive TabBar menus, and Rocky/AlmaLinux OS detection.
 - Refined server-row actions and operating-system icons for clearer visual separation and easier scanning.
+- Reworked terminal theming: added the Sakura Mist and Matcha Green themes, completed bright-color palettes, and softened the Dark and gx Dark terminal background to #0b0e13.
 - Unified the application, frontend, CLI, and release metadata version at 1.6.1.
 
 ### 中文
 
 - 修复前端依赖锁文件一致性、TabBar 下拉菜单互斥逻辑，以及 Rocky/AlmaLinux 系统识别顺序。
 - 调整服务器行操作按钮和操作系统图标，增强视觉区分并提升扫描效率。
+- 重做终端主题：新增樱雾与抹茶青主题，补全明亮色板，Dark 与 gx Dark 终端背景调整为更柔和的 #0b0e13。
 - 将应用、前端、CLI 与发布元数据版本统一为 1.6.1。
 
 ## [1.6.0] - 2026-08-22
