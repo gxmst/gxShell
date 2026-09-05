@@ -3,6 +3,20 @@
 All notable gxShell changes are documented here. Release notes are generated
 from the version section in this file.
 
+## [1.6.3] - 2026-09-05
+
+### English
+
+- Updated golang.org/x/crypto (together with x/sys, x/net, and x/text) to clear every reachable govulncheck finding, including the malicious-peer connection deadlock fixed in v0.56.0.
+- Built with Go 1.26.8, which also clears every reachable standard-library finding of the 1.26.0 toolchain; the `go` directive in go.mod now pins it as the minimum.
+- The release pipeline now runs the same reachable-vulnerability scan as verify, so a failing security check can no longer publish a tag.
+
+### 中文
+
+- 升级 golang.org/x/crypto（连同 x/sys、x/net、x/text），清零所有可达漏洞，包括 v0.56.0 才修复的恶意对端连接死锁。
+- 改用 Go 1.26.8 构建，同时清除 1.26.0 工具链的全部可达标准库告警；go.mod 的 `go` 指令现在将其固定为最低版本。
+- 发布流水线现在运行与 verify 相同的可达漏洞扫描，安全检查不过不再发布。
+
 ## [1.6.2] - 2026-09-05
 
 ### English
