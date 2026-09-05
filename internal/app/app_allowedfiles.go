@@ -15,11 +15,10 @@ import (
 const documentAuthorizationFilename = "document-access.dat"
 const maxDocumentAuthorizationBytes = 1024 * 1024
 
-// allowedFileSet is the set of local file paths the user has genuinely chosen
-// to open (via the native file dialog, the startup file-open, or as a text
-// sibling of an already-allowed file). Local file reads and writes only operate
-// on paths in this set, so a compromised renderer cannot use them to read or
-// overwrite arbitrary files on disk.
+// allowedFileSet holds explicitly opened local files and their session-only
+// document siblings. Only explicitly opened paths enter the persistent history.
+// Local file reads and writes only operate on paths in this set, so a compromised
+// renderer cannot use them to read or overwrite arbitrary files on disk.
 //
 // It is a small, self-contained subsystem extracted from App so the
 // authorization boundary can be reasoned about and tested in isolation. All
@@ -121,9 +120,18 @@ func (s *allowedFileSet) allow(path string) (string, error) {
 	return paths[0], err
 }
 
-// Directory listings authorize siblings together so they persist the history
-// once, rather than rewriting and flushing it once per directory entry.
+// allowMany authorizes explicitly opened paths and persists their history once.
 func (s *allowedFileSet) allowMany(paths []string) ([]string, error) {
+	return s.authorizeMany(paths, true)
+}
+
+// allowSessionMany authorizes directory siblings without granting restore access
+// after a restart. Listing a document is not an explicit file-open action.
+func (s *allowedFileSet) allowSessionMany(paths []string) ([]string, error) {
+	return s.authorizeMany(paths, false)
+}
+
+func (s *allowedFileSet) authorizeMany(paths []string, persist bool) ([]string, error) {
 	absPaths := make([]string, 0, len(paths))
 	for _, path := range paths {
 		abs, err := filepath.Abs(path)
@@ -138,7 +146,7 @@ func (s *allowedFileSet) allowMany(paths []string) ([]string, error) {
 	for _, abs := range absPaths {
 		key := allowedFileKey(abs)
 		s.paths[key] = true
-		if !s.history[key] {
+		if persist && !s.history[key] {
 			s.history[key] = true
 			added = append(added, key)
 		}

@@ -43,7 +43,7 @@ import { PasteConfirmDialog } from "./components/modals/PasteConfirmDialog";
 import { sameTerminalPasteTargets, terminalPasteTargets } from "./utils/terminalPaste";
 import { TextInputDialog } from "./components/modals/TextInputDialog";
 import { ActivityCenter } from "./components/ActivityCenter/ActivityCenter";
-import { detectOsFromText, isValidOsType, saveStoredServerOs, type ServerOsType } from "./components/common/ServerOsIcon";
+import { isValidOsType, saveStoredServerOs, type ServerOsType } from "./components/common/ServerOsIcon";
 import { parsePaletteQuery } from "./utils/paletteSearch";
 import { createDefaultActionRegistry, type ActionContext } from "./actions/actionRegistry";
 import { PanelLeftOpen, Type as TypeIcon } from "lucide-react";
@@ -132,7 +132,7 @@ function App() {
   const fontSizeHudTimer = useRef<number | null>(null);
   const [broadcastInput, setBroadcastInput] = useState(false);
   const [detectedOsMap, setDetectedOsMap] = useState<Record<string, ServerOsType>>({});
-  const detectedOsProfilesRef = useRef<Set<string>>(new Set());
+  const detectedOsRef = useRef<Map<string, ServerOsType>>(new Map());
   // Session ids currently recording. Backend owns the real state; this mirror
   // drives the TabBar toggle. Cleared for a session when it stops or closes.
   const [recordingIds, setRecordingIds] = useState<string[]>([]);
@@ -491,15 +491,6 @@ function App() {
     const offData = EventsOn("terminal:data", (payload: { sessionId: string; data: string; runtimeId?: string; generation?: number }) => {
       if (!sessions.isCurrentRuntimeEvent(payload)) return;
       writeOutput(payload.sessionId, payload.data);
-      const tab = tabsRef.current.find((t) => t.id === payload.sessionId);
-      if (tab?.profileId && !detectedOsProfilesRef.current.has(tab.profileId)) {
-        const detected = detectOsFromText(payload.data);
-        if (detected && detected !== "server") {
-          detectedOsProfilesRef.current.add(tab.profileId);
-          saveStoredServerOs(tab.profileId, detected);
-          setDetectedOsMap((prev) => prev[tab.profileId!] === detected ? prev : { ...prev, [tab.profileId!]: detected });
-        }
-      }
       const split = splitPaneRef.current;
       const visibleInWorkspace = payload.sessionId === activeTabIdRef.current
         || split?.left === payload.sessionId
@@ -522,12 +513,13 @@ function App() {
   }, [sessions.isCurrentRuntimeEvent, sessions.setTabs, writeOutput]);
 
   useEffect(() => {
+    // Only monitor probes identify the remote OS; terminal output is arbitrary.
     const offMonitor = EventsOn("monitor:update", (metrics: types.Metrics) => {
       if (!metrics?.sessionId || !isValidOsType(metrics.os)) return;
       const tab = tabsRef.current.find((t) => t.id === metrics.sessionId);
-      if (tab?.profileId && !detectedOsProfilesRef.current.has(tab.profileId)) {
+      if (tab?.profileId && detectedOsRef.current.get(tab.profileId) !== metrics.os) {
         const os = metrics.os;
-        detectedOsProfilesRef.current.add(tab.profileId);
+        detectedOsRef.current.set(tab.profileId, os);
         saveStoredServerOs(tab.profileId, os);
         setDetectedOsMap((prev) => prev[tab.profileId!] === os ? prev : { ...prev, [tab.profileId!]: os });
       }

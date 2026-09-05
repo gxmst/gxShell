@@ -60,15 +60,7 @@ func (a *App) LocalHomeDir() string {
 // path normalization live in allowedFileSet; this stays a method so callers
 // across the app read naturally.
 func (a *App) allowFile(path string) string {
-	paths := a.allowFiles([]string{path})
-	if len(paths) == 0 {
-		return ""
-	}
-	return paths[0]
-}
-
-func (a *App) allowFiles(paths []string) []string {
-	abs, err := a.allowedFiles.allowMany(paths)
+	abs, err := a.allowedFiles.allow(path)
 	if err != nil && a.log != nil {
 		a.log.ErrorFields("Failed to persist document authorization", LogFields{"error": err.Error()})
 	}
@@ -408,8 +400,8 @@ func (a *App) SelectMarkdownFile() (string, error) {
 }
 
 // ListTextFilesInDir lists supported documents in the same directory as the given file.
-// The returned siblings are authorized for reading, matching the viewer's behavior
-// of letting the user step between documents in the opened folder.
+// The returned siblings are authorized only for this session, letting the user
+// step between documents without adding the whole folder to persistent history.
 func (a *App) ListTextFilesInDir(filePath string) ([]string, error) {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
@@ -443,11 +435,11 @@ func (a *App) ListTextFilesInDir(filePath string) ([]string, error) {
 			textFiles = append(textFiles, full)
 		}
 	}
-	return a.allowFiles(textFiles), nil
+	return a.allowedFiles.allowSessionMany(textFiles)
 }
 
 // ListMarkdownFilesInDir is kept for older frontend builds and preserves the
-// original Markdown-only sibling list.
+// original Markdown-only sibling list with session-only authorization.
 func (a *App) ListMarkdownFilesInDir(filePath string) ([]string, error) {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
@@ -481,7 +473,7 @@ func (a *App) ListMarkdownFilesInDir(filePath string) ([]string, error) {
 			mdFiles = append(mdFiles, full)
 		}
 	}
-	return a.allowFiles(mdFiles), nil
+	return a.allowedFiles.allowSessionMany(mdFiles)
 }
 
 func isMarkdownPath(path string) bool {

@@ -137,7 +137,7 @@ func TestDocumentHistoryWriteFailureKeepsOnlySessionAccess(t *testing.T) {
 	}
 }
 
-func TestSiblingDocumentAuthorizationSurvivesRestart(t *testing.T) {
+func TestSiblingDocumentAuthorizationIsSessionOnly(t *testing.T) {
 	for _, markdownOnly := range []bool{false, true} {
 		name := "text"
 		if markdownOnly {
@@ -159,6 +159,10 @@ func TestSiblingDocumentAuthorizationSurvivesRestart(t *testing.T) {
 				t.Fatal(err)
 			}
 			first.allowFile(opened)
+			before, err := os.ReadFile(history)
+			if err != nil {
+				t.Fatal(err)
+			}
 			list := first.ListTextFilesInDir
 			if markdownOnly {
 				list = first.ListMarkdownFilesInDir
@@ -167,20 +171,74 @@ func TestSiblingDocumentAuthorizationSurvivesRestart(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			wantCount := 3
+			if markdownOnly {
+				wantCount = 2
+			}
+			if len(files) != wantCount {
+				t.Fatalf("listed files = %v, want %d documents", files, wantCount)
+			}
+			for _, path := range files {
+				if _, err := first.ReadLocalFile(path); err != nil {
+					t.Fatalf("listed document should be readable in this session: %v", err)
+				}
+			}
+			if err := first.WriteLocalFile(sibling, "edited"); err != nil {
+				t.Fatalf("listed sibling should be writable in this session: %v", err)
+			}
+			if markdownOnly && first.isFileAllowed(text) {
+				t.Fatal("Markdown-only listing authorized a text sibling")
+			}
+			after, err := os.ReadFile(history)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Fatalf("listing siblings changed persistent authorization history: %v", err)
+			}
 			second := NewApp()
 			if err := second.allowedFiles.loadHistory(history); err != nil {
 				t.Fatal(err)
 			}
-			if restored := second.RestoreTextFiles(files); len(restored) != len(files) {
-				t.Fatalf("siblings missing from persisted history: %v", restored)
+			if restored := second.RestoreTextFiles([]string{opened, sibling, text}); len(restored) != 1 || restored[0] != opened {
+				t.Fatalf("only the explicitly opened document should be restored: %v", restored)
 			}
-			if markdownOnly && second.allowedFiles.restore(text) {
-				t.Fatal("Markdown-only listing authorized a text sibling")
-			}
-			if _, err := second.ReadLocalFile(sibling); err != nil {
-				t.Fatalf("restored sibling should be readable: %v", err)
+			for _, path := range []string{sibling, text} {
+				if _, err := second.ReadLocalFile(path); err == nil {
+					t.Fatalf("listed sibling became readable after restart: %s", path)
+				}
+				if err := second.WriteLocalFile(path, "changed"); err == nil {
+					t.Fatalf("listed sibling became writable after restart: %s", path)
+				}
 			}
 		})
+	}
+}
+
+func TestExplicitOpenPersistsOnlySelectedSessionDocument(t *testing.T) {
+	dir := t.TempDir()
+	history := filepath.Join(dir, documentAuthorizationFilename)
+	opened := filepath.Join(dir, "opened.md")
+	sibling := filepath.Join(dir, "sibling.md")
+	first := newAllowedFileSet()
+	if err := first.loadHistory(history); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.allowSessionMany([]string{opened, sibling}); err != nil {
+		t.Fatal(err)
+	}
+	if restored := first.restore(sibling); !restored {
+		t.Fatal("listed sibling should retain session access")
+	}
+	if _, err := first.allow(opened); err != nil {
+		t.Fatal(err)
+	}
+	second := newAllowedFileSet()
+	if err := second.loadHistory(history); err != nil {
+		t.Fatal(err)
+	}
+	if !second.restore(opened) {
+		t.Fatal("explicitly opened document should survive restart")
+	}
+	if second.restore(sibling) {
+		t.Fatal("persisting one document must not persist other session authorizations")
 	}
 }
 
