@@ -7,7 +7,7 @@ require (
 	github.com/charmbracelet/x/xpty v0.1.3
 	github.com/getlantern/systray v1.2.2
 	github.com/pkg/sftp v1.13.10
-	github.com/wailsapp/wails/v2 v2.12.0
+	github.com/wailsapp/wails/v2 v2.15.0
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/crypto v0.56.0
 	golang.org/x/sys v0.47.0
