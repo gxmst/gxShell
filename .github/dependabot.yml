@@ -1,0 +1,19 @@
+version: 2
+updates:
+  # Go module dependencies for the Wails backend and the CLI.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Frontend dependencies live in the frontend/ workspace.
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+
+  # Keep the CI actions themselves current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

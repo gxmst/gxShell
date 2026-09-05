@@ -161,6 +161,8 @@ func TestSanitizeUnit(t *testing.T) {
 		{"shell injection dollar", "nginx$(id)", true},
 		{"shell injection backtick", "nginx`id`", true},
 		{"slash", "../nginx", true},
+		{"flag injection", "--all", true},
+		{"leading dash", "-nginx.service", true},
 		{"too long", string(make([]byte, 257)), true},
 	}
 	for _, tt := range tests {

@@ -32,6 +32,7 @@ frontend/vite.config.ts.timestamp-*.mjs
 # leading slash keeps this to the root: icons and doc assets live in
 # build/, docs/ and frontend/src/assets/ and must stay tracked.
 /tmp_*
+/usque-watchdog.sh
 /*.png
 /.staging/
 /.tmp/

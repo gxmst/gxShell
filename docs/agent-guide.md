@@ -38,8 +38,9 @@ a higher-risk approval or that the user did not authorize. This includes:
 Treat the complete script or generated program, its destination, file changes,
 network destinations, and secret use as the requested action. A successful
 upload approval covers file movement only; it does not approve executing the
-uploaded file. A profile trust window suppresses approval only for T1 scoped,
-recoverable changes; opaque execution is at least T2 and still prompts. This is
+uploaded file. A profile trust window suppresses approval for T1 scoped,
+recoverable changes and for bounded local T2 operations; opaque execution and
+effects that leave the server still prompt. This is
 a policy control for cooperative automation, not containment against a
 malicious token holder or cleverly disguised program. Use arbitrary scripts
 only when the user has explicitly authorized that exact source and purpose.
@@ -67,8 +68,10 @@ For `exec`, also inspect `riskTier`, `riskCategories`, `approval`, and
 - T0 observation: no prompt.
 - T1 scoped, recoverable change: no prompt only during an active trust window;
   otherwise one native click.
-- T2 bounded destructive, opaque, or external action: one native click even
-  during a trust window.
+- T2 bounded destructive, opaque, or external action: a statically resolvable,
+  bounded local action runs without a prompt during an active trust window;
+  opaque or external T2 actions take one native click even during a trust
+  window.
 - T3 irreversible, self-locking, credential, or public action: immediate native
   click and never part of an "Allow all" batch, regardless of trust.
 

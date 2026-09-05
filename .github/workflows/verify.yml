@@ -46,10 +46,18 @@ jobs:
         run: npm run build
 
       - name: Go test
-        run: go test ./...
+        # -race: the backend is goroutine-heavy (SSH sessions, tunnels,
+        # terminal IO pumping, reconnect generations) and data races here
+        # surface as rare user-visible corruption, not compile errors.
+        run: go test -race ./...
 
       - name: Go vet
         run: go vet ./...
+
+      # govulncheck reports only vulnerabilities reachable from this code, so
+      # it stays quiet until a shipped call path is actually affected.
+      - name: Go vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
   # The root package needs Wails/WebView2 and is Windows-first, but the backend
   # and CLI packages carry *_other.go variants that nothing compiled until now.

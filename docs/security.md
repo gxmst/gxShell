@@ -15,11 +15,13 @@ credentials away from ordinary profile data and terminal input.
 - CLI access is globally disabled by default and is additionally opt-in per profile.
 - Requests stay on `127.0.0.1` and require a local bearer token.
 - The CLI exposes aliases rather than hostnames, usernames, ports, profile IDs, or jump-host details.
-- External CLI `exec` requests use behavior-based T0-T3 risk tiers. Automation
-  trust auto-approves only T1 scoped, recoverable changes. T2 always requires a
-  native click; T3 uses an immediate individual click and never joins a batch,
-  regardless of trust. Prompted commands include a short classifier-derived
-  explanation of their recognized behavior and target.
+- External CLI `exec` requests use behavior-based T0-T3 risk tiers. Inside a
+  trust window, T1 scoped, recoverable changes and T2 bounded local operations
+  run without a prompt. T2 operations the classifier cannot statically resolve,
+  or whose effect leaves the machine, still require a native click, and T3 uses
+  an immediate individual click and never joins a batch, regardless of trust.
+  Prompted commands include a short classifier-derived explanation of their
+  recognized behavior and target.
 - The native dialog is authoritative. The in-app coloured risk card is
   informational and cannot approve execution.
 - Transfer/copy sensitive-path policy can still block an operation outright.

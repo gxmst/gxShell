@@ -24,6 +24,8 @@ func TestSanitizeDockerArg(t *testing.T) {
 		{"shell injection space", "abc def", true},
 		{"path traversal", "../etc/passwd", true},
 		{"newline injection", "abc\nwhoami", true},
+		{"flag injection", "--all", true},
+		{"leading dash", "-abc123def456", true},
 	}
 
 	for _, tt := range tests {

@@ -59,7 +59,8 @@ jobs:
         run: npm run build
 
       - name: Go test
-        run: go test ./...
+        # Matches verify.yml; a release must not go out on a race-dirty tree.
+        run: go test -race ./...
 
       - name: Go vet
         run: go vet ./...

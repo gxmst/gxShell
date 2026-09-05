@@ -55,8 +55,9 @@ func (m *Manager) SetEmit(fn func(event string, data any)) {
 // unitNameRe covers regular units (nginx.service), template instances
 // (getty@tty1.service) and device-style names; anything with shell
 // metacharacters is rejected because unit names are interpolated into
-// remote commands.
-var unitNameRe = regexp.MustCompile(`^[A-Za-z0-9@:._\-]+$`)
+// remote commands. The first character cannot be a dash, so a unit slot
+// can never inject a flag such as --all into `systemctl <action> <unit>`.
+var unitNameRe = regexp.MustCompile(`^[A-Za-z0-9@:._][A-Za-z0-9@:._\-]*$`)
 
 func sanitizeUnit(unit string) error {
 	if unit == "" || len(unit) > 256 || !unitNameRe.MatchString(unit) {

@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest an improvement or new capability for gxShell
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to do, and what currently gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What you would like gxShell to do. Mention the relevant panel (terminal, SFTP, monitor, tunnels, AI, CLI) if applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives or workarounds
+      description: How do you handle this today (including with other tools)?
+    validations:
+      required: false

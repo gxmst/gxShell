@@ -1,0 +1,45 @@
+name: Bug report
+description: Report something broken in gxShell
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please search existing issues first. For security-sensitive problems
+        (credential exposure, approval/trust bypass, CLI token handling, host
+        key verification), use private vulnerability reporting instead:
+        https://github.com/gxmst/gxShell/security/advisories/new
+  - type: input
+    id: version
+    attributes:
+      label: gxShell version
+      placeholder: e.g. 1.6.2
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. Windows 11 24H2
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: What you did, what alias/panel was involved, and what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Attach relevant log output with credentials, secrets, and hostnames removed.
+    validations:
+      required: false

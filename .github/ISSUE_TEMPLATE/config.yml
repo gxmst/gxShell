@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://github.com/gxmst/gxShell/tree/main/docs
+    about: Feature reference, CLI and agent guides, architecture, and development setup.
+  - name: Security policy
+    url: https://github.com/gxmst/gxShell/blob/main/SECURITY.md
+    about: How to report vulnerabilities privately.

@@ -49,7 +49,10 @@ func (m *Manager) SetEmit(fn func(event string, data any)) {
 	}
 }
 
-var safeIDRe = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
+// safeIDRe bounds container names, IDs, and log stream keys before they are
+// interpolated into remote docker commands. The first character cannot be a
+// dash, so an argument slot can never inject a flag such as --all.
+var safeIDRe = regexp.MustCompile(`^[a-zA-Z0-9_.][a-zA-Z0-9_.\-]*$`)
 
 func sanitizeDockerArg(arg string) error {
 	if !safeIDRe.MatchString(arg) {

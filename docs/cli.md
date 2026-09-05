@@ -16,8 +16,8 @@ opts in through Settings.
 - Profiles are hidden from the CLI by default.
 - A profile must have `Allow CLI access` enabled before it appears in `gxshell-cli list`.
 - The CLI lists aliases only. It does not return hostnames, IP addresses, usernames, ports, profile IDs, or jump-host details.
-- External CLI commands are classified by visible behavior from T0 through T3. T0 observation runs without a prompt. T1 scoped, recoverable changes require a native click unless the profile has active automation trust. T2 bounded destructive, opaque, or external actions always require a native click. T3 irreversible, self-locking, credential, or public actions use an immediate native click and never join a batched "Allow all" prompt.
-- Automation trust lasts 1, 4, 8, or 24 hours and has no permanent switch. It auto-approves only T1 commands. T2 and T3 remain interactive, and every T3 command is confirmed separately regardless of trust.
+- External CLI commands are classified by visible behavior from T0 through T3. T0 observation runs without a prompt. T1 scoped, recoverable changes require a native click unless the profile has active automation trust. Bounded T2 operations also skip the prompt inside a trust window; opaque or external T2 actions always require a native click. T3 irreversible, self-locking, credential, or public actions use an immediate native click and never join a batched "Allow all" prompt.
+- Automation trust lasts 1, 4, 8, or 24 hours and has no permanent switch. It auto-approves T1 commands and bounded local T2 operations; opaque or external T2 commands and every T3 command remain interactive, and each T3 command is confirmed separately regardless of trust.
 - Sensitive-path policy can still block transfer/copy operations outright. The built-in AI assistant retains its existing known-pattern command preflight. External CLI `exec` uses risk tiers rather than treating a permanent command blacklist as its security boundary.
 - Remote file copies require native confirmation by default and apply sensitive-path checks to both endpoints. They skip confirmation only while both endpoint profiles are trusted.
 - Local file transfers (`transfer push`/`pull`) are single-file SFTP operations. They always require a native approval dialog, even when the server profile has an active CLI trust window. Overwrite is disabled by default and must be requested explicitly with `--overwrite`; missing remote parent directories can be created for uploads with `--mkdir`.
@@ -70,8 +70,9 @@ creates a file with a command and executes it later.
 Do not use an interpreter, compiler, build hook, shell wrapper, download/decode
 step, or library/system API to disguise an operation that would require a
 higher-risk approval or was not authorized. Transfer approval authorizes moving
-a file only, not running it. A time-limited trusted profile auto-approves only
-T1; opaque scripts are at least T2 and still prompt. Before running a script or
+a file only, not running it. A time-limited trusted profile auto-approves T1
+and bounded local T2 operations; opaque scripts are T2-undecidable and still
+prompt. Before running a script or
 generated program, the agent must have explicit authorization for the complete
 source, target, side effects, network destinations, and secret use. Prefer a
 small inspectable command or a dedicated typed operation when available.
@@ -84,8 +85,8 @@ safety verdict.
 For an external caller (including an AI agent), `exec` uses four tiers:
 
 - **T0 observation** - fixed, statically understood read-only behavior runs without a prompt.
-- **T1 recoverable change** - scoped local writes, ordinary builds/tests, and similar recoverable work. It needs one native click normally and is the only command tier an active automation-trust window can auto-approve.
-- **T2 bounded/opaque/external** - bounded deletion, persistence, network exposure, ordinary remote publication, interpreters, uploaded scripts, decoded payloads, and anything the classifier cannot resolve. It always needs one native click. Concurrent T1/T2 requests for one alias may be shown in a batched prompt.
+- **T1 recoverable change** - scoped local writes, ordinary builds/tests, and similar recoverable work. It needs one native click normally; an active automation-trust window auto-approves it.
+- **T2 bounded/opaque/external** - bounded deletion, persistence, network exposure, ordinary remote publication, interpreters, uploaded scripts, decoded payloads, and anything the classifier cannot resolve. A statically resolvable, bounded local T2 action skips the prompt inside a trust window; opaque or external T2 actions always need one native click. Concurrent T1/T2 requests for one alias may be shown in a batched prompt.
 - **T3 critical** - irreversible storage loss, loss of host access, credential access, or unrecallable/public state. It opens an immediate native click dialog and never joins a batch, regardless of trust.
 
 Every command that requires confirmation is followed by a short `What this
@@ -186,8 +187,9 @@ Get-Content .\script.sh -Raw | .\gxshell-cli.exe exec-stdin prod-web --shell bas
 ```
 
 T0 commands run immediately. A server profile can receive automation trust for
-a bounded 1/4/8/24-hour window; only T1 commands skip interactive approval in
-that window. T2 and T3 remain interactive. Remote copies skip approval only
+a bounded 1/4/8/24-hour window; T1 commands and bounded local T2 operations
+skip interactive approval in that window, while opaque or external T2 commands
+and all T3 commands remain interactive. Remote copies skip approval only
 when both endpoints are trusted. Local transfers, secret changes, and tunnels
 always prompt. Transfer/copy sensitive-path restrictions remain separate from
 the `exec` tier classifier.

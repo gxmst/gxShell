@@ -9,7 +9,7 @@
 package version
 
 // Version is the release version, without a leading "v".
-const Version = "1.6.1"
+const Version = "1.6.2"
 
 // Repository is the canonical upstream, used to look up published releases.
 const Repository = "gxmst/gxShell"

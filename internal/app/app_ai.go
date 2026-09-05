@@ -431,7 +431,9 @@ func (a *App) prepareAiToolExecution(toolCall authorizedAIToolCall) (aiToolExecu
 			return aiToolExecutionPlan{}, "Error parsing command arguments: " + err.Error(), false
 		}
 		if reason, ok := validateAiToolCommand(args.Command); !ok {
-			a.log.ErrorFields("AI tool command blocked", LogFields{"command": args.Command, "reason": reason})
+			fields := logger.CommandAuditFields(args.Command)
+			fields["reason"] = reason
+			a.log.ErrorFields("AI tool command blocked", fields)
 			return aiToolExecutionPlan{}, "BLOCKED: " + reason, false
 		}
 		if args.Shell == "" {

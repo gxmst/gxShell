@@ -3,6 +3,24 @@
 All notable gxShell changes are documented here. Release notes are generated
 from the version section in this file.
 
+## [1.6.2] - 2026-09-05
+
+### English
+
+- Updated the security, CLI, and agent documentation to match the actual automation-trust behavior: a trust window auto-approves T1 and bounded local T2 operations, while undecidable, external, credential, self-locking, and all T3 commands still require a native click.
+- Hardened service and Docker argument validation to reject values starting with a dash, preventing flag injection into interpolated remote `systemctl`/`docker` commands.
+- Blocked AI tool commands are now recorded in the audit log with hashed and redacted fields instead of the raw command text.
+- Added CI hardening (race detector, govulncheck, Dependabot) and community files (SECURITY.md, CONTRIBUTING.md, issue templates).
+- Bumped the application, frontend, CLI, and release metadata version to 1.6.2.
+
+### 中文
+
+- 更新安全模型、CLI 与 Agent 文档，使其与实际的限时信任行为一致：信任窗口自动放行 T1 与影响局部的有界 T2 操作；无法判定、跨系统、凭据、可能断联及所有 T3 命令仍需原生点击确认。
+- 加固 services 与 Docker 参数校验，拒绝以连字符开头的取值，防止拼接远程 `systemctl`/`docker` 命令时注入旗标。
+- AI 被拦截命令的审计日志改为哈希与脱敏字段，不再写入原始命令文本。
+- 增强 CI（竞态检测、govulncheck、Dependabot），补充社区文件（SECURITY.md、CONTRIBUTING.md 与 issue 模板）。
+- 将应用、前端、CLI 与发布元数据版本统一为 1.6.2。
+
 ## [1.6.1] - 2026-09-03
 
 ### English
