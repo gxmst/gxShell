@@ -65,6 +65,12 @@ jobs:
       - name: Go vet
         run: go vet ./...
 
+      # A release build must clear the same reachable-vulnerability scan as
+      # verify.yml; without it, a red verify run would not stop the tag from
+      # publishing.
+      - name: Go vulnerability check
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
       - name: Install matching Wails CLI
         shell: pwsh
         run: |

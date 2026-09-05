@@ -7,7 +7,7 @@ discussions, and pull requests are all welcome.
 
 - Windows 10/11 x64 with the WebView2 Runtime is the supported desktop target;
   Linux/macOS builds are experimental CI artifacts.
-- Go 1.24+ (see `go.mod`), Node.js 20.19+ (CI pins 22), and the
+- Go 1.26.8+ (see the `go` directive in `go.mod`), Node.js 20.19+ (CI pins 22), and the
   [Wails v2 CLI](https://wails.io) for desktop builds.
 
 Read [docs/development.md](docs/development.md) first — it explains the build
