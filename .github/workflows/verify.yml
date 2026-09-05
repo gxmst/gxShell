@@ -19,7 +19,7 @@ jobs:
           cache: true
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           # ESLint 10 and Vitest 4 both require 20.19+, so pinning the major to
           # 22 keeps CI off the edge of their engine ranges.
@@ -97,7 +97,7 @@ jobs:
           cache: true
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -160,7 +160,7 @@ jobs:
           cache: true
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
