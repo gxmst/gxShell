@@ -148,6 +148,10 @@ export default function MarkdownViewer({
   const draftRef = useRef(draft);
   const eolRef = useRef(eol);
   const saveInFlightRef = useRef<Promise<boolean> | null>(null);
+  const loadGenerationRef = useRef(0);
+  const loadedDocumentRef = useRef<string | null>(null);
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
   draftRef.current = draft;
   eolRef.current = eol;
 
@@ -178,6 +182,7 @@ export default function MarkdownViewer({
 
 
   const displayPath = source === 'remote' ? remotePath : filePath;
+  const documentKey = JSON.stringify([source, displayPath]);
   const fileName = (displayPath || '').split(/[\\/]/).pop() || '';
   const editorMode = documentEditorMode(displayPath || '');
   const jsonMode = editorMode === 'json' || editorMode === 'jsonl' ? editorMode : null;
@@ -252,6 +257,7 @@ export default function MarkdownViewer({
   }, [zoom]);
 
   const loadFile = useCallback(async () => {
+    const generation = ++loadGenerationRef.current;
     try {
       setLoading(true);
       if (pdfMode) {
@@ -267,6 +273,7 @@ export default function MarkdownViewer({
       const text = source === 'remote'
         ? await ReadRemoteTextFile(sessionId || '', remotePath || '')
         : await ReadLocalFile(filePath || '');
+      if (generation !== loadGenerationRef.current) return;
       // A single-line file has no detectable ending. Use the local platform
       // default for local files; remote hosts are unknown, so keep the portable
       // LF default and let the status control change it explicitly if needed.
@@ -281,17 +288,25 @@ export default function MarkdownViewer({
       setDraft(normalized);
       setError('');
     } catch (err: any) {
-      setError(err.toString());
+      if (generation === loadGenerationRef.current) setError(err.toString());
     } finally {
-      setLoading(false);
+      if (generation === loadGenerationRef.current) setLoading(false);
     }
   }, [source, filePath, remotePath, sessionId, pdfMode]);
 
   useEffect(() => {
-    setEditing(false);
-    setSplitPreview(false);
-    loadFile();
-  }, [loadFile]);
+    const sameDocument = loadedDocumentRef.current === documentKey;
+    loadedDocumentRef.current = documentKey;
+    // A transport replacement changes where the next save goes, not the draft.
+    if (sameDocument && (editingRef.current || saveInFlightRef.current)) {
+      setLoading(false);
+    } else {
+      setEditing(false);
+      setSplitPreview(false);
+      void loadFile();
+    }
+    return () => { loadGenerationRef.current += 1; };
+  }, [documentKey, loadFile]);
 
   const dirty = editing && (draft.length !== content.length || draft !== content || eol !== loadedEol);
 

@@ -21,7 +21,10 @@ func TestAllowedFileSetNormalizesAndAuthorizes(t *testing.T) {
 	// pre-clean it) must normalize to the cleaned absolute path that contains()
 	// is later queried with.
 	raw := dir + string(filepath.Separator) + "sub" + string(filepath.Separator) + ".." + string(filepath.Separator) + "note.md"
-	abs := set.allow(raw)
+	abs, err := set.allow(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if abs == "" {
 		t.Fatal("allow returned empty for a resolvable path")
 	}

@@ -227,6 +227,9 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.store = store
 	a.log = logger.New(store.DataDir())
+	if err := a.allowedFiles.loadHistory(filepath.Join(store.DataDir(), documentAuthorizationFilename)); err != nil {
+		a.log.ErrorFields("Document restore authorization unavailable", LogFields{"error": err.Error()})
+	}
 	a.secrets = secrets.NewStore(a.store.DataDir())
 
 	emit := func(event string, data any) {

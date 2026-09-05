@@ -54,6 +54,41 @@ describe('MarkdownViewer saving', () => {
   beforeEach(() => {
     appMocks.readLocalFile.mockResolvedValue('original\n');
     appMocks.writeLocalFile.mockReset();
+    appMocks.readRemoteFile.mockReset();
+    appMocks.writeRemoteFile.mockReset();
+  });
+
+  it('keeps the draft and saves through the replacement SSH session', async () => {
+    appMocks.readRemoteFile.mockResolvedValue('original\n');
+    appMocks.writeRemoteFile.mockResolvedValue(undefined);
+    let saveCurrent = async () => false;
+    const onDirtyChange = vi.fn((dirty: boolean, save: () => Promise<boolean>) => {
+      if (dirty) saveCurrent = save;
+    });
+    const props = { active: true, source: 'remote' as const, remotePath: '/notes.txt', onClose: vi.fn(), onDirtyChange };
+    const { rerender } = render(<MarkdownViewer {...props} sessionId="old" />);
+    await screen.findByText('original');
+    fireEvent.click(screen.getByTitle('Edit'));
+    fireEvent.change(await screen.findByLabelText('Source editor'), { target: { value: 'unsaved draft\n' } });
+    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true, expect.any(Function)));
+    rerender(<MarkdownViewer {...props} sessionId="new" />);
+    expect(screen.getByLabelText('Source editor')).toHaveValue('unsaved draft\n');
+    expect(appMocks.readRemoteFile).toHaveBeenCalledTimes(1);
+    await act(async () => { expect(await saveCurrent()).toBe(true); });
+    expect(appMocks.writeRemoteFile).toHaveBeenCalledWith('new', '/notes.txt', 'unsaved draft\n');
+  });
+
+  it('ignores a read from the old SSH session that finishes after reconnect', async () => {
+    const oldRead = deferred<string>();
+    appMocks.readRemoteFile.mockReturnValueOnce(oldRead.promise).mockResolvedValueOnce('current contents');
+    const props = { active: true, source: 'remote' as const, remotePath: '/notes.txt', onClose: vi.fn() };
+    const { rerender } = render(<MarkdownViewer {...props} sessionId="old" />);
+    await waitFor(() => expect(appMocks.readRemoteFile).toHaveBeenCalledTimes(1));
+    rerender(<MarkdownViewer {...props} sessionId="new" />);
+    await screen.findByText('current contents');
+    await act(async () => { oldRead.resolve('stale contents'); });
+    expect(screen.getByText('current contents')).toBeInTheDocument();
+    expect(screen.queryByText('stale contents')).not.toBeInTheDocument();
   });
 
   it('deduplicates concurrent saves and preserves edits made while a snapshot is being written', async () => {

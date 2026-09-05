@@ -60,8 +60,9 @@ type Manager struct {
 	stopEvict chan struct{}
 	stopOnce  sync.Once
 
-	transferMu sync.Mutex
-	transfers  map[string]*transferJob
+	transferMu   sync.Mutex
+	transfers    map[string]*transferJob
+	partCleanups map[string]bool
 }
 
 type transferJob struct {
@@ -109,12 +110,13 @@ type transferJob struct {
 	lastDone       int64
 	lastTotal      int64
 
-	// partPath is the temp file this job is currently writing, published so
+	// partPath and its normalized partKey identify the current temp file so
 	// concurrent transfers into the same directory do not clean it up as an
 	// orphan. Empty until the job has decided on a name. Guarded by the
 	// Manager's transferMu rather than a field mutex, because it is only ever
 	// written by the owning job and read while walking the job map.
 	partPath string
+	partKey  string
 
 	interruptMu sync.Mutex
 	interrupt   func()
@@ -502,10 +504,27 @@ func (m *Manager) setTransferRetryable(job *transferJob, retryable bool) {
 // a concurrent transfer treats it as live rather than abandoned. Call it before
 // opening the file: the window between opening and claiming is exactly the race
 // this closes.
-func (m *Manager) claimPart(job *transferJob, partPath string) {
+func (m *Manager) claimPart(job *transferJob, partPath string) error {
+	key, err := transferPartKey(partPath, job.direction)
+	if err != nil {
+		return err
+	}
 	m.transferMu.Lock()
+	defer m.transferMu.Unlock()
+	if m.partCleanups[key] {
+		return errTransferPartBusy
+	}
+	for _, other := range m.transfers {
+		if other == job || other.partKey != key || other.direction != job.direction {
+			continue
+		}
+		if job.direction == "download" || other.remoteIdentity() == job.remoteIdentity() {
+			return errTransferPartBusy
+		}
+	}
 	job.partPath = partPath
-	m.transferMu.Unlock()
+	job.partKey = key
+	return nil
 }
 
 // partsInUse is the set of temp files live transfers are writing. Callers use it
@@ -970,6 +989,10 @@ func (m *Manager) uploadFileWithPolicy(sessionID, localPath, remotePath string, 
 		}
 	}()
 
+	sourceIdentity, err := localSourceIdentity(localPath)
+	if err != nil {
+		return err
+	}
 	src, err := os.Open(localPath)
 	if err != nil {
 		return err
@@ -981,10 +1004,10 @@ func (m *Manager) uploadFileWithPolicy(sessionID, localPath, remotePath string, 
 		}
 	}()
 	stat, statErr := src.Stat()
-	var key resumeKey
+	key := resumeKey{source: sourceIdentity}
 	if statErr == nil {
 		totalSize = stat.Size()
-		key = resumeKey{size: stat.Size(), modTime: stat.ModTime()}
+		key.size, key.modTime = stat.Size(), stat.ModTime()
 	}
 
 	client, release, err := m.acquire(sessionID)
@@ -997,23 +1020,36 @@ func (m *Manager) uploadFileWithPolicy(sessionID, localPath, remotePath string, 
 	// so editing the file locally invalidates the partial rather than appending
 	// new bytes onto old ones.
 	tmpPath := remotePartPath(remotePath, key)
-	m.claimPart(job, tmpPath)
+	if err = m.claimPart(job, tmpPath); err != nil {
+		return err
+	}
 	for _, orphan := range m.remoteRemovableParts(client, remotePath, tmpPath) {
-		_ = client.Remove(orphan)
+		_ = m.removeUnusedPart(orphan, "upload", client.Remove)
 	}
 
 	var offset int64
 	// Without source metadata there is no identity to compare across attempts.
 	// Transfer from byte zero rather than trusting a zero-key partial.
-	if statErr == nil && expectedSHA256 == "" {
-		if info, statPartErr := client.Stat(tmpPath); statPartErr == nil && info.Mode().IsRegular() {
-			offset = resumeOffset(info.Size(), totalSize, true)
+	partInfo, partErr := client.Lstat(tmpPath)
+	if partErr == nil {
+		if !partInfo.Mode().IsRegular() {
+			return fmt.Errorf("%w: %s", errInvalidTransferPart, tmpPath)
 		}
+		if statErr == nil && expectedSHA256 == "" {
+			offset = resumeOffset(partInfo.Size(), totalSize, true)
+		}
+	} else if !os.IsNotExist(partErr) {
+		return partErr
 	}
 
 	flags := os.O_WRONLY | os.O_CREATE
 	if offset == 0 {
 		flags |= os.O_TRUNC
+	} else {
+		flags = os.O_RDWR
+	}
+	if os.IsNotExist(partErr) {
+		flags |= os.O_EXCL
 	}
 	dst, err := client.OpenFile(tmpPath, flags)
 	if err != nil {
@@ -1029,6 +1065,23 @@ func (m *Manager) uploadFileWithPolicy(sessionID, localPath, remotePath string, 
 		// finds it unusable.
 	}()
 
+	clearInterrupt := job.setInterrupt(func() {
+		_ = src.Close()
+		_ = dst.Close()
+	})
+	defer clearInterrupt()
+	if offset > 0 {
+		matches, verifyErr := verifyResumePrefix(job, src, dst, offset)
+		if verifyErr != nil {
+			return verifyErr
+		}
+		if !matches {
+			if err = dst.Truncate(0); err != nil {
+				return err
+			}
+			offset = 0
+		}
+	}
 	if offset > 0 {
 		if _, err = src.Seek(offset, io.SeekStart); err != nil {
 			return err
@@ -1038,12 +1091,6 @@ func (m *Manager) uploadFileWithPolicy(sessionID, localPath, remotePath string, 
 		}
 		m.emitResumed(job, offset, totalSize)
 	}
-
-	clearInterrupt := job.setInterrupt(func() {
-		_ = src.Close()
-		_ = dst.Close()
-	})
-	defer clearInterrupt()
 
 	progress := m.transferProgress(job, offset, totalSize)
 	// ReadFrom writes from the handle's current offset, so the seek above is what
@@ -1228,38 +1275,47 @@ func (m *Manager) DownloadFileWithPolicy(sessionID, remotePath, localPath string
 		}
 	}()
 	stat, statErr := src.Stat()
-	var key resumeKey
+	key := resumeKey{source: job.remoteSourceIdentity(remotePath)}
 	if statErr == nil {
 		totalSize = stat.Size()
-		key = resumeKey{size: stat.Size(), modTime: stat.ModTime()}
+		key.size, key.modTime = stat.Size(), stat.ModTime()
 	}
 
 	// The part file's name encodes the source's size and mtime, so a metadata
 	// change invalidates the old partial and starts a clean transfer.
 	partPath := localPartPath(localPath, key)
-	m.claimPart(job, partPath)
+	if err = m.claimPart(job, partPath); err != nil {
+		return err
+	}
 	// Part files from abandoned transfers of this same destination can no longer
 	// be resumed once the source metadata changes; drop them rather than
 	// accumulate, and sweep long-abandoned parts for other destinations too.
 	for _, orphan := range m.localRemovableParts(localPath, partPath) {
-		_ = os.Remove(orphan)
+		_ = m.removeUnusedPart(orphan, "download", os.Remove)
 	}
 
 	var offset int64
 	// A failed remote Stat means the source version is unknown. Never resume a
 	// partial in that case, even if a previous zero-key file happens to exist.
-	if statErr == nil {
-		if info, statPartErr := os.Stat(partPath); statPartErr == nil && info.Mode().IsRegular() {
-			offset = resumeOffset(info.Size(), totalSize, true)
+	partInfo, partErr := os.Lstat(partPath)
+	if partErr == nil {
+		if !partInfo.Mode().IsRegular() {
+			return fmt.Errorf("%w: %s", errInvalidTransferPart, partPath)
 		}
+		if statErr == nil {
+			offset = resumeOffset(partInfo.Size(), totalSize, true)
+		}
+	} else if !os.IsNotExist(partErr) {
+		return partErr
 	}
 
-	// O_EXCL is deliberately absent: the whole point is to reopen an existing
-	// part file. When offset is 0 the file is truncated, so a partial that failed
-	// the resume checks above cannot contribute stale bytes.
-	flags := os.O_WRONLY | os.O_CREATE
+	// Reopen a checked regular partial, or exclusively create a missing one.
+	flags := os.O_RDWR | os.O_CREATE
 	if offset == 0 {
 		flags |= os.O_TRUNC
+	}
+	if os.IsNotExist(partErr) {
+		flags |= os.O_EXCL
 	}
 	dst, err := os.OpenFile(partPath, flags, 0644)
 	if err != nil {
@@ -1275,6 +1331,23 @@ func (m *Manager) DownloadFileWithPolicy(sessionID, remotePath, localPath string
 		// Only a corrupt-looking partial is discarded, above.
 	}()
 
+	clearInterrupt := job.setInterrupt(func() {
+		_ = src.Close()
+		_ = dst.Close()
+	})
+	defer clearInterrupt()
+	if offset > 0 {
+		matches, verifyErr := verifyResumePrefix(job, src, dst, offset)
+		if verifyErr != nil {
+			return verifyErr
+		}
+		if !matches {
+			if err = dst.Truncate(0); err != nil {
+				return err
+			}
+			offset = 0
+		}
+	}
 	if offset > 0 {
 		// Both sides must agree on the position. Seek the remote handle so the
 		// server sends only the remainder, and the local handle so the bytes land
@@ -1287,12 +1360,6 @@ func (m *Manager) DownloadFileWithPolicy(sessionID, remotePath, localPath string
 		}
 		m.emitResumed(job, offset, totalSize)
 	}
-
-	clearInterrupt := job.setInterrupt(func() {
-		_ = src.Close()
-		_ = dst.Close()
-	})
-	defer clearInterrupt()
 
 	// Progress is reported against the whole file, not this attempt, so a resumed
 	// transfer's bar continues from where it stopped rather than restarting at 0.
@@ -1435,15 +1502,8 @@ func (m *Manager) WriteRemoteFile(sessionID string, remotePath string, data []by
 	tmpPath := remotePath + ".gxshell-" + randomSuffix() + ".tmp"
 	if err := writeRemoteFileAt(client, tmpPath, data, mode); err != nil {
 		_ = client.Remove(tmpPath)
-		if isPermissionErr(err) {
-			// Directory not writable but the file itself may be (e.g. sticky
-			// shared dirs): fall back to the old in-place write.
-			if fallbackErr := writeRemoteFileAt(client, remotePath, data, mode); fallbackErr == nil {
-				return nil
-			}
-		}
 		m.invalidateOnConnErr(sessionID, err)
-		return err
+		return fmt.Errorf("write remote temporary file; original preserved: %w", err)
 	}
 	if err := client.PosixRename(tmpPath, remotePath); err != nil {
 		// posix-rename@openssh.com may be unsupported. Plain SFTP Rename is a
@@ -1798,7 +1858,9 @@ func (m *Manager) downloadFileOnly(client *sftp.Client, job *transferJob, remote
 	// tree being fetched twice from colliding. Claiming it still matters, so a
 	// single-file transfer sweeping the same directory leaves it alone.
 	partPath := transferPartPath(localPath, job.id)
-	m.claimPart(job, partPath)
+	if err = m.claimPart(job, partPath); err != nil {
+		return 0, err
+	}
 	dst, err := os.OpenFile(partPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		return 0, err
@@ -1847,7 +1909,7 @@ func (m *Manager) downloadFileOnly(client *sftp.Client, job *transferJob, remote
 // tear down an SFTP subsystem that concurrent operations are still using and
 // force a pointless reconnect.
 func (m *Manager) invalidateOnConnErr(sessionID string, err error) {
-	if err == nil {
+	if err == nil || os.IsNotExist(err) || os.IsPermission(err) {
 		return
 	}
 	var status *sftp.StatusError
@@ -1863,7 +1925,7 @@ func (m *Manager) invalidateOnTransferErr(sessionID string, err error) {
 	}
 	// A destination conflict is a policy outcome on a healthy connection, not
 	// evidence that the SSH/SFTP transport needs to be recycled.
-	if errors.Is(err, ErrOverwriteRequired) {
+	if errors.Is(err, ErrOverwriteRequired) || errors.Is(err, errTransferPartBusy) || errors.Is(err, errInvalidTransferPart) {
 		return
 	}
 	// Local open/write/rename failures do not say anything about the cached
@@ -1877,14 +1939,6 @@ func (m *Manager) invalidateOnTransferErr(sessionID string, err error) {
 		return
 	}
 	m.invalidateOnConnErr(sessionID, err)
-}
-
-func isPermissionErr(err error) bool {
-	var status *sftp.StatusError
-	if errors.As(err, &status) {
-		return status.FxCode() == sftp.ErrSSHFxPermissionDenied
-	}
-	return os.IsPermission(err)
 }
 
 func randomSuffix() string {

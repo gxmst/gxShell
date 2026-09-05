@@ -36,6 +36,9 @@ credentials away from ordinary profile data and terminal input.
 - CLI commands use short-lived SSH exec channels rather than typing into the interactive PTY.
 - Terminal highlighting and links are display-layer decorations; they do not rewrite SSH output or inject ANSI data.
 - Local text-file access is limited to files the user selected through a native dialog, OS open action, drag-and-drop, or authorized siblings.
+- Workspace restore accepts only paths recorded by the backend in the config directory's `document-access.dat`. Renderer storage alone cannot grant access. Missing or invalid history leaves documents unauthorized; documents opened before this record existed need to be selected or confirmed once again. The history contains paths, not document contents, and cannot be opened as an editable text sibling.
+- SFTP resume binds partial files to a source identity, path, size, and modification time, then compares the full existing prefix before appending. A changed prefix restarts the transfer; legacy partials are not resumed. Verification reads the prefix again and adds network I/O. This does not provide a snapshot of a source that changes during the transfer.
+- Remote editor saves write a sibling temporary file and promote it only after writing and closing succeed. Failure to create that temporary file or replace the destination is reported without falling back to truncating the original. Saving therefore requires the directory permissions needed for a temporary file and rename.
 - Login commands are deliberately raw and appear in terminal history/scrollback; never put credentials in them.
 
 ## Network and privacy

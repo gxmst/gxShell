@@ -60,7 +60,19 @@ func (a *App) LocalHomeDir() string {
 // path normalization live in allowedFileSet; this stays a method so callers
 // across the app read naturally.
 func (a *App) allowFile(path string) string {
-	return a.allowedFiles.allow(path)
+	paths := a.allowFiles([]string{path})
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
+}
+
+func (a *App) allowFiles(paths []string) []string {
+	abs, err := a.allowedFiles.allowMany(paths)
+	if err != nil && a.log != nil {
+		a.log.ErrorFields("Failed to persist document authorization", LogFields{"error": err.Error()})
+	}
+	return abs
 }
 
 // isFileAllowed reports whether path was previously authorized via allowFile.
@@ -273,7 +285,7 @@ func (a *App) OpenRecentTextFile(filePath string) (string, error) {
 
 // RestoreTextFiles re-authorizes the small set of local documents that were
 // open when this personal workspace last closed. Invalid or stale entries are
-// ignored so startup remains silent and resilient.
+// ignored. Renderer-supplied paths must already have backend authorization.
 func (a *App) RestoreTextFiles(paths []string) []string {
 	if len(paths) > 30 {
 		paths = paths[:30]
@@ -286,7 +298,7 @@ func (a *App) RestoreTextFiles(paths []string) []string {
 			continue
 		}
 		absPath = filepath.Clean(absPath)
-		key := strings.ToLower(absPath)
+		key := allowedFileKey(absPath)
 		if seen[key] || !isSupportedDocumentPath(absPath) {
 			continue
 		}
@@ -294,8 +306,11 @@ func (a *App) RestoreTextFiles(paths []string) []string {
 		if err != nil || info.IsDir() {
 			continue
 		}
+		if !a.allowedFiles.restore(absPath) {
+			continue
+		}
 		seen[key] = true
-		restored = append(restored, a.allowFile(absPath))
+		restored = append(restored, absPath)
 	}
 	return restored
 }
@@ -425,11 +440,10 @@ func (a *App) ListTextFilesInDir(filePath string) ([]string, error) {
 	for _, entry := range entries {
 		if !entry.IsDir() && isSupportedDocumentPath(entry.Name()) {
 			full := filepath.Join(dir, entry.Name())
-			a.allowFile(full)
 			textFiles = append(textFiles, full)
 		}
 	}
-	return textFiles, nil
+	return a.allowFiles(textFiles), nil
 }
 
 // ListMarkdownFilesInDir is kept for older frontend builds and preserves the
@@ -464,11 +478,10 @@ func (a *App) ListMarkdownFilesInDir(filePath string) ([]string, error) {
 	for _, entry := range entries {
 		if !entry.IsDir() && isMarkdownPath(entry.Name()) {
 			full := filepath.Join(dir, entry.Name())
-			a.allowFile(full)
 			mdFiles = append(mdFiles, full)
 		}
 	}
-	return mdFiles, nil
+	return a.allowFiles(mdFiles), nil
 }
 
 func isMarkdownPath(path string) bool {

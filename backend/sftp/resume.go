@@ -2,18 +2,11 @@ package sftpmanager
 
 // Resumable transfers.
 //
-// A partial transfer is only safe to continue if the *source* has not changed
-// since the bytes on disk were written. Rather than keep a sidecar metadata file
-// (which then needs its own lifecycle, cleanup and corruption handling), a
-// source metadata fingerprint is encoded into the part file's name:
+// A part name binds the destination to the source identity, size and mtime.
+// Before appending, both directions compare the complete existing prefix
+// against the source. Metadata-preserving rewrites therefore restart safely.
 //
-//	report.csv.gxshell-r1-4a3f2e00-18d1c2b3f40.part
-//	                     ^size    ^modtime
-//
-// If the source's size or modification time changes, the computed name changes
-// too and the transfer starts over. A metadata-preserving rewrite is outside
-// this scheme's guarantee; detecting that would require content hashing and a
-// sidecar or server-side hash support.
+//	report.csv.gxshell-r2-<source-hash>-<size>-<mtime>.part
 //
 // # The contiguous-prefix invariant
 //
@@ -38,21 +31,29 @@ package sftpmanager
 // resume has to stop trusting the length and start verifying content.
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/pkg/sftp"
 )
 
-// partSuffix is the marker shared by every part file gxShell writes. The "r1"
+// partSuffix is the marker shared by every part file gxShell writes. The "r2"
 // generation is part of the name so a future change to the resume format cannot
 // be mistaken for a resumable part written by this version.
 const partSuffix = ".part"
-const partMarker = ".gxshell-r1-"
+const partMarker = ".gxshell-r2-"
+
+var errTransferPartBusy = errors.New("another transfer is already writing this partial file")
+var errInvalidTransferPart = errors.New("transfer partial is not a regular file")
 
 // artifactMarker is common to every temporary file gxShell writes beside a
 // transfer destination: resumable parts, the per-job parts that directory
@@ -83,21 +84,23 @@ const partSweepAge = 7 * 24 * time.Hour
 // resumeKey fingerprints one source version by the metadata available locally
 // or through SFTP.
 type resumeKey struct {
+	source  string
 	size    int64
 	modTime time.Time
 }
 
 // partName renders the part-file name for a destination and source version at
 // the supplied timestamp precision.
-func partName(destination string, size, modTime int64) string {
-	return fmt.Sprintf("%s%s%x-%x%s", destination, partMarker, size, modTime, partSuffix)
+func partName(destination, source string, size, modTime int64) string {
+	identity := sha256.Sum256([]byte(source))
+	return fmt.Sprintf("%s%s%x-%x-%x%s", destination, partMarker, identity[:16], size, modTime, partSuffix)
 }
 
 // isPartPath reports whether name is a resumable part file in this version's
 // format, so resume bookkeeping can recognise one without re-deriving a key.
 func isPartPath(name string) bool {
 	suffix, ok := transferArtifactSuffix(name)
-	return ok && isResumePartSuffix(suffix)
+	return ok && strings.HasPrefix(suffix, "r2-") && isResumePartSuffix(suffix)
 }
 
 // IsTransferArtifact reports whether name is any temporary file gxShell writes
@@ -128,7 +131,7 @@ func IsTransferArtifact(name string) bool {
 	}
 
 	partID := strings.TrimSuffix(suffix, partSuffix)
-	if strings.HasPrefix(partID, "r1-") {
+	if strings.HasPrefix(partID, "r1-") || strings.HasPrefix(partID, "r2-") {
 		return isResumePartSuffix(suffix)
 	}
 	if strings.HasPrefix(partID, "copy-") {
@@ -158,10 +161,22 @@ func transferArtifactSuffix(name string) (string, bool) {
 }
 
 func isResumePartSuffix(suffix string) bool {
-	if !strings.HasPrefix(suffix, "r1-") || !strings.HasSuffix(suffix, partSuffix) {
+	if !strings.HasSuffix(suffix, partSuffix) {
 		return false
 	}
-	version := strings.TrimSuffix(strings.TrimPrefix(suffix, "r1-"), partSuffix)
+	version := strings.TrimSuffix(suffix, partSuffix)
+	switch {
+	case strings.HasPrefix(version, "r2-"):
+		identity, rest, found := strings.Cut(strings.TrimPrefix(version, "r2-"), "-")
+		if !found || len(identity) != 32 || !isHex(identity) {
+			return false
+		}
+		version = rest
+	case strings.HasPrefix(version, "r1-"):
+		version = strings.TrimPrefix(version, "r1-")
+	default:
+		return false
+	}
 	size, modTime, found := strings.Cut(version, "-")
 	return found && isHex(size) && isSignedHex(modTime)
 }
@@ -220,7 +235,7 @@ func resumeOffset(existing, total int64, sourceKnown bool) int64 {
 func localPartPath(localPath string, key resumeKey) string {
 	// SFTP exposes remote mtimes at whole-second precision, so a download cannot
 	// safely use sub-second data that will not be present on the next attempt.
-	return partName(localPath, key.size, key.modTime.Unix())
+	return partName(localPath, key.source, key.size, key.modTime.Unix())
 }
 
 // remotePartPath is the part path for an upload, alongside the final file.
@@ -228,7 +243,100 @@ func localPartPath(localPath string, key resumeKey) string {
 func remotePartPath(remotePath string, key resumeKey) string {
 	// Upload sources are local files. Preserve their full timestamp precision so
 	// an equal-sized rewrite within one second invalidates the old partial.
-	return partName(remotePath, key.size, key.modTime.UnixNano())
+	return partName(remotePath, key.source, key.size, key.modTime.UnixNano())
+}
+
+func localSourceIdentity(localPath string) (string, error) {
+	abs, err := filepath.Abs(localPath)
+	if err != nil {
+		return "", err
+	}
+	if runtime.GOOS == "windows" {
+		abs = strings.ToLower(abs)
+	}
+	return "local\x00" + filepath.Clean(abs), nil
+}
+
+func transferPartKey(partPath, direction string) (string, error) {
+	if direction == "download" {
+		return localSourceIdentity(partPath)
+	}
+	return "remote\x00" + cleanRemotePath(partPath), nil
+}
+
+// The sweep's directory snapshot may be stale by the time it deletes a file.
+// Reserve deletion under the claim lock, then do I/O without blocking transfer
+// cancellation. A new writer cannot claim the path until deletion finishes.
+func (m *Manager) removeUnusedPart(partPath, direction string, remove func(string) error) error {
+	key, err := transferPartKey(partPath, direction)
+	if err != nil {
+		return err
+	}
+	m.transferMu.Lock()
+	if m.partCleanups[key] {
+		m.transferMu.Unlock()
+		return nil
+	}
+	for _, job := range m.transfers {
+		if job.partKey == key {
+			m.transferMu.Unlock()
+			return nil
+		}
+	}
+	if m.partCleanups == nil {
+		m.partCleanups = make(map[string]bool)
+	}
+	m.partCleanups[key] = true
+	m.transferMu.Unlock()
+	defer func() {
+		m.transferMu.Lock()
+		delete(m.partCleanups, key)
+		m.transferMu.Unlock()
+	}()
+	return remove(partPath)
+}
+
+func (j *transferJob) remoteIdentity() string {
+	if j.runtimeID != "" {
+		return j.runtimeID
+	}
+	if j.profileID != "" {
+		return "profile:" + j.profileID
+	}
+	return "session:" + j.sessionID
+}
+
+func (j *transferJob) remoteSourceIdentity(remotePath string) string {
+	return "remote\x00" + j.remoteIdentity() + "\x00" + cleanRemotePath(remotePath)
+}
+
+// ReaderAt keeps transfer offsets intact. Verification is bounded in memory
+// and observes the same pause/cancel gate as the subsequent copy.
+func verifyResumePrefix(job *transferJob, source, partial io.ReaderAt, size int64) (bool, error) {
+	sourceBuffer := make([]byte, 64*1024)
+	partialBuffer := make([]byte, len(sourceBuffer))
+	for offset := int64(0); offset < size; {
+		if err := job.waitIfPaused(); err != nil {
+			return false, err
+		}
+		length := int(min(int64(len(sourceBuffer)), size-offset))
+		n, err := source.ReadAt(sourceBuffer[:length], offset)
+		if err != nil && err != io.EOF {
+			return false, fmt.Errorf("verify source prefix: %w", err)
+		}
+		if n != length {
+			return false, nil
+		}
+		n, err = partial.ReadAt(partialBuffer[:length], offset)
+		if err != nil && err != io.EOF {
+			return false, fmt.Errorf("verify partial prefix: %w", err)
+		}
+		if n != length || !bytes.Equal(sourceBuffer[:length], partialBuffer[:length]) {
+			return false, nil
+		}
+		offset += int64(length)
+	}
+	return true, nil
 }
 
 // partEntry is one directory entry with the metadata cleanup needs.

@@ -1,4 +1,4 @@
-import type { IBufferLine, IBufferRange, ILink, ILinkProvider, Terminal } from "@xterm/xterm";
+import type { IBufferCellPosition, ILink, ILinkProvider, Terminal } from "@xterm/xterm";
 
 // Terminal link providers detect URLs and remote file paths in the rendered
 // buffer and make them clickable. This lives in the xterm display layer via
@@ -63,23 +63,9 @@ function collectMatches(text: string): Match[] {
   return matches;
 }
 
-// Convert a 0-based offset within the logical (possibly wrapped) line into an
-// xterm range. xterm rows/cols in ILink are 1-based and rows are viewport-
-// relative to the line where provideLinks was invoked.
-function toRange(startOffset: number, endOffset: number, cols: number, baseRow: number): IBufferRange {
-  const startRow = Math.floor(startOffset / cols);
-  const startCol = startOffset % cols;
-  const endRow = Math.floor((endOffset - 1) / cols);
-  const endCol = ((endOffset - 1) % cols) + 1;
-  return {
-    start: { x: startCol + 1, y: baseRow + startRow },
-    end: { x: endCol + 1, y: baseRow + endRow },
-  };
-}
-
 // Read the full logical line at bufferRow, following xterm's wrapped-line flag
-// so a URL split across the terminal width is still matched as one string.
-function readWrappedLine(term: Terminal, bufferRow: number): { text: string; firstRow: number } {
+// and map UTF-16 offsets back to cells, including wide and combining characters.
+function readWrappedLine(term: Terminal, bufferRow: number) {
   const buffer = term.buffer.active;
   let first = bufferRow;
   // Walk back over continuation rows to find the logical line start.
@@ -92,20 +78,35 @@ function readWrappedLine(term: Terminal, bufferRow: number): { text: string; fir
     }
   }
   let text = "";
+  const starts: IBufferCellPosition[] = [];
+  const ends: IBufferCellPosition[] = [];
   let row = first;
   // Concatenate this row and any wrapped continuation rows.
   while (true) {
-    const line: IBufferLine | undefined = buffer.getLine(row);
+    const line = buffer.getLine(row);
     if (!line) break;
-    text += line.translateToString(false);
     const next = buffer.getLine(row + 1);
+    let length = line.length;
+    // An unoccupied last cell before a wrapped wide character is padding.
+    if (next?.isWrapped && next.getCell(0)?.getWidth() === 2
+      && line.getCell(length - 1)?.getCode() === 0) length -= 1;
+    for (let col = 0; col < length; col += 1) {
+      const cell = line.getCell(col);
+      if (!cell || cell.getWidth() === 0) continue;
+      const chars = cell.getChars() || " ";
+      text += chars;
+      for (let index = 0; index < chars.length; index += 1) {
+        starts.push({ x: col + 1, y: row + 1 });
+        ends.push({ x: col + cell.getWidth(), y: row + 1 });
+      }
+    }
     if (next && next.isWrapped) {
       row += 1;
     } else {
       break;
     }
   }
-  return { text, firstRow: first };
+  return { text, starts, ends };
 }
 
 export function createLinkProvider(term: Terminal, handlers: TerminalLinkHandlers, isEnabled?: () => boolean): ILinkProvider {
@@ -117,40 +118,30 @@ export function createLinkProvider(term: Terminal, handlers: TerminalLinkHandler
         callback(undefined);
         return;
       }
-      // bufferLineNumber is 1-based within the viewport.
+      // xterm supplies a 1-based buffer row, including any scrollback offset.
       const buffer = term.buffer.active;
-      const absoluteRow = buffer.viewportY + bufferLineNumber - 1;
+      const absoluteRow = bufferLineNumber - 1;
       const line = buffer.getLine(absoluteRow);
       if (!line) {
         callback(undefined);
         return;
       }
-      // Only build links from the logical start row to avoid duplicating work on
-      // each wrapped continuation row.
-      if (line.isWrapped) {
-        callback(undefined);
-        return;
-      }
-
-      const { text } = readWrappedLine(term, absoluteRow);
+      const { text, starts, ends } = readWrappedLine(term, absoluteRow);
       const matches = collectMatches(text);
       if (!matches.length) {
         callback(undefined);
         return;
       }
 
-      const cols = term.cols;
-      // The viewport row (1-based) for the first buffer row of this logical line
-      // is bufferLineNumber since we start at the non-wrapped row.
       const links: ILink[] = matches.map((match) => ({
-        range: toRange(match.start, match.end, cols, bufferLineNumber),
+        range: { start: starts[match.start], end: ends[match.end - 1] },
         text: match.value,
         activate: (event: MouseEvent) => {
           event.preventDefault();
           if (match.kind === "url") handlers.openUrl(match.value);
           else handlers.openPath(match.value);
         },
-      }));
+      })).filter((link) => link.range.start.y <= bufferLineNumber && link.range.end.y >= bufferLineNumber);
 
       callback(links);
     },

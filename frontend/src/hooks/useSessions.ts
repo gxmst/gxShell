@@ -67,6 +67,18 @@ const runtimeFields = (info: types.SessionInfo): Pick<Partial<Tab>, "runtimeId" 
   };
 };
 
+function replaceSessionTabs(items: Tab[], oldID: string, info: types.SessionInfo, title: string): Tab[] {
+  const runtime = runtimeFields(info);
+  return items.filter((tab) => tab.id !== info.id || tab.id === oldID).map((tab) => {
+    if (tab.type === "markdown" && tab.remoteSessionId === oldID) {
+      return { ...tab, ...runtime, profileId: info.profileId, remoteSessionId: info.id };
+    }
+    return tab.id === oldID
+      ? { ...tab, id: info.id, ...runtime, profileId: info.profileId, title: tab.customTitle ? tab.title : title, state: info.state, error: undefined }
+      : tab;
+  });
+}
+
 const readWorkspaceProfiles = (): { ids: string[]; activeProfileId: string } => {
   try {
     const parsed = JSON.parse(localStorage.getItem("gx:workspaceProfiles") || "[]");
@@ -267,15 +279,13 @@ export function useSessions(options: UseSessionsOptions) {
       const profile = profilesRef.current.find((item) => item.id === info.profileId);
       setTabs((items) => {
         const oldTab = items.find((tab) => tab.id === payload.oldSessionId);
-        const withoutDuplicate = items.filter((tab) => tab.id !== info.id);
+        const replaced = replaceSessionTabs(items, payload.oldSessionId, info, tabTitle(profile, info.name));
         if (!oldTab) {
-          return [...withoutDuplicate, {
+          return [...replaced, {
             id: info.id, ...runtime, profileId: info.profileId, title: tabTitle(profile, info.name), state: info.state,
           }];
         }
-        return withoutDuplicate.map((tab) => tab.id === payload.oldSessionId
-          ? { ...tab, id: info.id, ...runtime, profileId: info.profileId, title: tab.customTitle ? tab.title : tabTitle(profile, info.name), state: info.state, error: undefined }
-          : tab);
+        return replaced;
       });
       setActiveTab((current) => current === payload.oldSessionId ? info.id : current);
     });
@@ -365,7 +375,7 @@ export function useSessions(options: UseSessionsOptions) {
       notifyRef.current(`${profile.name || profile.host}: connection already in progress`, "info");
       return;
     }
-    const existing = tabsRef.current.find((tab) => tab.profileId === profile.id && isSessionBusy(tab.state));
+    const existing = tabsRef.current.find((tab) => tab.type !== "markdown" && tab.profileId === profile.id && isSessionBusy(tab.state));
     if (existing) {
       setActiveTab(existing.id);
       notifyRef.current(existing.state !== "connected"
@@ -408,7 +418,7 @@ export function useSessions(options: UseSessionsOptions) {
     const wanted = new Set(workspaceProfiles.current.ids);
     const matched = options.profiles.filter((profile) => wanted.has(profile.id));
     const alreadyLive = new Set(tabsRef.current
-      .filter((tab) => isSessionBusy(tab.state))
+      .filter((tab) => tab.type !== "markdown" && isSessionBusy(tab.state))
       .map((tab) => tab.profileId));
     const pending = matched.filter((profile) => !alreadyLive.has(profile.id));
     const restorable = pending.filter((profile) => !needsSecret(profile));
@@ -425,7 +435,7 @@ export function useSessions(options: UseSessionsOptions) {
       const activeProfileId = workspaceProfiles.current.activeProfileId;
       if (activeProfileId) {
         window.setTimeout(() => {
-          const restoredActive = tabsRef.current.find((tab) => tab.profileId === activeProfileId && tab.state === "connected");
+          const restoredActive = tabsRef.current.find((tab) => tab.type !== "markdown" && tab.profileId === activeProfileId && tab.state === "connected");
           if (restoredActive) setActiveTab(restoredActive.id);
         }, 0);
       }
@@ -447,7 +457,7 @@ export function useSessions(options: UseSessionsOptions) {
 
   const connectProfileWithSecrets = useCallback(async (profile: types.Profile, password: string, passphrase: string) => {
     if (creatingProfiles.current.has(profile.id)) return;
-    const existing = tabsRef.current.find((tab) => tab.profileId === profile.id && isSessionBusy(tab.state));
+    const existing = tabsRef.current.find((tab) => tab.type !== "markdown" && tab.profileId === profile.id && isSessionBusy(tab.state));
     if (existing) {
       setActiveTab(existing.id);
       return;
@@ -462,19 +472,15 @@ export function useSessions(options: UseSessionsOptions) {
       rememberPassword: false,
     });
     quickProfiles.current.set(profile.id, profile);
-    const staleTab = tabsRef.current.find((tab) => tab.profileId === profile.id && (tab.state === "error" || tab.state === "disconnected"));
+    const staleTab = tabsRef.current.find((tab) => tab.type !== "markdown" && tab.profileId === profile.id && (tab.state === "error" || tab.state === "disconnected"));
     if (!staleTab) creatingProfiles.current.add(profile.id);
     notifyRef.current(`Connecting to ${profile.name || profile.host}...`, "info");
     try {
       const info = await ConnectQuick(profile, 120, 36);
-      const runtime = rememberSessionInfo(info);
+      rememberSessionInfo(info);
       if (staleTab) {
         disposeTerminalRef.current(staleTab.id);
-        setTabs((items) => items
-          .filter((tab) => tab.id !== info.id || tab.id === staleTab.id)
-          .map((tab) => tab.id === staleTab.id
-            ? { ...tab, id: info.id, ...runtime, title: tab.customTitle ? tab.title : tabTitle(profile, info.name), state: info.state, error: undefined }
-            : tab));
+        setTabs((items) => replaceSessionTabs(items, staleTab.id, info, tabTitle(profile, info.name)));
         setActiveTab(info.id);
       } else {
         await appendSession(profile, info);
@@ -491,14 +497,13 @@ export function useSessions(options: UseSessionsOptions) {
     if (!discardUnclaimedSession(oldID, info)) return false;
     if (oldID !== info.id) disposeTerminalRef.current(oldID);
     const profile = profilesRef.current.find((item) => item.id === info.profileId);
-    const runtime = rememberSessionInfo(info);
+    rememberSessionInfo(info);
     setTabs((items) => {
       // A concurrent CLI attach can already represent info.id — the backend
       // reuses a healthy session for the same profile. Drop that tab rather
       // than producing two tabs with one session id: the survivor adopts the
       // session's terminal, which is keyed by id.
-      const withoutDuplicate = items.filter((tab) => tab.id !== info.id || tab.id === oldID);
-      return withoutDuplicate.map((tab) => tab.id === oldID ? { ...tab, id: info.id, ...runtime, title: tab.customTitle ? tab.title : tabTitle(profile, info.name), state: info.state, error: undefined } : tab);
+      return replaceSessionTabs(items, oldID, info, tabTitle(profile, info.name));
     });
     setActiveTab(info.id);
     return true;
@@ -711,15 +716,12 @@ export function useSessions(options: UseSessionsOptions) {
           clearAutoReconnect(tabId);
           return;
         }
-        const runtime = rememberSessionInfo(info);
         // Replace the old tab id in place so ordering and active state persist.
+        rememberSessionInfo(info);
         // The same-session-id dedupe as replaceReconnectedTab: a concurrent CLI
         // attach may already show info.id on the strip.
         setTabs((items) => {
-          const withoutDuplicate = items.filter((item) => item.id !== info.id || item.id === tabId);
-          return withoutDuplicate.map((item) => item.id === tabId
-            ? { ...item, id: info.id, ...runtime, title: item.customTitle ? item.title : tabTitle(profile, info.name), state: info.state, error: undefined }
-            : item);
+          return replaceSessionTabs(items, tabId, info, tabTitle(profile, info.name));
         });
         setActiveTab((current) => current === tabId ? info.id : current);
         clearAutoReconnect(tabId);

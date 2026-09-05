@@ -1373,7 +1373,7 @@ function App() {
   }, [appActionRegistry, globalQuery, handleOpenMarkdown, notify, profileState.settings?.language, requestDrawer, runOnActive, searchConnectLocal, searchConnectProfile, searchSetActiveTab, searchTabs, sessions.active?.type, sessions.activeTab]);
 
   const resolveTransferSession = (item: Pick<TransferHistoryItem, "sessionId" | "runtimeId" | "profileId">) => {
-    const current = sessions.tabs.find((tab) => tab.state === "connected" && (
+    const current = connectedSshTabs.find((tab) => (
       (item.runtimeId && tab.runtimeId === item.runtimeId)
       || (!item.runtimeId && item.profileId && tab.profileId === item.profileId)
       || (!item.runtimeId && !item.profileId && tab.id === item.sessionId)

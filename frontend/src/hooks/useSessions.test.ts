@@ -6,6 +6,8 @@ import { restoreProfilesInBatches, useSessions } from "./useSessions";
 const appMocks = vi.hoisted(() => ({
   connect: vi.fn(),
   connectQuick: vi.fn(),
+  connectWithSecrets: vi.fn(),
+  reconnect: vi.fn(),
   disconnect: vi.fn(),
   stopMonitor: vi.fn(),
   listSessions: vi.fn(),
@@ -24,11 +26,11 @@ vi.mock("../../wailsjs/runtime/runtime", () => ({
 vi.mock("../../wailsjs/go/app/App", () => ({
   Connect: appMocks.connect,
   ConnectQuick: appMocks.connectQuick,
-  ConnectWithSecrets: vi.fn(),
+  ConnectWithSecrets: appMocks.connectWithSecrets,
   ConnectLocal: vi.fn(),
   Disconnect: appMocks.disconnect,
   ListSessions: appMocks.listSessions,
-  Reconnect: vi.fn(),
+  Reconnect: appMocks.reconnect,
   ReconnectWithSecrets: vi.fn(),
   StopMonitor: appMocks.stopMonitor,
 }));
@@ -63,6 +65,8 @@ describe("useSessions workspace restore", () => {
     });
     appMocks.connect.mockReset();
     appMocks.connectQuick.mockReset();
+    appMocks.connectWithSecrets.mockReset();
+    appMocks.reconnect.mockReset();
     appMocks.disconnect.mockReset();
     appMocks.stopMonitor.mockReset();
     appMocks.stopMonitor.mockResolvedValue(undefined);
@@ -71,7 +75,47 @@ describe("useSessions workspace restore", () => {
     appMocks.events.clear();
   });
 
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it.each(["manual", "cli", "automatic", "quick"])("rebinds remote documents after %s reconnect", async (mode) => {
+    const profile = makeProfile(mode === "quick" ? "quick-one" : "one");
+    profile.autoReconnect = true;
+    const replacement = new types.SessionInfo({
+      id: "new", profileId: profile.id, name: profile.name, state: "connected", runtimeId: `profile:${profile.id}`, generation: 2,
+    });
+    appMocks.reconnect.mockResolvedValue(replacement);
+    appMocks.connect.mockResolvedValue(replacement);
+    appMocks.connectQuick.mockResolvedValue(replacement);
+    const { result } = renderHook(() => useSessions({
+      profiles: [profile], notify: vi.fn(), reload: vi.fn(async () => undefined),
+      disposeTerminal: vi.fn(), restoreWorkspace: false, language: "en",
+    }));
+    await waitFor(() => expect(appMocks.events.has("terminal:cli-session-replaced")).toBe(true));
+    act(() => result.current.setTabs([
+      { id: "old", profileId: profile.id, title: "Custom title", customTitle: true, state: mode === "quick" ? "disconnected" : "connected" },
+      { id: "doc", profileId: profile.id, title: "notes", type: "markdown", state: "connected", markdownSource: "remote", remotePath: "/notes.txt", remoteSessionId: "old" },
+      { id: "other-doc", profileId: "other", title: "other", type: "markdown", state: "connected", markdownSource: "remote", remotePath: "/notes.txt", remoteSessionId: "other" },
+    ]));
+    if (mode === "manual") {
+      await act(async () => result.current.reconnectTab(result.current.tabs[0]));
+    } else if (mode === "cli") {
+      act(() => appMocks.events.get("terminal:cli-session-replaced")?.({ oldSessionId: "old", session: replacement }));
+    } else if (mode === "quick") {
+      await act(async () => result.current.connectQuick(profile));
+    } else {
+      vi.useFakeTimers();
+      act(() => appMocks.events.get("terminal:disconnected")?.({ id: "old", profileId: profile.id, state: "disconnected" }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    }
+    expect(result.current.tabs.find((tab) => tab.id === "new")?.title).toBe("Custom title");
+    expect(result.current.tabs.find((tab) => tab.id === "doc")).toMatchObject({
+      remoteSessionId: "new", runtimeId: `profile:${profile.id}`, connectionGeneration: 2,
+    });
+    expect(result.current.tabs.find((tab) => tab.id === "other-doc")?.remoteSessionId).toBe("other");
+  });
 
   it("removes legacy workspace state when restore is disabled", async () => {
     localStorage.setItem("gx:workspaceProfiles", JSON.stringify(["one"]));
@@ -89,6 +133,28 @@ describe("useSessions workspace restore", () => {
     await waitFor(() => expect(localStorage.getItem("gx:workspaceProfiles")).toBeNull());
     expect(localStorage.getItem("gx:workspaceActiveProfile")).toBeNull();
     expect(appMocks.connect).not.toHaveBeenCalled();
+  });
+
+  it.each(["saved", "secrets"])("does not mistake a remote document for a %s connection", async (mode) => {
+    const profile = makeProfile("one");
+    profile.rememberPassword = true;
+    const info = new types.SessionInfo({ id: "new", profileId: profile.id, name: profile.name, state: "connected" });
+    appMocks.connect.mockResolvedValue(info);
+    appMocks.connectWithSecrets.mockResolvedValue(info);
+    const { result } = renderHook(() => useSessions({
+      profiles: [profile], notify: vi.fn(), reload: vi.fn(async () => undefined),
+      disposeTerminal: vi.fn(), restoreWorkspace: false, language: "en",
+    }));
+    act(() => result.current.setTabs([
+      { id: "doc", profileId: profile.id, title: "notes", type: "markdown", state: "connected", markdownSource: "remote", remotePath: "/notes.txt", remoteSessionId: "old" },
+    ]));
+    await act(async () => {
+      if (mode === "saved") await result.current.connectProfile(profile);
+      else await result.current.connectProfileWithSecrets(profile, "", "");
+    });
+    expect(result.current.tabs.find((tab) => tab.id === "new")?.state).toBe("connected");
+    expect(result.current.tabs.find((tab) => tab.id === "doc")?.remotePath).toBe("/notes.txt");
+    expect(result.current.activeTab).toBe("new");
   });
 
   it("restores at most three profiles concurrently", async () => {

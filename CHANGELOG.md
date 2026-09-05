@@ -3,6 +3,26 @@
 All notable gxShell changes are documented here. Release notes are generated
 from the version section in this file.
 
+## [Unreleased]
+
+### English
+
+- Restricted local workspace document restoration to backend-persisted authorization history. Documents from older versions need to be opened or confirmed once to establish that history.
+- Batched sibling-document authorization into one history write per listing, and synchronized transfer-part cleanup with normalized path claims to protect active transfers from stale directory snapshots.
+- Bound SFTP partial files to their source and verified the complete existing prefix before resuming, preventing mixed-source results even when size and modification time match. Rejected nonregular partials and concurrent writes to an active partial; legacy partials restart from zero.
+- Removed the remote editor's in-place write fallback on temporary-file permission errors, preserving the original document when saving cannot complete.
+- Rebound remote documents on manual, automatic, CLI, and quick-session replacement while preserving drafts and discarding stale reads. Excluded document tabs from SSH connection selection and transfer retries.
+- Corrected terminal link coordinates in scrollback and wrapped lines, including wide and combining characters, with regression coverage for the affected workflows.
+
+### 中文
+
+- 本地工作区文档恢复改为核对后端持久化授权记录；旧版本的文档需要重新打开或确认一次，以建立记录。
+- 同目录文档授权改为每次列目录批量持久化一次；传输残留清理与规范化路径占用同步，防止过期目录快照误删正在使用的临时文件。
+- SFTP 续传临时文件绑定来源，追加前校验整个已有前缀，防止大小和修改时间相同的不同内容被拼接；拒绝非普通临时文件和对正在使用的临时文件并发写入，旧版残留从零重传。
+- 移除远程编辑器在临时文件权限不足时的原地写入回退，保存失败时保留原文。
+- 手动、自动、CLI 及快速连接替换会话时同步重新绑定远程文档，保留草稿并丢弃过期读取；SSH 连接选择及传输重试排除文档标签。
+- 修复终端链接在滚动历史和折行中的坐标，覆盖宽字符、组合字符，并为上述流程补充回归测试。
+
 ## [1.6.2] - 2026-09-05
 
 ### English

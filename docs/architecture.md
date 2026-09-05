@@ -106,6 +106,8 @@ gxShell/
 - **Host Key 安全策略**：实现 TOFU（Trust On First Use）机制，首次连接时弹出确认框，后续自动验证
 - **终端自适应**：前端监听容器尺寸变化，通过 `ResizeTerminal` API 动态调整 PTY 大小，带防抖处理
 - **WebGL 渲染**：使用 `@xterm/addon-webgl` 实现 GPU 加速渲染，大幅提升大数据量场景下的渲染性能
+- **重连后的文档归属**：替换 SSH 会话时同步更新远程文档的会话 ID，保留正在编辑的草稿，并忽略旧会话迟到的读取结果。
+- **终端链接坐标**：使用 xterm 的绝对缓冲区行号与字符单元坐标，支持滚动历史、折行、宽字符和组合字符。
 - **输出批量写入**：后端将 SSH 输出批量发送，前端批量写入 xterm，减少频繁渲染开销
 
 ### 2. SFTP 文件管理
@@ -115,7 +117,9 @@ gxShell/
 **关键实现**：
 - **双面板 UI**：`SftpDualPanel` 组件实现本地和远程文件列表并列显示，支持拖拽上传/下载
 - **传输队列**：`useTransfers` Hook 管理传输队列，支持多文件并行传输和进度显示
-- **路径安全**：`cleanRemotePath` 函数处理路径遍历攻击，规范化 `..` 等相对路径
+- **路径规范化**：`cleanRemotePath` 统一远程路径格式；路径规范化本身不构成目录隔离或授权，敏感路径策略由调用入口执行。
+- **断点续传校验**：`r2` 临时文件名包含来源标识、大小与修改时间，追加前逐块比较整个已有前缀；内容不同就从零开始，不续传旧版 `r1` 文件。校验会增加网络读取量，不保证传输期间仍被修改的源文件具有快照一致性。
+- **保存失败保护**：远程编辑先完整写入同目录临时文件，再替换原文件；权限不足时返回错误，不退回到原地截断写入。续传也拒绝符号链接、目录等非普通临时文件。
 - **目录缓存**：远程目录列表带缓存，减少重复请求
 
 ### 3. 系统监控
@@ -191,7 +195,7 @@ AI 工具调用 → 前端显示 → 用户确认 → AiExecuteTool → SSH 执�
 **关键实现**：
 - **Keyring 优先**：使用 `go-keyring` 库访问系统密钥环（Windows Credential Manager / macOS Keychain / Linux Secret Service）
 - **AES 加密回退**：当 Keyring 不可用时，使用 AES-256-GCM 加密存储到本地文件
-- **密钥派生**：使用 SHA-256 从机器 ID 派生加密密钥
+- **回退密钥**：通过密码学随机源生成 32 字节密钥；Windows 使用 DPAPI 绑定当前用户保护密钥文件，其他平台的回退文件依赖文件系统权限。
 - **安全擦除**：密码使用后尽快从内存中清除
 
 ### 8. 配置持久化
@@ -203,6 +207,7 @@ AI 工具调用 → 前端显示 → 用户确认 → AiExecuteTool → SSH 执�
 - **备份容错**：JSON 解析失败时自动尝试 `.bak` 备份文件
 - **默认值保障**：`ensureDefaults` 确保配置文件存在且格式正确
 - **独立 AI 配置**：AI 配置使用专用的 `SaveAiConfig`/`GetAiConfig` API，避免嵌套对象序列化问题
+- **本地文档授权**：后端在配置目录的 `document-access.dat` 中原子记录已授权路径；`RestoreTextFiles` 只恢复该记录中已授权且仍存在的文档。旧版本没有这份记录时，需要通过原生选择或确认重新打开一次。
 
 ### 9. 浮动终端
 
@@ -311,7 +316,7 @@ build/bin/gxShell.exe
 
 - Windows: `gxShell.exe`（内嵌前端资源）
 - 前端资源通过 `//go:embed all:frontend/dist` 嵌入 Go 二进制
-- Wails 自动生成 TypeScript 绑定（`wailsjs/` 目录）
+- `frontend/wailsjs/` 中的绑定由项目手工维护，所有 `wails build` / `wails dev` 必须传入 `-skipbindings`，构建时通过 `check-bindings.mjs` 检查。
 
 ---
 
