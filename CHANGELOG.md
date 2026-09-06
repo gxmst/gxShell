@@ -3,6 +3,16 @@
 All notable gxShell changes are documented here. Release notes are generated
 from the version section in this file.
 
+## [Unreleased]
+
+### English
+
+- Workspace restoration no longer pulls focus away from a document opened before or during reconnection. User-initiated connections keep focus-following, and the restored-server selection only runs when no document is active.
+
+### 中文
+
+- 工作区恢复不再把焦点从恢复前或恢复过程中打开的文档上抢走；用户手动连接仍跟随焦点，只有当前没有活动文档时才执行"选中上次服务器"。
+
 ## [1.6.3] - 2026-09-05
 
 ### English

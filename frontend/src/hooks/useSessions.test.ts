@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { types } from "../../wailsjs/go/models";
+import { useMarkdownTabs } from "./useMarkdownTabs";
 import { restoreProfilesInBatches, useSessions } from "./useSessions";
 
 const appMocks = vi.hoisted(() => ({
@@ -33,6 +34,11 @@ vi.mock("../../wailsjs/go/app/App", () => ({
   Reconnect: appMocks.reconnect,
   ReconnectWithSecrets: vi.fn(),
   StopMonitor: appMocks.stopMonitor,
+  ListRemoteTextFilesInDir: vi.fn().mockResolvedValue([]),
+  ListTextFilesInDir: vi.fn().mockResolvedValue([]),
+  OpenRecentTextFile: vi.fn(),
+  RestoreTextFiles: vi.fn().mockResolvedValue([]),
+  SelectTextFile: vi.fn(),
 }));
 
 const makeProfile = (id: string) => new types.Profile({
@@ -135,6 +141,69 @@ describe("useSessions workspace restore", () => {
     expect(appMocks.connect).not.toHaveBeenCalled();
   });
 
+  it.each(["before", "during"])("keeps a local file opened %s session restoration active", async (timing) => {
+    vi.useFakeTimers();
+    const profiles = [makeProfile("one"), makeProfile("two")];
+    profiles.forEach((profile) => { profile.rememberPassword = true; });
+    localStorage.setItem("gx:workspaceProfiles", JSON.stringify(profiles.map((profile) => profile.id)));
+    localStorage.setItem("gx:workspaceActiveProfile", "two");
+    let hydrate!: (items: types.SessionInfo[]) => void;
+    appMocks.listSessions.mockReturnValue(new Promise<types.SessionInfo[]>((resolve) => { hydrate = resolve; }));
+    const complete = new Map<string, () => void>();
+    appMocks.connect.mockImplementation((id: string) => {
+      const info = new types.SessionInfo({ id: `session-${id}`, profileId: id, name: id, state: "connected" });
+      appMocks.events.get("terminal:connecting")?.({ ...info, state: "connecting" });
+      return new Promise<types.SessionInfo>((resolve) => { complete.set(id, () => resolve(info)); });
+    });
+    const { result } = renderHook(() => {
+      const sessions = useSessions({
+        profiles, notify: vi.fn(), reload: vi.fn(async () => undefined),
+        disposeTerminal: vi.fn(), restoreWorkspace: true, language: "en",
+      });
+      const documents = useMarkdownTabs({
+        tabs: sessions.tabs, activeTab: sessions.activeTab, profiles, language: "en",
+        setTabs: sessions.setTabs, setActiveTab: sessions.setActiveTab, setDrawer: vi.fn(), notify: vi.fn(),
+      });
+      return { sessions, documents };
+    });
+
+    if (timing === "before") {
+      await act(async () => { await result.current.documents.openMarkdownFile("C:\\docs\\current.md"); });
+    }
+    await act(async () => { hydrate([]); });
+    expect(appMocks.connect).toHaveBeenCalledTimes(2);
+    if (timing === "during") {
+      await act(async () => { await result.current.documents.openMarkdownFile("C:\\docs\\current.md"); });
+    }
+    expect(result.current.sessions.active?.filePath).toBe("C:\\docs\\current.md");
+    const openedTab = result.current.sessions.activeTab;
+
+    await act(async () => { complete.get("one")!(); });
+    expect(result.current.sessions.activeTab).toBe(openedTab);
+    await act(async () => { complete.get("two")!(); });
+    await act(async () => { await vi.runAllTimersAsync(); });
+
+    expect(result.current.sessions.tabs.filter((tab) => tab.type !== "markdown").every((tab) => tab.state === "connected")).toBe(true);
+    expect(result.current.sessions.activeTab).toBe(openedTab);
+  });
+
+  it.each(["two", ""])("selects a restored server with saved active profile '%s' when no document was opened", async (activeProfile) => {
+    const profiles = [makeProfile("one"), makeProfile("two")];
+    profiles.forEach((profile) => { profile.rememberPassword = true; });
+    localStorage.setItem("gx:workspaceProfiles", JSON.stringify(profiles.map((profile) => profile.id)));
+    localStorage.setItem("gx:workspaceActiveProfile", activeProfile);
+    appMocks.connect.mockImplementation(async (id: string) => new types.SessionInfo({
+      id: `session-${id}`, profileId: id, name: id, state: "connected",
+    }));
+    const { result } = renderHook(() => useSessions({
+      profiles, notify: vi.fn(), reload: vi.fn(async () => undefined),
+      disposeTerminal: vi.fn(), restoreWorkspace: true, language: "en",
+    }));
+
+    await waitFor(() => expect(result.current.activeTab).toBe(`session-${activeProfile || "one"}`));
+    expect(result.current.tabs).toHaveLength(2);
+  });
+
   it.each(["saved", "secrets"])("does not mistake a remote document for a %s connection", async (mode) => {
     const profile = makeProfile("one");
     profile.rememberPassword = true;
@@ -145,9 +214,12 @@ describe("useSessions workspace restore", () => {
       profiles: [profile], notify: vi.fn(), reload: vi.fn(async () => undefined),
       disposeTerminal: vi.fn(), restoreWorkspace: false, language: "en",
     }));
-    act(() => result.current.setTabs([
-      { id: "doc", profileId: profile.id, title: "notes", type: "markdown", state: "connected", markdownSource: "remote", remotePath: "/notes.txt", remoteSessionId: "old" },
-    ]));
+    act(() => {
+      result.current.setTabs([
+        { id: "doc", profileId: profile.id, title: "notes", type: "markdown", state: "connected", markdownSource: "remote", remotePath: "/notes.txt", remoteSessionId: "old" },
+      ]);
+      result.current.setActiveTab("doc");
+    });
     await act(async () => {
       if (mode === "saved") await result.current.connectProfile(profile);
       else await result.current.connectProfileWithSecrets(profile, "", "");

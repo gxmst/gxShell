@@ -7,13 +7,14 @@ import { useMarkdownTabs } from './useMarkdownTabs';
 const appMocks = vi.hoisted(() => ({
   listLocal: vi.fn(),
   listRemote: vi.fn(),
+  restoreLocal: vi.fn(),
 }));
 
 vi.mock('../../wailsjs/go/app/App', () => ({
   ListRemoteTextFilesInDir: appMocks.listRemote,
   ListTextFilesInDir: appMocks.listLocal,
   OpenRecentTextFile: vi.fn(),
-  RestoreTextFiles: vi.fn().mockResolvedValue([]),
+  RestoreTextFiles: appMocks.restoreLocal,
   SelectTextFile: vi.fn(),
 }));
 
@@ -45,6 +46,7 @@ describe('useMarkdownTabs sibling loading', () => {
     });
     appMocks.listLocal.mockReset().mockResolvedValue(['C:\\docs\\notes.txt']);
     appMocks.listRemote.mockReset().mockResolvedValue(['/srv/notes.txt']);
+    appMocks.restoreLocal.mockReset().mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -61,6 +63,37 @@ describe('useMarkdownTabs sibling loading', () => {
 
     await waitFor(() => expect(appMocks.listLocal).toHaveBeenCalledTimes(1));
     expect(appMocks.listLocal).toHaveBeenCalledWith('C:\\docs\\notes.txt');
+  });
+
+  it.each(['local', 'remote'])('keeps a newly opened %s document active after historical files restore', async (source) => {
+    const oldPath = 'C:\\docs\\old.md';
+    localStorage.setItem('gx:workspaceLocalFiles', JSON.stringify([oldPath]));
+    localStorage.setItem('gx:workspaceActiveLocalFile', oldPath);
+    let restore!: (paths: string[]) => void;
+    appMocks.restoreLocal.mockReturnValue(new Promise<string[]>((resolve) => { restore = resolve; }));
+    const { result } = renderHook(() => useHarness());
+
+    await act(async () => {
+      if (source === 'local') await result.current.documents.openMarkdownFile('C:\\docs\\new.md');
+      else await result.current.documents.openRemoteMarkdownFile('session-1', '/srv/new.md');
+    });
+    const openedTab = result.current.activeTab;
+    await act(async () => { restore([oldPath]); });
+
+    expect(result.current.tabs).toHaveLength(2);
+    expect(result.current.tabs.find((tab) => tab.filePath === oldPath)).toBeDefined();
+    expect(result.current.activeTab).toBe(openedTab);
+  });
+
+  it('selects the saved local document when no new document was opened', async () => {
+    const paths = ['C:\\docs\\one.md', 'C:\\docs\\two.md'];
+    localStorage.setItem('gx:workspaceLocalFiles', JSON.stringify(paths));
+    localStorage.setItem('gx:workspaceActiveLocalFile', paths[1]);
+    appMocks.restoreLocal.mockResolvedValue(paths);
+    const { result } = renderHook(() => useHarness());
+
+    await waitFor(() => expect(result.current.tabs).toHaveLength(2));
+    expect(result.current.tabs.find((tab) => tab.id === result.current.activeTab)?.filePath).toBe(paths[1]);
   });
 
   it('lists a remote directory once when opening a new document', async () => {

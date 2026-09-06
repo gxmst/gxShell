@@ -46,7 +46,6 @@ interface UseMarkdownTabsParams {
   setTabs: Dispatch<SetStateAction<Tab[]>>;
   setActiveTab: (id: string) => void;
   setDrawer: (drawer: Drawer) => void;
-  revealLocalDocumentWorkspace?: () => void;
   notify: (text: string, tone?: "info" | "error" | "success") => void;
 }
 
@@ -75,13 +74,13 @@ export function useMarkdownTabs({
   setTabs,
   setActiveTab,
   setDrawer,
-  revealLocalDocumentWorkspace,
   notify,
 }: UseMarkdownTabsParams): MarkdownTabs {
   const [markdownSiblings, setMarkdownSiblings] = useState<string[]>([]);
   const [recentMarkdown, setRecentMarkdown] = usePersistedState<RecentMarkdownItem[]>("gx:recentMarkdown", []);
   const workspaceFiles = useRef(readWorkspaceFiles());
   const workspaceRestoreStarted = useRef(false);
+  const documentOpened = useRef(false);
   const [workspaceRestoreReady, setWorkspaceRestoreReady] = useState(workspaceFiles.current.paths.length === 0);
 
   // Mirror the live tabs/activeTab in refs so callbacks can read the current
@@ -116,7 +115,7 @@ export function useMarkdownTabs({
           if (!existing) next.push(candidate);
         }
         const activePath = localPathKey(workspaceFiles.current.activePath);
-        if (activePath) {
+        if (activePath && !documentOpened.current) {
           const restoredActive = next.find((tab) => tab.type === "markdown" && tab.filePath && localPathKey(tab.filePath) === activePath);
           if (restoredActive) setActiveTab(restoredActive.id);
         }
@@ -150,7 +149,7 @@ export function useMarkdownTabs({
   }, [setRecentMarkdown]);
 
   const openMarkdownFile = useCallback(async (filePath: string) => {
-    revealLocalDocumentWorkspace?.();
+    documentOpened.current = true;
     const normalizedPath = localPathKey(filePath);
     const existing = tabsRef.current.find((tab) => tab.type === "markdown" && tab.filePath && localPathKey(tab.filePath) === normalizedPath);
     rememberMarkdown({ source: "local", path: filePath, title: fileNameFromPath(filePath) });
@@ -174,9 +173,10 @@ export function useMarkdownTabs({
     setTabs(prev => [...prev, newTab]);
     setActiveTab(newTab.id);
     setDrawer("sftp");
-  }, [rememberMarkdown, revealLocalDocumentWorkspace, setActiveTab, setTabs, setDrawer]);
+  }, [rememberMarkdown, setActiveTab, setTabs, setDrawer]);
 
   const openRemoteMarkdownFile = useCallback(async (sessionID: string, remotePath: string) => {
+    documentOpened.current = true;
     const sessionTab = tabsRef.current.find((tab) => tab.id === sessionID);
     const profile = sessionTab ? profilesRef.current.find((item) => item.id === sessionTab.profileId) : undefined;
     const existing = tabsRef.current.find((tab) => (

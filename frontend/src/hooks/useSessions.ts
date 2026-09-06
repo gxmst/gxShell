@@ -42,6 +42,10 @@ type PendingRestoreMetadata = Pick<Tab, "title" | "customTitle" | "pinned"> & {
   closedRecord?: ClosedTabRecord;
 };
 
+type SessionOpenOptions = {
+  preserveActiveTab?: boolean;
+};
+
 const rememberRuntimeGeneration = (generations: Map<string, number>, runtimeID: string, generation: number) => {
   const current = generations.get(runtimeID) || 0;
   if (generation <= current) return;
@@ -139,6 +143,10 @@ export function useSessions(options: UseSessionsOptions) {
   // tab from the backend event. External gxshell-cli connections emit the same
   // low-level event and must not steal focus from the user's current work.
   const creatingProfiles = useRef<Set<string>>(new Set());
+  // Workspace restoration creates the same optimistic connecting tabs as a
+  // user initiated connection. Keep those events from moving focus away from
+  // a local document that was opened during startup.
+  const preserveFocusProfiles = useRef<Set<string>>(new Set());
   const connectingSessionProfiles = useRef<Map<string, string>>(new Map());
   // Connect failures are delivered both as terminal:error and as a rejected
   // Connect promise. Remember the profile whose event was already surfaced so
@@ -193,7 +201,8 @@ export function useSessions(options: UseSessionsOptions) {
       setTabs((items) => items.some((tab) => tab.id === info.id)
         ? items
         : [...items, { id: info.id, ...runtime, profileId: info.profileId, title: tabTitle(profile, info.name), state: "connecting" }]);
-      setActiveTab(info.id);
+      const preserveActiveTab = preserveFocusProfiles.current.has(info.profileId);
+      setActiveTab((current) => preserveActiveTab ? current || info.id : info.id);
     });
     const offConnected = EventsOn("terminal:connected", (info: types.SessionInfo) => {
       if (!acceptRuntimeEvent(info)) return;
@@ -328,14 +337,14 @@ export function useSessions(options: UseSessionsOptions) {
     return () => { cancelled = true; };
   }, [rememberSessionInfo]);
 
-  const appendSession = useCallback(async (profile: types.Profile, info: types.SessionInfo) => {
+  const appendSession = useCallback(async (profile: types.Profile, info: types.SessionInfo, sessionOptions: SessionOpenOptions = {}) => {
     const runtime = rememberSessionInfo(info);
     const restore = pendingRestoreMetadata.current.get(profile.id);
     pendingRestoreMetadata.current.delete(profile.id);
     setTabs((items) => items.some((tab) => tab.id === info.id)
       ? items.map((tab) => tab.id === info.id ? { ...tab, ...runtime, profileId: info.profileId, title: restore?.customTitle ? restore.title : (tab.customTitle ? tab.title : tabTitle(profile, info.name)), customTitle: restore?.customTitle || tab.customTitle, pinned: restore?.pinned || tab.pinned, state: info.state, error: undefined } : tab)
       : [...items, { id: info.id, ...runtime, profileId: info.profileId, title: restore?.customTitle ? restore.title : tabTitle(profile, info.name), customTitle: restore?.customTitle, pinned: restore?.pinned, state: info.state }]);
-    setActiveTab(info.id);
+    setActiveTab((current) => sessionOptions.preserveActiveTab ? current || info.id : info.id);
     if (restore?.closedRecord) {
       const index = closedTabs.current.indexOf(restore.closedRecord);
       if (index >= 0) closedTabs.current.splice(index, 1);
@@ -357,27 +366,29 @@ export function useSessions(options: UseSessionsOptions) {
     return false;
   }, []);
 
-  const openSession = useCallback(async (profile: types.Profile, password: string, passphrase: string) => {
+  const openSession = useCallback(async (profile: types.Profile, password: string, passphrase: string, sessionOptions: SessionOpenOptions = {}) => {
     notifyRef.current(`Connecting to ${profile.name || profile.host}...`, "info");
     creatingProfiles.current.add(profile.id);
+    if (sessionOptions.preserveActiveTab) preserveFocusProfiles.current.add(profile.id);
     try {
       const info = profile.rememberPassword
         ? await Connect(profile.id, 120, 36)
         : await ConnectWithSecrets(profile.id, password, passphrase, 120, 36);
-      await appendSession(profile, info);
+      await appendSession(profile, info, sessionOptions);
     } finally {
       creatingProfiles.current.delete(profile.id);
+      preserveFocusProfiles.current.delete(profile.id);
     }
   }, [appendSession]);
 
-  const connectProfile = useCallback(async (profile: types.Profile) => {
+  const connectProfile = useCallback(async (profile: types.Profile, sessionOptions: SessionOpenOptions = {}) => {
     if (creatingProfiles.current.has(profile.id)) {
       notifyRef.current(`${profile.name || profile.host}: connection already in progress`, "info");
       return;
     }
     const existing = tabsRef.current.find((tab) => tab.type !== "markdown" && tab.profileId === profile.id && isSessionBusy(tab.state));
     if (existing) {
-      setActiveTab(existing.id);
+      if (!sessionOptions.preserveActiveTab) setActiveTab(existing.id);
       notifyRef.current(existing.state !== "connected"
         ? `${existing.title}: connection already in progress`
         : `${existing.title}: already connected`, "info");
@@ -388,7 +399,7 @@ export function useSessions(options: UseSessionsOptions) {
       return;
     }
     try {
-      await openSession(profile, "", "");
+      await openSession(profile, "", "", sessionOptions);
     } catch (err) {
       // The backend also emits terminal:error after a low-level SSH failure,
       // which updates the optimistic tab. This catch closes the Promise path
@@ -430,11 +441,13 @@ export function useSessions(options: UseSessionsOptions) {
     if (restorable.length > 0) {
       notifyRef.current(zh ? `正在恢复 ${restorable.length} 个工作区连接` : `Restoring ${restorable.length} workspace connection${restorable.length === 1 ? "" : "s"}`, "info");
     }
-    restoreProfilesInBatches(restorable, connectProfile).finally(() => {
+    restoreProfilesInBatches(restorable, (profile) => connectProfile(profile, { preserveActiveTab: true })).finally(() => {
       setWorkspaceRestoreReady(true);
       const activeProfileId = workspaceProfiles.current.activeProfileId;
       if (activeProfileId) {
         window.setTimeout(() => {
+          const currentActive = tabsRef.current.find((tab) => tab.id === activeTabRef.current);
+          if (currentActive?.type === "markdown") return;
           const restoredActive = tabsRef.current.find((tab) => tab.type !== "markdown" && tab.profileId === activeProfileId && tab.state === "connected");
           if (restoredActive) setActiveTab(restoredActive.id);
         }, 0);

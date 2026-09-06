@@ -114,7 +114,6 @@ function App() {
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const sidebarPanelWidthRef = useRef(sidebarPanelWidth);
   sidebarPanelWidthRef.current = sidebarPanelWidth;
-  const revealLocalDocumentWorkspace = useCallback(() => setSidebarCollapsed(false), [setSidebarCollapsed]);
   const [logViewer, setLogViewer] = useState<{ name: string; content: string } | null>(null);
   const [floatingTabIds, setFloatingTabIds] = usePersistedState<string[]>("gx:floatingTabIds", []);
   const [splitPane, setSplitPane] = useState<SplitPane | null>(null);
@@ -339,7 +338,6 @@ function App() {
     setTabs: sessions.setTabs,
     setActiveTab: sessions.setActiveTab,
     setDrawer: requestDrawer,
-    revealLocalDocumentWorkspace,
     notify,
     language: profileState.settings?.language || "en",
   });
@@ -363,8 +361,6 @@ function App() {
     });
 
     // Explorer's context-menu/Open With path is distinct from drag-and-drop.
-    // Both paths reveal the document workspace so the active local file can be
-    // located in the sidebar immediately.
     const openExternalDocument = (filePath: string) => {
       if (!isSupportedDocumentPath(filePath)) return;
       openMarkdownFile(filePath);
@@ -432,7 +428,7 @@ function App() {
       if (unsubKiClosed) unsubKiClosed();
       OnFileDropOff();
     };
-  }, [openMarkdownFile, handleOpenMarkdown, setDrawer, setSidebarCollapsed, notify, sessions.isCurrentRuntimeEvent]);
+  }, [openMarkdownFile, handleOpenMarkdown, setDrawer, notify, sessions.isCurrentRuntimeEvent]);
 
   // A prompt can be queued while its connection is current and become stale
   // when a reconnect advances the runtime generation before the timeout event
