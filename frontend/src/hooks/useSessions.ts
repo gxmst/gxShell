@@ -171,7 +171,7 @@ export function useSessions(options: UseSessionsOptions) {
   // Auto-reconnect bookkeeping. Keyed by the tab id that owned the session that
   // dropped. userClosing marks ids the user is intentionally closing so their
   // disconnect does not trigger a reconnect.
-  const autoReconnect = useRef<Record<string, { attempts: number; timer: number; inFlight?: boolean }>>({});
+  const autoReconnect = useRef<Record<string, { attempts: number; timer: number; inFlight?: boolean; cancelledByClose?: boolean }>>({});
   const userClosing = useRef<Set<string>>(new Set());
   // Session ids whose backend-owned reconnect this renderer observed on a live
   // tab. The cli-session-replaced handler consumes the record to tell a
@@ -771,7 +771,10 @@ export function useSessions(options: UseSessionsOptions) {
         disposeTerminalRef.current(tabId);
         const info = await Connect(profile.id, 120, 36);
         if (autoReconnect.current[tabId] !== attemptState) {
-          if (!tabsRef.current.some((item) => item.id === info.id || item.id === tabId) && !creatingProfiles.current.has(info.profileId)) void Disconnect(info.id).catch(() => undefined);
+          // A closing tab stays mounted during backend cleanup, but can no
+          // longer claim the replacement. Other consumers may still own it.
+          const owned = tabsRef.current.some((item) => item.id === info.id || (!attemptState.cancelledByClose && item.id === tabId));
+          if (!owned && !creatingProfiles.current.has(info.profileId)) void Disconnect(info.id).catch(() => undefined);
           return;
         }
         if (!discardUnclaimedSession(tabId, info)) {
@@ -857,6 +860,7 @@ export function useSessions(options: UseSessionsOptions) {
     userClosing.current.add(id);
     const pending = autoReconnect.current[id];
     if (pending) {
+      pending.cancelledByClose = true;
       window.clearTimeout(pending.timer);
       delete autoReconnect.current[id];
     }
