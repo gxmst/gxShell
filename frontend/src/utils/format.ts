@@ -27,7 +27,7 @@ export function parseRgbColor(value: string): { r: number; g: number; b: number 
   return { r: channel(match[1]), g: channel(match[2]), b: channel(match[3]) };
 }
 
-export function getTerminalTheme(settings: types.AppSettings) {
+export function getTerminalTheme(settings: Pick<types.AppSettings, "terminal" | "themeName">) {
   const requested = settings.terminal.themeName || settings.themeName || "Light";
   return terminalThemes[requested] || terminalThemes[normalizeAppTheme(settings.themeName)] || terminalThemes["Light"];
 }

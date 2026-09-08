@@ -25,8 +25,9 @@ import (
 )
 
 type Manager struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
+	outputLogFactory func(types.Profile) (OutputLog, error)
+	mu               sync.RWMutex
+	sessions         map[string]*Session
 	// runtimes survives individual session teardown. It is the small identity
 	// registry that lets a later reconnect receive a new generation while
 	// consumers continue to refer to the same remote runtime.
@@ -60,7 +61,9 @@ type Manager struct {
 type KeyboardInteractivePrompt func(sessionID, name, instruction string, questions []string, echos []bool) ([]string, error)
 
 type Session struct {
-	info types.SessionInfo
+	outputLog OutputLog
+	outputWG  sync.WaitGroup
+	info      types.SessionInfo
 	// port is the remote SSH port from the connecting profile. It is immutable
 	// after Connect, and exposed via SessionPort for firewall lockout guards.
 	port        int
@@ -74,6 +77,16 @@ type Session struct {
 	closeOnce   sync.Once
 	mu          sync.RWMutex
 	recorder    *castRecorder
+}
+
+type OutputLog interface {
+	WriteStream(stream int, text string)
+	Close() error
+}
+
+// SetOutputLogFactory must be configured before connections can start.
+func (m *Manager) SetOutputLogFactory(factory func(types.Profile) (OutputLog, error)) {
+	m.outputLogFactory = factory
 }
 
 func NewManager(knownHostsPath string, emit func(event string, data any), confirm func(host, fingerprint string) bool) *Manager {
@@ -331,6 +344,13 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 		return info, err
 	}
 
+	var outputLog OutputLog
+	if m.outputLogFactory != nil {
+		outputLog, err = m.outputLogFactory(profile)
+		if err != nil {
+			m.emit("session-log:error", map[string]any{"sessionId": id, "error": err.Error()})
+		}
+	}
 	session.mu.Lock()
 	select {
 	case <-session.done:
@@ -339,6 +359,9 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 		// will ever close what we just opened — close it here, or the TCP
 		// connection and remote shell leak with no code path left to reach them.
 		session.mu.Unlock()
+		if outputLog != nil {
+			_ = outputLog.Close()
+		}
 		_ = shell.Close()
 		_ = client.Close()
 		if jumpClient != nil {
@@ -365,13 +388,15 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 		go func() { _ = m.Disconnect(id) }()
 	})
 	session.info.State = types.SessionConnected
+	session.outputLog = outputLog
+	session.outputWG.Add(2)
 	info = session.info
 	session.mu.Unlock()
 	m.updateRuntimeState(session, RuntimeActive)
 	m.emit("terminal:connected", info)
 
-	go m.forwardOutput(id, stdout)
-	go m.forwardOutput(id, stderr)
+	go m.forwardOutputStream(session, stdout, 0)
+	go m.forwardOutputStream(session, stderr, 1)
 	go m.keepalive(id)
 	go func() {
 		defer func() {
@@ -383,6 +408,7 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 			}
 		}()
 		err := shell.Wait()
+		session.outputWG.Wait()
 		if err != nil && !isBenignShellWaitError(err) {
 			m.emitSession("terminal:error", session, map[string]any{"error": err.Error()})
 		}
@@ -403,14 +429,24 @@ func (m *Manager) forwardOutput(id string, reader io.Reader) {
 	if session == nil {
 		return
 	}
+	session.outputWG.Add(1)
+	m.forwardOutputStream(session, reader, 0)
+}
+
+func (m *Manager) forwardOutputStream(session *Session, reader io.Reader, stream int) {
 	defer panicHandler(session, m)
+	defer session.outputWG.Done()
 	termio.Pump(reader, session.done, func(chunk string) {
 		m.emitSession("terminal:data", session, map[string]any{"data": chunk})
 		session.mu.RLock()
 		rec := session.recorder
+		outputLog := session.outputLog
 		session.mu.RUnlock()
 		if rec != nil {
 			rec.writeOutput(chunk)
+		}
+		if outputLog != nil {
+			outputLog.WriteStream(stream, chunk)
 		}
 	})
 }
@@ -619,6 +655,10 @@ func (m *Manager) Disconnect(id string) error {
 		}
 		if stdin != nil {
 			_ = stdin.Close()
+		}
+		session.outputWG.Wait()
+		if session.outputLog != nil {
+			_ = session.outputLog.Close()
 		}
 		if rec != nil {
 			if err := rec.close(); err != nil {

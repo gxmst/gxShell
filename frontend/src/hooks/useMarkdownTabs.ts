@@ -45,6 +45,7 @@ interface UseMarkdownTabsParams {
   language: string;
   setTabs: Dispatch<SetStateAction<Tab[]>>;
   setActiveTab: (id: string) => void;
+  restoreActiveTab?: (id: string) => void;
   setDrawer: (drawer: Drawer) => void;
   notify: (text: string, tone?: "info" | "error" | "success") => void;
 }
@@ -73,6 +74,7 @@ export function useMarkdownTabs({
   language,
   setTabs,
   setActiveTab,
+  restoreActiveTab,
   setDrawer,
   notify,
 }: UseMarkdownTabsParams): MarkdownTabs {
@@ -117,7 +119,7 @@ export function useMarkdownTabs({
         const activePath = localPathKey(workspaceFiles.current.activePath);
         if (activePath && !documentOpened.current) {
           const restoredActive = next.find((tab) => tab.type === "markdown" && tab.filePath && localPathKey(tab.filePath) === activePath);
-          if (restoredActive) setActiveTab(restoredActive.id);
+          if (restoredActive) (restoreActiveTab || setActiveTab)(restoredActive.id);
         }
         return next;
       });
@@ -126,7 +128,7 @@ export function useMarkdownTabs({
     }).finally(() => {
       setWorkspaceRestoreReady(true);
     });
-  }, [notify, setActiveTab, setTabs]);
+  }, [notify, setActiveTab, setTabs, restoreActiveTab]);
 
   useEffect(() => {
     if (!workspaceRestoreReady) return;

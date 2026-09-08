@@ -1,10 +1,11 @@
 import clsx from "clsx";
-import { lazy, memo, Suspense, useCallback, useMemo, useRef } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef } from "react";
 import { Plus, Radio, TerminalSquare, X } from "lucide-react";
 import type { MarkdownOpenTarget, SplitPane, Tab } from "../../types";
 import { TerminalStatusBar } from "./TerminalStatusBar";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
+import { clampSplitRatio, splitPaneIds } from "../../utils/splitPane";
 
 // Lazy-loaded: MarkdownViewer pulls in marked, DOMPurify, highlight.js and
 // mermaid, which together dominate the bundle. Splitting them out keeps them
@@ -42,21 +43,23 @@ export const TerminalArea = memo(function TerminalArea(props: {
   onOpenCurrentDirectory?: (id: string, path: string) => void;
 }) {
   const lang = props.language;
+  const { onSplitChange, refitTerminal } = props;
   const floatingSet = useMemo(() => new Set(props.floatingTabIds || []), [props.floatingTabIds]);
   const visibleTabs = useMemo(() => props.tabs.filter((tab) => !floatingSet.has(tab.id)), [props.tabs, floatingSet]);
   const active = props.tabs.find((tab) => tab.id === props.activeTab);
   const split = props.splitPane;
   const splitRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
-  const splitDragRef = useRef<{ pointerId: number; split: SplitPane; bounds: DOMRect; ratio: number; frame: number } | null>(null);
+  const splitDragRef = useRef<{ pointerId: number; split: SplitPane; bounds: DOMRect; ratio: number; frame: number; row: boolean; horizontal: boolean } | null>(null);
+  useEffect(() => () => { if (splitDragRef.current?.frame) cancelAnimationFrame(splitDragRef.current.frame); splitDragRef.current = null; }, [split]);
 
-  const applyLiveSplit = useCallback((splitValue: SplitPane, ratio: number) => {
+  const applyLiveSplit = useCallback((splitValue: SplitPane, ratio: number, row = false) => {
     const stage = stageRef.current;
     if (!stage) return;
-    if (splitValue.direction === "horizontal") {
-      stage.style.gridTemplateColumns = `${ratio}fr 4px ${1 - ratio}fr`;
+    if (splitValue.direction !== "vertical" && !row) {
+      stage.style.gridTemplateColumns = `minmax(0, ${ratio}fr) 4px minmax(0, ${1 - ratio}fr)`;
     } else {
-      stage.style.gridTemplateRows = `${ratio}fr 4px ${1 - ratio}fr`;
+      stage.style.gridTemplateRows = `minmax(0, ${ratio}fr) 4px minmax(0, ${1 - ratio}fr)`;
     }
   }, []);
 
@@ -64,27 +67,30 @@ export const TerminalArea = memo(function TerminalArea(props: {
     if (!split || !splitRef.current?.parentElement) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
+    const row = e.currentTarget.dataset.axis === "row";
     splitDragRef.current = {
       pointerId: e.pointerId,
       split,
       bounds: splitRef.current.parentElement.getBoundingClientRect(),
-      ratio: split.ratio,
+      ratio: row ? split.rowRatio ?? 0.5 : split.ratio,
       frame: 0,
+      row,
+      horizontal: split.direction !== "vertical" && !row,
     };
   }, [split]);
 
   const onDragSplitMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const drag = splitDragRef.current;
     if (!drag || drag.pointerId !== e.pointerId) return;
-    const pos = drag.split.direction === "horizontal" ? e.clientX - drag.bounds.left : e.clientY - drag.bounds.top;
-    const total = drag.split.direction === "horizontal" ? drag.bounds.width : drag.bounds.height;
-    drag.ratio = Math.min(0.8, Math.max(0.2, pos / total));
+    const pos = drag.horizontal ? e.clientX - drag.bounds.left : e.clientY - drag.bounds.top;
+    const total = drag.horizontal ? drag.bounds.width : drag.bounds.height;
+    drag.ratio = clampSplitRatio(pos / total);
     if (drag.frame) return;
     drag.frame = requestAnimationFrame(() => {
       const current = splitDragRef.current;
       if (!current) return;
       current.frame = 0;
-      applyLiveSplit(current.split, current.ratio);
+      applyLiveSplit(current.split, current.ratio, current.row);
     });
   }, [applyLiveSplit]);
 
@@ -93,22 +99,38 @@ export const TerminalArea = memo(function TerminalArea(props: {
     if (!drag || drag.pointerId !== e.pointerId) return;
     if (drag.frame) cancelAnimationFrame(drag.frame);
     splitDragRef.current = null;
-    const ratio = cancelled ? drag.split.ratio : drag.ratio;
-    applyLiveSplit(drag.split, ratio);
-    if (!cancelled && ratio !== drag.split.ratio) props.onSplitChange?.({ ...drag.split, ratio });
+    const oldRatio = drag.row ? drag.split.rowRatio ?? 0.5 : drag.split.ratio;
+    const ratio = cancelled ? oldRatio : drag.ratio;
+    applyLiveSplit(drag.split, ratio, drag.row);
+    if (!cancelled && ratio !== oldRatio) onSplitChange?.({ ...drag.split, [drag.row ? "rowRatio" : "ratio"]: ratio });
     requestAnimationFrame(() => {
-      props.refitTerminal?.(drag.split.left);
-      props.refitTerminal?.(drag.split.right);
+      splitPaneIds(drag.split).forEach((id) => refitTerminal?.(id));
     });
-  }, [applyLiveSplit, props.onSplitChange, props.refitTerminal]);
+  }, [applyLiveSplit, onSplitChange, refitTerminal]);
 
-  const isSplitVisible = split && props.tabs.some((t) => t.id === split.left) && props.tabs.some((t) => t.id === split.right);
+  const paneIds = splitPaneIds(split);
+  const isSplitVisible = split && paneIds.includes(props.activeTab) && paneIds.every((id) => visibleTabs.some((t) => t.id === id));
+  const tracks = (ratio: number) => `minmax(0, ${clampSplitRatio(ratio)}fr) 4px minmax(0, ${1-clampSplitRatio(ratio)}fr)`;
 
   const stageStyle: React.CSSProperties = isSplitVisible
-    ? split.direction === "horizontal"
-      ? { display: "grid", gridTemplateColumns: `${split.ratio}fr 4px ${1 - split.ratio}fr` }
-      : { display: "grid", gridTemplateRows: `${split.ratio}fr 4px ${1 - split.ratio}fr` }
+    ? split.bottom
+      ? { display: "grid", gridTemplateColumns: tracks(split.ratio), gridTemplateRows: tracks(split.rowRatio ?? 0.5) }
+      : split.direction === "horizontal"
+        ? { display: "grid", gridTemplateColumns: tracks(split.ratio), gridTemplateRows: "minmax(0, 1fr)" }
+        : { display: "grid", gridTemplateRows: tracks(split.ratio), gridTemplateColumns: "minmax(0, 1fr)" }
     : {};
+
+  const dividerKeyboard = (e: React.KeyboardEvent, row = false) => {
+    if (!split) return;
+    const horizontal = split.direction !== "vertical" && !row;
+    const minus = horizontal ? "ArrowLeft" : "ArrowUp";
+    const plus = horizontal ? "ArrowRight" : "ArrowDown";
+    if (![minus, plus, "Home", "End"].includes(e.key)) return;
+    e.preventDefault();
+    const current = row ? split.rowRatio ?? 0.5 : split.ratio;
+    const ratio = e.key === "Home" ? 0.2 : e.key === "End" ? 0.8 : clampSplitRatio(current + (e.key === minus ? -0.05 : 0.05));
+    props.onSplitChange?.({ ...split, [row ? "rowRatio" : "ratio"]: ratio });
+  };
 
   return (
     <section className="terminal-pane">
@@ -138,9 +160,8 @@ export const TerminalArea = memo(function TerminalArea(props: {
       <div className="terminal-stage" style={stageStyle} ref={stageRef}>
         {props.tabs.map((tab) => {
           const isFloating = floatingSet.has(tab.id);
-          const isLeft = isSplitVisible && tab.id === split!.left;
-          const isRight = isSplitVisible && tab.id === split!.right;
-          const isSplitTab = isLeft || isRight;
+          const paneIndex = paneIds.indexOf(tab.id);
+          const isSplitTab = !!isSplitVisible && paneIndex >= 0;
           const isActive = props.activeTab === tab.id;
 
           let hostStyle: React.CSSProperties | undefined;
@@ -148,10 +169,10 @@ export const TerminalArea = memo(function TerminalArea(props: {
 
           if (isSplitVisible && isSplitTab) {
             hostClass = clsx("terminal-host", "terminal-split-pane", isActive && "terminal-split-active");
-            if (isLeft) {
-              hostStyle = split.direction === "horizontal"
-                ? { gridColumn: "1", gridRow: "1" }
-                : { gridColumn: "1", gridRow: "1" };
+            if (split.bottom) {
+              hostStyle = { gridColumn: paneIndex % 2 ? "3" : "1", gridRow: paneIndex >= 2 ? "3" : "1" };
+            } else if (paneIndex === 0) {
+              hostStyle = { gridColumn: "1", gridRow: "1" };
             } else {
               hostStyle = split.direction === "horizontal"
                 ? { gridColumn: "3", gridRow: "1" }
@@ -172,6 +193,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
               className={hostClass}
               style={hostStyle}
               ref={(el) => { props.terminalHosts.current[tab.id] = el; }}
+              onFocusCapture={isSplitTab && !isActive ? () => props.onActive(tab.id) : undefined}
               onClick={isSplitTab ? () => props.onActive(tab.id) : undefined}
             >
               {tab.type === 'markdown' && (tab.filePath || tab.remotePath) && (
@@ -197,7 +219,9 @@ export const TerminalArea = memo(function TerminalArea(props: {
         <div
           ref={splitRef}
           className={clsx("split-divider", !isSplitVisible && "split-divider-hidden", split?.direction === "vertical" && "split-divider-vertical")}
-          style={isSplitVisible ? { gridColumn: split!.direction === "horizontal" ? "2" : "1", gridRow: split!.direction === "horizontal" ? "1" : "2" } : undefined}
+          role="separator" tabIndex={isSplitVisible ? 0 : -1} aria-label={lang === "zh-CN" ? "调整窗格宽高" : "Resize panes"} aria-orientation={split?.direction === "vertical" ? "horizontal" : "vertical"} aria-valuemin={20} aria-valuemax={80} aria-valuenow={Math.round((split?.ratio ?? 0.5)*100)}
+          style={isSplitVisible ? { gridColumn: split!.direction !== "vertical" ? "2" : "1", gridRow: split!.bottom ? "1 / 4" : split!.direction !== "vertical" ? "1" : "2" } : undefined}
+          onKeyDown={dividerKeyboard}
           onPointerDown={onDragSplit}
           onPointerMove={onDragSplitMove}
           onPointerUp={(e) => finishSplitDrag(e)}
@@ -206,11 +230,11 @@ export const TerminalArea = memo(function TerminalArea(props: {
             if (!split) return;
             props.onSplitChange?.({ ...split, ratio: 0.5 });
             requestAnimationFrame(() => {
-              props.refitTerminal?.(split.left);
-              props.refitTerminal?.(split.right);
+              paneIds.forEach((id) => props.refitTerminal?.(id));
             });
           }}
         />
+        {isSplitVisible && split.bottom && <div className="split-divider split-divider-vertical" data-axis="row" role="separator" tabIndex={0} aria-label={lang === "zh-CN" ? "调整窗格高度" : "Resize pane rows"} aria-orientation="horizontal" aria-valuemin={20} aria-valuemax={80} aria-valuenow={Math.round((split.rowRatio ?? 0.5)*100)} style={{ gridColumn: "1 / 4", gridRow: "2" }} onKeyDown={(e) => dividerKeyboard(e, true)} onPointerDown={onDragSplit} onPointerMove={onDragSplitMove} onPointerUp={(e) => finishSplitDrag(e)} onPointerCancel={(e) => finishSplitDrag(e, true)} onDoubleClick={() => props.onSplitChange?.({ ...split, rowRatio: 0.5 })} />}
         {props.logViewer && (
           <div className="log-viewer-overlay">
             <div className="log-viewer-header">

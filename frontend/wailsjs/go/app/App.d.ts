@@ -301,3 +301,6 @@ export function MinimiseWindow():Promise<void>;
 export function SetWindowBackgroundColour(arg1:number,arg2:number,arg3:number):Promise<void>;
 
 export function ToggleMaximiseWindow():Promise<boolean>;
+export function ListSessionLogFiles(): Promise<Array<types.LogFile>>;
+export function ReadSessionLogFile(name: string): Promise<string>;
+export function UpdateProfilesBatch(ids: string[], patch: types.ProfileBatchPatch): Promise<Array<types.Profile>>;

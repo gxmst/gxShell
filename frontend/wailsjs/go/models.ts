@@ -214,6 +214,17 @@ export namespace types {
 	        this.localStartDirectory = source["localStartDirectory"];
 	    }
 	}
+	export type HighlightRule = {
+	    id: string; pattern: string; mode: "literal" | "regex"; color: string;
+	    enabled: boolean; caseSensitive: boolean;
+	};
+	export type ProfileBatchPatch = {
+	    group?: string; username?: string; port?: number; autoReconnect?: boolean;
+	    favorite?: boolean; inheritTerminal: boolean;
+	};
+	export type SessionLogSettings = {
+	    enabled: boolean; timestamps: boolean; maxFileMb: number; maxSessionMb: number;
+	};
 	export class AppSettings {
 	    themeName: string;
 	    language: string;
@@ -222,6 +233,8 @@ export namespace types {
 	    monitorIntervalSec: number;
 	    connectionTimeout: number;
 	    highlightLevel: string;
+	    highlightRules?: HighlightRule[];
+	    sessionLog?: SessionLogSettings;
 	    sidebarWidth: number;
 	    sidebarSplitPct: number;
 	    savePasswords: boolean;
@@ -248,6 +261,8 @@ export namespace types {
 	        this.monitorIntervalSec = source["monitorIntervalSec"];
 	        this.connectionTimeout = source["connectionTimeout"];
 	        this.highlightLevel = source["highlightLevel"];
+	        this.highlightRules = source["highlightRules"];
+	        this.sessionLog = source["sessionLog"];
 	        this.sidebarWidth = source["sidebarWidth"];
 	        this.sidebarSplitPct = source["sidebarSplitPct"];
 	        this.savePasswords = source["savePasswords"];
@@ -788,6 +803,8 @@ export namespace types {
 	    aiAlias?: string;
 	    tunnels: TunnelRule[];
 	    autoReconnect: boolean;
+	    terminal?: TerminalSettings;
+	    sessionLog?: SessionLogSettings;
 	    startDirectory?: string;
 	    environment?: string[];
 	    loginCommands?: string[];
@@ -826,6 +843,8 @@ export namespace types {
 	        this.aiAlias = source["aiAlias"];
 	        this.tunnels = this.convertValues(source["tunnels"], TunnelRule);
 	        this.autoReconnect = source["autoReconnect"];
+	        this.terminal = this.convertValues(source["terminal"], TerminalSettings);
+	        this.sessionLog = source["sessionLog"];
 	        this.startDirectory = source["startDirectory"];
 	        this.environment = source["environment"];
 	        this.loginCommands = source["loginCommands"];

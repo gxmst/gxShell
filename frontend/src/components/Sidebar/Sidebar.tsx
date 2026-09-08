@@ -95,6 +95,7 @@ export function Sidebar(props: {
   onOpenRecentMarkdown?: (item: RecentMarkdownItem) => void;
   onRemoveRecentMarkdown?: (id: string) => void;
   onNewProfile: () => void;
+  onBulkProfiles?: () => void;
   onQuickConnect: () => void;
   onEditProfile: (profile: types.Profile) => void;
   onConnectProfile: (profile: types.Profile) => void;
@@ -119,7 +120,7 @@ export function Sidebar(props: {
   onSaveSettings: (settings: types.AppSettings) => void | Promise<void>;
   onSettingsDirtyChange?: (dirty: boolean, save: () => Promise<boolean>) => void;
   onOpenData: () => void;
-  onOpenLog: (name: string) => void;
+  onOpenLog: (name: string, sessionLog?: boolean) => void;
   getTerminalLines: (id: string, lineCount: number) => string;
   activeTabId: string;
   tabs: Tab[];
@@ -329,6 +330,7 @@ export function Sidebar(props: {
       x: Math.min(rect.left, window.innerWidth - 210),
       y: rect.bottom + 5,
       items: [
+        ...(props.onBulkProfiles ? [{ label: lang === "zh-CN" ? "批量修改服务器" : "Bulk edit servers", action: props.onBulkProfiles }] : []),
         { label: t(lang, "importProfiles"), action: props.onImportProfiles },
         { label: t(lang, "importOpenSSH"), action: props.onImportOpenSSH },
         { label: t(lang, "exportProfiles"), action: props.onExportProfiles },

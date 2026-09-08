@@ -4,6 +4,7 @@ go 1.26.8
 
 require (
 	github.com/Microsoft/go-winio v0.6.2
+	github.com/charmbracelet/x/ansi v0.10.1
 	github.com/charmbracelet/x/xpty v0.1.3
 	github.com/getlantern/systray v1.2.2
 	github.com/pkg/sftp v1.13.10
@@ -41,8 +42,10 @@ require (
 	github.com/leaanthony/gosod v1.0.4 // indirect
 	github.com/leaanthony/slicer v1.6.0 // indirect
 	github.com/leaanthony/u v1.1.1 // indirect
+	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/mattn/go-runewidth v0.0.16 // indirect
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect

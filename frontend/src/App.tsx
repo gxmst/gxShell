@@ -34,6 +34,12 @@ import { ProgressBar } from "./components/ProgressBar/ProgressBar";
 import { ToastStack } from "./components/ToastStack";
 import { TransfersProvider, type TransferHistoryItem } from "./hooks/useTransfers";
 import { BrowserOpenURL, EventsOn, OnFileDrop, OnFileDropOff } from "../wailsjs/runtime/runtime";
+import { ReadSessionLogFile, UpdateProfilesBatch } from "../wailsjs/go/app/App";
+import { BulkProfilesModal } from "./components/modals/BulkProfilesModal";
+import { reconcileSplit, replaceSplitIds, splitPaneIds } from "./utils/splitPane";
+import { useNamedWorkspaces } from "./hooks/useNamedWorkspaces";
+import { WorkspacesModal } from "./components/modals/WorkspacesModal";
+import { PanelsTopLeft } from "lucide-react";
 import { isSupportedDocumentPath } from "./utils/textFiles";
 import { shellQuote } from "./utils/shellQuote";
 import { t } from "./i18n";
@@ -98,6 +104,8 @@ function App() {
     setDrawer(next);
   }, [setDrawer]);
   const [profileModal, setProfileModal] = useState<types.Profile | null>(null);
+  const [bulkProfilesOpen, setBulkProfilesOpen] = useState(false);
+  const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [revokingCliTrustID, setRevokingCliTrustID] = useState("");
   const [quickConnectOpen, setQuickConnectOpen] = useState(false);
   const [commandModal, setCommandModal] = useState<types.CommandTemplate | null>(null);
@@ -117,6 +125,7 @@ function App() {
   const [logViewer, setLogViewer] = useState<{ name: string; content: string } | null>(null);
   const [floatingTabIds, setFloatingTabIds] = usePersistedState<string[]>("gx:floatingTabIds", []);
   const [splitPane, setSplitPane] = useState<SplitPane | null>(null);
+  const layoutTabsRef = useRef<Tab[]>([]);
   const [ctxMenu, setCtxMenu] = useState<AppContextMenu | null>(null);
   const [pasteRequest, setPasteRequest] = useState<TerminalPasteRequest | null>(null);
   const [batchCommandRequest, setBatchCommandRequest] = useState<BatchCommandRequest | null>(null);
@@ -317,7 +326,11 @@ function App() {
   const handleTerminalSearchResults = useCallback((id: string, index: number, count: number) => {
     setTerminalSearchResult({ id, index, count });
   }, []);
-  const activeTerminal = useTerminal(sessions.activeTab, activeIsTerminal, profileState.settings, notify, sidebarCollapsed, splitPane, broadcastRef, linkHandlersRef, setCtxMenu, handleTerminalSearchResults, setPasteRequest);
+  const terminalOverrides = useMemo(() => Object.fromEntries(sessions.tabs.flatMap((tab) => {
+    const terminal = profileState.profiles.find((profile) => profile.id === tab.profileId)?.terminal;
+    return terminal ? [[tab.id, terminal]] : [];
+  })), [sessions.tabs, profileState.profiles]);
+  const activeTerminal = useTerminal(sessions.activeTab, activeIsTerminal, profileState.settings, notify, sidebarCollapsed, splitPane, broadcastRef, linkHandlersRef, setCtxMenu, handleTerminalSearchResults, setPasteRequest, terminalOverrides);
   const { writeOutput, disposeTerminal, findNext, findPrev, focusTerminal, refitTerminal, reattachTerminal } = activeTerminal;
   terminalBridge.current.disposeTerminal = disposeTerminal;
 
@@ -337,6 +350,7 @@ function App() {
     profiles: profileState.profiles,
     setTabs: sessions.setTabs,
     setActiveTab: sessions.setActiveTab,
+    restoreActiveTab: sessions.restoreActiveTab,
     setDrawer: requestDrawer,
     notify,
     language: profileState.settings?.language || "en",
@@ -369,6 +383,9 @@ function App() {
 
     const unsubRecordingError = EventsOn("recording:error", (payload: { error?: string }) => {
       notify(payload?.error || "Failed to finalize recording", "error");
+    });
+    const unsubSessionLogError = EventsOn("session-log:error", (payload: { error?: string }) => {
+      notify((langRef.current === "zh-CN" ? "会话日志已停止：" : "Session logging stopped: ") + (payload?.error || "unknown error"), "error");
     });
 
     // Surface local CLI HTTP server startup failures (e.g. port already in
@@ -420,6 +437,7 @@ function App() {
       if (unsubFileOpen) unsubFileOpen();
       if (unsubExternalFileOpen) unsubExternalFileOpen();
       if (unsubRecordingError) unsubRecordingError();
+      unsubSessionLogError?.();
       if (unsubCliServerError) unsubCliServerError();
       if (unsubTrayNewConnection) unsubTrayNewConnection();
       if (unsubTrayOpenMarkdown) unsubTrayOpenMarkdown();
@@ -465,7 +483,7 @@ function App() {
 
   useEffect(() => {
     const tabIds = new Set(sessions.tabs.map((t) => t.id));
-    setFloatingTabIds((prev) => prev.filter((id) => tabIds.has(id)));
+    setFloatingTabIds((prev) => { const next = prev.filter((id) => tabIds.has(id)); return next.length === prev.length ? prev : next; });
     setAutomationActivity((prev) => {
       const next = Object.fromEntries(Object.entries(prev).filter(([id]) => tabIds.has(id)));
       return Object.keys(next).length === Object.keys(prev).length ? prev : next;
@@ -478,10 +496,10 @@ function App() {
         delete automationClearTimers.current[id];
       }
     }
-    if (splitPane && (!tabIds.has(splitPane.left) || !tabIds.has(splitPane.right))) {
-      setSplitPane(null);
-    }
-  }, [sessions.tabs]);
+    const before = layoutTabsRef.current;
+    layoutTabsRef.current = sessions.tabs;
+    setSplitPane((split) => reconcileSplit(split, before, sessions.tabs, floatingTabIds));
+  }, [sessions.tabs, floatingTabIds, setFloatingTabIds]);
 
   useEffect(() => {
     const offData = EventsOn("terminal:data", (payload: { sessionId: string; data: string; runtimeId?: string; generation?: number }) => {
@@ -489,8 +507,7 @@ function App() {
       writeOutput(payload.sessionId, payload.data);
       const split = splitPaneRef.current;
       const visibleInWorkspace = payload.sessionId === activeTabIdRef.current
-        || split?.left === payload.sessionId
-        || split?.right === payload.sessionId
+        || (splitPaneIds(split).includes(activeTabIdRef.current) && splitPaneIds(split).includes(payload.sessionId))
         || floatingTabIdsRef.current.includes(payload.sessionId);
       const userCanSeeOutput = document.visibilityState === "visible" && document.hasFocus() && visibleInWorkspace;
       if (!userCanSeeOutput) {
@@ -527,8 +544,8 @@ function App() {
     if (document.visibilityState !== "visible" || !document.hasFocus()) return;
     const visible = new Set<string>();
     if (activeTabIdRef.current) visible.add(activeTabIdRef.current);
-    if (splitPaneRef.current?.left) visible.add(splitPaneRef.current.left);
-    if (splitPaneRef.current?.right) visible.add(splitPaneRef.current.right);
+    const panes = splitPaneIds(splitPaneRef.current);
+    if (panes.includes(activeTabIdRef.current)) panes.forEach((id) => visible.add(id));
     floatingTabIdsRef.current.forEach((id) => visible.add(id));
     sessions.setTabs((items) => {
       let changed = false;
@@ -683,9 +700,11 @@ function App() {
     const target = tabsRef.current.find((tab) => tab.id === id);
     if (!target) return;
     setSplitPane((current) => {
-      if (!current || current.left === id || current.right === id) return current;
-      const replaceLeft = current.left === activeTabIdRef.current;
-      return replaceLeft ? { ...current, left: id } : { ...current, right: id };
+      if (!current || target.type === "markdown" || splitPaneIds(current).includes(id)) return current;
+      const ids = splitPaneIds(current);
+      const index = Math.max(0, ids.indexOf(activeTabIdRef.current));
+      ids[index] = id;
+      return replaceSplitIds(current, ids);
     });
     sessions.setActiveTab(id);
     sessions.setTabs((items) => items.map((tab) => tab.id === id && tab.unread ? { ...tab, unread: false } : tab));
@@ -724,20 +743,34 @@ function App() {
     () => sessions.tabs.filter((tab) => !floatingTabIds.includes(tab.id)),
     [floatingTabIds, sessions.tabs],
   );
+  const namedWorkspaces = useNamedWorkspaces({
+    sessions, profiles: profileState.profiles, floating: floatingTabIds, split: splitPane, setSplit: setSplitPane,
+    dock: (ids) => setFloatingTabIds((current) => { const next = current.filter((id) => !ids.includes(id)); return next.length === current.length ? current : next; }),
+    language: profileState.settings?.language || "en",
+  });
+  const workspaceEligible = visibleTabs.filter((tab) => tab.type === "markdown"
+    ? tab.markdownSource !== "remote" && !!tab.filePath
+    : !tab.local && profileState.profiles.some((profile) => profile.id === tab.profileId)).length;
 
   // Split toggling moved up here with the tab strip. Toggling off refits both
   // panes after the layout settles; toggling on picks the neighbour that is not
   // already the active tab so the split never pairs a tab with itself.
   const handleSplitToggle = useCallback((tabId: string, direction: SplitDirection) => {
-    const visible = tabsRef.current.filter((tab) => !floatingTabIdsRef.current.includes(tab.id));
+    const visible = tabsRef.current.filter((tab) => !floatingTabIdsRef.current.includes(tab.id) && tab.type !== "markdown");
+    if (!visible.some((tab) => tab.id === tabId)) return;
     const current = splitPaneRef.current;
     const splitLive = !!current
       && visible.some((tab) => tab.id === current.left)
       && visible.some((tab) => tab.id === current.right);
-    if (splitLive && current) {
-      const { left, right } = current;
+    if (splitLive && current && current.direction === direction) {
       setSplitPane(null);
-      window.setTimeout(() => { refitTerminal(left); refitTerminal(right); }, 80);
+      window.setTimeout(() => splitPaneIds(current).forEach(refitTerminal), 80);
+      return;
+    }
+    if (direction === "grid") {
+      const ids = [tabId, ...visible.filter((tab) => tab.id !== tabId).map((tab) => tab.id)].slice(0, 4);
+      if (ids.length < 4) return;
+      setSplitPane({ left: ids[0], right: ids[1], bottom: [ids[2], ids[3]], direction, ratio: 0.5, rowRatio: 0.5 });
       return;
     }
     const other = visible.find((tab) => tab.id !== tabId && tab.id !== activeTabIdRef.current);
@@ -1427,7 +1460,7 @@ function App() {
           automationActivity={automationActivity}
           dirtyTabIds={dirtyTabIds}
           language={profileState.settings?.language || "en"}
-          rightAccessory={<ActivityCenter
+          rightAccessory={<><button className="tab-action" title={profileState.settings?.language === "zh-CN" ? "工作区" : "Workspaces"} aria-label={profileState.settings?.language === "zh-CN" ? "工作区" : "Workspaces"} onClick={() => { sessions.beginFocusRequest(); setWorkspacesOpen(true); }}><PanelsTopLeft size={15} /></button><ActivityCenter
             activities={activities}
             unreadCount={unreadActivityCount}
             locale={profileState.settings?.language || "en"}
@@ -1437,7 +1470,7 @@ function App() {
             onMarkAllRead={markAllActivitiesRead}
             onDismiss={removeActivity}
             onClear={clearActivities}
-          />}
+          /></>}
         />}
       />
       <main className="workspace">
@@ -1469,6 +1502,7 @@ function App() {
           onOpenRecentMarkdown={handleOpenRecentMarkdown}
           onRemoveRecentMarkdown={handleRemoveRecentMarkdown}
           onNewProfile={() => setProfileModal(emptyProfile())}
+          onBulkProfiles={() => setBulkProfilesOpen(true)}
           onQuickConnect={() => setQuickConnectOpen(true)}
           onEditProfile={(profile) => setProfileModal(new types.Profile(profile))}
           onConnectProfile={sessions.connectProfile}
@@ -1517,9 +1551,9 @@ function App() {
             notify(t(profileState.settings?.language || "en", "settingsSaved"), "success");
           }}
           onOpenData={OpenDataDir}
-          onOpenLog={async (name) => {
+          onOpenLog={async (name, sessionLog) => {
             try {
-              const content = await ReadLogFile(name);
+              const content = await (sessionLog ? ReadSessionLogFile(name) : ReadLogFile(name));
               setLogViewer({ name, content });
             } catch { notify(t(profileState.settings?.language || "en", "logReadFailed"), "error"); }
           }}
@@ -1626,7 +1660,9 @@ function App() {
           setRenameTabRequest(null);
         }}
       />}
-      {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={(id) => setDeleteProfileRequest({ id, name: profileModal.name || profileModal.host, closeEditor: true })} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify(t(profileState.settings?.language || "en", "profileCopied"), "info"); }} onDirtyChange={handleProfileDirtyChange} />}
+      {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileState.settings?.language || "en"} terminalDefaults={profileState.settings?.terminal} sessionLogDefaults={profileState.settings?.sessionLog} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={(id) => setDeleteProfileRequest({ id, name: profileModal.name || profileModal.host, closeEditor: true })} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify(t(profileState.settings?.language || "en", "profileCopied"), "info"); }} onDirtyChange={handleProfileDirtyChange} />}
+      {bulkProfilesOpen && <BulkProfilesModal profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setBulkProfilesOpen(false)} onSave={async (ids, patch) => { await UpdateProfilesBatch(ids, patch); await profileState.reload(); notify(profileState.settings?.language === "zh-CN" ? "批量修改已保存" : "Batch changes saved", "success"); }} />}
+      {workspacesOpen && <WorkspacesModal manager={namedWorkspaces} language={profileState.settings?.language || "en"} eligible={workspaceEligible} excluded={visibleTabs.length - workspaceEligible} onClose={() => setWorkspacesOpen(false)} />}
       {quickConnectOpen && <QuickConnectModal
         language={profileState.settings?.language || "en"}
         onClose={() => setQuickConnectOpen(false)}

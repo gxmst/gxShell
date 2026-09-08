@@ -1,3 +1,7 @@
+import type { types } from "../../wailsjs/go/models";
+
+export const defaultSessionLog: types.SessionLogSettings = { enabled: false, timestamps: true, maxFileMb: 10, maxSessionMb: 100 };
+
 /** xterm accepts line heights only in this range. Keep the same contract for
  * settings loaded from older or hand-edited configuration files. */
 export const DEFAULT_LINE_HEIGHT = 1.25;

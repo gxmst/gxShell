@@ -1,0 +1,23 @@
+.workbench-fields { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; padding: 12px 0; border-top: 1px solid var(--border); font-size: 12px; }
+.workbench-fields > * { min-width: 0; }
+.bulk-profile-list { height: 180px; overflow: auto; border-block: 1px solid var(--border); }
+.bulk-profile-row { display: flex; align-items: center; gap: 10px; padding: 7px 4px; font-size: 12px; }
+.bulk-profile-row > span { display: grid; min-width: 0; overflow-wrap: anywhere; }
+.bulk-profile-row small { color: var(--muted); }
+.bulk-field { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(100px, 1fr); align-items: center; gap: 10px; }
+.workspace-saved-list { max-height: 340px; overflow: auto; border-block: 1px solid var(--border); }
+.workspace-name-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.workspace-name-row .input { flex: 1; min-width: 0; width: 0; }
+.workspace-name-row button { flex-shrink: 0; white-space: nowrap; }
+.workspace-saved-row { display: flex; align-items: center; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.workspace-open { display: flex; flex: 1; min-width: 0; align-items: center; gap: 10px; text-align: left; padding: 5px; font-size: 12px; }
+.workspace-open > span { display: grid; min-width: 0; overflow-wrap: anywhere; }
+.workspace-open small { color: var(--muted); }
+.workspace-issues { max-height: 160px; overflow: auto; color: var(--bad); font-size: 12px; overflow-wrap: anywhere; padding-top: 8px; }
+.highlight-rule-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 64px 28px; gap: 5px; align-items: center; }
+.highlight-rule-row input[type="color"] { width: 28px; height: 26px; padding: 1px; border: 1px solid var(--border); background: transparent; }
+.highlight-rule-row .input { min-width: 0; }
+.highlight-rule-case { grid-column: 1 / 3; justify-self: start; white-space: nowrap; }
+.highlight-rule-actions { grid-column: 3 / -1; display: flex; justify-content: flex-end; gap: 5px; }
+.highlight-rule-actions .icon-btn { flex-shrink: 0; }
+.highlight-preview { min-height: 32px; margin: 0; padding: 8px; border: 1px solid var(--border); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--bg); }

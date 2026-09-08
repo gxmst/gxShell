@@ -595,3 +595,13 @@ export function SetWindowBackgroundColour(arg1, arg2, arg3) {
 export function ToggleMaximiseWindow() {
   return window['go']['app']['App']['ToggleMaximiseWindow']();
 }
+export function ListSessionLogFiles() {
+  return window['go']['app']['App']['ListSessionLogFiles']();
+}
+
+export function ReadSessionLogFile(name) {
+  return window['go']['app']['App']['ReadSessionLogFile'](name);
+}
+export function UpdateProfilesBatch(ids, patch) {
+  return window['go']['app']['App']['UpdateProfilesBatch'](ids, patch);
+}

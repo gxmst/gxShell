@@ -22,7 +22,7 @@ export function useHotkeys(options: HotkeyOptions) {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
       const target = event.target instanceof Element ? event.target : null;
       // xterm receives keystrokes through a real <textarea>, so a focused
       // terminal reports one as event.target. Treating it as a form field

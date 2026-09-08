@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Circle, Columns2, FileText, List, Pin, PinOff, Plus, Radio, RefreshCw, Rows2, Server, Terminal, X } from "lucide-react";
 import type { AutomationIndicator, SplitDirection, Tab } from "../../types";
+import { Grid2X2 } from "lucide-react";
 import { stateClass } from "../../utils/format";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
@@ -286,7 +287,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
               <button
                 className="tab-action-item"
                 role="menuitem"
-                disabled={!active || tabs.length < 2}
+                disabled={!active || active.type === "markdown" || tabs.filter((tab) => tab.type !== "markdown").length < 2}
                 onClick={() => { setToolsMenuOpen(false); if (active) onSplitToggle?.(active.id, "horizontal"); }}
                 title={t(lang, "splitHorizontal")}
               >
@@ -296,13 +297,19 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
               <button
                 className="tab-action-item"
                 role="menuitem"
-                disabled={!active || tabs.length < 2}
+                disabled={!active || active.type === "markdown" || tabs.filter((tab) => tab.type !== "markdown").length < 2}
                 onClick={() => { setToolsMenuOpen(false); if (active) onSplitToggle?.(active.id, "vertical"); }}
                 title={t(lang, "splitVertical")}
               >
                 <Rows2 size={13} />
                 <span>{t(lang, "splitVertical")}</span>
               </button>
+              <button
+                className="tab-action-item"
+                role="menuitem"
+                disabled={!active || active.type === "markdown" || tabs.filter((tab) => tab.type !== "markdown").length < 4}
+                onClick={() => { setToolsMenuOpen(false); if (active) onSplitToggle?.(active.id, "grid"); }}
+              ><Grid2X2 size={13} /><span>{lang === "zh-CN" ? "四分屏" : "Four panes"}</span></button>
               <button
                 className={clsx("tab-action-item", broadcastInput && "active")}
                 role="menuitem"

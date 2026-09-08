@@ -9,6 +9,29 @@ import (
 	"unicode/utf8"
 )
 
+func TestPumpSustainedConcurrentUnicodeStreams(t *testing.T) {
+	const workers = 20
+	input := strings.Repeat("\x1b[32m\u4e2d\u6587\x1b[0m\r\n", 8192)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var output strings.Builder
+			Pump(strings.NewReader(input), make(chan struct{}), func(chunk string) {
+				if !utf8.ValidString(chunk) {
+					t.Error("invalid UTF-8 output")
+				}
+				output.WriteString(chunk)
+			})
+			if output.String() != input {
+				t.Error("terminal output changed or was lost")
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 // scriptedReader returns each script entry from one Read call, then blocks
 // until closed (like a live terminal stream with no more output).
 type scriptedReader struct {

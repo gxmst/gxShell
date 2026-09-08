@@ -86,6 +86,97 @@ describe("useSessions workspace restore", () => {
     vi.unstubAllGlobals();
   });
 
+  it("preserves a later tab selection when a manual connection finishes", async () => {
+    const profile = makeProfile("one");
+    profile.rememberPassword = true;
+    let complete!: (info: types.SessionInfo) => void;
+    appMocks.connect.mockReturnValue(new Promise<types.SessionInfo>((resolve) => { complete = resolve; }));
+    const { result } = renderHook(() => useSessions({ profiles: [profile], notify: vi.fn(), reload: vi.fn(async () => undefined), disposeTerminal: vi.fn(), restoreWorkspace: false }));
+    let connecting!: Promise<void>;
+    act(() => { connecting = result.current.connectProfile(profile); });
+    act(() => { result.current.setActiveTab("other-server"); });
+    await act(async () => {
+      complete(new types.SessionInfo({ id: "new", profileId: profile.id, state: "connected" }));
+      await connecting;
+    });
+    expect(result.current.tabs.some((tab) => tab.id === "new")).toBe(true);
+    expect(result.current.activeTab).toBe("other-server");
+    act(() => result.current.restoreActiveTab("saved-server"));
+    expect(result.current.activeTab).toBe("other-server");
+  });
+
+  it("does not restore focus after the user deliberately reselects the current tab", async () => {
+    const { result } = renderHook(() => useSessions({ profiles: [], notify: vi.fn(), reload: vi.fn(async () => undefined), disposeTerminal: vi.fn(), restoreWorkspace: false }));
+    act(() => result.current.restoreActiveTab("initial"));
+    act(() => result.current.setActiveTab("initial"));
+    act(() => result.current.restoreActiveTab("saved"));
+    expect(result.current.activeTab).toBe("initial");
+  });
+
+  it("keeps a shared replacement alive when manual reconnect supersedes an automatic attempt", async () => {
+    vi.useFakeTimers();
+    const profile = makeProfile("one");
+    profile.autoReconnect = true;
+    let finish!: (info: types.SessionInfo) => void;
+    const pending = new Promise<types.SessionInfo>((resolve) => { finish = resolve; });
+    appMocks.connect.mockReturnValue(pending);
+    appMocks.reconnect.mockReturnValue(pending);
+    appMocks.disconnect.mockResolvedValue(undefined);
+    const { result } = renderHook(() => useSessions({ profiles: [profile], notify: vi.fn(), reload: vi.fn(async () => undefined), disposeTerminal: vi.fn(), restoreWorkspace: false }));
+    act(() => result.current.setTabs([{ id: "old", profileId: "one", title: "one", state: "connected" }]));
+    act(() => appMocks.events.get("terminal:disconnected")?.({ id: "old", state: "disconnected" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    let manual!: Promise<void>;
+    act(() => { manual = result.current.reconnectTab(result.current.tabs[0]); });
+    await act(async () => { finish(new types.SessionInfo({ id: "new", profileId: "one", state: "connected" })); await manual; });
+    expect(result.current.tabs[0].id).toBe("new");
+    expect(appMocks.disconnect).not.toHaveBeenCalledWith("new");
+  });
+
+  it("retries after the network returns and stops pending retries on unmount", async () => {
+    vi.useFakeTimers();
+    const profile = makeProfile("one");
+    profile.autoReconnect = true;
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    const { result, unmount } = renderHook(() => useSessions({ profiles: [profile], notify: vi.fn(), reload: vi.fn(async () => undefined), disposeTerminal: vi.fn(), restoreWorkspace: false }));
+    act(() => result.current.setTabs([{ id: "old", profileId: "one", title: "one", state: "connected" }]));
+    act(() => appMocks.events.get("terminal:disconnected")?.({ id: "old", state: "disconnected" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    expect(appMocks.connect).not.toHaveBeenCalled();
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    act(() => window.dispatchEvent(new Event("online")));
+    expect(result.current.tabs[0].state).toBe("reconnecting");
+    unmount();
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(appMocks.connect).not.toHaveBeenCalled();
+  });
+
+  it("recovers when the network drops during an automatic reconnect", async () => {
+    vi.useFakeTimers();
+    const profile = makeProfile("one");
+    profile.autoReconnect = true;
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    let fail!: (error: Error) => void;
+    appMocks.connect.mockReturnValueOnce(new Promise<types.SessionInfo>((_, reject) => { fail = reject; }));
+    appMocks.connect.mockResolvedValue(new types.SessionInfo({ id: "new", profileId: "one", state: "connected" }));
+    const { result } = renderHook(() => useSessions({ profiles: [profile], notify: vi.fn(), reload: vi.fn(async () => undefined), disposeTerminal: vi.fn(), restoreWorkspace: false }));
+    act(() => {
+      result.current.setTabs([{ id: "old", profileId: "one", title: "one", state: "connected" }]);
+      result.current.setActiveTab("old");
+    });
+    act(() => appMocks.events.get("terminal:disconnected")?.({ id: "old", state: "disconnected" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(appMocks.connect).toHaveBeenCalledTimes(1);
+    online.mockReturnValue(false);
+    await act(async () => { fail(new Error("network unavailable")); });
+    online.mockReturnValue(true);
+    act(() => window.dispatchEvent(new Event("online")));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(appMocks.connect).toHaveBeenCalledTimes(2);
+    expect(result.current.tabs[0]).toMatchObject({ id: "new", state: "connected" });
+    expect(result.current.activeTab).toBe("new");
+  });
+
   it.each(["manual", "cli", "automatic", "quick"])("rebinds remote documents after %s reconnect", async (mode) => {
     const profile = makeProfile(mode === "quick" ? "quick-one" : "one");
     profile.autoReconnect = true;

@@ -5,9 +5,12 @@ import { BrowserOpenURL } from "../../../wailsjs/runtime/runtime";
 import { types, version as versionModel } from "../../../wailsjs/go/models";
 import { appThemes, fontPresets, terminalThemes, themeDisplayName } from "../../constants";
 import { normalizeAppTheme } from "../../utils/format";
-import { normalizeFontSize, normalizeLineHeight, normalizeScrollbackLines } from "../../utils/terminalSettings";
+import { defaultSessionLog, normalizeFontSize, normalizeLineHeight, normalizeScrollbackLines } from "../../utils/terminalSettings";
 import { t } from "../../i18n";
 import { KnownHostsManager } from "./KnownHostsManager";
+import { HighlightRulesEditor } from "./HighlightRulesEditor";
+import { SessionLogFields } from "./SessionLogFields";
+import { highlightRuleError } from "../../utils/highlight";
 
 const themePreview: Record<string, { bg: string; surface: string; accent: string }> = {
   Light: { bg: "#e8edf4", surface: "#ffffff", accent: "#2563eb" },
@@ -102,6 +105,8 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
   // prompt can keep itself open on failure instead of discarding the edits.
   const commit = useCallback(async () => {
     if (!dirty) return true;
+    const ruleError = (draft.highlightRules || []).map(highlightRuleError).find(Boolean);
+    if (ruleError) { onNotify?.(ruleError, "error"); return false; }
     try {
       await onSave(normalizedDraft);
       return true;
@@ -109,7 +114,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
       onNotify?.(String(err), "error");
       return false;
     }
-  }, [dirty, normalizedDraft, onSave, onNotify]);
+  }, [dirty, draft.highlightRules, normalizedDraft, onSave, onNotify]);
 
   // Publish the dirty state upward so closing or switching the drawer can stop
   // and ask instead of silently dropping the edits. The save closure is passed
@@ -314,6 +319,8 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
           </div>
           <SettingsToggle checked={draft.terminal.cursorBlink} onChange={(checked) => updateTerm({ cursorBlink: checked })} label={t(lang, "cursorBlinkLabel")} />
           <SettingsToggle checked={draft.smartHighlight !== false} onChange={(checked) => update({ smartHighlight: checked })} label={t(lang, "clickableLinks")} hint={t(lang, "clickableLinksHint")} />
+          <HighlightRulesEditor rules={draft.highlightRules || []} onChange={(highlightRules) => update({ highlightRules })} zh={zh} />
+          <SessionLogFields value={draft.sessionLog || defaultSessionLog} onChange={(sessionLog) => update({ sessionLog })} zh={zh} />
         </SettingsSection>
 
         <SettingsSection icon={<Activity size={15} />} title={zh ? "连接与自动化" : "Connections & automation"} description={zh ? "监控频率、连接保护和 CLI 接入" : "Monitoring cadence, connection safeguards and CLI access"}>

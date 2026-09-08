@@ -238,6 +238,13 @@ const (
 // heights and cursor styles, while an extreme scrollback value can make a new
 // terminal unusable or consume excessive memory.
 func NormalizeSettings(settings types.AppSettings) types.AppSettings {
+	settings.Terminal = NormalizeTerminalSettings(settings.Terminal)
+	settings.SessionLog = NormalizeSessionLog(settings.SessionLog)
+	return settings
+}
+
+func NormalizeTerminalSettings(terminal types.TerminalSettings) types.TerminalSettings {
+	settings := types.AppSettings{Terminal: terminal}
 	defaults := DefaultSettings()
 	if settings.Terminal.FontSize < minTerminalFontSize || settings.Terminal.FontSize > maxTerminalFontSize {
 		settings.Terminal.FontSize = defaults.Terminal.FontSize
@@ -254,7 +261,13 @@ func NormalizeSettings(settings types.AppSettings) types.AppSettings {
 	default:
 		settings.Terminal.CursorStyle = defaults.Terminal.CursorStyle
 	}
-	return settings
+	if strings.TrimSpace(settings.Terminal.FontFamily) == "" {
+		settings.Terminal.FontFamily = defaults.Terminal.FontFamily
+	}
+	if settings.Terminal.ThemeName == "" {
+		settings.Terminal.ThemeName = defaults.Terminal.ThemeName
+	}
+	return settings.Terminal
 }
 
 // MigrateSettingsDefaults backfills fields that older settings.json files did

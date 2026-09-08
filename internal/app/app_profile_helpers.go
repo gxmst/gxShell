@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"gxShell/backend/config"
 	"gxShell/backend/types"
 )
 
@@ -95,6 +96,14 @@ func (a *App) touchProfile(id string) {
 
 // normalizeProfile sets default values for a profile.
 func normalizeProfile(profile *types.Profile) {
+	if profile.Terminal != nil {
+		normalized := config.NormalizeTerminalSettings(*profile.Terminal)
+		profile.Terminal = &normalized
+	}
+	if profile.SessionLog != nil {
+		normalized := config.NormalizeSessionLog(*profile.SessionLog)
+		profile.SessionLog = &normalized
+	}
 	if profile.Port <= 0 {
 		profile.Port = 22
 	}

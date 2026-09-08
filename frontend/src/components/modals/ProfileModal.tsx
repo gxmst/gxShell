@@ -4,6 +4,9 @@ import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ModalShell, Label } from "./ModalShell";
+import { TerminalPreferencesFields } from "../SettingsPanel/TerminalPreferencesFields";
+import { SessionLogFields } from "../SettingsPanel/SessionLogFields";
+import { defaultSessionLog } from "../../utils/terminalSettings";
 
 // The post-connect textareas hold one entry per line, but the profile stores an
 // array. Blank lines are dropped on the way into the array so a trailing newline
@@ -12,7 +15,7 @@ function splitLines(value: string): string[] {
   return value.split("\n").filter((line) => line.trim() !== "");
 }
 
-export function ProfileModal(props: { profile: types.Profile; profiles: types.Profile[]; language: string; onClose: () => void; onSave: (profile: types.Profile) => void | Promise<void>; onPickKey: () => Promise<string>; onDelete: (id: string) => void; onDuplicate: (id: string) => void | Promise<void>; onDirtyChange?: (dirty: boolean) => void }) {
+export function ProfileModal(props: { profile: types.Profile; profiles: types.Profile[]; language: string; terminalDefaults?: types.TerminalSettings; sessionLogDefaults?: types.SessionLogSettings; onClose: () => void; onSave: (profile: types.Profile) => void | Promise<void>; onPickKey: () => Promise<string>; onDelete: (id: string) => void; onDuplicate: (id: string) => void | Promise<void>; onDirtyChange?: (dirty: boolean) => void }) {
   const lang = props.language;
   const [draft, setDraft] = useState(new types.Profile(props.profile));
   const [error, setError] = useState("");
@@ -206,6 +209,14 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
         <Label text={t(lang, "description")} className="col-span-2"><textarea className="input compact-input min-h-[56px]" value={draft.description} onChange={(e) => update({ description: e.target.value })} placeholder={lang === "zh-CN" ? "可选备注说明" : "Optional notes"} /></Label>
       </div>
 
+      {props.terminalDefaults && <div className="workbench-fields">
+        <label className="check"><input type="checkbox" checked={!!draft.terminal} onChange={(e) => update({ terminal: e.target.checked ? new types.TerminalSettings(props.terminalDefaults) : undefined })} />{lang === "zh-CN" ? "使用独立终端配置" : "Use profile terminal preferences"}</label>
+        {draft.terminal && <TerminalPreferencesFields value={draft.terminal} onChange={(terminal) => update({ terminal })} language={lang} />}
+      </div>}
+      <div className="workbench-fields">
+        <label className="check"><input type="checkbox" checked={!!draft.sessionLog} onChange={(e) => update({ sessionLog: e.target.checked ? { ...(props.sessionLogDefaults || defaultSessionLog) } : undefined })} />{lang === "zh-CN" ? "使用独立日志设置" : "Use profile logging preferences"}</label>
+        {draft.sessionLog && <SessionLogFields value={draft.sessionLog} onChange={(sessionLog) => update({ sessionLog })} zh={lang === "zh-CN"} />}
+      </div>
       <div className="profile-modal-tunnel-header">
         <span className="profile-modal-tunnel-title">{t(lang, "tunnelRules")}</span>
         <button className="icon-btn compact-icon" onClick={addTunnel} title={t(lang, "addTunnel")}><Plus size={12} /></button>

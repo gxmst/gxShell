@@ -44,6 +44,7 @@ type PendingRestoreMetadata = Pick<Tab, "title" | "customTitle" | "pinned"> & {
 
 type SessionOpenOptions = {
   preserveActiveTab?: boolean;
+  focusRevision?: number;
 };
 
 const rememberRuntimeGeneration = (generations: Map<string, number>, runtimeID: string, generation: number) => {
@@ -106,7 +107,20 @@ export async function restoreProfilesInBatches(
 
 export function useSessions(options: UseSessionsOptions) {
   const [tabs, setTabs] = useState<Tab[]>([]);
-  const [activeTab, setActiveTab] = useState("");
+  const [activeTab, setActiveTabState] = useState("");
+  const focusRevision = useRef(0);
+  const beginFocusRequest = useCallback(() => ++focusRevision.current, []);
+  const isFocusRequestCurrent = useCallback((revision: number) => focusRevision.current === revision, []);
+  const setActiveTab = useCallback((value: React.SetStateAction<string>) => {
+    focusRevision.current += 1;
+    setActiveTabState(value);
+  }, []);
+  const finishFocusRequest = useCallback((id: string, revision: number) => {
+    setActiveTabState((current) => focusRevision.current === revision ? id : current);
+  }, []);
+  const restoreActiveTab = useCallback((id: string) => {
+    finishFocusRequest(id, 0);
+  }, [finishFocusRequest]);
   const [secretRequest, setSecretRequest] = useState<SecretRequest | null>(null);
   const workspaceProfiles = useRef(readWorkspaceProfiles());
   const workspaceRestoreStarted = useRef(false);
@@ -147,6 +161,7 @@ export function useSessions(options: UseSessionsOptions) {
   // user initiated connection. Keep those events from moving focus away from
   // a local document that was opened during startup.
   const preserveFocusProfiles = useRef<Set<string>>(new Set());
+  const connectionFocus = useRef<Map<string, number>>(new Map());
   const connectingSessionProfiles = useRef<Map<string, string>>(new Map());
   // Connect failures are delivered both as terminal:error and as a rejected
   // Connect promise. Remember the profile whose event was already surfaced so
@@ -156,7 +171,7 @@ export function useSessions(options: UseSessionsOptions) {
   // Auto-reconnect bookkeeping. Keyed by the tab id that owned the session that
   // dropped. userClosing marks ids the user is intentionally closing so their
   // disconnect does not trigger a reconnect.
-  const autoReconnect = useRef<Record<string, { attempts: number; timer: number }>>({});
+  const autoReconnect = useRef<Record<string, { attempts: number; timer: number; inFlight?: boolean }>>({});
   const userClosing = useRef<Set<string>>(new Set());
   // Session ids whose backend-owned reconnect this renderer observed on a live
   // tab. The cli-session-replaced handler consumes the record to tell a
@@ -202,7 +217,10 @@ export function useSessions(options: UseSessionsOptions) {
         ? items
         : [...items, { id: info.id, ...runtime, profileId: info.profileId, title: tabTitle(profile, info.name), state: "connecting" }]);
       const preserveActiveTab = preserveFocusProfiles.current.has(info.profileId);
-      setActiveTab((current) => preserveActiveTab ? current || info.id : info.id);
+      const revision = connectionFocus.current.get(info.profileId);
+      if (preserveActiveTab) setActiveTabState((current) => current || info.id);
+      else if (revision !== undefined) finishFocusRequest(info.id, revision);
+      else setActiveTab(info.id);
     });
     const offConnected = EventsOn("terminal:connected", (info: types.SessionInfo) => {
       if (!acceptRuntimeEvent(info)) return;
@@ -249,7 +267,7 @@ export function useSessions(options: UseSessionsOptions) {
       // Do not steal focus from the user's current terminal. If the CLI session
       // is the first tab, make it active so its buffered output has a visible
       // host immediately.
-      setActiveTab((current) => current || info.id);
+      setActiveTabState((current) => current || info.id);
     });
     const offCliSessionRecovering = EventsOn("terminal:cli-session-recovering", (payload: { sessionId: string; runtimeId?: string; generation?: number }) => {
       if (!payload?.sessionId || !acceptRuntimeEvent(payload)) return;
@@ -296,12 +314,12 @@ export function useSessions(options: UseSessionsOptions) {
         }
         return replaced;
       });
-      setActiveTab((current) => current === payload.oldSessionId ? info.id : current);
+      setActiveTabState((current) => current === payload.oldSessionId ? info.id : current);
     });
     return () => {
       offConnecting(); offConnected(); offDisconnected(); offError(); offCliSession(); offCliSessionRecovering(); offCliSessionReplaced();
     };
-  }, [acceptRuntimeEvent, clearAutoReconnect, rememberSessionInfo]);
+  }, [acceptRuntimeEvent, clearAutoReconnect, rememberSessionInfo, finishFocusRequest, setActiveTab]);
 
   // A renderer reload should not make still-running backend sessions vanish.
   // Hydrate the tab strip from the authoritative managers, while merging with
@@ -331,7 +349,7 @@ export function useSessions(options: UseSessionsOptions) {
         }
         return Array.from(byID.values());
       });
-      setActiveTab((current) => current || items[0]?.id || "");
+      setActiveTabState((current) => current || items[0]?.id || "");
     }).catch((err) => notifyRef.current(String(err), "error"))
       .finally(() => { if (!cancelled) setSessionsHydrated(true); });
     return () => { cancelled = true; };
@@ -344,14 +362,16 @@ export function useSessions(options: UseSessionsOptions) {
     setTabs((items) => items.some((tab) => tab.id === info.id)
       ? items.map((tab) => tab.id === info.id ? { ...tab, ...runtime, profileId: info.profileId, title: restore?.customTitle ? restore.title : (tab.customTitle ? tab.title : tabTitle(profile, info.name)), customTitle: restore?.customTitle || tab.customTitle, pinned: restore?.pinned || tab.pinned, state: info.state, error: undefined } : tab)
       : [...items, { id: info.id, ...runtime, profileId: info.profileId, title: restore?.customTitle ? restore.title : tabTitle(profile, info.name), customTitle: restore?.customTitle, pinned: restore?.pinned, state: info.state }]);
-    setActiveTab((current) => sessionOptions.preserveActiveTab ? current || info.id : info.id);
+    if (sessionOptions.preserveActiveTab) setActiveTabState((current) => current || info.id);
+    else if (sessionOptions.focusRevision !== undefined) finishFocusRequest(info.id, sessionOptions.focusRevision);
+    else setActiveTab(info.id);
     if (restore?.closedRecord) {
       const index = closedTabs.current.indexOf(restore.closedRecord);
       if (index >= 0) closedTabs.current.splice(index, 1);
       setClosedTabCount(closedTabs.current.length);
     }
     await reloadRef.current();
-  }, [rememberSessionInfo]);
+  }, [rememberSessionInfo, finishFocusRequest, setActiveTab]);
 
   // A reconnect can finish after the user closes its old tab. Do not leave the
   // newly-created backend session running without a renderer owner. If the new
@@ -360,26 +380,37 @@ export function useSessions(options: UseSessionsOptions) {
   const discardUnclaimedSession = useCallback((oldID: string, info: types.SessionInfo) => {
     const currentTabs = tabsRef.current;
     if (currentTabs.some((item) => item.id === oldID)) return true;
-    if (info.id && !currentTabs.some((item) => item.id === info.id)) {
+    if (info.id && !currentTabs.some((item) => item.id === info.id) && !creatingProfiles.current.has(info.profileId)) {
       void Disconnect(info.id).catch(() => undefined);
     }
     return false;
   }, []);
 
   const openSession = useCallback(async (profile: types.Profile, password: string, passphrase: string, sessionOptions: SessionOpenOptions = {}) => {
+    const request = { ...sessionOptions, focusRevision: sessionOptions.preserveActiveTab ? undefined : sessionOptions.focusRevision ?? beginFocusRequest() };
     notifyRef.current(`Connecting to ${profile.name || profile.host}...`, "info");
     creatingProfiles.current.add(profile.id);
     if (sessionOptions.preserveActiveTab) preserveFocusProfiles.current.add(profile.id);
+    if (request.focusRevision !== undefined) connectionFocus.current.set(profile.id, request.focusRevision);
     try {
       const info = profile.rememberPassword
         ? await Connect(profile.id, 120, 36)
         : await ConnectWithSecrets(profile.id, password, passphrase, 120, 36);
-      await appendSession(profile, info, sessionOptions);
+      await appendSession(profile, info, request);
+      return info.id;
     } finally {
       creatingProfiles.current.delete(profile.id);
       preserveFocusProfiles.current.delete(profile.id);
+      connectionFocus.current.delete(profile.id);
     }
-  }, [appendSession]);
+  }, [appendSession, beginFocusRequest]);
+
+  const connectWorkspaceProfile = useCallback(async (profile: types.Profile, password = "", passphrase = "") => {
+    const existing = tabsRef.current.find((tab) => tab.type !== "markdown" && tab.profileId === profile.id && isSessionBusy(tab.state));
+    if (existing) return existing.id;
+    if (creatingProfiles.current.has(profile.id)) throw new Error("Connection already in progress");
+    return openSession(profile, password, passphrase, { preserveActiveTab: true });
+  }, [openSession]);
 
   const connectProfile = useCallback(async (profile: types.Profile, sessionOptions: SessionOpenOptions = {}) => {
     if (creatingProfiles.current.has(profile.id)) {
@@ -412,7 +443,7 @@ export function useSessions(options: UseSessionsOptions) {
         notifyRef.current(`${profile.name || profile.host}: ${String(err)}`, "error");
       }
     }
-  }, [openSession]);
+  }, [openSession, setActiveTab]);
 
   useEffect(() => {
     if (!sessionsHydrated || workspaceRestoreStarted.current || options.restoreWorkspace === undefined) return;
@@ -446,14 +477,12 @@ export function useSessions(options: UseSessionsOptions) {
       const activeProfileId = workspaceProfiles.current.activeProfileId;
       if (activeProfileId) {
         window.setTimeout(() => {
-          const currentActive = tabsRef.current.find((tab) => tab.id === activeTabRef.current);
-          if (currentActive?.type === "markdown") return;
           const restoredActive = tabsRef.current.find((tab) => tab.type !== "markdown" && tab.profileId === activeProfileId && tab.state === "connected");
-          if (restoredActive) setActiveTab(restoredActive.id);
+          if (restoredActive) restoreActiveTab(restoredActive.id);
         }, 0);
       }
     });
-  }, [connectProfile, options.language, options.profiles, options.restoreWorkspace, sessionsHydrated]);
+  }, [connectProfile, options.language, options.profiles, options.restoreWorkspace, sessionsHydrated, restoreActiveTab]);
 
   useEffect(() => {
     if (!workspaceRestoreReady || options.restoreWorkspace !== true) return;
@@ -476,9 +505,10 @@ export function useSessions(options: UseSessionsOptions) {
       return;
     }
     await openSession(profile, password, passphrase);
-  }, [openSession]);
+  }, [openSession, setActiveTab]);
 
   const connectQuick = useCallback(async (input: types.Profile) => {
+    const revision = beginFocusRequest();
     const profile = new types.Profile({
       ...input,
       id: input.id && input.id.startsWith("quick-") ? input.id : `quick-${crypto.randomUUID()}`,
@@ -487,6 +517,7 @@ export function useSessions(options: UseSessionsOptions) {
     quickProfiles.current.set(profile.id, profile);
     const staleTab = tabsRef.current.find((tab) => tab.type !== "markdown" && tab.profileId === profile.id && (tab.state === "error" || tab.state === "disconnected"));
     if (!staleTab) creatingProfiles.current.add(profile.id);
+    connectionFocus.current.set(profile.id, revision);
     notifyRef.current(`Connecting to ${profile.name || profile.host}...`, "info");
     try {
       const info = await ConnectQuick(profile, 120, 36);
@@ -494,14 +525,15 @@ export function useSessions(options: UseSessionsOptions) {
       if (staleTab) {
         disposeTerminalRef.current(staleTab.id);
         setTabs((items) => replaceSessionTabs(items, staleTab.id, info, tabTitle(profile, info.name)));
-        setActiveTab(info.id);
+        finishFocusRequest(info.id, revision);
       } else {
-        await appendSession(profile, info);
+        await appendSession(profile, info, { focusRevision: revision });
       }
     } finally {
       creatingProfiles.current.delete(profile.id);
+      connectionFocus.current.delete(profile.id);
     }
-  }, [appendSession, rememberSessionInfo]);
+  }, [appendSession, rememberSessionInfo, beginFocusRequest, finishFocusRequest]);
 
   const replaceReconnectedTab = useCallback((oldID: string, info: types.SessionInfo) => {
     // A reconnect answered with the same session id means the backend reused a
@@ -518,28 +550,30 @@ export function useSessions(options: UseSessionsOptions) {
       // session's terminal, which is keyed by id.
       return replaceSessionTabs(items, oldID, info, tabTitle(profile, info.name));
     });
-    setActiveTab(info.id);
+    setActiveTabState((current) => current === oldID ? info.id : current);
     return true;
   }, [discardUnclaimedSession, rememberSessionInfo]);
 
   const connectLocal = useCallback(async () => {
+    const revision = beginFocusRequest();
     notifyRef.current("Opening local terminal...", "info");
     const info = await ConnectLocal(120, 36);
     const runtime = rememberSessionInfo(info);
     setTabs((items) => [...items, { id: info.id, ...runtime, profileId: "", title: info.name || "Local Terminal", state: info.state, local: true }]);
-    setActiveTab(info.id);
-  }, [rememberSessionInfo]);
+    finishFocusRequest(info.id, revision);
+  }, [rememberSessionInfo, beginFocusRequest, finishFocusRequest]);
 
   const reopenClosedTab = useCallback(async () => {
     const record = closedTabs.current[0];
     if (!record) return false;
+    const revision = beginFocusRequest();
     const tab = record.tab;
     if (tab.local) {
       try {
         const info = await ConnectLocal(120, 36);
         const runtime = rememberSessionInfo(info);
         setTabs((items) => [...items, { id: info.id, ...runtime, profileId: "", title: tab.customTitle ? tab.title : (info.name || "Local Terminal"), customTitle: tab.customTitle, pinned: tab.pinned, state: info.state, local: true }]);
-        setActiveTab(info.id);
+        finishFocusRequest(info.id, revision);
         const index = closedTabs.current.indexOf(record);
         if (index >= 0) closedTabs.current.splice(index, 1);
         setClosedTabCount(closedTabs.current.length);
@@ -566,9 +600,9 @@ export function useSessions(options: UseSessionsOptions) {
     try {
       if (quickProfile) {
         const info = await ConnectQuick(target, 120, 36);
-        await appendSession(target, info);
+        await appendSession(target, info, { focusRevision: revision });
       } else {
-        await openSession(target, "", "");
+        await openSession(target, "", "", { focusRevision: revision });
       }
       return true;
     } catch (err) {
@@ -576,9 +610,10 @@ export function useSessions(options: UseSessionsOptions) {
       notifyRef.current(String(err), "error");
       return false;
     }
-  }, [appendSession, openSession, rememberSessionInfo]);
+  }, [appendSession, openSession, rememberSessionInfo, beginFocusRequest, finishFocusRequest]);
 
   const reconnectTab = useCallback(async (tab: Tab) => {
+    setActiveTab(tab.id);
     // A manual reconnect supersedes any pending auto-reconnect for this tab.
     clearAutoReconnect(tab.id);
     if (tab.local) {
@@ -638,7 +673,7 @@ export function useSessions(options: UseSessionsOptions) {
       setTabs((items) => items.map((item) => item.id === tab.id ? { ...item, state: "error", error: message } : item));
       notifyRef.current(`${tab.title}: reconnect failed: ${message}`, "error");
     }
-  }, [connectLocal, replaceReconnectedTab, clearAutoReconnect]);
+  }, [connectLocal, replaceReconnectedTab, clearAutoReconnect, setActiveTab]);
 
   const submitSecret = useCallback(async (request: SecretRequest, password: string, passphrase: string) => {
     if (request.mode === "connect") {
@@ -646,6 +681,7 @@ export function useSessions(options: UseSessionsOptions) {
       return;
     }
     if (!request.sessionId) return;
+    setActiveTab(request.sessionId);
     try {
       let info: types.SessionInfo;
       try {
@@ -664,7 +700,7 @@ export function useSessions(options: UseSessionsOptions) {
       notifyRef.current(`${request.profile.name || request.profile.host}: reconnect failed: ${String(err)}`, "error");
 	  throw err;
     }
-  }, [openSession, replaceReconnectedTab]);
+  }, [openSession, replaceReconnectedTab, setActiveTab]);
 
   const cancelSecretRequest = useCallback(() => {
     const request = secretRequest;
@@ -694,7 +730,7 @@ export function useSessions(options: UseSessionsOptions) {
     // If a reconnect timer is already pending for this tab, do not schedule a
     // second one — that would double-Connect and race two id replacements. The
     // failed-attempt path stores timer: 0, so retries are not blocked by this.
-    if (autoReconnect.current[tabId]?.timer) return;
+    if (autoReconnect.current[tabId]?.timer || autoReconnect.current[tabId]?.inFlight || navigator.onLine === false) return;
     const tab = tabsRef.current.find((item) => item.id === tabId);
     if (!tab || tab.local || tab.type === "markdown") return;
     const profile = profilesRef.current.find((item) => item.id === tab.profileId);
@@ -717,14 +753,27 @@ export function useSessions(options: UseSessionsOptions) {
     notifyRef.current(`${tab.title}: reconnecting (attempt ${attempt + 1}/${AUTO_RECONNECT_MAX})...`, "info");
 
     const timer = window.setTimeout(async () => {
+      const attemptState = autoReconnect.current[tabId];
+      if (!attemptState) return;
+      attemptState.timer = 0;
+      attemptState.inFlight = true;
       // The tab may have been closed while we waited.
       if (!tabsRef.current.some((item) => item.id === tabId)) {
         clearAutoReconnect(tabId);
         return;
       }
+      if (navigator.onLine === false) {
+        clearAutoReconnect(tabId);
+        setTabs((items) => items.map((item) => item.id === tabId ? { ...item, state: "disconnected" } : item));
+        return;
+      }
       try {
         disposeTerminalRef.current(tabId);
         const info = await Connect(profile.id, 120, 36);
+        if (autoReconnect.current[tabId] !== attemptState) {
+          if (!tabsRef.current.some((item) => item.id === info.id || item.id === tabId) && !creatingProfiles.current.has(info.profileId)) void Disconnect(info.id).catch(() => undefined);
+          return;
+        }
         if (!discardUnclaimedSession(tabId, info)) {
           clearAutoReconnect(tabId);
           return;
@@ -736,14 +785,15 @@ export function useSessions(options: UseSessionsOptions) {
         setTabs((items) => {
           return replaceSessionTabs(items, tabId, info, tabTitle(profile, info.name));
         });
-        setActiveTab((current) => current === tabId ? info.id : current);
+        setActiveTabState((current) => current === tabId ? info.id : current);
         clearAutoReconnect(tabId);
         await reloadRef.current();
       } catch (err) {
-        // Record the failed attempt and let the resulting disconnect/error event
-        // reschedule with the next backoff step.
+        if (autoReconnect.current[tabId] !== attemptState || !tabsRef.current.some((item) => item.id === tabId)) return;
+        // Keep failures eligible for the online/visibility retry path when the
+        // network disappears during the request and no new timer can start.
         setTabs((items) => items.map((item) => item.id === tabId
-          ? { ...item, state: "connecting", error: String(err) }
+          ? { ...item, state: "error", error: String(err) }
           : item));
         autoReconnect.current[tabId] = { attempts: attempt + 1, timer: 0 };
         scheduleAutoReconnectRef.current(tabId);
@@ -754,6 +804,26 @@ export function useSessions(options: UseSessionsOptions) {
   }, [clearAutoReconnect, discardUnclaimedSession, rememberSessionInfo]);
 
   scheduleAutoReconnectRef.current = scheduleAutoReconnect;
+
+  useEffect(() => {
+    const reconnects = autoReconnect.current;
+    const retry = () => {
+      if (navigator.onLine === false || document.visibilityState === "hidden") return;
+      for (const tab of tabsRef.current) {
+        if (tab.local || tab.type === "markdown" || !["error", "disconnected"].includes(tab.state)) continue;
+        if (autoReconnect.current[tab.id]?.inFlight) continue;
+        clearAutoReconnect(tab.id);
+        scheduleAutoReconnectRef.current(tab.id);
+      }
+    };
+    window.addEventListener("online", retry);
+    document.addEventListener("visibilitychange", retry);
+    return () => {
+      window.removeEventListener("online", retry);
+      document.removeEventListener("visibilitychange", retry);
+      Object.keys(reconnects).forEach(clearAutoReconnect);
+    };
+  }, [clearAutoReconnect]);
 
   const reorderTabs = useCallback((draggedId: string, targetId: string) => {
     if (draggedId === targetId) return;
@@ -769,10 +839,11 @@ export function useSessions(options: UseSessionsOptions) {
     });
   }, []);
 
+  const beforeCloseTab = options.beforeCloseTab;
   const closeTab = useCallback(async (id: string, skipConfirm = false) => {
     const tab = tabs.find((item) => item.id === id);
     const isMarkdown = tab?.type === "markdown";
-    if (!skipConfirm && tab && options.beforeCloseTab && !(await options.beforeCloseTab(tab))) {
+    if (!skipConfirm && tab && beforeCloseTab && !(await beforeCloseTab(tab))) {
       return;
     }
     if (tab && tab.type !== "markdown") {
@@ -807,7 +878,7 @@ export function useSessions(options: UseSessionsOptions) {
       }
       return next;
     });
-  }, [options.beforeCloseTab, tabs]);
+  }, [beforeCloseTab, tabs, setActiveTab]);
 
   return {
     tabs,
@@ -815,10 +886,15 @@ export function useSessions(options: UseSessionsOptions) {
     activeTab,
     active,
     setActiveTab,
+    restoreActiveTab,
+    beginFocusRequest,
+    isFocusRequestCurrent,
+    finishFocusRequest,
     secretRequest,
     setSecretRequest,
     cancelSecretRequest,
     connectProfile,
+    connectWorkspaceProfile,
     connectProfileWithSecrets,
     connectQuick,
     connectLocal,

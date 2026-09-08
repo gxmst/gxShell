@@ -24,6 +24,7 @@
 @import "./styles/settings.css";
 @import "./styles/unified.css";
 @import "./styles/cli-approval.css";
+@import "./styles/workbench.css";
 
 /* Tactile press + hover motion on shared controls. */
 .btn-primary,

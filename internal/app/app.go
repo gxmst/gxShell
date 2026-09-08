@@ -21,6 +21,7 @@ import (
 	"gxShell/backend/scheduler"
 	"gxShell/backend/secrets"
 	"gxShell/backend/services"
+	"gxShell/backend/sessionlog"
 	sftpmanager "gxShell/backend/sftp"
 	sshmanager "gxShell/backend/ssh"
 	"gxShell/backend/tunnel"
@@ -255,6 +256,26 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	a.ssh = sshmanager.NewManager(filepath.Join(a.store.DataDir(), "known_hosts"), emit, confirm)
+	a.ssh.SetOutputLogFactory(func(profile types.Profile) (sshmanager.OutputLog, error) {
+		settings, err := a.store.GetSettings()
+		if err != nil {
+			return nil, err
+		}
+		options := settings.SessionLog
+		if profile.SessionLog != nil {
+			options = *profile.SessionLog
+		}
+		if !options.Enabled {
+			return nil, nil
+		}
+		writer, err := sessionlog.New(filepath.Join(a.store.DataDir(), "session-logs"), profile.Name, options, func(err error) {
+			emit("session-log:error", map[string]any{"profileId": profile.ID, "error": err.Error()})
+		})
+		if err != nil {
+			return nil, err
+		}
+		return writer, nil
+	})
 	a.sftp = sftpmanager.NewManager(a.ssh, emit)
 	a.monitor = monitor.NewManager(a.ssh, emit)
 	a.net = network.NewManager(emit)

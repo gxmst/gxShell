@@ -44,10 +44,12 @@ type Profile struct {
 	// that named this flag "aiEnabled"/"aiAlias". They are migrated into
 	// CliEnabled/CliAlias on startup (see App.migrateCliProfileFlags) and then
 	// cleared, so they only exist to avoid losing an existing user's opt-in.
-	LegacyAIEnabled bool         `json:"aiEnabled,omitempty"`
-	LegacyAIAlias   string       `json:"aiAlias,omitempty"`
-	Tunnels         []TunnelRule `json:"tunnels"`
-	AutoReconnect   bool         `json:"autoReconnect"`
+	LegacyAIEnabled bool                `json:"aiEnabled,omitempty"`
+	LegacyAIAlias   string              `json:"aiAlias,omitempty"`
+	Tunnels         []TunnelRule        `json:"tunnels"`
+	AutoReconnect   bool                `json:"autoReconnect"`
+	Terminal        *TerminalSettings   `json:"terminal,omitempty"`
+	SessionLog      *SessionLogSettings `json:"sessionLog,omitempty"`
 	// StartDirectory, Environment and LoginCommands are the post-connect
 	// actions. They are typed into the interactive shell after the session is
 	// up, in that order, because that is the only place they can affect what the
@@ -71,18 +73,20 @@ type Profile struct {
 }
 
 type AppSettings struct {
-	ThemeName           string           `json:"themeName"`
-	Language            string           `json:"language"`
-	Terminal            TerminalSettings `json:"terminal"`
-	MonitorEnabled      bool             `json:"monitorEnabled"`
-	MonitorIntervalSec  int              `json:"monitorIntervalSec"`
-	ConnectionTimeout   int              `json:"connectionTimeout"`
-	HighlightLevel      string           `json:"highlightLevel"`
-	SidebarWidth        int              `json:"sidebarWidth"`
-	SidebarSplitPct     int              `json:"sidebarSplitPct"`
-	SavePasswords       bool             `json:"savePasswords"`
-	SmartHighlight      bool             `json:"smartHighlight"`
-	ConfirmOnDisconnect bool             `json:"confirmOnDisconnect"`
+	ThemeName           string             `json:"themeName"`
+	Language            string             `json:"language"`
+	Terminal            TerminalSettings   `json:"terminal"`
+	MonitorEnabled      bool               `json:"monitorEnabled"`
+	MonitorIntervalSec  int                `json:"monitorIntervalSec"`
+	ConnectionTimeout   int                `json:"connectionTimeout"`
+	HighlightLevel      string             `json:"highlightLevel"`
+	HighlightRules      []HighlightRule    `json:"highlightRules,omitempty"`
+	SessionLog          SessionLogSettings `json:"sessionLog"`
+	SidebarWidth        int                `json:"sidebarWidth"`
+	SidebarSplitPct     int                `json:"sidebarSplitPct"`
+	SavePasswords       bool               `json:"savePasswords"`
+	SmartHighlight      bool               `json:"smartHighlight"`
+	ConfirmOnDisconnect bool               `json:"confirmOnDisconnect"`
 	// RestoreWorkspace reconnects profiles that were still open when the app
 	// last exited. It is opt-in because reconnecting is an external side effect.
 	RestoreWorkspace bool `json:"restoreWorkspace"`
@@ -108,6 +112,31 @@ type AppSettings struct {
 	// on every startup.
 	ConsentDefaultsVersion int      `json:"consentDefaultsVersion"`
 	Ai                     AiConfig `json:"ai"`
+}
+
+type HighlightRule struct {
+	ID            string `json:"id"`
+	Pattern       string `json:"pattern"`
+	Mode          string `json:"mode"`
+	Color         string `json:"color"`
+	Enabled       bool   `json:"enabled"`
+	CaseSensitive bool   `json:"caseSensitive"`
+}
+
+type ProfileBatchPatch struct {
+	Group           *string `json:"group,omitempty"`
+	Username        *string `json:"username,omitempty"`
+	Port            *int    `json:"port,omitempty"`
+	AutoReconnect   *bool   `json:"autoReconnect,omitempty"`
+	Favorite        *bool   `json:"favorite,omitempty"`
+	InheritTerminal bool    `json:"inheritTerminal"`
+}
+
+type SessionLogSettings struct {
+	Enabled      bool `json:"enabled"`
+	Timestamps   bool `json:"timestamps"`
+	MaxFileMB    int  `json:"maxFileMb"`
+	MaxSessionMB int  `json:"maxSessionMb"`
 }
 
 type TerminalSettings struct {

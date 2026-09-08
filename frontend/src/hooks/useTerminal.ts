@@ -12,6 +12,7 @@ import { MAX_FONT_SIZE, MIN_FONT_SIZE, normalizeFontSize, normalizeLineHeight, n
 import { findHighlightMatches, type HighlightLevel } from "../utils/highlight";
 import { createLinkProvider, type TerminalLinkAppHandlers } from "../utils/terminalLinks";
 import type { SplitPane } from "../types";
+import { splitPaneIds } from "../utils/splitPane";
 import { t } from "../i18n";
 import { analyzeTerminalPaste, terminalPasteTargets, type TerminalPasteRisk } from "../utils/terminalPaste";
 import { hasActiveOverlay } from "../utils/overlayManager";
@@ -66,7 +67,7 @@ function readBufferCells(term: Terminal, row: number): { text: string; spans: Bu
   return { text: text.trimEnd(), spans };
 }
 
-export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null, broadcastRef?: MutableRefObject<{ enabled: boolean; targets: string[] }>, linkHandlersRef?: MutableRefObject<TerminalLinkAppHandlers>, setContextMenu?: (menu: AppContextMenu | null) => void, onSearchResults?: (id: string, index: number, count: number) => void, onPasteRequest?: (request: TerminalPasteRequest) => void) {
+export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null, broadcastRef?: MutableRefObject<{ enabled: boolean; targets: string[] }>, linkHandlersRef?: MutableRefObject<TerminalLinkAppHandlers>, setContextMenu?: (menu: AppContextMenu | null) => void, onSearchResults?: (id: string, index: number, count: number) => void, onPasteRequest?: (request: TerminalPasteRequest) => void, terminalOverrides?: Record<string, types.TerminalSettings>) {
   const terminals = useRef<Record<string, Terminal>>({});
   const fits = useRef<Record<string, FitAddon>>({});
   const searches = useRef<Record<string, SearchAddon>>({});
@@ -100,8 +101,10 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   searchResultsRef.current = onSearchResults;
   const pasteRequestRef = useRef(onPasteRequest);
   pasteRequestRef.current = onPasteRequest;
-  const runtimeFontSize = useRef<number | null>(null);
-  const settingsFontSize = useRef<number | null>(null);
+  const runtimeFontSize = useRef<Record<string, number>>({});
+  const settingsFontSize = useRef<Record<string, number>>({});
+  const overridesRef = useRef(terminalOverrides);
+  overridesRef.current = terminalOverrides;
 
   const notifyRef = useRef(notify);
   notifyRef.current = notify;
@@ -163,7 +166,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const refreshDisplayHighlights = useCallback((sessionId: string, term: Terminal) => {
     const level = highlightLevelRef.current;
     const buffer = term.buffer.active;
-    if (level === "off") {
+    if (level === "off" && !settingsRef.current?.highlightRules?.some((r) => r.enabled)) {
       clearHighlightDecorations(sessionId);
       return;
     }
@@ -186,7 +189,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     for (let row = firstRow; row <= lastRow; row += 1) {
       const content = readBufferCells(term, row);
       if (!content?.text) continue;
-      const matches = findHighlightMatches(content.text, level);
+      const matches = findHighlightMatches(content.text, level, settingsRef.current?.highlightRules);
       for (const match of matches) {
         const covered = content.spans.filter((span) => match.start < span.end && match.end > span.start);
         if (!covered.length) continue;
@@ -229,351 +232,322 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
 
   useEffect(() => {
     if (!activeTab || !activeIsTerminal || !settingsRef.current) return;
-    const host = terminalHosts.current[activeTab];
-    if (!host) return;
+    const focusedId = activeTab;
+    const attach = (activeTab: string) => {
+      if (!settingsRef.current) return;
+      const host = terminalHosts.current[activeTab];
+      if (!host) return;
 
-    // These three refs hold the per-session maps for the lifetime of the hook:
-    // nothing reassigns .current, only mutates the map in place. Capturing them
-    // here states that invariant instead of relying on it, and it is what
-    // exhaustive-deps wants to see for refs touched from the cleanup below.
-    const observerMap = observers.current;
-    const cleanupMap = cleanupFns.current;
-    const cmdBufferMap = cmdBuffer.current;
+      // These three refs hold the per-session maps for the lifetime of the hook:
+      // nothing reassigns .current, only mutates the map in place. Capturing them
+      // here states that invariant instead of relying on it, and it is what
+      // exhaustive-deps wants to see for refs touched from the cleanup below.
+      const observerMap = observers.current;
+      const cleanupMap = cleanupFns.current;
 
-    // Disconnect any observer left by reattachTerminal before setting up our own
-    observerMap[activeTab]?.disconnect();
-    delete observerMap[activeTab];
+      // Disconnect any observer left by reattachTerminal before setting up our own
+      observerMap[activeTab]?.disconnect();
+      delete observerMap[activeTab];
 
-    const fitAndResize = () => {
-      if (pendingFitFrames.current[activeTab]) return;
-      pendingFitFrames.current[activeTab] = window.requestAnimationFrame(() => {
-        delete pendingFitFrames.current[activeTab];
-        try {
-          if (!host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
-          const fit = fits.current[activeTab];
-          const term = terminals.current[activeTab];
-          if (!fit || !term) return;
+      const fitAndResize = () => {
+        if (pendingFitFrames.current[activeTab]) return;
+        pendingFitFrames.current[activeTab] = window.requestAnimationFrame(() => {
+          delete pendingFitFrames.current[activeTab];
+          try {
+            if (!host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
+            const fit = fits.current[activeTab];
+            const term = terminals.current[activeTab];
+            if (!fit || !term) return;
 
-          fit.fit();
-          const { cols, rows } = term;
-          
-          const prev = lastDimensions.current[activeTab];
-          if (prev && prev.cols === cols && prev.rows === rows) return;
+            fit.fit();
+            const { cols, rows } = term;
 
-          lastDimensions.current[activeTab] = { cols, rows };
-          window.clearTimeout(pendingResizeTimers.current[activeTab]);
-          pendingResizeTimers.current[activeTab] = window.setTimeout(() => {
-            delete pendingResizeTimers.current[activeTab];
-            ResizeTerminal(activeTab, cols, rows).catch(() => {
-              delete lastDimensions.current[activeTab];
-            });
-          }, RESIZE_SETTLE_MS);
-        } catch {
-        }
-      });
-    };
+            const prev = lastDimensions.current[activeTab];
+            if (prev && prev.cols === cols && prev.rows === rows) return;
 
-    if (terminals.current[activeTab]) {
-      fitAndResize();
-    } else {
-      const s = settingsRef.current;
-      const term = new Terminal({
-        allowProposedApi: true,
-        convertEol: true,
-        cursorBlink: s.terminal.cursorBlink,
-        cursorStyle: (s.terminal.cursorStyle || "block") as "block" | "underline" | "bar",
-        fontFamily: s.terminal.fontFamily || "JetBrains Mono, Cascadia Code, Fira Code, Maple Mono, Consolas, monospace",
-        fontSize: runtimeFontSize.current ?? normalizeFontSize(s.terminal.fontSize),
-        fontWeight: 400,
-        lineHeight: normalizeLineHeight(s.terminal.lineHeight),
-        minimumContrastRatio: 1,
-        drawBoldTextInBrightColors: false,
-        scrollback: normalizeScrollbackLines(s.terminal.scrollbackLines),
-        smoothScrollDuration: 0,
-        theme: getTerminalTheme(s)
-      });
-      const fit = new FitAddon();
-      const searchAddon = new SearchAddon();
-      term.loadAddon(fit);
-      term.loadAddon(searchAddon);
-      // Unicode 11 width tables so newer emoji and wide characters advance the
-      // cursor correctly (xterm defaults to Unicode 6 measurements). Like the
-      // fit/search addons, it is disposed by term.dispose() in disposeTerminal.
-      term.loadAddon(new Unicode11Addon());
-      term.unicode.activeVersion = "11";
-      term.parser.registerOscHandler(7, (payload) => {
-        const directory = parseOsc7Directory(payload);
-        if (!directory) return false;
-        currentDirectories.current[activeTab] = directory;
-        return true;
-      });
-      // Report match count/position to the search bar. Fires after every
-      // findNext/findPrevious, so the bar can show "3 / 12" live. resultIndex is
-      // -1 when there is no match; the addon uses 0-based indices.
-      try {
-        searchAddon.onDidChangeResults((res) => {
-          if (searchResultsRef.current) {
-            searchResultsRef.current(activeTab, res.resultIndex, res.resultCount);
+            lastDimensions.current[activeTab] = { cols, rows };
+            window.clearTimeout(pendingResizeTimers.current[activeTab]);
+            pendingResizeTimers.current[activeTab] = window.setTimeout(() => {
+              delete pendingResizeTimers.current[activeTab];
+              ResizeTerminal(activeTab, cols, rows).catch(() => {
+                delete lastDimensions.current[activeTab];
+              });
+            }, RESIZE_SETTLE_MS);
+          } catch {
           }
         });
-      } catch {}
-      term.open(host);
-      term.onScroll(() => scheduleDisplayHighlights(activeTab, term));
-
-      const pasteIntoTerminal = (text: string) => {
-        if (!text) return;
-        const risk = analyzeTerminalPaste(text, term.buffer.active.type === "alternate");
-        const requestPaste = pasteRequestRef.current;
-        if (risk && requestPaste) {
-          const broadcast = broadcastRef?.current;
-          const targetIds = terminalPasteTargets(activeTab, broadcast);
-          requestPaste({
-            sessionId: activeTab,
-            text,
-            risk,
-            broadcastTargets: targetIds.length,
-            targetIds,
-            broadcast: broadcast?.enabled === true && broadcast.targets.includes(activeTab),
-            commit: () => {
-              pasteTargetOverrides.current[activeTab] = targetIds;
-              try {
-                term.paste(text);
-              } finally {
-                // xterm emits onData synchronously today. The microtask keeps
-                // the override valid for an implementation that defers the
-                // callback while ensuring later typing never inherits it.
-                queueMicrotask(() => {
-                  if (pasteTargetOverrides.current[activeTab] === targetIds) {
-                    delete pasteTargetOverrides.current[activeTab];
-                  }
-                });
-              }
-            },
-          });
-          return;
-        }
-        term.paste(text);
       };
 
-      // Keep Ctrl+C ergonomic without stealing SIGINT: copy only when xterm has
-      // an actual selection; otherwise let the terminal receive the key.
-      term.attachCustomKeyEventHandler((event) => {
-        if (event.type !== "keydown" || event.altKey) return true;
-        if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "c" || !term.hasSelection()) return true;
-        writeClipboardText(term.getSelection()).catch(() => notifyRef.current(t(settingsRef.current?.language || "en", "copyFailed"), "error"));
-        return false;
-      });
+      if (terminals.current[activeTab]) {
+        fitAndResize();
+      } else {
+        const s = { ...settingsRef.current, terminal: overridesRef.current?.[activeTab] || settingsRef.current.terminal };
+        host.style.setProperty("--terminal", getTerminalTheme(s).background);
+        host.style.backgroundColor = "var(--terminal)";
+        const term = new Terminal({
+          allowProposedApi: true,
+          convertEol: true,
+          cursorBlink: s.terminal.cursorBlink,
+          cursorStyle: (s.terminal.cursorStyle || "block") as "block" | "underline" | "bar",
+          fontFamily: s.terminal.fontFamily || "JetBrains Mono, Cascadia Code, Fira Code, Maple Mono, Consolas, monospace",
+          fontSize: runtimeFontSize.current[activeTab] ?? normalizeFontSize(s.terminal.fontSize),
+          fontWeight: 400,
+          lineHeight: normalizeLineHeight(s.terminal.lineHeight),
+          minimumContrastRatio: 1,
+          drawBoldTextInBrightColors: false,
+          scrollback: normalizeScrollbackLines(s.terminal.scrollbackLines),
+          smoothScrollDuration: 0,
+          theme: getTerminalTheme(s)
+        });
+        const fit = new FitAddon();
+        const searchAddon = new SearchAddon();
+        term.loadAddon(fit);
+        term.loadAddon(searchAddon);
+        // Unicode 11 width tables so newer emoji and wide characters advance the
+        // cursor correctly (xterm defaults to Unicode 6 measurements). Like the
+        // fit/search addons, it is disposed by term.dispose() in disposeTerminal.
+        term.loadAddon(new Unicode11Addon());
+        term.unicode.activeVersion = "11";
+        term.parser.registerOscHandler(7, (payload) => {
+          const directory = parseOsc7Directory(payload);
+          if (!directory) return false;
+          currentDirectories.current[activeTab] = directory;
+          return true;
+        });
+        // Report match count/position to the search bar. Fires after every
+        // findNext/findPrevious, so the bar can show "3 / 12" live. resultIndex is
+        // -1 when there is no match; the addon uses 0-based indices.
+        try {
+          searchAddon.onDidChangeResults((res) => {
+            if (searchResultsRef.current) {
+              searchResultsRef.current(activeTab, res.resultIndex, res.resultCount);
+            }
+          });
+        } catch { }
+        term.open(host);
+        term.onScroll(() => scheduleDisplayHighlights(activeTab, term));
 
-      // xterm normally handles browser paste itself. Capture only risky shell
-      // pastes so safe single-line and full-screen editor workflows stay fast.
-      term.element?.addEventListener("paste", (event) => {
-        const clipboardEvent = event as ClipboardEvent;
-        const text = clipboardEvent.clipboardData?.getData("text/plain") || "";
-        const risk = analyzeTerminalPaste(text, term.buffer.active.type === "alternate");
-        if (!risk || !pasteRequestRef.current) return;
-        clipboardEvent.preventDefault();
-        clipboardEvent.stopPropagation();
-        pasteIntoTerminal(text);
-      }, true);
+        const pasteIntoTerminal = (text: string) => {
+          if (!text) return;
+          const risk = analyzeTerminalPaste(text, term.buffer.active.type === "alternate");
+          const requestPaste = pasteRequestRef.current;
+          if (risk && requestPaste) {
+            const broadcast = broadcastRef?.current;
+            const targetIds = terminalPasteTargets(activeTab, broadcast);
+            requestPaste({
+              sessionId: activeTab,
+              text,
+              risk,
+              broadcastTargets: targetIds.length,
+              targetIds,
+              broadcast: broadcast?.enabled === true && broadcast.targets.includes(activeTab),
+              commit: () => {
+                pasteTargetOverrides.current[activeTab] = targetIds;
+                try {
+                  term.paste(text);
+                } finally {
+                  // xterm emits onData synchronously today. The microtask keeps
+                  // the override valid for an implementation that defers the
+                  // callback while ensuring later typing never inherits it.
+                  queueMicrotask(() => {
+                    if (pasteTargetOverrides.current[activeTab] === targetIds) {
+                      delete pasteTargetOverrides.current[activeTab];
+                    }
+                  });
+                }
+              },
+            });
+            return;
+          }
+          term.paste(text);
+        };
 
-      // Clickable URLs and remote file paths, detected in the xterm display
-      // layer so the SSH output stream is never rewritten. The provider reads
-      // linkHandlersRef lazily on each click, so it stays valid across renders.
-      if (linkHandlersRef?.current) {
-        const provider = createLinkProvider(
-          term,
-          {
-            openUrl: (url) => linkHandlersRef.current?.openUrl(url),
-            openPath: (path) => linkHandlersRef.current?.openPath(activeTab, path),
-          },
-          // smartHighlight gates the clickable-link feature; read live so the
-          // settings toggle applies without reopening the terminal.
-          () => settingsRef.current?.smartHighlight !== false,
-        );
-        linkProviders.current[activeTab] = term.registerLinkProvider(provider);
-      }
+        // Keep Ctrl+C ergonomic without stealing SIGINT: copy only when xterm has
+        // an actual selection; otherwise let the terminal receive the key.
+        term.attachCustomKeyEventHandler((event) => {
+          if (event.isComposing || event.keyCode === 229) return true;
+          if (event.type !== "keydown" || event.altKey) return true;
+          if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "c" || !term.hasSelection()) return true;
+          writeClipboardText(term.getSelection()).catch(() => notifyRef.current(t(settingsRef.current?.language || "en", "copyFailed"), "error"));
+          return false;
+        });
 
-      try {
-        const gl = new WebglAddon();
-        gl.onContextLoss(() => {
-          // Dispose the WebGL addon; xterm.js automatically falls back
-          // to the canvas renderer, avoiding flickering / white screens.
-          gl.dispose();
-          delete webgl.current[activeTab];
+        // xterm normally handles browser paste itself. Capture only risky shell
+        // pastes so safe single-line and full-screen editor workflows stay fast.
+        term.element?.addEventListener("paste", (event) => {
+          const clipboardEvent = event as ClipboardEvent;
+          const text = clipboardEvent.clipboardData?.getData("text/plain") || "";
+          const risk = analyzeTerminalPaste(text, term.buffer.active.type === "alternate");
+          if (!risk || !pasteRequestRef.current) return;
+          clipboardEvent.preventDefault();
+          clipboardEvent.stopPropagation();
+          pasteIntoTerminal(text);
+        }, true);
+
+        // Clickable URLs and remote file paths, detected in the xterm display
+        // layer so the SSH output stream is never rewritten. The provider reads
+        // linkHandlersRef lazily on each click, so it stays valid across renders.
+        if (linkHandlersRef?.current) {
+          const provider = createLinkProvider(
+            term,
+            {
+              openUrl: (url) => linkHandlersRef.current?.openUrl(url),
+              openPath: (path) => linkHandlersRef.current?.openPath(activeTab, path),
+            },
+            // smartHighlight gates the clickable-link feature; read live so the
+            // settings toggle applies without reopening the terminal.
+            () => settingsRef.current?.smartHighlight !== false,
+          );
+          linkProviders.current[activeTab] = term.registerLinkProvider(provider);
+        }
+
+        try {
+          const gl = new WebglAddon();
+          gl.onContextLoss(() => {
+            // Dispose the WebGL addon; xterm.js automatically falls back
+            // to the canvas renderer, avoiding flickering / white screens.
+            gl.dispose();
+            delete webgl.current[activeTab];
+            if (!webglFallbackToastShown) {
+              webglFallbackToastShown = true;
+              notifyRef.current("WebGL context lost, using canvas renderer", "info");
+            }
+          });
+          term.loadAddon(gl);
+          webgl.current[activeTab] = gl;
+        } catch {
           if (!webglFallbackToastShown) {
             webglFallbackToastShown = true;
-            notifyRef.current("WebGL context lost, using canvas renderer", "info");
+            notifyRef.current("WebGL unavailable, using canvas renderer", "info");
           }
-        });
-        term.loadAddon(gl);
-        webgl.current[activeTab] = gl;
-      } catch {
-        if (!webglFallbackToastShown) {
-          webglFallbackToastShown = true;
-          notifyRef.current("WebGL unavailable, using canvas renderer", "info");
         }
-      }
 
-      // The listener lives on xterm's root element, which moves with the
-      // terminal when it is torn off/docked. Shift+right-click deliberately
-      // keeps the platform menu available for troubleshooting.
-      term.element?.addEventListener("contextmenu", (e) => {
-        if (e.shiftKey) return;
-        e.preventDefault();
-        e.stopPropagation();
-        const lang = settingsRef.current?.language || "en";
-        const selection = term.getSelection();
-        const items: AppContextMenu["items"] = [];
-        if (selection) {
+        // The listener lives on xterm's root element, which moves with the
+        // terminal when it is torn off/docked. Shift+right-click deliberately
+        // keeps the platform menu available for troubleshooting.
+        term.element?.addEventListener("contextmenu", (e) => {
+          if (e.shiftKey) return;
+          e.preventDefault();
+          e.stopPropagation();
+          const lang = settingsRef.current?.language || "en";
+          const selection = term.getSelection();
+          const items: AppContextMenu["items"] = [];
+          if (selection) {
+            items.push({
+              label: t(lang, "copy"),
+              action: () => {
+                // writeClipboardText, not navigator.clipboard directly: xterm
+                // hands back rows joined with LF and Win32 paste targets need
+                // CRLF (see utils/clipboard.ts).
+                writeClipboardText(selection)
+                  .then(() => notifyRef.current(t(lang, "copyToClipboard"), "success"))
+                  .catch(() => notifyRef.current(t(lang, "copyFailed"), "error"));
+              },
+            });
+          }
           items.push({
-            label: t(lang, "copy"),
+            label: t(lang, "paste"),
             action: () => {
-              // writeClipboardText, not navigator.clipboard directly: xterm
-              // hands back rows joined with LF and Win32 paste targets need
-              // CRLF (see utils/clipboard.ts).
-              writeClipboardText(selection)
-                .then(() => notifyRef.current(t(lang, "copyToClipboard"), "success"))
-                .catch(() => notifyRef.current(t(lang, "copyFailed"), "error"));
+              navigator.clipboard.readText().then((text) => {
+                if (!text) return;
+                // xterm.paste honours bracketed-paste mode and routes through the
+                // same onData path, preserving broadcast and command history.
+                pasteIntoTerminal(text);
+              }).catch(() => notifyRef.current(t(lang, "pasteFailed"), "error"));
             },
           });
-        }
-        items.push({
-          label: t(lang, "paste"),
-          action: () => {
-            navigator.clipboard.readText().then((text) => {
-              if (!text) return;
-              // xterm.paste honours bracketed-paste mode and routes through the
-              // same onData path, preserving broadcast and command history.
-              pasteIntoTerminal(text);
-            }).catch(() => notifyRef.current(t(lang, "pasteFailed"), "error"));
-          },
+          items.push({ label: t(lang, "selectAll"), action: () => term.selectAll() });
+          items.push({ label: t(lang, "clearTerminal"), action: () => { term.clear(); term.focus(); } });
+
+          if (setContextMenu) {
+            setContextMenu({ x: e.clientX, y: e.clientY, items });
+          } else if (selection) {
+            // Backward-compatible fallback while the host app is still wiring the
+            // visual menu: retain the former one-click copy behavior.
+            writeClipboardText(selection).catch(() => undefined);
+          }
         });
-        items.push({ label: t(lang, "selectAll"), action: () => term.selectAll() });
-        items.push({ label: t(lang, "clearTerminal"), action: () => { term.clear(); term.focus(); } });
 
-        if (setContextMenu) {
-          setContextMenu({ x: e.clientX, y: e.clientY, items });
-        } else if (selection) {
-          // Backward-compatible fallback while the host app is still wiring the
-          // visual menu: retain the former one-click copy behavior.
-          writeClipboardText(selection).catch(() => undefined);
-        }
-      });
+        if (activeTab === focusedId && !hasActiveOverlay()) term.focus();
+        terminals.current[activeTab] = term;
+        fits.current[activeTab] = fit;
+        searches.current[activeTab] = searchAddon;
 
-      if (!hasActiveOverlay()) term.focus();
-      terminals.current[activeTab] = term;
-      fits.current[activeTab] = fit;
-      searches.current[activeTab] = searchAddon;
-
-      term.onData((data) => {
-        const pasteTargets = pasteTargetOverrides.current[activeTab];
-        if (pasteTargets) {
-          for (const id of pasteTargets) enqueueTerminalInput(id, data);
-        } else {
-          enqueueTerminalInput(activeTab, data);
-        }
-        // Broadcast (synchronized input): when enabled, mirror the same keystrokes
-        // to every other connected SSH terminal. Only the active terminal drives
-        // the command buffer / history below.
-        const bc = broadcastRef?.current;
-        if (!pasteTargets && bc?.enabled && bc.targets.includes(activeTab)) {
-          for (const id of bc.targets) {
-            if (id !== activeTab) enqueueTerminalInput(id, data);
+        term.onData((data) => {
+          const pasteTargets = pasteTargetOverrides.current[activeTab];
+          if (pasteTargets) {
+            for (const id of pasteTargets) enqueueTerminalInput(id, data);
+          } else {
+            enqueueTerminalInput(activeTab, data);
           }
-        }
-        const buf = cmdBuffer.current[activeTab] || "";
-        if (data === "\r") {
-          if (buf.trim()) {
-            LogCommand(activeTab, buf.trim()).catch(() => {});
+          // Broadcast (synchronized input): when enabled, mirror the same keystrokes
+          // to every other connected SSH terminal. Only the active terminal drives
+          // the command buffer / history below.
+          const bc = broadcastRef?.current;
+          if (!pasteTargets && bc?.enabled && bc.targets.includes(activeTab)) {
+            for (const id of bc.targets) {
+              if (id !== activeTab) enqueueTerminalInput(id, data);
+            }
           }
-          cmdBuffer.current[activeTab] = "";
-        } else if (data === "\x7f" || data === "\b") {
-          cmdBuffer.current[activeTab] = buf.slice(0, -1);
-        } else if (data.length === 1 && data.charCodeAt(0) >= 32 && buf.length < MAX_COMMAND_BUFFER_CHARS) {
-          cmdBuffer.current[activeTab] = buf + data;
-        }
-      });
+          const buf = cmdBuffer.current[activeTab] || "";
+          if (data === "\r") {
+            if (buf.trim()) {
+              LogCommand(activeTab, buf.trim()).catch(() => { });
+            }
+            cmdBuffer.current[activeTab] = "";
+          } else if (data === "\x7f" || data === "\b") {
+            cmdBuffer.current[activeTab] = buf.slice(0, -1);
+          } else if (data.length === 1 && data.charCodeAt(0) >= 32 && buf.length < MAX_COMMAND_BUFFER_CHARS) {
+            cmdBuffer.current[activeTab] = buf + data;
+          }
+        });
 
-      const buffered = bufferedOutput.current[activeTab] || [];
-      const truncationNotice = bufferedOutputDropped.current[activeTab]
-        ? "\r\n\x1b[33m[gxShell: earlier buffered output was truncated]\x1b[39m\r\n"
-        : "";
-      const initialOutput = truncationNotice + buffered.join("");
-      if (initialOutput) {
-        term.write(initialOutput, () => scheduleDisplayHighlights(activeTab, term));
+        const buffered = bufferedOutput.current[activeTab] || [];
+        const truncationNotice = bufferedOutputDropped.current[activeTab]
+          ? "\r\n\x1b[33m[gxShell: earlier buffered output was truncated]\x1b[39m\r\n"
+          : "";
+        const initialOutput = truncationNotice + buffered.join("");
+        if (initialOutput) {
+          term.write(initialOutput, () => scheduleDisplayHighlights(activeTab, term));
+        }
+        delete bufferedOutput.current[activeTab];
+        delete bufferedOutputSizes.current[activeTab];
+        delete bufferedOutputDropped.current[activeTab];
+
+        fitAndResize();
       }
-      delete bufferedOutput.current[activeTab];
-      delete bufferedOutputSizes.current[activeTab];
-      delete bufferedOutputDropped.current[activeTab];
 
-      fitAndResize();
-    }
-
-    const resize = () => {
-      const h = terminalHosts.current[activeTab];
-      if (!h || h.clientWidth <= 0 || h.clientHeight <= 0) return;
-      const key = `${h.clientWidth}x${h.clientHeight}`;
-      if (lastHostSize.current[activeTab] === key) return;
-      lastHostSize.current[activeTab] = key;
-      fitAndResize();
-    };
-    const observer = new ResizeObserver(resize);
-    observer.observe(host);
-    observerMap[activeTab] = observer;
-    window.addEventListener("resize", resize);
-
-    cleanupMap[activeTab] = () => {
-      observer.disconnect();
-      window.removeEventListener("resize", resize);
-    };
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", resize);
-      delete observerMap[activeTab];
-      delete cleanupMap[activeTab];
-      delete cmdBufferMap[activeTab];
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, activeIsTerminal, enqueueTerminalInput, settingsReady, scheduleDisplayHighlights]);
-
-  useEffect(() => {
-    if (!splitPane) return;
-    const ids = [splitPane.left, splitPane.right].filter((id) => id && id !== activeTab && terminals.current[id]);
-    if (!ids.length) return;
-    const cleanups: (() => void)[] = [];
-    ids.forEach((id) => {
-      const host = terminalHosts.current[id];
-      if (!host) return;
-      const fit = fits.current[id];
-      const term = terminals.current[id];
-      if (!fit || !term) return;
       const resize = () => {
-        if (!host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
-        const key = `${host.clientWidth}x${host.clientHeight}`;
-        if (lastHostSize.current[id] === key) return;
-        lastHostSize.current[id] = key;
-        try {
-          fit.fit();
-          const { cols, rows } = term;
-          const prev = lastDimensions.current[id];
-          if (!prev || prev.cols !== cols || prev.rows !== rows) {
-            lastDimensions.current[id] = { cols, rows };
-            window.clearTimeout(pendingResizeTimers.current[id]);
-            pendingResizeTimers.current[id] = window.setTimeout(() => {
-              delete pendingResizeTimers.current[id];
-              ResizeTerminal(id, cols, rows).catch(() => { delete lastDimensions.current[id]; });
-            }, RESIZE_SETTLE_MS);
-          }
-        } catch {}
+        const h = terminalHosts.current[activeTab];
+        if (!h || h.clientWidth <= 0 || h.clientHeight <= 0) return;
+        const key = `${h.clientWidth}x${h.clientHeight}`;
+        if (lastHostSize.current[activeTab] === key) return;
+        lastHostSize.current[activeTab] = key;
+        fitAndResize();
       };
       const observer = new ResizeObserver(resize);
       observer.observe(host);
-      cleanups.push(() => observer.disconnect());
-      resize();
-    });
-    return () => cleanups.forEach((fn) => fn());
-  }, [splitPane, activeTab]);
+      observerMap[activeTab] = observer;
+      window.addEventListener("resize", resize);
+
+      cleanupMap[activeTab] = () => {
+        observer.disconnect();
+        window.removeEventListener("resize", resize);
+      };
+
+      return () => {
+        observer.disconnect();
+        window.removeEventListener("resize", resize);
+        delete observerMap[activeTab];
+        delete cleanupMap[activeTab];
+      };
+    };
+    const panes = splitPaneIds(splitPane);
+    const ids = panes.includes(activeTab) ? panes : [activeTab];
+    const cleanups = ids.map(attach);
+    return () => cleanups.forEach((cleanup) => cleanup?.());
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, activeIsTerminal, enqueueTerminalInput, settingsReady, scheduleDisplayHighlights, splitPane]);
 
   useEffect(() => {
     const ids = Object.keys(terminals.current);
@@ -673,6 +647,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     if (pendingWriteFrames.current[id]) window.cancelAnimationFrame(pendingWriteFrames.current[id]);
     window.clearTimeout(pendingResizeTimers.current[id]);
     window.clearTimeout(pendingInputTimers.current[id]);
+    window.clearTimeout(refitTimers.current[id]);
     delete webgl.current[id];
     delete terminals.current[id];
     delete fits.current[id];
@@ -697,6 +672,8 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     delete lastHostSize.current[id];
     delete terminalHosts.current[id];
     delete throughputRef.current[id];
+    delete runtimeFontSize.current[id];
+    delete settingsFontSize.current[id];
   }, [clearHighlightDecorations]);
 
   const findNext = useCallback((id: string, query: string) => {
@@ -716,7 +693,8 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     if (!fit || !term || !host) return;
     if (host.clientWidth <= 0 || host.clientHeight <= 0) {
       if (_depth < 5) {
-        setTimeout(() => refitTerminal(id, _depth + 1), 80);
+        window.clearTimeout(refitTimers.current[id]);
+        refitTimers.current[id] = window.setTimeout(() => refitTerminal(id, _depth + 1), 80);
       }
       return;
     }
@@ -739,24 +717,21 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
 
   const applyRuntimeFontSize = useCallback((value: number) => {
     const normalized = normalizeFontSize(value);
-    runtimeFontSize.current = normalized;
-    Object.keys(terminals.current).forEach((id) => {
-      terminals.current[id].options.fontSize = normalized;
-      refitTerminal(id);
-    });
+    runtimeFontSize.current[activeTab] = normalized;
+    if (terminals.current[activeTab]) terminals.current[activeTab].options.fontSize = normalized;
+    refitTerminal(activeTab);
     return normalized;
-  }, [refitTerminal]);
+  }, [refitTerminal, activeTab]);
 
   const adjustFontSize = useCallback((delta: number) => {
-    const base = runtimeFontSize.current
-      ?? settingsFontSize.current
-      ?? normalizeFontSize(settingsRef.current?.terminal.fontSize || 14);
+    const base = runtimeFontSize.current[activeTab]
+      ?? normalizeFontSize(overridesRef.current?.[activeTab]?.fontSize ?? settingsRef.current?.terminal.fontSize ?? 14);
     return applyRuntimeFontSize(Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, base + delta)));
-  }, [applyRuntimeFontSize]);
+  }, [applyRuntimeFontSize, activeTab]);
 
   const resetFontSize = useCallback(() => applyRuntimeFontSize(
-    settingsFontSize.current ?? normalizeFontSize(settingsRef.current?.terminal.fontSize || 14),
-  ), [applyRuntimeFontSize]);
+    normalizeFontSize(overridesRef.current?.[activeTab]?.fontSize ?? settingsRef.current?.terminal.fontSize ?? 14),
+  ), [applyRuntimeFontSize, activeTab]);
 
   // Apply live settings changes to every open terminal. Font metrics changes
   // (size/family/line height) invalidate the current cols/rows, so each
@@ -764,28 +739,33 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   // vim/htop layouts stay stale until the next window resize.
   useEffect(() => {
     if (!settings) return;
-    const configuredFontSize = normalizeFontSize(settings.terminal.fontSize);
-    if (settingsFontSize.current !== configuredFontSize) {
-      settingsFontSize.current = configuredFontSize;
-      runtimeFontSize.current = configuredFontSize;
-    }
-    const theme = getTerminalTheme(settings);
     Object.keys(terminals.current).forEach((id) => {
+      const terminal = terminalOverrides?.[id] || settings.terminal;
+      const configuredFontSize = normalizeFontSize(terminal.fontSize);
+      if (settingsFontSize.current[id] !== configuredFontSize) {
+        settingsFontSize.current[id] = configuredFontSize;
+        delete runtimeFontSize.current[id];
+      }
       const term = terminals.current[id];
-      term.options.theme = theme;
-      term.options.fontFamily = settings.terminal.fontFamily;
-      term.options.fontSize = runtimeFontSize.current ?? configuredFontSize;
-      term.options.lineHeight = normalizeLineHeight(settings.terminal.lineHeight);
+      term.options.theme = getTerminalTheme({ ...settings, terminal });
+      const host = terminalHosts.current[id];
+      if (host) {
+        host.style.setProperty("--terminal", term.options.theme?.background || "");
+        host.style.backgroundColor = "var(--terminal)";
+      }
+      term.options.fontFamily = terminal.fontFamily;
+      term.options.fontSize = runtimeFontSize.current[id] ?? configuredFontSize;
+      term.options.lineHeight = normalizeLineHeight(terminal.lineHeight);
       // Cursor options do not affect the grid, so they need no refit. Scrollback
       // is deliberately absent: changing it reallocates the buffer and would
       // discard existing history, so it stays a new-terminal setting.
-      term.options.cursorStyle = (settings.terminal.cursorStyle || "block") as "block" | "underline" | "bar";
-      term.options.cursorBlink = settings.terminal.cursorBlink;
+      term.options.cursorStyle = (terminal.cursorStyle || "block") as "block" | "underline" | "bar";
+      term.options.cursorBlink = terminal.cursorBlink;
       refitTerminal(id);
-      if (settings.highlightLevel === "off") clearHighlightDecorations(id);
-      else scheduleDisplayHighlights(id, term);
+      clearHighlightDecorations(id);
+      scheduleDisplayHighlights(id, term);
     });
-  }, [settings, refitTerminal, clearHighlightDecorations, scheduleDisplayHighlights]);
+  }, [settings, terminalOverrides, refitTerminal, clearHighlightDecorations, scheduleDisplayHighlights]);
 
   const reattachTerminal = useCallback((id: string, newHost: HTMLDivElement) => {
     const term = terminals.current[id];
@@ -798,6 +778,8 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       newHost.appendChild(term.element);
     }
     terminalHosts.current[id] = newHost;
+    newHost.style.setProperty("--terminal", term.options.theme?.background || "");
+    newHost.style.backgroundColor = "var(--terminal)";
 
     // Setup ResizeObserver for the new host
     if (observers.current[id]) {

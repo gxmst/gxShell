@@ -53,6 +53,18 @@ afterEach(() => {
 });
 
 describe("useHotkeys", () => {
+  it.each([true, false])("leaves IME composition keys to the terminal (isComposing=%s)", (isComposing) => {
+    const handlers = setup();
+    const terminal = mountTarget(TERMINAL_HTML).querySelector("textarea")!;
+    const forwarded = vi.fn();
+    terminal.addEventListener("keydown", forwarded);
+    const event = new KeyboardEvent("keydown", { key: "k", ctrlKey: true, isComposing, keyCode: isComposing ? 75 : 229, bubbles: true, cancelable: true });
+    terminal.dispatchEvent(event);
+    expect(handlers.onGlobalSearch).not.toHaveBeenCalled();
+    expect(forwarded).toHaveBeenCalledOnce();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
   it("opens the global search on Ctrl+K", () => {
     const handlers = setup();
     press(window, "k", { ctrl: true });
