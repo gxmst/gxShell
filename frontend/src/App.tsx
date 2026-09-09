@@ -1444,6 +1444,7 @@ function App() {
           onActive={activateTab}
           onClose={sessions.closeTab}
           onReconnect={sessions.reconnectTab}
+          onNewTerminal={(tab) => { const profile = profileState.profiles.find((p) => p.id === tab.profileId); if (profile) void sessions.connectProfile(profile, { instanceId: crypto.randomUUID() }); }}
           onTearOff={handleTearOff}
           onReorder={sessions.reorderTabs}
           onSplitToggle={handleSplitToggle}

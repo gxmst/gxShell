@@ -12,6 +12,17 @@ const tabs: Tab[] = Array.from({ length: 12 }, (_, index) => ({
 }));
 
 describe("TabBar overflow", () => {
+  it("offers a new independent terminal for a saved server", () => {
+    const onNewTerminal = vi.fn();
+    const saved = { ...tabs[0], profileId: "profile-1" };
+    render(
+      <TabBar tabs={[saved]} activeTab={saved.id} profiles={[{ id: "profile-1" } as any]} onActive={vi.fn()} onClose={vi.fn()} onReconnect={vi.fn()} onNewTerminal={onNewTerminal} language="en" />,
+    );
+    fireEvent.contextMenu(screen.getByRole("tab", { name: saved.title }).closest(".tab") as HTMLElement);
+    fireEvent.click(within(screen.getByRole("menu")).getByRole("menuitem", { name: "Open in new terminal" }));
+    expect(onNewTerminal).toHaveBeenCalledWith(saved);
+  });
+
   it("keeps every tab available through the compact strip and all-tabs menu", () => {
     const onActive = vi.fn();
     const onClose = vi.fn();

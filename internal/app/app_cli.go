@@ -603,13 +603,13 @@ func (a *App) findCliSession(profileID string) string {
 func chooseConnectedCliSession(profileID, preferredID string, sessions []types.SessionInfo) string {
 	if preferredID != "" {
 		for _, session := range sessions {
-			if session.ID == preferredID && session.ProfileID == profileID && session.State == types.SessionConnected {
+			if session.ID == preferredID && session.ProfileID == profileID && session.InstanceID == "" && session.State == types.SessionConnected {
 				return preferredID
 			}
 		}
 	}
 	for _, session := range sessions {
-		if session.ProfileID == profileID && session.State == types.SessionConnected {
+		if session.ProfileID == profileID && session.InstanceID == "" && session.State == types.SessionConnected {
 			return session.ID
 		}
 	}

@@ -1010,6 +1010,7 @@ export namespace types {
 	export class SessionInfo {
 	    id: string;
 	    profileId: string;
+	    instanceId?: string;
 	    runtimeId?: string;
 	    generation?: number;
 	    name: string;
@@ -1028,6 +1029,7 @@ export namespace types {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.profileId = source["profileId"];
+	        this.instanceId = source["instanceId"];
 	        this.runtimeId = source["runtimeId"];
 	        this.generation = source["generation"];
 	        this.name = source["name"];

@@ -35,6 +35,7 @@ export function ConnectLocal(arg1:number,arg2:number):Promise<types.SessionInfo>
 export function ConnectQuick(arg1:types.Profile,arg2:number,arg3:number):Promise<types.SessionInfo>;
 
 export function ConnectWithSecrets(arg1:string,arg2:string,arg3:string,arg4:number,arg5:number):Promise<types.SessionInfo>;
+export function ConnectTerminal(profileId:string,instanceId:string,password:string,passphrase:string,cols:number,rows:number):Promise<types.SessionInfo>;
 
 export function ContainerLogs(arg1:string,arg2:string,arg3:number):Promise<string>;
 

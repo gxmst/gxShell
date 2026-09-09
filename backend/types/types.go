@@ -177,8 +177,9 @@ const (
 )
 
 type SessionInfo struct {
-	ID        string `json:"id"`
-	ProfileID string `json:"profileId"`
+	ID         string `json:"id"`
+	ProfileID  string `json:"profileId"`
+	InstanceID string `json:"instanceId,omitempty"`
 	// RuntimeID is stable across physical SSH reconnects for the same saved
 	// profile. Generation identifies the particular SSH transport instance.
 	// Both fields are additive so existing sessionId consumers remain compatible.

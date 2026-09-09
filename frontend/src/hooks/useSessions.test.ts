@@ -8,6 +8,7 @@ const appMocks = vi.hoisted(() => ({
   connect: vi.fn(),
   connectQuick: vi.fn(),
   connectWithSecrets: vi.fn(),
+  connectTerminal: vi.fn(),
   reconnect: vi.fn(),
   disconnect: vi.fn(),
   stopMonitor: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("../../wailsjs/go/app/App", () => ({
   Connect: appMocks.connect,
   ConnectQuick: appMocks.connectQuick,
   ConnectWithSecrets: appMocks.connectWithSecrets,
+  ConnectTerminal: appMocks.connectTerminal,
   ConnectLocal: vi.fn(),
   Disconnect: appMocks.disconnect,
   ListSessions: appMocks.listSessions,
@@ -72,6 +74,7 @@ describe("useSessions workspace restore", () => {
     appMocks.connect.mockReset();
     appMocks.connectQuick.mockReset();
     appMocks.connectWithSecrets.mockReset();
+    appMocks.connectTerminal.mockReset();
     appMocks.reconnect.mockReset();
     appMocks.disconnect.mockReset();
     appMocks.stopMonitor.mockReset();
@@ -103,6 +106,17 @@ describe("useSessions workspace restore", () => {
     expect(result.current.activeTab).toBe("other-server");
     act(() => result.current.restoreActiveTab("saved-server"));
     expect(result.current.activeTab).toBe("other-server");
+  });
+
+  it("opens a second terminal instance without reusing the default session", async () => {
+    const profile = makeProfile("one");
+    appMocks.connectTerminal.mockResolvedValue(new types.SessionInfo({ id: "second", profileId: profile.id, instanceId: "terminal-2", state: "connected", runtimeId: "profile:one:terminal:terminal-2", generation: 1 }));
+    const { result } = renderHook(() => useSessions({ profiles: [profile], notify: vi.fn(), reload: vi.fn(async () => undefined), disposeTerminal: vi.fn(), restoreWorkspace: false }));
+    act(() => result.current.setTabs([{ id: "default", profileId: profile.id, title: profile.name, state: "connected" }]));
+    await act(async () => { await result.current.connectProfile(profile, { instanceId: "terminal-2" }); });
+    expect(appMocks.connectTerminal).toHaveBeenCalledWith(profile.id, "terminal-2", "", "", 120, 36);
+    expect(result.current.tabs.map((tab) => tab.id)).toEqual(["default", "second"]);
+    expect(result.current.tabs[1].instanceId).toBe("terminal-2");
   });
 
   it("does not restore focus after the user deliberately reselects the current tab", async () => {

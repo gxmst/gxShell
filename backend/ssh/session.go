@@ -133,7 +133,21 @@ func (m *Manager) ConnectViaJump(profile types.Profile, jumpProfile types.Profil
 // active session or waited for another caller that owned the handshake. The
 // app uses this bit to avoid running monitor/tunnel/post-connect setup twice.
 func (m *Manager) ConnectViaJumpWithStatus(profile types.Profile, jumpProfile types.Profile, timeoutSec int, cols int, rows int) (info types.SessionInfo, established bool, err error) {
+	return m.ConnectInstanceViaJumpWithStatus(profile, jumpProfile, "", timeoutSec, cols, rows)
+}
+
+// Each terminal instance owns its transport and reconnect generation. The empty
+// instance remains the default connection used by the CLI and profile actions.
+func (m *Manager) ConnectInstanceViaJumpWithStatus(profile types.Profile, jumpProfile types.Profile, instanceID string, timeoutSec int, cols int, rows int) (info types.SessionInfo, established bool, err error) {
+	if len(instanceID) > 64 || strings.IndexFunc(instanceID, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-')
+	}) >= 0 {
+		return info, false, errors.New("invalid terminal instance ID")
+	}
 	runtimeID := RuntimeIDForProfile(profile)
+	if instanceID != "" {
+		runtimeID += ":terminal:" + instanceID
+	}
 	existing, call, owner := m.beginRuntimeConnect(runtimeID)
 	if existing.ID != "" {
 		return existing, false, nil
@@ -146,11 +160,11 @@ func (m *Manager) ConnectViaJumpWithStatus(profile types.Profile, jumpProfile ty
 	defer func() {
 		m.finishRuntimeConnect(runtimeID, call, info, err)
 	}()
-	info, err = m.connectViaJumpOwned(profile, jumpProfile, timeoutSec, cols, rows)
+	info, err = m.connectViaJumpOwned(profile, jumpProfile, instanceID, runtimeID, timeoutSec, cols, rows)
 	return info, true, err
 }
 
-func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.Profile, timeoutSec int, cols int, rows int) (types.SessionInfo, error) {
+func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.Profile, instanceID, runtimeID string, timeoutSec int, cols int, rows int) (types.SessionInfo, error) {
 	if cols <= 0 {
 		cols = 120
 	}
@@ -162,16 +176,16 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 	}
 
 	id := newSessionID()
-	runtimeID := RuntimeIDForProfile(profile)
 	info := types.SessionInfo{
-		ID:        id,
-		ProfileID: profile.ID,
-		Name:      profile.Name,
-		RuntimeID: runtimeID,
-		State:     types.SessionConnecting,
-		Cols:      cols,
-		Rows:      rows,
-		StartedAt: time.Now(),
+		ID:         id,
+		ProfileID:  profile.ID,
+		InstanceID: instanceID,
+		Name:       profile.Name,
+		RuntimeID:  runtimeID,
+		State:      types.SessionConnecting,
+		Cols:       cols,
+		Rows:       rows,
+		StartedAt:  time.Now(),
 	}
 	session := &Session{info: info, port: profile.Port, done: make(chan struct{})}
 	// The limit check and the insert share one critical section: a separate

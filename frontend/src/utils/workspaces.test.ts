@@ -37,6 +37,15 @@ describe("named workspaces", () => {
     expect(result.tabs[0]).toMatchObject({ id: current.id, title: "Primary DB", customTitle: true, pinned: true });
     expect(current.title).toBe("Server");
   });
+  it("keeps two instances of one profile as separate workspace items", () => {
+    const first = { ...ssh, instanceId: "terminal-a" };
+    const second = { ...ssh, id: "ssh-2", instanceId: "terminal-b", title: "Server (2)" };
+    const workspace = captureWorkspace("Two shells", [first, second], [profile], first.id, null);
+    expect(workspace.items).toHaveLength(2);
+    expect(workspace.items.map((item) => item.instanceId)).toEqual(["terminal-a", "terminal-b"]);
+    const parsed = parseWorkspaces(JSON.stringify([workspace]))[0];
+    expect(parsed.items.map((item) => item.instanceId)).toEqual(["terminal-a", "terminal-b"]);
+  });
   it("validates imported layout values and drops missing layout targets", () => {
     const workspace = captureWorkspace("Daily", [ssh, doc], [profile], ssh.id, null);
     const parsed = parseWorkspaces(JSON.stringify([{ ...workspace, layout: { keys: ["missing", "p:server"], ratio: 100 } }]))[0];

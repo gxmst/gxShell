@@ -36,6 +36,7 @@ export type Tab = {
   runtimeId?: string;
   connectionGeneration?: number;
   profileId: string;
+  instanceId?: string;
   title: string;
   state: string;
   unread?: boolean;
@@ -204,6 +205,7 @@ export type SecretRequest = {
   profile: types.Profile;
   mode: "connect" | "reconnect";
   sessionId?: string;
+  instanceId?: string;
 };
 
 export type GlobalSearchResult = {

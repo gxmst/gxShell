@@ -8,7 +8,7 @@ import { useNamedWorkspaces } from "./useNamedWorkspaces";
 import { captureWorkspace } from "../utils/workspaces";
 
 const bridge = vi.hoisted(() => ({ files: vi.fn(), connect: vi.fn(), events: new Map<string, (...args: any[]) => void>() }));
-vi.mock("../../wailsjs/go/app/App", () => ({ RestoreTextFiles: bridge.files, Connect: bridge.connect, ConnectWithSecrets: bridge.connect, ConnectQuick: vi.fn(), ConnectLocal: vi.fn(), Disconnect: vi.fn(), ListSessions: vi.fn(async () => []), Reconnect: vi.fn(), ReconnectWithSecrets: vi.fn(), StopMonitor: vi.fn() }));
+vi.mock("../../wailsjs/go/app/App", () => ({ RestoreTextFiles: bridge.files, Connect: bridge.connect, ConnectWithSecrets: bridge.connect, ConnectTerminal: bridge.connect, ConnectQuick: vi.fn(), ConnectLocal: vi.fn(), Disconnect: vi.fn(), ListSessions: vi.fn(async () => []), Reconnect: vi.fn(), ReconnectWithSecrets: vi.fn(), StopMonitor: vi.fn() }));
 vi.mock("../../wailsjs/runtime/runtime", () => ({ EventsOn: (name: string, callback: (...args: any[]) => void) => { bridge.events.set(name, callback); return () => bridge.events.delete(name); } }));
 const profiles = ["a", "b"].map((id) => new types.Profile({ id, name: id, host: `${id}.test`, username: "root", authType: "password", rememberPassword: false }));
 const server = (id: string): Tab => ({ id: `session-${id}`, profileId: id, title: id, state: "connected" });

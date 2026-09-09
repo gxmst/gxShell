@@ -1,6 +1,6 @@
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, Circle, Columns2, FileText, List, Pin, PinOff, Plus, Radio, RefreshCw, Rows2, Server, Terminal, X } from "lucide-react";
+import { ChevronDown, Circle, Columns2, CopyPlus, FileText, List, Pin, PinOff, Plus, Radio, RefreshCw, Rows2, Server, Terminal, X } from "lucide-react";
 import type { AutomationIndicator, SplitDirection, Tab } from "../../types";
 import { Grid2X2 } from "lucide-react";
 import { stateClass } from "../../utils/format";
@@ -10,7 +10,7 @@ import { t } from "../../i18n";
 // The tab strip. It is mounted inside AppTopBar, so it owns no window chrome
 // and no sidebar affordance: the activity rail is always visible and carries
 // the only panel toggle.
-export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconnect, onTearOff, onReorder, onSplitToggle, onNewConnection, onNewLocal, onOpenMarkdown, onRename, onTogglePin, rightAccessory, broadcastInput, broadcastAvailable, onToggleBroadcast, recording, onToggleRecording, automationActivity, dirtyTabIds, language }: { tabs: Tab[]; activeTab: string; profiles: types.Profile[]; onActive: (id: string) => void; onClose: (id: string) => void; onReconnect: (tab: Tab) => void; onTearOff?: (tab: Tab) => void; onReorder?: (draggedId: string, targetId: string) => void; onSplitToggle?: (tabId: string, direction: SplitDirection) => void; onNewConnection?: () => void; onNewLocal?: () => void; onOpenMarkdown?: () => void; onRename?: (tab: Tab) => void; onTogglePin?: (tab: Tab) => void; rightAccessory?: ReactNode; broadcastInput?: boolean; broadcastAvailable?: boolean; onToggleBroadcast?: () => void; recording?: boolean; onToggleRecording?: (id: string) => void; automationActivity?: Record<string, AutomationIndicator>; dirtyTabIds?: string[]; language?: string }) {
+export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconnect, onTearOff, onReorder, onSplitToggle, onNewConnection, onNewLocal, onNewTerminal, onOpenMarkdown, onRename, onTogglePin, rightAccessory, broadcastInput, broadcastAvailable, onToggleBroadcast, recording, onToggleRecording, automationActivity, dirtyTabIds, language }: { tabs: Tab[]; activeTab: string; profiles: types.Profile[]; onActive: (id: string) => void; onClose: (id: string) => void; onReconnect: (tab: Tab) => void; onTearOff?: (tab: Tab) => void; onReorder?: (draggedId: string, targetId: string) => void; onSplitToggle?: (tabId: string, direction: SplitDirection) => void; onNewConnection?: () => void; onNewLocal?: () => void; onNewTerminal?: (tab: Tab) => void; onOpenMarkdown?: () => void; onRename?: (tab: Tab) => void; onTogglePin?: (tab: Tab) => void; rightAccessory?: ReactNode; broadcastInput?: boolean; broadcastAvailable?: boolean; onToggleBroadcast?: () => void; recording?: boolean; onToggleRecording?: (id: string) => void; automationActivity?: Record<string, AutomationIndicator>; dirtyTabIds?: string[]; language?: string }) {
   const active = tabs.find((tab) => tab.id === activeTab);
   const lang = language || "en";
   const dragRef = useRef<{ tabId: string; startX: number; startY: number; active: boolean } | null>(null);
@@ -212,6 +212,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
               </button>
               <button className="tab-close" tabIndex={activeTab === tab.id ? 0 : -1} aria-label={`${t(lang, "close")} ${tab.title}`} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onClose(tab.id); }}><X size={13} /></button>
               {contextTabId === tab.id && <div className="tab-context-menu" role="menu" onClick={(event) => event.stopPropagation()}>
+                {onNewTerminal && tab.type !== "markdown" && profileByID.has(tab.profileId) && <button role="menuitem" onClick={() => { setContextTabId(""); onNewTerminal(tab); }}><CopyPlus size={12} />{lang === "zh-CN" ? "在新终端打开" : "Open in new terminal"}</button>}
                 {onRename && <button role="menuitem" onClick={() => { setContextTabId(""); onRename(tab); }}>{lang === "zh-CN" ? "重命名标签" : "Rename tab"}</button>}
                 {onTogglePin && <button role="menuitem" onClick={() => { setContextTabId(""); onTogglePin(tab); }}>{tab.pinned ? <PinOff size={12} /> : <Pin size={12} />}{tab.pinned ? (lang === "zh-CN" ? "取消固定" : "Unpin") : (lang === "zh-CN" ? "固定标签" : "Pin tab")}</button>}
                 <button role="menuitem" onClick={() => { setContextTabId(""); onClose(tab.id); }}><X size={12} />{t(lang, "close")}</button>
@@ -249,6 +250,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
           </button>
           {newMenuOpen && (
             <div className="tab-action-dropdown" role="menu" onClick={(e) => e.stopPropagation()}>
+              {active && active.type !== "markdown" && profileByID.has(active.profileId) && onNewTerminal && <button className="tab-action-item" role="menuitem" onClick={() => { setNewMenuOpen(false); onNewTerminal(active); }}><CopyPlus size={12} />{lang === "zh-CN" ? "在新终端打开" : "Open in new terminal"}</button>}
               <button className="tab-action-item" role="menuitem" onClick={() => { setNewMenuOpen(false); onNewConnection?.(); }}>
                 <Server size={12} />
                 {t(lang, "sshConnection")}

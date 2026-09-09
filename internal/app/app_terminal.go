@@ -16,6 +16,11 @@ func (a *App) Connect(profileID string, cols int, rows int) (types.SessionInfo, 
 
 // ConnectWithSecrets establishes an SSH connection with provided credentials.
 func (a *App) ConnectWithSecrets(profileID string, password string, privateKeyPassphrase string, cols int, rows int) (types.SessionInfo, error) {
+	return a.ConnectTerminal(profileID, "", password, privateKeyPassphrase, cols, rows)
+}
+
+// ConnectTerminal opens or restores one independently addressable terminal.
+func (a *App) ConnectTerminal(profileID string, instanceID string, password string, privateKeyPassphrase string, cols int, rows int) (types.SessionInfo, error) {
 	// Check rate limit
 	if err := a.rateLimiter.CheckAndRecord(profileID); err != nil {
 		return types.SessionInfo{}, err
@@ -81,7 +86,7 @@ func (a *App) ConnectWithSecrets(profileID string, password string, privateKeyPa
 		settings.MonitorIntervalSec = defaultSettings.MonitorIntervalSec
 	}
 
-	info, established, err := a.ssh.ConnectViaJumpWithStatus(fullProfile, jumpProfile, settings.ConnectionTimeout, cols, rows)
+	info, established, err := a.ssh.ConnectInstanceViaJumpWithStatus(fullProfile, jumpProfile, instanceID, settings.ConnectionTimeout, cols, rows)
 	if err != nil {
 		a.log.Error("connect failed: " + err.Error())
 		return info, err
@@ -104,7 +109,7 @@ func (a *App) ConnectWithSecrets(profileID string, password string, privateKeyPa
 	}
 
 	// Start tunnels if configured
-	if len(fullProfile.Tunnels) > 0 {
+	if instanceID == "" && len(fullProfile.Tunnels) > 0 {
 		client, clientErr := a.ssh.Client(info.ID)
 		if clientErr == nil {
 			a.tunnels.StartTunnels(info.ID, client, fullProfile.Tunnels)
@@ -152,7 +157,7 @@ func (a *App) ReconnectWithSecrets(sessionID string, password string, privateKey
 		return types.SessionInfo{}, err
 	}
 	_ = a.Disconnect(sessionID)
-	return a.ConnectWithSecrets(old.ProfileID, password, privateKeyPassphrase, old.Cols, old.Rows)
+	return a.ConnectTerminal(old.ProfileID, old.InstanceID, password, privateKeyPassphrase, old.Cols, old.Rows)
 }
 
 // WriteToTerminal sends data to a terminal session.

@@ -66,6 +66,10 @@ export function ConnectWithSecrets(arg1, arg2, arg3, arg4, arg5) {
   return window['go']['app']['App']['ConnectWithSecrets'](arg1, arg2, arg3, arg4, arg5);
 }
 
+export function ConnectTerminal(profileId, instanceId, password, passphrase, cols, rows) {
+  return window['go']['app']['App']['ConnectTerminal'](profileId, instanceId, password, passphrase, cols, rows);
+}
+
 export function ContainerLogs(arg1, arg2, arg3) {
   return window['go']['app']['App']['ContainerLogs'](arg1, arg2, arg3);
 }

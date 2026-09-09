@@ -4,6 +4,7 @@ import { RestoreTextFiles } from "../../wailsjs/go/app/App";
 import type { SplitPane } from "../types";
 import type { useSessions } from "./useSessions";
 import { needsSecret } from "../utils/format";
+import { sameTerminal, terminalKey } from "../utils/sessionIdentity";
 import { applyWorkspace, captureWorkspace, parseWorkspaces, WORKSPACES_KEY, workspacePathKey, type NamedWorkspace } from "../utils/workspaces";
 
 type SecretPrompt = { profile: types.Profile; submit: (password: string, passphrase: string) => Promise<void>; cancel: () => void };
@@ -88,19 +89,19 @@ export function useNamedWorkspaces(options: { sessions: ReturnType<typeof useSes
         if (!profile) { issues.push(`${item.title}: ${current.current.language === "zh-CN" ? "连接配置已不存在" : "profile no longer exists"}`); continue; }
         setProgress(profile.name || profile.host);
         try {
-          const existing = current.current.sessions.tabs.find((t) => t.type !== "markdown" && t.profileId === profile.id && ["connected", "connecting", "restoring", "reconnecting"].includes(t.state));
+          const existing = current.current.sessions.tabs.find((t) => t.type !== "markdown" && sameTerminal(t, profile.id, item.instanceId) && ["connected", "connecting", "restoring", "reconnecting"].includes(t.state));
           let id: string | null;
           if (existing) id = existing.id;
           else if (needsSecret(profile)) {
             id = await new Promise<string | null>((resolve) => {
               pendingSecret.current = resolve;
               setSecretPrompt({ profile, cancel: () => { setSecretPrompt(null); pendingSecret.current = null; resolve(null); }, submit: async (password, passphrase) => {
-                const id = await current.current.sessions.connectWorkspaceProfile(profile, password, passphrase);
+                const id = await current.current.sessions.connectWorkspaceProfile(profile, password, passphrase, item.instanceId);
                 setSecretPrompt(null); pendingSecret.current = null; resolve(id);
               } });
             });
-          } else id = await current.current.sessions.connectWorkspaceProfile(profile);
-          if (id) connected.set(profile.id, id);
+          } else id = await current.current.sessions.connectWorkspaceProfile(profile, "", "", item.instanceId);
+          if (id) connected.set(terminalKey(profile.id, item.instanceId), id);
           else issues.push(`${item.title}: ${current.current.language === "zh-CN" ? "已跳过认证" : "authentication skipped"}`);
         } catch (err) { issues.push(`${item.title}: ${String(err)}`); }
       }

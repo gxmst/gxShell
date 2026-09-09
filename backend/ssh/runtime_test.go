@@ -3,6 +3,7 @@ package sshmanager
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -72,6 +73,16 @@ func TestRuntimeIDForProfileUsesStableProfileIdentity(t *testing.T) {
 	profile.Host = "new.example.com"
 	if second := RuntimeIDForProfile(profile); second != first {
 		t.Fatalf("saved profile runtime id changed: %q != %q", second, first)
+	}
+}
+
+func TestConnectInstanceRejectsInvalidID(t *testing.T) {
+	manager := NewManager("", nil, nil)
+	profile := types.Profile{ID: "profile-1", Host: "example.com", Port: 22, Username: "root"}
+	for _, instanceID := range []string{"bad/id", "bad_id", strings.Repeat("x", 65)} {
+		if _, _, err := manager.ConnectInstanceViaJumpWithStatus(profile, types.Profile{}, instanceID, 1, 80, 24); err == nil {
+			t.Fatalf("instance %q should be rejected", instanceID)
+		}
 	}
 }
 
