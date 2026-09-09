@@ -72,6 +72,24 @@ describe("workspace restoration lifecycle", () => {
     expect(result.current.sessions.tabs).toEqual([]);
   });
 
+  it("restores separate instances of one profile and their split layout", async () => {
+    bridge.connect.mockImplementation(async (id: string, instanceId: string) => new types.SessionInfo({ id: `session-${instanceId}`, profileId: id, instanceId, state: "connected" }));
+    const { result } = renderHook(useHarness);
+    const tabs = ["first", "second"].map((instanceId) => ({ ...server("a"), id: `session-${instanceId}`, instanceId }));
+    const workspace = captureWorkspace("Instances", tabs, profiles, tabs[1].id, { left: tabs[0].id, right: tabs[1].id, direction: "horizontal", ratio: 0.5 });
+    let opening!: Promise<string[]>;
+    act(() => { opening = result.current.manager.open(workspace); });
+    await waitFor(() => expect(result.current.manager.secretPrompt).not.toBeNull());
+    await act(async () => { await result.current.manager.secretPrompt!.submit("one", ""); });
+    await waitFor(() => expect(bridge.connect).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.manager.secretPrompt).not.toBeNull());
+    await act(async () => { await result.current.manager.secretPrompt!.submit("two", ""); await opening; });
+    await waitFor(() => expect(result.current.sessions.tabs).toHaveLength(2));
+    expect(result.current.sessions.tabs.map((tab) => tab.instanceId)).toEqual(["first", "second"]);
+    expect(result.current.sessions.activeTab).toBe("session-second");
+    expect(result.current.split).toMatchObject({ left: "session-first", right: "session-second" });
+  });
+
   it("restores layout when an existing server reconnects while another awaits authentication", async () => {
     const { result } = renderHook(useHarness);
     act(() => result.current.sessions.setTabs([{ ...server("a"), state: "reconnecting" }]));
