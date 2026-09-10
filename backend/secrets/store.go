@@ -20,9 +20,11 @@ import (
 const service = "gxShell"
 
 type Store struct {
-	dataDir   string
-	legacyDir string
-	mu        sync.Mutex
+	dataDir     string
+	legacyDir   string
+	mu          sync.Mutex
+	operationMu sync.Mutex
+	keyring     credentialStore
 
 	// Cached state, guarded by mu. The store owns its files exclusively, so
 	// caching avoids re-reading and re-decrypting the fallback file (and the
@@ -50,10 +52,12 @@ func NewStore(dataDir string) *Store {
 }
 
 func (s *Store) SavePassword(profileID string, password string) error {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
 	if password == "" {
 		return nil
 	}
-	err := keyring.Set(service, key(profileID, "password"), password)
+	err := s.credentials().Set(key(profileID, "password"), password)
 	if err != nil {
 		return s.saveFallback(profileID, "password", password)
 	}
@@ -62,10 +66,12 @@ func (s *Store) SavePassword(profileID string, password string) error {
 }
 
 func (s *Store) SavePassphrase(profileID string, passphrase string) error {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
 	if passphrase == "" {
 		return nil
 	}
-	err := keyring.Set(service, key(profileID, "passphrase"), passphrase)
+	err := s.credentials().Set(key(profileID, "passphrase"), passphrase)
 	if err != nil {
 		return s.saveFallback(profileID, "passphrase", passphrase)
 	}
@@ -77,11 +83,16 @@ func (s *Store) SavePassphrase(profileID string, passphrase string) error {
 // Callers should expose only the name to untrusted clients; the returned value
 // from GetNamed must stay inside the final execution boundary.
 func (s *Store) SaveNamed(namespace string, name string, value string) error {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
 	if namespace == "" || name == "" || value == "" {
 		return errors.New("secret namespace, name, and value are required")
 	}
 	id := "named:" + namespace + ":" + name
-	err := keyring.Set(service, key(id, "value"), value)
+	if err := s.saveFallback(id, "indexed", "1"); err != nil {
+		return err
+	}
+	err := s.credentials().Set(key(id, "value"), value)
 	if err != nil {
 		return s.saveFallback(id, "value", value)
 	}
@@ -92,8 +103,10 @@ func (s *Store) SaveNamed(namespace string, name string, value string) error {
 // GetNamed retrieves an application-managed secret without exposing it through
 // profile/config serialization.
 func (s *Store) GetNamed(namespace string, name string) (string, error) {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
 	id := "named:" + namespace + ":" + name
-	value, err := keyring.Get(service, key(id, "value"))
+	value, err := s.credentials().Get(key(id, "value"))
 	if err == nil {
 		return value, nil
 	}
@@ -108,13 +121,17 @@ func (s *Store) GetNamed(namespace string, name string) (string, error) {
 
 // DeleteNamed removes one application-managed secret.
 func (s *Store) DeleteNamed(namespace string, name string) {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
 	id := "named:" + namespace + ":" + name
-	_ = keyring.Delete(service, key(id, "value"))
+	_ = s.credentials().Delete(key(id, "value"))
 	s.deleteFallback(id)
 }
 
 func (s *Store) GetPassword(profileID string) (string, error) {
-	value, err := keyring.Get(service, key(profileID, "password"))
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+	value, err := s.credentials().Get(key(profileID, "password"))
 	if err == nil {
 		return value, nil
 	}
@@ -131,7 +148,9 @@ func (s *Store) GetPassword(profileID string) (string, error) {
 }
 
 func (s *Store) GetPassphrase(profileID string) (string, error) {
-	value, err := keyring.Get(service, key(profileID, "passphrase"))
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+	value, err := s.credentials().Get(key(profileID, "passphrase"))
 	if err == nil {
 		return value, nil
 	}
@@ -148,8 +167,10 @@ func (s *Store) GetPassphrase(profileID string) (string, error) {
 }
 
 func (s *Store) Delete(profileID string) {
-	_ = keyring.Delete(service, key(profileID, "password"))
-	_ = keyring.Delete(service, key(profileID, "passphrase"))
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+	_ = s.credentials().Delete(key(profileID, "password"))
+	_ = s.credentials().Delete(key(profileID, "passphrase"))
 	s.deleteFallback(profileID)
 }
 
@@ -389,7 +410,7 @@ func (s *Store) writeFallback(data map[string]map[string]string) error {
 func (s *Store) saveFallback(profileID, kind, value string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data := s.fallbackData()
+	data := cloneFallback(s.fallbackData())
 	if data[profileID] == nil {
 		data[profileID] = map[string]string{}
 	}

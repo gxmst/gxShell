@@ -142,6 +142,22 @@ export function ExportProfiles(arg1) {
   return window['go']['app']['App']['ExportProfiles'](arg1);
 }
 
+export function ExportBackup(passphrase, workspaces, includeSecrets, includePrivateKeys) {
+  return window['go']['app']['App']['ExportBackup'](passphrase, workspaces, includeSecrets, includePrivateKeys);
+}
+
+export function PreviewBackup(passphrase, workspaces, policy, restoreSettings) {
+  return window['go']['app']['App']['PreviewBackup'](passphrase, workspaces, policy, restoreSettings);
+}
+
+export function ApplyBackup(token, previousWorkspaces) {
+  return window['go']['app']['App']['ApplyBackup'](token, previousWorkspaces);
+}
+
+export function DiscardBackupPreview(token) {
+  return window['go']['app']['App']['DiscardBackupPreview'](token);
+}
+
 export function GetAiConfig() {
   return window['go']['app']['App']['GetAiConfig']();
 }

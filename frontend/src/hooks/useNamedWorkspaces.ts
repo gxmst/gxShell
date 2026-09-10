@@ -6,6 +6,7 @@ import type { useSessions } from "./useSessions";
 import { needsSecret } from "../utils/format";
 import { sameTerminal, terminalKey } from "../utils/sessionIdentity";
 import { applyWorkspace, captureWorkspace, parseWorkspaces, WORKSPACES_KEY, workspacePathKey, type NamedWorkspace } from "../utils/workspaces";
+import { applyBackupWorkspaces } from "../utils/backupWorkspaces";
 
 type SecretPrompt = { profile: types.Profile; submit: (password: string, passphrase: string) => Promise<void>; cancel: () => void };
 
@@ -22,6 +23,7 @@ export function useNamedWorkspaces(options: { sessions: ReturnType<typeof useSes
   const pendingSecret = useRef<((id: string | null) => void) | null>(null);
   const operation = useRef(0);
   const running = useRef(false);
+  const importing = useRef(false);
   useEffect(() => () => { operation.current++; pendingSecret.current?.(null); }, []);
   useEffect(() => {
     if (!pending || pending.token !== operation.current) return;
@@ -40,9 +42,23 @@ export function useNamedWorkspaces(options: { sessions: ReturnType<typeof useSes
   }, [pending]);
 
   const persist = useCallback((next: NamedWorkspace[]) => {
+    if (importing.current) throw new Error("Workspace import is in progress");
     localStorage.setItem(WORKSPACES_KEY, JSON.stringify(next));
     saved.current = next;
     setWorkspaces(next);
+  }, []);
+  const restoreBackup = useCallback(async (previous: string | null, next: string, apply: () => Promise<void>) => {
+    if (running.current || importing.current) throw new Error("A workspace operation is already in progress");
+    importing.current = true;
+    setBusy(true);
+    try {
+      const parsed = await applyBackupWorkspaces(previous, next, apply);
+      saved.current = parsed;
+      setWorkspaces(parsed);
+    } finally {
+      importing.current = false;
+      setBusy(false);
+    }
   }, []);
   const snapshot = useCallback((name: string, id?: string) => {
     const o = current.current;
@@ -67,7 +83,7 @@ export function useNamedWorkspaces(options: { sessions: ReturnType<typeof useSes
   }, []);
 
   const open = useCallback(async (workspace: NamedWorkspace): Promise<string[]> => {
-    if (running.current) return [];
+    if (running.current || importing.current) return [];
     running.current = true;
     const token = ++operation.current;
     const revision = current.current.sessions.beginFocusRequest();
@@ -114,5 +130,5 @@ export function useNamedWorkspaces(options: { sessions: ReturnType<typeof useSes
     }
   }, []);
 
-  return { workspaces, snapshot, rename, remove, open, cancel, busy, progress, secretPrompt, storageError: initial.error };
+  return { workspaces, snapshot, rename, remove, restoreBackup, open, cancel, busy, progress, secretPrompt, storageError: initial.error };
 }

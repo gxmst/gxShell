@@ -1,7 +1,7 @@
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { types } from "../wailsjs/go/models";
-import { AnswerKeyboardInteractive, CloseWindow, CreateCommand, DeleteCommand, ExportProfiles, GetStartupFile, ImportOpenSSHConfig, ImportProfiles, IsRecording, ListCommands, OpenDataDir, ReadLogFile, RevokeCliTrust, SelectPrivateKey, SendCommandToTerminal, SetWindowBackgroundColour, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/app/App";
+import { AnswerKeyboardInteractive, ApplyBackup, CloseWindow, CreateCommand, DeleteCommand, ExportProfiles, GetStartupFile, ImportOpenSSHConfig, ImportProfiles, IsRecording, ListCommands, OpenDataDir, ReadLogFile, RevokeCliTrust, SelectPrivateKey, SendCommandToTerminal, SetWindowBackgroundColour, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/app/App";
 import { emptyProfile } from "./constants";
 import type { AutomationActivityEvent, AutomationActivityRecord, AutomationIndicator, CliApprovalEvent, Drawer, SplitDirection, SplitPane, Tab } from "./types";
 import { normalizeAppTheme, parseRgbColor } from "./utils/format";
@@ -39,6 +39,7 @@ import { BulkProfilesModal } from "./components/modals/BulkProfilesModal";
 import { reconcileSplit, replaceSplitIds, splitPaneIds } from "./utils/splitPane";
 import { useNamedWorkspaces } from "./hooks/useNamedWorkspaces";
 import { WorkspacesModal } from "./components/modals/WorkspacesModal";
+import { BackupModal } from "./components/modals/BackupModal";
 import { PanelsTopLeft } from "lucide-react";
 import { isSupportedDocumentPath } from "./utils/textFiles";
 import { shellQuote } from "./utils/shellQuote";
@@ -106,6 +107,9 @@ function App() {
   const [profileModal, setProfileModal] = useState<types.Profile | null>(null);
   const [bulkProfilesOpen, setBulkProfilesOpen] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
+  const [backupMode, setBackupMode] = useState<"export" | "import" | null>(null);
+  const backupBusyRef = useRef(false);
+  const handleBackupBusyChange = useCallback((busy: boolean) => { backupBusyRef.current = busy; }, []);
   const [revokingCliTrustID, setRevokingCliTrustID] = useState("");
   const [quickConnectOpen, setQuickConnectOpen] = useState(false);
   const [commandModal, setCommandModal] = useState<types.CommandTemplate | null>(null);
@@ -675,6 +679,10 @@ function App() {
   const handleCommandDirtyChange = useCallback((dirty: boolean) => { commandDirtyRef.current = dirty; }, []);
   useEffect(() => {
     const offCloseRequest = EventsOn("app:close-requested", () => {
+      if (backupBusyRef.current) {
+        notify(profileState.settings?.language === "zh-CN" ? "请等待备份操作完成后再关闭窗口" : "Wait for the backup operation to finish before closing the window", "info");
+        return;
+      }
       const hasUnsavedWork =
         Object.keys(dirtyDocumentsRef.current).length > 0 ||
         settingsDirtyRef.current.dirty ||
@@ -691,7 +699,7 @@ function App() {
       setQuitConfirmOpen(true);
     });
     return () => offCloseRequest();
-  }, []);
+  }, [notify, profileState.settings?.language]);
 
   // Keyboard tab navigation walks the tab strip, so it has to see the same order
   // and the same membership the strip shows: torn-off terminals live in their own
@@ -1105,6 +1113,14 @@ function App() {
       notify(String(err), "error");
     }
   }, [notify, profileState.settings?.language]);
+
+  const openBackup = useCallback((mode: "export" | "import") => {
+    if (settingsDirtyRef.current.dirty || namedWorkspaces.busy) {
+      notify(profileState.settings?.language === "zh-CN" ? "请先保存设置并等待工作区操作完成" : "Save settings and finish the workspace operation first", "info");
+      return;
+    }
+    setBackupMode(mode);
+  }, [namedWorkspaces.busy, notify, profileState.settings?.language]);
 
   const saveCommand = async (command: types.CommandTemplate) => {
     try {
@@ -1531,6 +1547,8 @@ function App() {
           onImportProfiles={() => importProfiles(false)}
           onImportOpenSSH={() => importProfiles(true)}
           onExportProfiles={exportProfiles}
+          onExportBackup={() => openBackup("export")}
+          onImportBackup={() => openBackup("import")}
           onOpenSearch={() => setGlobalSearchOpen(true)}
           onStartMonitor={() => sessions.active && StartMonitor(sessions.active.id)}
           onRefreshSftp={sftp.refreshSftp}
@@ -1664,6 +1682,18 @@ function App() {
       {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileState.settings?.language || "en"} terminalDefaults={profileState.settings?.terminal} sessionLogDefaults={profileState.settings?.sessionLog} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={(id) => setDeleteProfileRequest({ id, name: profileModal.name || profileModal.host, closeEditor: true })} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify(t(profileState.settings?.language || "en", "profileCopied"), "info"); }} onDirtyChange={handleProfileDirtyChange} />}
       {bulkProfilesOpen && <BulkProfilesModal profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setBulkProfilesOpen(false)} onSave={async (ids, patch) => { await UpdateProfilesBatch(ids, patch); await profileState.reload(); notify(profileState.settings?.language === "zh-CN" ? "批量修改已保存" : "Batch changes saved", "success"); }} />}
       {workspacesOpen && <WorkspacesModal manager={namedWorkspaces} language={profileState.settings?.language || "en"} eligible={workspaceEligible} excluded={visibleTabs.length - workspaceEligible} onClose={() => setWorkspacesOpen(false)} />}
+      {backupMode && <BackupModal
+        mode={backupMode}
+        language={profileState.settings?.language || "en"}
+        onClose={() => setBackupMode(null)}
+        onBusyChange={handleBackupBusyChange}
+        onApply={(token, previous, workspaces) => namedWorkspaces.restoreBackup(previous, workspaces, () => ApplyBackup(token, previous || "[]"))}
+        onImported={() => {
+          notify(profileState.settings?.language === "zh-CN" ? "备份已恢复" : "Backup restored", "success");
+          void profileState.reload().catch((err) => notify(`${profileState.settings?.language === "zh-CN" ? "备份已恢复，但界面刷新失败" : "Backup restored, but refreshing the interface failed"}: ${String(err)}`, "error"));
+        }}
+        onExported={(path) => notify(profileState.settings?.language === "zh-CN" ? `加密备份已导出：${path}` : `Encrypted backup exported: ${path}`, "success")}
+      />}
       {quickConnectOpen && <QuickConnectModal
         language={profileState.settings?.language || "en"}
         onClose={() => setQuickConnectOpen(false)}

@@ -61,7 +61,7 @@ function SettingsToggle({ checked, label, hint, onChange }: { checked: boolean; 
   );
 }
 
-export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir, onNotify, onDirtyChange }: { settings: types.AppSettings; language: string; onSave: (settings: types.AppSettings) => void | Promise<void>; onOpenData: () => void; dataDir: string; onNotify?: (text: string, tone?: "info" | "error" | "success") => void; onDirtyChange?: (dirty: boolean, save: () => Promise<boolean>) => void }) {
+export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir, onNotify, onDirtyChange, onExportBackup, onImportBackup }: { settings: types.AppSettings; language: string; onSave: (settings: types.AppSettings) => void | Promise<void>; onOpenData: () => void; dataDir: string; onNotify?: (text: string, tone?: "info" | "error" | "success") => void; onDirtyChange?: (dirty: boolean, save: () => Promise<boolean>) => void; onExportBackup?: () => void; onImportBackup?: () => void }) {
   const lang = language;
   const zh = lang === "zh-CN";
   const [draft, setDraft] = useState(new types.AppSettings(settings));
@@ -373,7 +373,10 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
           <div className="settings-action-grid">
             <button className="btn-secondary" onClick={onOpenData}><HardDrive size={13} /> {t(lang, "openData")}</button>
             <button className="btn-secondary" onClick={() => ExportHistory().catch(() => {})}><FileText size={13} /> {t(lang, "exportHistory")}</button>
+            {onExportBackup && <button className="btn-secondary" disabled={dirty} onClick={onExportBackup}><Download size={13} /> {zh ? "导出加密备份" : "Export encrypted backup"}</button>}
+            {onImportBackup && <button className="btn-secondary" disabled={dirty} onClick={onImportBackup}><RefreshCw size={13} /> {zh ? "导入加密备份" : "Import encrypted backup"}</button>}
           </div>
+          {dirty && (onExportBackup || onImportBackup) && <p className="backup-hint">{zh ? "请先保存当前设置，再进行备份或恢复。" : "Save your current settings before exporting or restoring a backup."}</p>}
           <div className="settings-data-path"><HardDrive size={11} /><span>{dataDir}</span></div>
           <KnownHostsManager language={lang} onNotify={onNotify} />
         </SettingsSection>

@@ -146,6 +146,8 @@ type App struct {
 	// CLI-triggered touchProfile and a UI profile edit can interleave and one
 	// silently overwrites the other.
 	profilesMu      sync.Mutex
+	backupMu        sync.Mutex
+	backupPending   *backupPlan
 	startupFilePath string
 	startedAt       time.Time
 	// allowedFiles tracks the local file paths the user has genuinely chosen to

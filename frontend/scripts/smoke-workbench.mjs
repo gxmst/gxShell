@@ -23,6 +23,8 @@ try {
     const events = new Map();
     window.smokeEmit = (name, data) => { for (const callback of events.get(name) || []) callback(data); };
     window.smokeWrites = [];
+    window.smokeBackups = [];
+    window.smokeQuit = false;
     let settings = {
       themeName: 'Light', language: 'zh-CN', highlightLevel: 'basic', highlightRules: [], monitorEnabled: false, monitorIntervalSec: 5, connectionTimeout: 15,
       sidebarWidth: 290, sidebarSplitPct: 45, smartHighlight: true, restoreWorkspace: false, cliServerEnabled: false, updateCheckEnabled: false,
@@ -40,6 +42,26 @@ try {
       UpdateProfilesBatch: (ids, patch) => { profiles = profiles.map((p) => ids.includes(p.id) ? { ...p, ...patch } : p); return profiles; },
       Disconnect: (id) => { sessions = sessions.filter((s) => s.id !== id); },
       IsRecording: () => false, IsTextContextMenuRegistered: () => false, IsWindowMaximised: () => false,
+      CloseWindow: () => { window.smokeQuit = true; },
+      ExportBackup: (_passphrase, _workspaces, includeSecrets, includePrivateKeys) => {
+        window.smokeBackups.push({ action: 'export', includeSecrets, includePrivateKeys });
+        return 'isolated-smoke-backup.gxbak';
+      },
+      PreviewBackup: (_passphrase, workspaces, policy, restoreSettings) => {
+        window.smokeBackups.push({ action: 'preview', policy, restoreSettings });
+        window.smokeBackupPrevious = workspaces;
+        return JSON.stringify({
+          token: 'smoke-preview', createdAt: '2026-09-10T00:00:00Z', profiles: 1, commands: 2, workspacesAdded: 0, skipped: 1,
+          privateKeys: 1, namedSecrets: 1, knownHosts: 2, settings: restoreSettings, workspaces,
+          changes: [{ kind: 'profile', name: 'Imported server', action: 'add' }, { kind: 'profile', name: 'Existing server', action: 'keep' }],
+          warnings: ['External document is unavailable; copy it separately: /previous-computer/operations/runbooks/long-document-name.md'],
+        });
+      },
+      ApplyBackup: (token, previous) => {
+        if (token !== 'smoke-preview' || previous !== window.smokeBackupPrevious) throw new Error('Wrong backup preview');
+        return new Promise((resolve) => { window.smokeFinishImport = () => { window.smokeBackups.push({ action: 'apply' }); resolve(); }; });
+      },
+      DiscardBackupPreview: () => undefined,
     };
     window.go = { app: { App: new Proxy(app, { get: (target, key) => (...args) => Promise.resolve(target[key] ? target[key](...args) : /^List|^Read/.test(String(key)) ? [] : undefined) }) } };
     window.runtime = new Proxy({ EventsOnMultiple: (name, callback) => { const list = events.get(name) || new Set(); list.add(callback); events.set(name, list); return () => list.delete(callback); } }, { get: (target, key) => target[key] || (() => undefined) });
@@ -131,8 +153,37 @@ try {
     });
   }), 'Highlight controls are clipped by the sidebar');
   await page.screenshot({ path: join(out, 'settings.png') });
+  await page.locator('.settings-save').click();
+  await page.getByRole('button', { name: '导出加密备份', exact: true }).click();
+  let backupDialog = page.getByRole('dialog', { name: '导出加密备份', exact: true });
+  await backupDialog.getByLabel('备份口令', { exact: true }).fill('smoke passphrase');
+  await backupDialog.getByLabel('确认口令', { exact: true }).fill('smoke passphrase');
+  assert.equal(await backupDialog.locator('input[type="password"]').count(), 2);
+  await page.setViewportSize({ width: 540, height: 720 });
+  await page.screenshot({ path: join(out, 'backup-export-narrow.png'), animations: 'disabled' });
+  await backupDialog.getByRole('button', { name: '导出备份', exact: true }).click();
+  await backupDialog.waitFor({ state: 'hidden' });
+  assert.deepEqual(await page.evaluate(() => window.smokeBackups[0]), { action: 'export', includeSecrets: false, includePrivateKeys: false });
+  await page.getByRole('button', { name: '导入加密备份', exact: true }).click();
+  backupDialog = page.getByRole('dialog', { name: '导入加密备份', exact: true });
+  await backupDialog.getByLabel('备份口令', { exact: true }).fill('smoke passphrase');
+  await backupDialog.getByRole('button', { name: '选择文件并预览', exact: true }).click();
+  await backupDialog.getByText('服务器 · Existing server', { exact: true }).waitFor();
+  for (const [width, height] of [[540, 720], [1440, 960]]) {
+    await page.setViewportSize({ width, height });
+    assert(await backupDialog.evaluate((dialog) => dialog.scrollWidth <= dialog.clientWidth + 1), `Backup preview overflows at ${width}px`);
+    await page.screenshot({ path: join(out, `backup-preview-${width}.png`), animations: 'disabled' });
+  }
+  assert.equal(await page.evaluate(() => window.smokeBackups.filter((item) => item.action === 'apply').length), 0);
+  await backupDialog.getByRole('button', { name: '确认导入', exact: true }).click();
+  await page.waitForFunction(() => typeof window.smokeFinishImport === 'function');
+  await page.evaluate(() => window.smokeEmit('app:close-requested'));
+  assert.equal(await page.evaluate(() => window.smokeQuit), false, 'App closed during backup import');
+  await page.evaluate(() => window.smokeFinishImport());
+  await backupDialog.waitFor({ state: 'hidden' });
+  assert.equal(await page.evaluate(() => window.smokeBackups.filter((item) => item.action === 'apply').length), 1);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ status: 'passed', screenshots: out, viewports: ['1440x960', '900x700', '540x720'], checks: ['four nonblank terminal panes', 'per-pane input routing', 'document focus and sidebar width', 'workspace persistence', 'atomic batch UI', 'highlight settings'] }));
+  console.log(JSON.stringify({ status: 'passed', screenshots: out, viewports: ['1440x960', '900x700', '540x720'], checks: ['four nonblank terminal panes', 'per-pane input routing', 'document focus and sidebar width', 'workspace persistence', 'atomic batch UI', 'highlight settings', 'masked backup passphrases', 'backup preview and explicit apply', 'close gate during import'] }));
 } finally {
   if (browser) await browser.close();
   await server.close();

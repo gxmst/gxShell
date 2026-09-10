@@ -6,6 +6,7 @@ require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/charmbracelet/x/ansi v0.10.1
 	github.com/charmbracelet/x/xpty v0.1.3
+	github.com/danieljoos/wincred v1.2.3
 	github.com/getlantern/systray v1.2.2
 	github.com/pkg/sftp v1.13.10
 	github.com/wailsapp/wails/v2 v2.12.0
@@ -22,7 +23,6 @@ require (
 	github.com/charmbracelet/x/term v0.2.1 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/creack/pty v1.1.24 // indirect
-	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/getlantern/context v0.0.0-20190109183933-c447772a6520 // indirect
 	github.com/getlantern/errors v0.0.0-20190325191628-abdb3e3e36f7 // indirect
 	github.com/getlantern/golog v0.0.0-20190830074920-4ef2e798c2d7 // indirect

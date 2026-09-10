@@ -10,6 +10,13 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
+// WithKnownHostsLock coordinates a migration with host-key verification writes.
+func WithKnownHostsLock(action func() error) error {
+	knownHostsWriteMu.Lock()
+	defer knownHostsWriteMu.Unlock()
+	return action()
+}
+
 // KnownHostEntry is one trusted host key, as shown in the settings UI.
 type KnownHostEntry struct {
 	Hosts       string `json:"hosts"`

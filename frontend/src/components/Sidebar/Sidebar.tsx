@@ -106,6 +106,8 @@ export function Sidebar(props: {
   onImportProfiles: () => void;
   onImportOpenSSH: () => void;
   onExportProfiles: () => void;
+  onExportBackup?: () => void;
+  onImportBackup?: () => void;
   onOpenSearch: () => void;
   onStartMonitor: () => void;
   onRefreshSftp: (path?: string) => void;
@@ -674,7 +676,7 @@ export function Sidebar(props: {
               </div>
             </>
           )}
-          {props.drawer === "settings" && props.settings && <SettingsPanel settings={props.settings} language={lang} onSave={props.onSaveSettings} onOpenData={props.onOpenData} dataDir={props.appInfo.dataDir || ""} onNotify={props.onNotify} onDirtyChange={props.onSettingsDirtyChange} />}
+          {props.drawer === "settings" && props.settings && <SettingsPanel settings={props.settings} language={lang} onSave={props.onSaveSettings} onOpenData={props.onOpenData} dataDir={props.appInfo.dataDir || ""} onNotify={props.onNotify} onDirtyChange={props.onSettingsDirtyChange} onExportBackup={props.onExportBackup} onImportBackup={props.onImportBackup} />}
         </Suspense></div>}
         {aiMounted && (
           <div className="tool-body-full ai-persistent-host" style={{ display: props.drawer === "ai" ? undefined : "none" }}>
