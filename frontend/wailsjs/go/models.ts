@@ -193,6 +193,10 @@ export namespace types {
 	    themeName: string;
 	    backgroundOpacity: number;
 	    scrollbackLines: number;
+	    encoding?: string;
+	    terminalType?: string;
+	    backspaceKey?: string;
+	    deleteKey?: string;
 	    localShell?: string;
 	    localStartDirectory?: string;
 	
@@ -210,6 +214,10 @@ export namespace types {
 	        this.themeName = source["themeName"];
 	        this.backgroundOpacity = source["backgroundOpacity"];
 	        this.scrollbackLines = source["scrollbackLines"];
+	        this.encoding = source["encoding"];
+	        this.terminalType = source["terminalType"];
+	        this.backspaceKey = source["backspaceKey"];
+	        this.deleteKey = source["deleteKey"];
 	        this.localShell = source["localShell"];
 	        this.localStartDirectory = source["localStartDirectory"];
 	    }

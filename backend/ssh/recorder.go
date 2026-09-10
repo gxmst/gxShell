@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	"gxShell/backend/types"
 )
 
 // castRecorder writes a terminal session to an asciinema v2 (.cast) file. The
@@ -45,7 +47,7 @@ const maxCastRecordingBytes int64 = 512 * 1024 * 1024
 
 // newCastRecorder creates the file and writes the .cast header. title is stored
 // in the header for display in the player list.
-func newCastRecorder(path, title string, cols, rows int) (*castRecorder, error) {
+func newCastRecorder(path, title string, cols, rows int, terminalType string) (*castRecorder, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, err
@@ -63,7 +65,7 @@ func newCastRecorder(path, title string, cols, rows int) (*castRecorder, error) 
 		"width":     cols,
 		"height":    rows,
 		"timestamp": r.start.Unix(),
-		"env":       map[string]string{"TERM": "xterm-256color"},
+		"env":       map[string]string{"TERM": types.NormalizeTerminalType(terminalType)},
 	}
 	if title != "" {
 		header["title"] = title

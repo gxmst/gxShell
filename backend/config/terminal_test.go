@@ -33,3 +33,45 @@ func TestTerminalAndLoggingBounds(t *testing.T) {
 		t.Fatalf("bad log bounds: %+v", logs)
 	}
 }
+
+func TestTerminalCompatibilityDefaultsAndAliases(t *testing.T) {
+	for _, tc := range []struct{ input, want string }{
+		{" CP936 ", "gbk"}, {"CP950", "big5"}, {"cp1252", "windows-1252"},
+		{"GB18030", "gb18030"}, {"unsupported", "utf-8"}, {"", "utf-8"},
+	} {
+		got := NormalizeTerminalSettings(types.TerminalSettings{Encoding: tc.input, TerminalType: "bad\nTERM", BackspaceKey: "bad", DeleteKey: "bad"})
+		if got.Encoding != tc.want || got.TerminalType != "xterm-256color" || got.BackspaceKey != "del" || got.DeleteKey != "escape" {
+			t.Fatalf("normalization of %q: %+v", tc.input, got)
+		}
+	}
+}
+
+func TestTerminalCompatibilityPersists(t *testing.T) {
+	store := newTestStore(t)
+	settings := DefaultSettings()
+	settings.Terminal.Encoding = "gb18030"
+	settings.Terminal.TerminalType = " VT100 "
+	settings.Terminal.BackspaceKey = "ctrl-h"
+	settings.Terminal.DeleteKey = "del"
+	if err := store.SaveSettings(settings); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Terminal.Encoding != "gb18030" || got.Terminal.TerminalType != "vt100" || got.Terminal.BackspaceKey != "ctrl-h" || got.Terminal.DeleteKey != "del" {
+		t.Fatalf("persisted settings: %+v", got.Terminal)
+	}
+	profileTerminal := NormalizeTerminalSettings(types.TerminalSettings{Encoding: "cp950", TerminalType: "screen", BackspaceKey: "del", DeleteKey: "ctrl-h"})
+	if err := store.SaveProfiles([]types.Profile{{ID: "legacy", Terminal: &profileTerminal}}); err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := store.ListProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 1 || profiles[0].Terminal == nil || *profiles[0].Terminal != profileTerminal {
+		t.Fatalf("profile settings were not preserved: %+v", profiles)
+	}
+}

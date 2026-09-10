@@ -148,6 +148,14 @@ type TerminalSettings struct {
 	ThemeName         string  `json:"themeName"`
 	BackgroundOpacity float64 `json:"backgroundOpacity"`
 	ScrollbackLines   int     `json:"scrollbackLines"`
+	// Encoding controls the SSH terminal byte encoding. UTF-8 is the default;
+	// legacy devices may use gbk, gb18030, big5, or windows-1252.
+	Encoding string `json:"encoding,omitempty"`
+	// TerminalType is negotiated when opening the SSH PTY. Key mappings are
+	// applied in the renderer, leaving pasted text and control replies intact.
+	TerminalType string `json:"terminalType,omitempty"`
+	BackspaceKey string `json:"backspaceKey,omitempty"`
+	DeleteKey    string `json:"deleteKey,omitempty"`
 	// LocalShell is an optional executable name or absolute path used for new
 	// local terminals. Empty and "auto" keep the platform default.
 	LocalShell string `json:"localShell,omitempty"`

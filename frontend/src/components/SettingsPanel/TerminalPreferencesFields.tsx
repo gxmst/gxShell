@@ -2,6 +2,7 @@ import { types } from "../../../wailsjs/go/models";
 import { fontPresets, terminalThemes, themeDisplayName } from "../../constants";
 import { t } from "../../i18n";
 import { normalizeFontSize, normalizeLineHeight, normalizeScrollbackLines } from "../../utils/terminalSettings";
+import { TerminalCompatibilityFields } from "./TerminalCompatibilityFields";
 
 export function TerminalPreferencesFields({ value, onChange, language }: { value: types.TerminalSettings; onChange: (value: types.TerminalSettings) => void; language: string }) {
   const update = (patch: Partial<types.TerminalSettings>) => onChange(new types.TerminalSettings({ ...value, ...patch }));
@@ -12,6 +13,7 @@ export function TerminalPreferencesFields({ value, onChange, language }: { value
     <label className="settings-field"><span>{language === "zh-CN" ? "终端配色" : "Terminal theme"}</span><select className="input compact-input" value={value.themeName} onChange={(e) => update({ themeName: e.target.value })}>{Object.keys(terminalThemes).map((theme) => <option key={theme} value={theme}>{themeDisplayName(theme, language)}</option>)}</select></label>
     <label className="settings-field"><span>{t(language, "cursorStyleLabel")}</span><select className="input compact-input" value={value.cursorStyle} onChange={(e) => update({ cursorStyle: e.target.value })}><option value="block">{t(language, "cursorBlock")}</option><option value="bar">{t(language, "cursorBar")}</option><option value="underline">{t(language, "cursorUnderline")}</option></select></label>
     <label className="settings-field"><span>{t(language, "scrollbackLabel")}</span><input className="input compact-input" type="number" min={500} max={200000} step={500} value={value.scrollbackLines} onChange={(e) => update({ scrollbackLines: Number(e.target.value) })} onBlur={() => update({ scrollbackLines: normalizeScrollbackLines(value.scrollbackLines) })} /></label>
+    <TerminalCompatibilityFields value={value} onChange={update} zh={language === "zh-CN"} />
     <label className="check"><input type="checkbox" checked={value.cursorBlink} onChange={(e) => update({ cursorBlink: e.target.checked })} />{t(language, "cursorBlinkLabel")}</label>
   </div>;
 }

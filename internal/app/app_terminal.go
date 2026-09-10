@@ -85,6 +85,9 @@ func (a *App) ConnectTerminal(profileID string, instanceID string, password stri
 	if settings.MonitorIntervalSec <= 0 {
 		settings.MonitorIntervalSec = defaultSettings.MonitorIntervalSec
 	}
+	if fullProfile.Terminal == nil {
+		fullProfile.Terminal = &settings.Terminal
+	}
 
 	info, established, err := a.ssh.ConnectInstanceViaJumpWithStatus(fullProfile, jumpProfile, instanceID, settings.ConnectionTimeout, cols, rows)
 	if err != nil {

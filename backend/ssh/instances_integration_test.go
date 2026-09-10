@@ -20,7 +20,12 @@ import (
 
 // Real TCP and SSH channels exercise transport ownership without a remote host
 // or any change to the developer's network. Each shell echoes only its input.
-func echoSSHServer(t *testing.T) (types.Profile, string, func(string)) {
+type echoSSHObservation struct {
+	request func(*ssh.Request)
+	input   io.Writer
+}
+
+func echoSSHServer(t *testing.T, observations ...echoSSHObservation) (types.Profile, string, func(string)) {
 	t.Helper()
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -70,10 +75,21 @@ func echoSSHServer(t *testing.T) (types.Profile, string, func(string)) {
 						defer wg.Done()
 						defer channel.Close()
 						for request := range requests {
+							for _, observation := range observations {
+								if observation.request != nil {
+									observation.request(request)
+								}
+							}
 							_ = request.Reply(true, nil)
 							if request.Type == "shell" {
 								go ssh.DiscardRequests(requests)
-								_, _ = io.Copy(channel, channel)
+								var input io.Reader = channel
+								for _, observation := range observations {
+									if observation.input != nil {
+										input = io.TeeReader(input, observation.input)
+									}
+								}
+								_, _ = io.Copy(channel, input)
 								return
 							}
 						}

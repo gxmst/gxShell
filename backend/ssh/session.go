@@ -66,17 +66,19 @@ type Session struct {
 	info      types.SessionInfo
 	// port is the remote SSH port from the connecting profile. It is immutable
 	// after Connect, and exposed via SessionPort for firewall lockout guards.
-	port        int
-	client      *ssh.Client
-	jumpClient  *ssh.Client
-	shell       *ssh.Session
-	stdin       io.WriteCloser
-	writer      *termio.WriteQueue
-	pendingConn net.Conn
-	done        chan struct{}
-	closeOnce   sync.Once
-	mu          sync.RWMutex
-	recorder    *castRecorder
+	port         int
+	client       *ssh.Client
+	jumpClient   *ssh.Client
+	shell        *ssh.Session
+	stdin        io.WriteCloser
+	writer       *termio.WriteQueue
+	pendingConn  net.Conn
+	done         chan struct{}
+	closeOnce    sync.Once
+	mu           sync.RWMutex
+	recorder     *castRecorder
+	encodingName string
+	terminalType string
 }
 
 type OutputLog interface {
@@ -187,7 +189,13 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 		Rows:       rows,
 		StartedAt:  time.Now(),
 	}
-	session := &Session{info: info, port: profile.Port, done: make(chan struct{})}
+	encodingName := "utf-8"
+	terminalType := "xterm-256color"
+	if profile.Terminal != nil {
+		encodingName = profile.Terminal.Encoding
+		terminalType = types.NormalizeTerminalType(profile.Terminal.TerminalType)
+	}
+	session := &Session{info: info, port: profile.Port, done: make(chan struct{}), encodingName: types.NormalizeTerminalEncoding(encodingName), terminalType: terminalType}
 	// The limit check and the insert share one critical section: a separate
 	// count check would let concurrent connects race past the limit together.
 	// Inserting before the (slow) handshake reserves the slot; failConnect
@@ -328,7 +336,7 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 		ssh.TTY_OP_ISPEED: 14400,
 		ssh.TTY_OP_OSPEED: 14400,
 	}
-	if err := shell.RequestPty("xterm-256color", rows, cols, modes); err != nil {
+	if err := shell.RequestPty(terminalType, rows, cols, modes); err != nil {
 		_ = shell.Close()
 		m.failConnect(id, err, client, jumpClient, nil)
 		return info, err
@@ -450,7 +458,7 @@ func (m *Manager) forwardOutput(id string, reader io.Reader) {
 func (m *Manager) forwardOutputStream(session *Session, reader io.Reader, stream int) {
 	defer panicHandler(session, m)
 	defer session.outputWG.Done()
-	termio.Pump(reader, session.done, func(chunk string) {
+	termio.Pump(termio.DecoderReader(reader, session.encodingName), session.done, func(chunk string) {
 		m.emitSession("terminal:data", session, map[string]any{"data": chunk})
 		session.mu.RLock()
 		rec := session.recorder
@@ -530,7 +538,11 @@ func (m *Manager) Write(id string, data string) error {
 	if writer == nil {
 		return errors.New("terminal is not writable")
 	}
-	return writer.Enqueue([]byte(data))
+	encoded, err := termio.EncodeInput(data, session.encodingName)
+	if err != nil {
+		return fmt.Errorf("terminal input cannot be encoded as %s: %w", session.encodingName, err)
+	}
+	return writer.Enqueue(encoded)
 }
 
 func (m *Manager) Resize(id string, cols int, rows int) error {
@@ -574,7 +586,7 @@ func (m *Manager) StartRecording(id, path, title string) error {
 		return recordingError("session is already recording")
 	}
 	cols, rows := session.info.Cols, session.info.Rows
-	rec, err := newCastRecorder(path, title, cols, rows)
+	rec, err := newCastRecorder(path, title, cols, rows, session.terminalType)
 	if err != nil {
 		return err
 	}

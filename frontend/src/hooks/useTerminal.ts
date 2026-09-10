@@ -17,6 +17,7 @@ import { t } from "../i18n";
 import { analyzeTerminalPaste, terminalPasteTargets, type TerminalPasteRisk } from "../utils/terminalPaste";
 import { hasActiveOverlay } from "../utils/overlayManager";
 import { parseOsc7Directory, type TerminalDirectory } from "../utils/terminalCwd";
+import { splitTerminalInput, terminalCompatibilityKey, terminalKeyData, type TerminalCompatibilityKey } from "../utils/terminalInput";
 
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 // requestAnimationFrame does not fire while the window is minimized/hidden in
@@ -120,8 +121,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     // Keep each bridge message comfortably below the backend's bounded 1 MiB
     // queue. Large pastes remain ordered while ordinary key presses collapse
     // into one call every few milliseconds.
-    for (let offset = 0; offset < combined.length; offset += 64 * 1024) {
-      const part = combined.slice(offset, offset + 64 * 1024);
+    for (const part of splitTerminalInput(combined)) {
       WriteToTerminal(id, part).catch((err) => {
         const now = Date.now();
         if (now - (lastInputErrorAt.current[id] || 0) > 2000) {
@@ -362,10 +362,24 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
           term.paste(text);
         };
 
+        // The physical key context exists only during xterm's synchronous onData
+        // emission, so pasted bytes and terminal replies are never remapped.
+        let physicalKey: TerminalCompatibilityKey | null = null;
         // Keep Ctrl+C ergonomic without stealing SIGINT: copy only when xterm has
         // an actual selection; otherwise let the terminal receive the key.
         term.attachCustomKeyEventHandler((event) => {
           if (event.isComposing || event.keyCode === 229) return true;
+          const key = terminalCompatibilityKey(event);
+          if (key) {
+            event.preventDefault();
+            physicalKey = key;
+            try {
+              term.input(terminalKeyData(key, overridesRef.current?.[activeTab] || settingsRef.current?.terminal), true);
+            } finally {
+              physicalKey = null;
+            }
+            return false;
+          }
           if (event.type !== "keydown" || event.altKey) return true;
           if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "c" || !term.hasSelection()) return true;
           writeClipboardText(term.getSelection()).catch(() => notifyRef.current(t(settingsRef.current?.language || "en", "copyFailed"), "error"));
@@ -474,11 +488,14 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         searches.current[activeTab] = searchAddon;
 
         term.onData((data) => {
+          const send = (id: string) => enqueueTerminalInput(id, physicalKey
+            ? terminalKeyData(physicalKey, overridesRef.current?.[id] || settingsRef.current?.terminal)
+            : data);
           const pasteTargets = pasteTargetOverrides.current[activeTab];
           if (pasteTargets) {
-            for (const id of pasteTargets) enqueueTerminalInput(id, data);
+            for (const id of pasteTargets) send(id);
           } else {
-            enqueueTerminalInput(activeTab, data);
+            send(activeTab);
           }
           // Broadcast (synchronized input): when enabled, mirror the same keystrokes
           // to every other connected SSH terminal. Only the active terminal drives
@@ -486,7 +503,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
           const bc = broadcastRef?.current;
           if (!pasteTargets && bc?.enabled && bc.targets.includes(activeTab)) {
             for (const id of bc.targets) {
-              if (id !== activeTab) enqueueTerminalInput(id, data);
+              if (id !== activeTab) send(id);
             }
           }
           const buf = cmdBuffer.current[activeTab] || "";

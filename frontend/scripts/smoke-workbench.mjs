@@ -31,7 +31,7 @@ try {
       ai: { provider: '', apiKey: '', endpoint: '', model: '' }, sessionLog: { enabled: false, timestamps: true, maxFileMb: 10, maxSessionMb: 100 },
       terminal: { fontFamily: 'Consolas, monospace', fontSize: 14, lineHeight: 1.25, cursorStyle: 'block', cursorBlink: true, themeName: 'Light', backgroundOpacity: 1, scrollbackLines: 5000 },
     };
-    let profiles = ['web-01', 'api-01', 'db-01', 'backup-01'].map((id, index) => ({ id, name: id, group: index < 2 ? 'Production' : 'Infrastructure', host: `${id}.test`, port: 22, username: 'ops', authType: 'agent', rememberPassword: false, favorite: false, tags: [], tunnels: [], cliEnabled: false, autoReconnect: false, description: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), ...(index === 2 ? { terminal: { ...settings.terminal, themeName: 'Dark', fontSize: 18 } } : {}) }));
+    let profiles = ['web-01', 'api-01', 'db-01', 'backup-01'].map((id, index) => ({ id, name: id, group: index < 2 ? 'Production' : 'Infrastructure', host: `${id}.test`, port: 22, username: 'ops', authType: 'agent', rememberPassword: false, favorite: false, tags: [], tunnels: [], cliEnabled: false, autoReconnect: false, description: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), ...(index === 2 ? { terminal: { ...settings.terminal, themeName: 'Dark', fontSize: 18, backspaceKey: 'ctrl-h', deleteKey: 'del' } } : {}) }));
     let sessions = profiles.map((p) => ({ id: `session-${p.id}`, profileId: p.id, runtimeId: `profile:${p.id}`, generation: 1, name: p.name, state: 'connected', cols: 80, rows: 24 }));
     const app = {
       GetSettings: () => settings, UpdateSettings: (value) => { settings = value; return value; }, GetVersion: () => '1.6.3', GetStartupFile: () => '',
@@ -108,6 +108,19 @@ try {
   await page.keyboard.type('pwd');
   await page.waitForFunction(() => window.smokeWrites.length > 0, undefined, { timeout: 5000 });
   assert(await page.evaluate(() => window.smokeWrites.filter((write) => write.id === 'session-db-01').map((write) => write.data).join('').includes('pwd')), JSON.stringify(await page.evaluate(() => window.smokeWrites)));
+  await page.evaluate(() => { window.smokeWrites = []; });
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Delete');
+  await page.waitForFunction(() => window.smokeWrites.map((write) => write.data).join('') === '\x08\x7f');
+  await page.locator('.tab-tools-toggle').click();
+  await page.getByRole('menuitem', { name: '同步输入到所有终端', exact: true }).click();
+  await page.locator('[data-tab-id="session-db-01"] .xterm-helper-textarea').focus();
+  await page.evaluate(() => { window.smokeWrites = []; });
+  await page.keyboard.press('Backspace');
+  await page.waitForFunction(() => window.smokeWrites.length === 4);
+  const broadcastWrites = await page.evaluate(() => window.smokeWrites);
+  assert(broadcastWrites.every(({ id, data }) => data === (id === 'session-db-01' ? '\x08' : '\x7f')), JSON.stringify(broadcastWrites));
+  await page.locator('.broadcast-banner-off').click();
   const sidebarWidth = await page.locator('.left-rail').evaluate((n) => n.getBoundingClientRect().width);
   await page.evaluate(() => window.smokeEmit('file:open-external', '/notes.md'));
   await page.getByRole('heading', { name: /^#?\s*Notes$/ }).waitFor();
@@ -183,7 +196,7 @@ try {
   await backupDialog.waitFor({ state: 'hidden' });
   assert.equal(await page.evaluate(() => window.smokeBackups.filter((item) => item.action === 'apply').length), 1);
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ status: 'passed', screenshots: out, viewports: ['1440x960', '900x700', '540x720'], checks: ['four nonblank terminal panes', 'per-pane input routing', 'document focus and sidebar width', 'workspace persistence', 'atomic batch UI', 'highlight settings', 'masked backup passphrases', 'backup preview and explicit apply', 'close gate during import'] }));
+  console.log(JSON.stringify({ status: 'passed', screenshots: out, viewports: ['1440x960', '900x700', '540x720'], checks: ['four nonblank terminal panes', 'per-pane input routing', 'physical Backspace and Delete', 'per-server broadcast key mapping', 'document focus and sidebar width', 'workspace persistence', 'atomic batch UI', 'highlight settings', 'masked backup passphrases', 'backup preview and explicit apply', 'close gate during import'] }));
 } finally {
   if (browser) await browser.close();
   await server.close();

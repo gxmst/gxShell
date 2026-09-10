@@ -10,6 +10,7 @@ import { t } from "../../i18n";
 import { KnownHostsManager } from "./KnownHostsManager";
 import { HighlightRulesEditor } from "./HighlightRulesEditor";
 import { SessionLogFields } from "./SessionLogFields";
+import { TerminalCompatibilityFields } from "./TerminalCompatibilityFields";
 import { highlightRuleError } from "../../utils/highlight";
 
 const themePreview: Record<string, { bg: string; surface: string; accent: string }> = {
@@ -302,6 +303,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
             </SettingsField>
             <SettingsField label={t(lang, "font")} wide><select className="input compact-input" value={draft.terminal.fontFamily} onChange={(event) => updateTerm({ fontFamily: event.target.value })}>{fontPresets.map((font) => <option key={font} value={font}>{font.split(",")[0].trim()}</option>)}</select></SettingsField>
             <SettingsField label={t(lang, "highlighting")} wide><select className="input compact-input" value={draft.highlightLevel || "off"} onChange={(event) => update({ highlightLevel: event.target.value })}><option value="off">{t(lang, "highlightOff")}</option><option value="basic">{t(lang, "highlightBasic")}</option><option value="full">{t(lang, "highlightFull")}</option></select></SettingsField>
+            <TerminalCompatibilityFields value={draft.terminal} onChange={updateTerm} zh={zh} />
             <SettingsField
               label={zh ? "本地 Shell" : "Local shell"}
               hint={zh ? "留空或填写 auto 自动选择；也可填写 pwsh.exe、cmd.exe、wsl.exe 或完整路径。下次新建本地终端生效。" : "Leave blank or use auto, or enter pwsh.exe, cmd.exe, wsl.exe, or a full executable path. Applies to new local terminals."}

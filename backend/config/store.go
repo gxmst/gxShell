@@ -267,6 +267,14 @@ func NormalizeTerminalSettings(terminal types.TerminalSettings) types.TerminalSe
 	if settings.Terminal.ThemeName == "" {
 		settings.Terminal.ThemeName = defaults.Terminal.ThemeName
 	}
+	settings.Terminal.Encoding = types.NormalizeTerminalEncoding(settings.Terminal.Encoding)
+	settings.Terminal.TerminalType = types.NormalizeTerminalType(settings.Terminal.TerminalType)
+	if settings.Terminal.BackspaceKey != "ctrl-h" {
+		settings.Terminal.BackspaceKey = "del"
+	}
+	if settings.Terminal.DeleteKey != "del" && settings.Terminal.DeleteKey != "ctrl-h" {
+		settings.Terminal.DeleteKey = "escape"
+	}
 	return settings.Terminal
 }
 
@@ -397,6 +405,10 @@ func DefaultSettings() types.AppSettings {
 			ThemeName:         "Light",
 			BackgroundOpacity: 1,
 			ScrollbackLines:   5000,
+			Encoding:          "utf-8",
+			TerminalType:      "xterm-256color",
+			BackspaceKey:      "del",
+			DeleteKey:         "escape",
 		},
 	}
 }

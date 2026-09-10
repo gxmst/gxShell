@@ -52,6 +52,9 @@ func (a *App) ConnectQuick(profile types.Profile, cols int, rows int) (types.Ses
 	if settings.MonitorIntervalSec <= 0 {
 		settings.MonitorIntervalSec = defaults.MonitorIntervalSec
 	}
+	if profile.Terminal == nil {
+		profile.Terminal = &settings.Terminal
+	}
 
 	info, established, err := a.ssh.ConnectViaJumpWithStatus(profile, types.Profile{}, settings.ConnectionTimeout, cols, rows)
 	if err != nil {
