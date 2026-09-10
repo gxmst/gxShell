@@ -134,7 +134,9 @@ export function buildMarkdown(markdown: string): RenderedMarkdown {
     const lang = firstLang(token.lang || '');
     const text = token.text || '';
     if (lang.toLowerCase() === 'mermaid') {
-      return `<div class="md-mermaid" data-source="${escapeAttr(text)}">${escapeHtml(text)}</div>`;
+      // XML-safe sanitization rejects literal --> inside attribute values.
+      // URI encoding preserves Mermaid arrows and Chinese labels in metadata.
+      return `<div class="md-mermaid" data-mermaid-source="${escapeAttr(encodeURIComponent(text))}">${escapeHtml(text)}</div>`;
     }
     const highlighted = highlightCode(text, lang);
     const label = highlighted.label || lang || 'text';
@@ -175,12 +177,18 @@ export function buildMarkdown(markdown: string): RenderedMarkdown {
 
   const rawHtml = marked.parse(markdown, { renderer, gfm: true, breaks: false }) as string;
   const html = DOMPurify.sanitize(rawHtml, {
-    ADD_ATTR: ['target', 'rel', 'data-md-link', 'data-md-src', 'data-source', 'data-md-heading', 'data-code-copy', 'aria-label'],
+    ADD_ATTR: ['target', 'rel', 'data-md-link', 'data-md-src', 'data-mermaid-source', 'data-md-heading', 'data-code-copy', 'aria-label'],
     ADD_TAGS: ['button'],
   });
   return { html, toc };
 }
 
 export function sanitizeMermaidSVG(svg: string) {
-  return DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true } });
+  return DOMPurify.sanitize(svg, {
+    USE_PROFILES: { svg: true, svgFilters: true },
+    // Mermaid measures and renders HTML labels inside SVG foreignObject.
+    // Retain that small text vocabulary without enabling arbitrary HTML.
+    ADD_TAGS: ['foreignObject', 'div', 'span', 'p', 'br', 'b', 'i', 'strong', 'em', 'code', 's', 'sub', 'sup'],
+    HTML_INTEGRATION_POINTS: { foreignobject: true },
+  });
 }

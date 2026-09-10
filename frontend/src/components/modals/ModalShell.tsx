@@ -25,6 +25,7 @@ export function ModalShell({
   priority = 0,
   dismissOnBackdrop = true,
   dismissOnEscape = true,
+  className,
 }: {
   children: React.ReactNode;
   onClose: () => void;
@@ -36,6 +37,7 @@ export function ModalShell({
   priority?: number;
   dismissOnBackdrop?: boolean;
   dismissOnEscape?: boolean;
+  className?: string;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   // Keep the focus origin for the lifetime of this shell. A nested overlay
@@ -140,6 +142,7 @@ export function ModalShell({
           compact && "modal-compact",
           palette && "modal-palette",
           palette && compact && "modal-palette-compact",
+          className,
         )}
         role="dialog"
         aria-modal="true"

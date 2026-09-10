@@ -1,5 +1,5 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MarkdownViewer from './MarkdownViewer';
 
 const appMocks = vi.hoisted(() => ({
@@ -34,6 +34,7 @@ function deferred<T>() {
 }
 
 describe('MarkdownViewer deferred rendering', () => {
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
     appMocks.readLocalFile.mockReset();
     rendererMocks.buildMarkdown.mockReset();
@@ -90,5 +91,29 @@ describe('MarkdownViewer deferred rendering', () => {
     await act(async () => { firstRender.resolve({ html: '<p>stale result</p>', toc: [] }); });
     expect(screen.getByText('new result')).toBeInTheDocument();
     expect(screen.queryByText('stale result')).not.toBeInTheDocument();
+  });
+
+  it('updates active search results when a diagram finishes rendering', async () => {
+    const highlights = new Map();
+    vi.stubGlobal('CSS', { highlights });
+    vi.stubGlobal('Highlight', class { constructor(..._ranges: Range[]) {} });
+    const scrollIntoView = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = vi.fn();
+    try {
+      appMocks.readLocalFile.mockResolvedValue('document');
+      rendererMocks.buildMarkdown.mockReturnValue({ html: '<p>文档正文</p><div id="diagram-target"></div>', toc: [] });
+      const { container } = render(<MarkdownViewer active filePath={'C:\\notes.md'} onClose={vi.fn()} />);
+      await screen.findByText('文档正文');
+      fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+      fireEvent.change(screen.getByPlaceholderText('Find'), { target: { value: '证据' } });
+      expect(screen.getByText('0/0')).toBeInTheDocument();
+      await act(async () => {
+        container.querySelector('#diagram-target')!.innerHTML = '<svg><style>.证据{fill:red}</style><text>证据引用</text></svg>';
+      });
+      await screen.findByText('1/1');
+      expect(highlights.has('md-search-active')).toBe(true);
+    } finally {
+      Element.prototype.scrollIntoView = scrollIntoView;
+    }
   });
 });

@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import { useState, useEffect, useRef, useCallback, useLayoutEffect, lazy, Suspense } from 'react';
-import { Braces, Columns2, ListTree, Pencil, RefreshCw, Save, WrapText, X, ChevronUp, ChevronDown } from 'lucide-react';
+import { Braces, Columns2, ListTree, Pencil, RefreshCw, Save, Search, WrapText, X, ChevronUp, ChevronDown } from 'lucide-react';
 import {
   ReadLocalFile,
   ReadLocalMarkdownResourceDataURL,
@@ -19,6 +19,9 @@ import type { JsonValidationResult } from '../../utils/jsonDocuments';
 import type { EditorStats, SourceEditorHandle } from './SourceEditor';
 import type { RenderedMarkdown } from './markdownRenderer';
 import { t } from '../../i18n';
+import { hasActiveOverlay } from '../../utils/overlayManager';
+import { MermaidDiagrams } from './MermaidDiagrams';
+import { findPreviewRanges } from './previewSearch';
 import '../../styles/markdown-viewer.css';
 
 // CodeMirror only loads when a document is actually edited, keeping it out of
@@ -50,10 +53,7 @@ const HL_ALL = 'md-search';
 const HL_ACTIVE = 'md-search-active';
 let markdownRendererModulePromise: Promise<typeof import('./markdownRenderer')> | null = null;
 let jsonDocumentsModulePromise: Promise<typeof import('../../utils/jsonDocuments')> | null = null;
-let mermaidModulePromise: Promise<typeof import('mermaid')['default']> | null = null;
-let mermaidRenderSequence = 0;
 const markdownImageLoadTokens = new WeakMap<HTMLImageElement, object>();
-const mermaidRenderTokens = new WeakMap<HTMLElement, object>();
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -65,16 +65,6 @@ function localPDFURL(filePath: string) {
 
 function remotePDFURL(sessionId: string, remotePath: string) {
   return `/__gxshell/document/remote-pdf?sessionId=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(remotePath)}&v=${Date.now()}`;
-}
-
-function getMermaid() {
-  if (!mermaidModulePromise) {
-    mermaidModulePromise = import('mermaid').then(({ default: mermaid }) => {
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'dark' });
-      return mermaid;
-    });
-  }
-  return mermaidModulePromise;
 }
 
 function getMarkdownRenderer() {
@@ -132,6 +122,8 @@ export default function MarkdownViewer({
   const [saving, setSaving] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [tocOpen, setTocOpen] = useState(true);
+  const [compactReading, setCompactReading] = useState(false);
+  const [compactTocOpen, setCompactTocOpen] = useState(false);
   const [tocWidth, setTocWidth] = useState(initialTocWidth);
   const [activeHeading, setActiveHeading] = useState('');
   const [wrapCode, setWrapCode] = useState(false);
@@ -159,6 +151,7 @@ export default function MarkdownViewer({
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [matchCount, setMatchCount] = useState(0);
+  const [matchRevision, setMatchRevision] = useState(0);
   const [current, setCurrent] = useState(0);
   const [jsonValidation, setJsonValidation] = useState<JsonValidationResult | null>(null);
 
@@ -170,6 +163,7 @@ export default function MarkdownViewer({
   const splitPreviewRef = useRef<HTMLDivElement>(null);
   const contentRootRef = useRef<HTMLElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const zoomInputRef = useRef<HTMLInputElement>(null);
   const rangesRef = useRef<Range[]>([]);
   const editMatchesRef = useRef<{ start: number; end: number }[]>([]);
   const pendingScrollRatioRef = useRef<number | null>(null);
@@ -193,9 +187,26 @@ export default function MarkdownViewer({
   const [draftDoc, setDraftDoc] = useState<RenderedMarkdown>(EMPTY_RENDERED_MARKDOWN);
   const visibleDoc = editing && splitPreview ? draftDoc : previewDoc;
   const canShowToc = markdownMode && (!editing || splitPreview) && visibleDoc.toc.length > 0;
-  const viewerMainStyle = canShowToc && tocOpen
+  const outlineOpen = compactReading ? compactTocOpen : tocOpen;
+  const viewerMainStyle = canShowToc && outlineOpen
     ? ({ '--md-outline-width': `${tocWidth}px` } as React.CSSProperties)
     : undefined;
+
+  useLayoutEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    const update = () => {
+      const width = viewer.clientWidth;
+      if (width > 0) setCompactReading(width < 640);
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(viewer);
+    return () => observer.disconnect();
+  }, [loading, error]);
+
+  const toggleOutline = () => compactReading ? setCompactTocOpen((open) => !open) : setTocOpen((open) => !open);
+  const closeOutline = () => compactReading ? setCompactTocOpen(false) : setTocOpen(false);
 
   useEffect(() => {
     if (!markdownMode || !isVisible) return;
@@ -250,6 +261,7 @@ export default function MarkdownViewer({
 
   useLayoutEffect(() => {
     committedZoomRef.current = zoom;
+    if (zoomInputRef.current) zoomInputRef.current.value = String(zoom);
     const viewer = viewerRef.current;
     if (!viewer) return;
     viewer.classList.remove('markdown-viewer-zooming');
@@ -547,28 +559,33 @@ export default function MarkdownViewer({
       setCurrent(0);
       return;
     }
-    const needle = q.toLowerCase();
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-    const ranges: Range[] = [];
-    let node: Node | null;
-    while ((node = walker.nextNode())) {
-      const text = (node.textContent || '').toLowerCase();
-      let from = 0;
-      for (;;) {
-        const idx = text.indexOf(needle, from);
-        if (idx === -1) break;
-        const range = document.createRange();
-        range.setStart(node, idx);
-        range.setEnd(node, idx + needle.length);
-        ranges.push(range);
-        from = idx + needle.length;
-      }
-    }
-    rangesRef.current = ranges;
-    reg.set(HL_ALL, new (window as any).Highlight(...ranges));
-    setMatchCount(ranges.length);
-    setCurrent(ranges.length ? 0 : -1);
-  }, [query, searchOpen, editing, content, draft, active]);
+    let frame = 0;
+    let first = true;
+    const rebuild = () => {
+      frame = 0;
+      const ranges = findPreviewRanges(root, q);
+      rangesRef.current = ranges;
+      reg.set(HL_ALL, new (window as any).Highlight(...ranges));
+      reg.delete(HL_ACTIVE);
+      setMatchCount(ranges.length);
+      const reset = first;
+      first = false;
+      setCurrent((previous) => ranges.length ? (reset ? 0 : clamp(previous, 0, ranges.length - 1)) : -1);
+      setMatchRevision((previous) => previous + 1);
+    };
+    rebuild();
+    // Mermaid and lazy content finish after Markdown parsing. Refresh ranges
+    // without forcing those renderers to run again or searching their CSS.
+    const observer = new MutationObserver((mutations) => {
+      if (mutations.every(({ target }) => (target instanceof Element ? target : target.parentElement)?.closest('[data-md-search-ignore]'))) return;
+      if (!frame) frame = requestAnimationFrame(rebuild);
+    });
+    observer.observe(root, { childList: true, characterData: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [query, searchOpen, editing, content, draft, active, visibleDoc.html]);
 
   useEffect(() => {
     if (!searchOpen || !active || current < 0) return;
@@ -598,7 +615,7 @@ export default function MarkdownViewer({
     reg.set(HL_ACTIVE, new (window as any).Highlight(range));
     const target = range.startContainer.parentElement;
     target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [current, matchCount, query, searchOpen, editing, active, draft]);
+  }, [current, matchCount, matchRevision, query, searchOpen, editing, active, draft]);
 
   const goNext = useCallback(() => {
     if (matchCount === 0) return;
@@ -613,6 +630,7 @@ export default function MarkdownViewer({
   useEffect(() => {
     if (!active) return;
     const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing || e.keyCode === 229 || hasActiveOverlay()) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
         e.preventDefault();
         e.stopPropagation();
@@ -632,11 +650,14 @@ export default function MarkdownViewer({
         }
       } else if (e.key === 'Escape' && searchOpen) {
         closeSearch();
+      } else if (e.key === 'Escape' && compactReading && compactTocOpen) {
+        e.preventDefault();
+        setCompactTocOpen(false);
       }
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [active, editing, pdfMode, searchOpen, openSearch, closeSearch]);
+  }, [active, compactReading, compactTocOpen, editing, pdfMode, searchOpen, openSearch, closeSearch]);
 
   const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -683,7 +704,7 @@ export default function MarkdownViewer({
 
   const onContentClick = useCallback(async (e: React.MouseEvent<HTMLDivElement>) => {
     if (!isVisible || !markdownMode) return;
-    if (!(e.target instanceof HTMLElement)) return;
+    if (!(e.target instanceof Element)) return;
 
     const copyBtn = e.target.closest('[data-code-copy]');
     if (copyBtn) {
@@ -700,7 +721,9 @@ export default function MarkdownViewer({
 
     const anchor = e.target.closest('a[href^="#"]') as HTMLAnchorElement | null;
     if (anchor && !anchor.dataset.mdLink) {
-      const id = decodeURIComponent(anchor.getAttribute('href')?.slice(1) || '');
+      const fragment = anchor.getAttribute('href')?.slice(1) || '';
+      let id = fragment;
+      try { id = decodeURIComponent(fragment); } catch { /* Handwritten anchors may contain a literal %. */ }
       const el = contentRootRef.current?.querySelector<HTMLElement>(`#${cssEscape(id)}`);
       if (el) {
         e.preventDefault();
@@ -729,6 +752,7 @@ export default function MarkdownViewer({
   const jumpToHeading = (id: string) => {
     const el = contentRootRef.current?.querySelector<HTMLElement>(`#${cssEscape(id)}`);
     el?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    if (compactReading) setCompactTocOpen(false);
   };
 
   const previewZoom = useCallback((next: number) => {
@@ -836,57 +860,6 @@ export default function MarkdownViewer({
   }, [displayPath, editing, filePath, isVisible, markdownMode, remotePath, sessionId, source, splitPreview, visibleDoc.html]);
 
   useEffect(() => {
-    if (!isVisible || !markdownMode) return;
-    const root = contentRootRef.current;
-    if (!root) return;
-    let cancelled = false;
-    const blocks = Array.from(root.querySelectorAll<HTMLElement>('.md-mermaid:not([data-md-rendered])'));
-    if (!blocks.length) return;
-
-    const tokens = blocks.map((block) => {
-      const token = {};
-      mermaidRenderTokens.set(block, token);
-      block.dataset.mdRendered = 'pending';
-      return token;
-    });
-
-    (async () => {
-      const mermaid = await getMermaid();
-      for (let i = 0; i < blocks.length; i++) {
-        const block = blocks[i];
-        const sourceText = block.dataset.source || block.textContent || '';
-        const id = `md-mermaid-${++mermaidRenderSequence}`;
-        try {
-          const result = await mermaid.render(id, sourceText);
-          if (cancelled || mermaidRenderTokens.get(block) !== tokens[i]) return;
-          const renderer = await getMarkdownRenderer();
-          const sanitizedSVG = renderer.sanitizeMermaidSVG(result.svg);
-          if (cancelled || mermaidRenderTokens.get(block) !== tokens[i]) return;
-          mermaidRenderTokens.delete(block);
-          block.innerHTML = sanitizedSVG;
-          block.dataset.mdRendered = 'true';
-          block.classList.add('md-mermaid-rendered');
-        } catch (err: any) {
-          if (cancelled || mermaidRenderTokens.get(block) !== tokens[i]) return;
-          mermaidRenderTokens.delete(block);
-          block.dataset.mdRendered = 'error';
-          block.classList.add('md-mermaid-error');
-          block.textContent = err?.message || 'Mermaid render failed';
-        }
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      blocks.forEach((block, index) => {
-        if (mermaidRenderTokens.get(block) !== tokens[index]) return;
-        mermaidRenderTokens.delete(block);
-        if (block.dataset.mdRendered === 'pending') delete block.dataset.mdRendered;
-      });
-    };
-  }, [editing, isVisible, markdownMode, splitPreview, visibleDoc.html]);
-
-  useEffect(() => {
     const scroller = editing && splitPreview ? splitPreviewRef.current : previewRef.current;
     const root = contentRootRef.current;
     if (!isVisible || !scroller || !root || !canShowToc) {
@@ -938,7 +911,7 @@ export default function MarkdownViewer({
 
   return (
     <div
-      className="markdown-viewer"
+      className={clsx('markdown-viewer', compactReading && 'markdown-viewer-compact')}
       ref={viewerRef}
       data-active={active ? 'true' : 'false'}
       data-visible={isVisible ? 'true' : 'false'}
@@ -954,6 +927,7 @@ export default function MarkdownViewer({
         </span>
         <span className="markdown-viewer-toolbar-spacer" />
         {!pdfMode && <input
+          ref={zoomInputRef}
           type="range"
           className="markdown-viewer-zoom"
           min={MIN_ZOOM}
@@ -975,9 +949,24 @@ export default function MarkdownViewer({
           onPointerCancel={(e) => cancelZoomGesture(e.currentTarget)}
         />}
         {!pdfMode && <button
-          onClick={() => setTocOpen((v) => !v)}
-          className={clsx('markdown-viewer-tbtn', tocOpen && canShowToc && 'active')}
+          type="button"
+          className="markdown-viewer-zoom-reset"
+          onClick={() => setZoom(1)}
+          title={lang === 'zh-CN' ? '重置缩放（100%）' : 'Reset zoom (100%)'}
+          aria-label={lang === 'zh-CN' ? '重置文档缩放' : 'Reset document zoom'}
+        >{Math.round(zoom * 100)}%</button>}
+        {!pdfMode && <button
+          type="button"
+          onClick={openSearch}
+          className={clsx('markdown-viewer-tbtn', searchOpen && 'active')}
+          title={`${t(lang, 'find')} (Ctrl+F)`}
+          aria-label={t(lang, 'find')}
+        ><Search size={15} /></button>}
+        {!pdfMode && <button
+          onClick={toggleOutline}
+          className={clsx('markdown-viewer-tbtn', outlineOpen && canShowToc && 'active')}
           disabled={!canShowToc}
+          aria-expanded={outlineOpen && canShowToc}
           title={t(lang, "outline")}
         >
           <ListTree size={15} />
@@ -1062,12 +1051,12 @@ export default function MarkdownViewer({
         </div>
       )}
 
-      <div ref={viewerMainRef} className={clsx('markdown-viewer-main', canShowToc && tocOpen && 'with-toc')} style={viewerMainStyle}>
-        {canShowToc && tocOpen && (
+      <div ref={viewerMainRef} className={clsx('markdown-viewer-main', canShowToc && outlineOpen && 'with-toc')} style={viewerMainStyle}>
+        {canShowToc && outlineOpen && (
           <aside className="markdown-viewer-outline">
             <div className="markdown-outline-header">
               <span>{t(lang, "outline")}</span>
-              <button className="markdown-outline-close" onClick={() => setTocOpen(false)} title={t(lang, "hideOutline")}>
+              <button className="markdown-outline-close" onClick={closeOutline} title={t(lang, "hideOutline")}>
                 <X size={13} />
               </button>
             </div>
@@ -1155,6 +1144,15 @@ export default function MarkdownViewer({
           </div>
         )}
       </div>
+
+      {markdownMode && <MermaidDiagrams
+        rootRef={contentRootRef}
+        html={visibleDoc.html}
+        visible={!!isVisible && (!editing || splitPreview)}
+        previewKey={`${documentKey}:${editing}:${splitPreview}`}
+        locale={lang}
+        onNotify={onNotify}
+      />}
 
       {editing && (
         <div className="source-editor-status">
