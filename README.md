@@ -12,9 +12,10 @@ an optional CLI in one desktop app.
 What it does that a conventional SSH client does not: local tools and AI agents
 can run commands on your servers *through* the running app, without ever
 receiving your SSH credentials. They address servers by alias only — never a
-hostname, user, port, or jump host — and anything beyond a read-only command
-raises a native confirmation dialog. Trust can be granted for 1, 4, 8, or 24
-hours; there is no permanent switch.
+hostname, user, port, or jump host — with native confirmations and an optional
+trust window for permitted operations. Trust can be granted for 1, 4, 8, or 24
+hours; there is no permanent switch. Sensitive and high-risk commands still
+require confirmation during a trust window.
 
 [中文说明](README.zh-CN.md)
 
@@ -43,11 +44,13 @@ Get-FileHash .\gxShell-v<version>-windows-amd64.zip -Algorithm SHA256
 
 - Local CLI and HTTP API that let scripts and AI agents work on your servers through the app, with alias-only targeting, native approvals, expiring trust, and `secret://` references that keep credentials out of prompts and process arguments.
 - Built-in AI assistant over any OpenAI-compatible API, with streaming replies, terminal context, and confirmation before any remote tool call.
-- Multi-session SSH terminal with reconnect, search, split view, floating tabs, broadcast input, and adaptive tabs.
+- Multi-session SSH terminal with independent terminals for the same server, two- or four-pane layouts, named workspaces, reconnect, broadcast input, and searchable tabs.
+- Per-server terminal appearance, SSH character encoding, TERM, and Backspace/Delete preferences.
 - SFTP browsing, uploads, downloads, resumable transfers, and local/remote document workflows.
 - Linux monitoring, Docker operations, SSH tunnels, services, firewall, cron, and website helpers over SSH.
-- Markdown and text viewing/editing with code highlighting and Mermaid diagrams, local/remote PDF viewing, plus syntax-aware JSON/JSONL validation and formatting.
-- Session recording to asciinema `.cast` files with a built-in player.
+- Local/remote document navigation and editing for Markdown, JSON/JSONC/JSONL/NDJSON, source code, and deployment files; Mermaid zoom, read-only PDF viewing, and responsive large-text previews.
+- Encrypted configuration backups with import previews, conflict handling, optional credentials/private keys, and rollback on failed imports.
+- Session recording to asciinema `.cast` files with a built-in player, plus opt-in text logs and automatic cleanup by age and total size.
 - Windows tray integration, file associations, drag-and-drop opening, and update notifications.
 
 ## Keyboard shortcuts
@@ -75,6 +78,8 @@ Read the full [security model](docs/security.md).
 | Topic | Document |
 | --- | --- |
 | Feature reference | [docs/features.md](docs/features.md) |
+| Encrypted backup and migration | [docs/development/backup-migration.md](docs/development/backup-migration.md) |
+| Session log retention | [docs/development/session-log-retention.md](docs/development/session-log-retention.md) |
 | CLI and local API | [docs/cli.md](docs/cli.md) |
 | Agent execution contract | [docs/agent-guide.md](docs/agent-guide.md) |
 | Architecture notes | [docs/architecture.md](docs/architecture.md) |
@@ -87,7 +92,8 @@ Read the full [security model](docs/security.md).
 - Windows x64 is the supported release platform. Linux and macOS desktop builds are experimental CI artifacts.
 - WebView2, tray behavior, keyring integration, and file associations may differ outside supported Windows versions.
 - Monitoring expects Linux-style remote hosts, and Docker management runs over SSH rather than a local Docker socket.
-- ProxyJump supports one jump-host level; terminal split view is designed for two visible terminals.
+- ProxyJump supports one jump-host level; terminal split view supports up to four visible terminals.
+- Text editing supports UTF-8 files up to 5 MiB; PDFs are read-only and limited to 50 MiB.
 
 ## License
 

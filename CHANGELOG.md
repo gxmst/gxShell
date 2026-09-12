@@ -5,13 +5,53 @@ from the version section in this file.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-09-12
+
 ### English
 
 - Workspace restoration no longer pulls focus away from a document opened before or during reconnection. User-initiated connections keep focus-following, and the restored-server selection only runs when no document is active.
+- Added independent terminal instances for the same saved server, including named workspace and split-layout restoration.
+- Added encrypted configuration backups with import previews, conflict handling, optional credentials/private keys, and rollback on failed imports.
+- Credential-inclusive backups preserve legacy passwords, key passphrases and API keys while secure-storage migration is incomplete. Export skips deleted-server workspace entries, repairs focus/layout references, and reports any omissions without changing local workspaces.
+- Added SSH character encodings, selectable TERM values, and per-server Backspace/Delete mappings.
+- Fixed Mermaid Chinese labels and added diagram zoom, source copying, expanded reading, theme-aware rendering, and improved Markdown search and narrow-pane layouts.
+- Fixed navigation buttons disappearing when opening or switching documents with the sidebar collapsed; expanding the sidebar still reveals the current file.
+- Added dedicated document navigation with folder filtering, refresh and current-file reveal; existing/restored document tabs select it automatically and terminals restore their previous tool.
+- Unified sidebar geometry across modes, retained preferred widths across window resizing, and replaced per-frame width animation with a single layout change and short fade.
+- Improved long tab titles with more room, active-tab visibility after resizing, and a searchable full-name menu with host/path details.
+- Added JSONC/NDJSON, deployment filenames and common source-text formats; JSONC formatting preserves comments, trailing commas and numeric precision.
+- Protected tab/document search during IME composition, added keyboard navigation and viewport bounds to the tab picker, and completed document-toolbar translations.
+- Paged large document directories, moved large JSON validation/formatting to cancellable workers, and preserved edits made during processing. Hardened document authorization against link/directory replacement and prevented binary files from entering text editing or being overwritten by stale drafts.
+- Virtualized large read-only text previews, retained full-document search/copy, and fixed saving across SSH reconnects during background validation. Restored server selection now waits for committed tabs; sidebar fade no longer plays on initial mount.
+- Backup previews now disclose AI configuration changes and reject oversized merged files before import. New exports use 600,000 PBKDF2 rounds while existing 210,000-round backups remain readable.
+- Automatic reconnect keeps its attempt limit across network and window visibility changes. Unchanged terminal preferences no longer rebuild every terminal's highlights.
+- Added opt-in global session-log retention by age and total size, protecting active connections and preserving the local cleanup policy during backup imports.
+- Hardened repeated workspace-open requests and centralized backup, diagram, terminal compatibility and log-setting translations.
+- Updated vulnerable frontend build/test dependencies and added npm audit to verification and release checks. Refreshed both READMEs for the current workspace, backup, document and log features.
+- Unified desktop, CLI, frontend and build metadata at version 1.7.0.
 
 ### 中文
 
 - 工作区恢复不再把焦点从恢复前或恢复过程中打开的文档上抢走；用户手动连接仍跟随焦点，只有当前没有活动文档时才执行"选中上次服务器"。
+- 同一服务器支持多个独立终端，并可随命名工作区和分屏布局恢复。
+- 新增加密配置备份，支持导入预览、冲突处理、可选凭据／私钥，以及导入失败回滚。
+- 包含凭据的备份会保留尚未迁移完成的旧版密码、私钥口令和 API 密钥。导出时跳过工作区中已删除的服务器、修正焦点与分屏引用，并列出跳过项；本地工作区保持不变。
+- 新增 SSH 字符编码、TERM 类型及服务器级退格／删除键配置。
+- 修复 Mermaid 中文标签，增加图表缩放、源码复制、展开阅读和主题适配，并优化 Markdown 搜索及窄窗口布局。
+- 修复侧栏收起时打开或切换文档导致主导航按钮消失的问题，展开侧栏后仍会定位当前文件。
+- 新增独立文档导航，支持同目录文件筛选、刷新和定位；切换或恢复文档标签时自动进入，返回终端时恢复原来的工具面板。
+- 统一两种模式的侧栏尺寸，窗口缩放保留自定义宽度；收缩改为一次布局变化与短淡入，避免每帧重排终端。
+- 长标签保留更多显示空间，窗口缩放后当前标签保持可见；全部标签菜单可搜索并显示完整名称、主机或路径。
+- 补充 JSONC／NDJSON、常见部署文件名和源码文本格式；JSONC 格式化保留注释、尾逗号及数字精度。
+- 保护中文输入法组词期间的标签与文档查找操作，补齐标签选择器键盘导航、视口高度限制和文档工具栏翻译。
+- 大目录按页展示，大 JSON 校验与格式化移至可取消的后台线程，并保留处理期间的新编辑；加固文档授权以防链接或目录替换，阻止二进制文件进入文本编辑及被旧草稿覆盖。
+- 大文本只读预览按需渲染，保留全文查找和复制；后台校验期间 SSH 重连后仍可正确保存。工作区在标签就绪后恢复选中服务器，侧栏淡入不再于首次挂载时播放。
+- 备份预览明确展示 AI 配置变化，并在导入前拒绝合并后超限的文件。新备份使用 60 万次 PBKDF2 派生，继续兼容已有的 21 万次备份。
+- 自动重连次数不再因网络或窗口可见性变化而重置；终端配置未变时，不再反复重建所有终端的高亮。
+- 新增可选的全局会话日志保留期与总量限制，保护活动连接，备份导入保留本机的清理选择。
+- 加固重复打开工作区的处理，并统一备份、图表、终端兼容与日志设置的中英文文案。
+- 更新存在安全告警的前端构建／测试依赖，并在验证及发布流程中加入 npm audit；同步中英文 README 的工作区、备份、文档与日志功能说明。
+- 桌面端、CLI、前端和构建元数据版本统一为 1.7.0。
 
 ## [1.6.3] - 2026-09-05
 

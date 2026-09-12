@@ -30,6 +30,18 @@ function deferred() {
 beforeEach(() => { mocks.render.mockReset(); mocks.copy.mockClear(); });
 
 describe('Mermaid reading controls', () => {
+  it('resets diagram zoom when its document content changes', async () => {
+    mocks.render.mockResolvedValue(drawing('diagram label'));
+    const { container, rerender } = render(<Harness text="flowchart TD\n A[document A] --> B" />);
+    await screen.findByText('diagram label');
+    fireEvent.click(screen.getByRole('button', { name: '100%' }));
+    for (let index = 0; index < 6; index++) fireEvent.click(screen.getByRole('button', { name: '放大图表' }));
+    expect(container.querySelector('.md-diagram-percent')).toHaveTextContent('220%');
+    rerender(<Harness text="flowchart TD\n A[document B] --> B" />);
+    await screen.findByText('diagram label');
+    expect(container.querySelector('.md-diagram-percent')).toHaveTextContent('100%');
+  });
+
   it('rejects stale results after a document changes', async () => {
     const old = deferred();
     const current = deferred();

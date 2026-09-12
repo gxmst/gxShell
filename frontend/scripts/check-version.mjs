@@ -1,13 +1,13 @@
 // Zero-dependency version consistency checker.
 //
 // backend/version/version.go is the single source of truth for the release
-// version, but two files cannot read it: wails.json and package.json both need a
-// literal, because their build tools parse them as plain JSON. Those copies had
+// version. wails.json, package.json and package-lock.json also need literals
+// because their build tools parse them as plain JSON. Those copies had
 // already drifted once — the desktop app reported 1.3.0 while gxshell-cli
 // reported 1.4.0 — which is the kind of mismatch nothing fails on and everyone
 // notices only after a release.
 //
-// This script compares the two literals against the Go constant. Run via
+// This script compares the literals and lockfile against the Go constant. Run via
 // `npm run check:version` (also chained into `npm run build`). Exits non-zero on
 // any mismatch, naming the file to fix.
 
@@ -21,6 +21,7 @@ const repoRoot = join(here, '..', '..');
 const versionGoPath = join(repoRoot, 'backend', 'version', 'version.go');
 const wailsJsonPath = join(repoRoot, 'wails.json');
 const packageJsonPath = join(here, '..', 'package.json');
+const packageLockPath = join(here, '..', 'package-lock.json');
 
 function fail(message) {
   console.error(`check-version: ${message}`);
@@ -50,6 +51,8 @@ const goVersion = readGoVersion();
 const checks = [
   { label: 'wails.json (info.productVersion)', value: readJsonField(wailsJsonPath, 'info.productVersion') },
   { label: 'frontend/package.json (version)', value: readJsonField(packageJsonPath, 'version') },
+  { label: 'frontend/package-lock.json (version)', value: readJsonField(packageLockPath, 'version') },
+  { label: 'frontend/package-lock.json (root package version)', value: readJsonField(packageLockPath, 'packages')?.['']?.version },
 ];
 
 const mismatches = checks.filter((check) => check.value !== goVersion);
@@ -63,4 +66,4 @@ if (mismatches.length > 0) {
   process.exit(1);
 }
 
-console.log(`check-version: ${goVersion} consistent across version.go, wails.json and package.json`);
+console.log(`check-version: ${goVersion} consistent across version.go, wails.json, package.json and package-lock.json`);

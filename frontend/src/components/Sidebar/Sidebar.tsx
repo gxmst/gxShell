@@ -1,14 +1,14 @@
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { ArrowUpRight, Bot, ChevronDown, ChevronRight, Edit3, FileText, Folder, FolderOpen, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Play, Plus, Search, Server, Settings, Star, Trash2, X, Zap } from "lucide-react";
+import { ArrowUpRight, Bot, ChevronDown, ChevronRight, Edit3, FileText, Folder, FolderOpen, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Play, Plus, Search, Server, Settings, Star, Trash2, Zap } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
-import { isWindowsPlatform } from "../../utils/clipboard";
 import { TraceRoute, PingHost, UpdateSettings } from "../../../wailsjs/go/app/App";
 import type { AutomationActivityRecord, AutomationIndicator, Drawer, RecentMarkdownItem, Tab, Toast } from "../../types";
 import type { AppContextMenu } from "../../hooks/useTerminal";
 import { drawerIcon } from "../../constants";
 import { stateClass } from "../../utils/format";
 import { t, navLabel } from "../../i18n";
+import { DocumentPanel } from "./DocumentPanel";
 import { MonitorPanel } from "../MonitorPanel/MonitorPanel";
 import { NetworkPathCard } from "../NetworkPathCard/NetworkPathCard";
 import { MemoryCard } from "../MemoryCard/MemoryCard";
@@ -17,8 +17,7 @@ import { CliTrustIndicator } from "../CliTrustIndicator/CliTrustIndicator";
 import { ServerOsIcon, detectServerOs, type ServerOsType } from "../common/ServerOsIcon";
 
 type FloatKey = "path" | "memory" | MonitorDetailKind;
-type PrimaryNav = "connections" | "files" | "tools";
-type FileMode = "remote" | "text";
+type PrimaryNav = "connections" | "files" | "documents" | "tools";
 
 // Tool drawers are not part of the terminal startup path. Loading them on first
 // use keeps the initial WebView bundle smaller without changing navigation.
@@ -48,19 +47,10 @@ const RECENT_SECTION_LIMIT = 8;
 function primaryForDrawer(drawer: Drawer): PrimaryNav | "ai" | "settings" {
   if (drawer === "monitor") return "connections";
   if (drawer === "sftp") return "files";
+  if (drawer === "documents") return "documents";
   if (drawer === "ai") return "ai";
   if (drawer === "settings") return "settings";
   return "tools";
-}
-
-function sameDocumentPath(left: string | undefined, right: string, remote: boolean) {
-  if (!left) return false;
-  if (remote) return left === right;
-  const normalize = (value: string) => {
-    const normalized = value.replace(/\\/g, "/");
-    return isWindowsPlatform() ? normalized.toLowerCase() : normalized;
-  };
-  return normalize(left) === normalize(right);
 }
 
 export function Sidebar(props: {
@@ -88,6 +78,9 @@ export function Sidebar(props: {
   remoteFiles: types.RemoteFile[];
   sftpBusy: boolean;
   markdownSiblings?: string[];
+  markdownSiblingsBusy?: boolean;
+  markdownSiblingsError?: string;
+  onRefreshMarkdownSiblings?: () => void;
   recentMarkdown?: RecentMarkdownItem[];
   onOpenMarkdownFile?: (path: string) => void;
   onOpenRemoteMarkdownFile?: (sessionId: string, path: string) => void;
@@ -171,25 +164,11 @@ export function Sidebar(props: {
     });
   }, []);
 
-  const [fileMode, setFileMode] = useState<FileMode>("remote");
-  const activeDocumentRowRef = useRef<HTMLButtonElement>(null);
   const [aiMounted, setAiMounted] = useState(props.drawer === "ai");
 
   useEffect(() => {
     if (props.drawer === "ai") setAiMounted(true);
   }, [props.drawer]);
-
-  useEffect(() => {
-    if (props.drawer === "sftp") setFileMode(props.active?.type === "markdown" ? "text" : "remote");
-  }, [props.drawer, props.active?.id, props.active?.type]);
-
-  useLayoutEffect(() => {
-    if (props.drawer !== "sftp" || fileMode !== "text") return;
-    const frame = requestAnimationFrame(() => {
-      activeDocumentRowRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [fileMode, props.active?.id, props.active?.filePath, props.active?.remotePath, props.drawer, props.markdownSiblings]);
 
   const lastConnectedValue = useCallback((profile: types.Profile) => {
     const value = Date.parse(String(profile.lastConnectedAt || ""));
@@ -305,12 +284,14 @@ export function Sidebar(props: {
   const titleText = {
     connections: lang === "zh-CN" ? "连接" : "Connect",
     files: lang === "zh-CN" ? "文件" : "Files",
+    documents: t(lang, "documentsNav"),
     tools: lang === "zh-CN" ? "工具" : "Tools",
   };
   const sectionKey = props.drawer === "ai" || props.drawer === "settings" ? props.drawer : activePrimary;
   const openPrimary = (nav: PrimaryNav) => {
     if (nav === "connections") props.setDrawer("monitor");
     if (nav === "files") props.setDrawer("sftp");
+    if (nav === "documents") props.setDrawer("documents");
     if (nav === "tools") props.setDrawer(toolDrawers.includes(props.drawer) ? props.drawer : "commands");
   };
   // Rail behaviour follows the established activity-bar idiom: clicking the
@@ -439,7 +420,7 @@ export function Sidebar(props: {
         />
       )}
       <nav className="activity-rail" aria-label={lang === "zh-CN" ? "主导航" : "Primary navigation"}>
-        {(["connections", "files", "tools"] as PrimaryNav[]).map((item) => (
+        {(["connections", "files", "documents", "tools"] as PrimaryNav[]).map((item) => (
           <button
             key={item}
             type="button"
@@ -449,7 +430,7 @@ export function Sidebar(props: {
             title={titleText[item]}
             onClick={() => activateSection(activePrimary === item, () => openPrimary(item))}
           >
-            {item === "connections" ? <Server size={17} /> : item === "files" ? <Folder size={17} /> : drawerIcon("commands", 17)}
+            {item === "connections" ? <Server size={17} /> : item === "files" ? <Folder size={17} /> : item === "documents" ? <FileText size={17} /> : drawerIcon("commands", 17)}
           </button>
         ))}
         <span className="rail-spacer" />
@@ -566,89 +547,21 @@ export function Sidebar(props: {
           </>
         )}
 
-        {activePrimary !== "connections" && props.drawer !== "ai" && <div className={clsx("tool-body-full", props.drawer === "settings" && "settings-host")} key={`${activePrimary}-${props.drawer}-${fileMode}`}><Suspense fallback={<DrawerFallback />}>
+        {activePrimary !== "connections" && props.drawer !== "ai" && <div className={clsx("tool-body-full", props.drawer === "settings" && "settings-host", props.drawer === "documents" && "documents-host")} key={`${activePrimary}-${props.drawer}`}><Suspense fallback={<DrawerFallback />}>
+          {props.drawer === "documents" && <DocumentPanel
+            active={props.active} siblings={props.markdownSiblings || []}
+            busy={props.markdownSiblingsBusy} error={props.markdownSiblingsError}
+            recent={props.recentMarkdown || []} collapsed={props.collapsed} language={lang}
+            host={props.profiles.find((profile) => profile.id === props.active?.profileId)?.host}
+            onOpen={props.onOpenMarkdownFile} onPick={props.onPickTextFile} onRefresh={props.onRefreshMarkdownSiblings}
+            onOpenRecent={props.onOpenRecentMarkdown} onRemoveRecent={props.onRemoveRecentMarkdown}
+          />}
           {props.drawer === "sftp" && (
             <div className="file-workspace">
-              <div className="file-workspace-bar">
-                <div className="file-workspace-title">
-                  <Folder size={14} />
-                  <span>{titleText.files}</span>
-                </div>
-                <div className="file-workspace-tabs" title={t(lang, "switchFilesView")}>
-                  <button className={clsx(fileMode === "remote" && "active")} onClick={() => setFileMode("remote")}>
-                    <FolderOpen size={11} /><span>{t(lang, "remote")}</span>
-                  </button>
-                  <button className={clsx(fileMode === "text" && "active")} onClick={() => setFileMode("text")}>
-                    <FileText size={11} /><span>{t(lang, "textFiles")}</span>
-                  </button>
-                </div>
-              </div>
-
+              <div className="file-workspace-bar"><div className="file-workspace-title"><Folder size={14} /><span>{titleText.files}</span></div></div>
               <div className="file-workspace-body">
-                {fileMode === "remote" && (
-                  !canBrowseRemote ? (
-                    <div className="file-workspace-empty">
-                      <FolderOpen size={22} />
-                      <span>{t(lang, "connectFirstSftp")}</span>
-                    </div>
-                  ) : (
-                    <SftpPanel active={props.active} path={props.remotePath} files={props.remoteFiles} busy={props.sftpBusy} locale={lang} onRefresh={props.onRefreshSftp} onNotify={props.onNotify} setCtxMenu={props.setCtxMenu} onOpenMarkdownFile={props.onOpenRemoteMarkdownFile} onOpenTerminalInDir={props.onOpenTerminalInDir} />
-                  )
-                )}
-
-                {fileMode === "text" && (
-                  <div className="text-file-workspace">
-                    <div className="text-file-toolbar">
-                      <div>
-                        <strong>{t(lang, "textFiles")}</strong>
-                        <small>{lang === "zh-CN" ? "本地与远程文档工作区" : "Local and remote document workspace"}</small>
-                      </div>
-                      <button className="text-file-open-btn" onClick={props.onPickTextFile}><Plus size={11} /> {t(lang, "open")}</button>
-                    </div>
-
-                    {!!props.markdownSiblings?.length && (
-                      <section className="text-file-section text-file-section-current">
-                        <div className="text-file-section-title">{lang === "zh-CN" ? "当前目录" : "Current folder"}<span>{props.markdownSiblings.length}</span></div>
-                        <div className="text-file-list text-file-list-scroll">
-                          {props.markdownSiblings.map((file) => {
-                            const isRemote = props.active?.markdownSource === "remote";
-                            const activePath = isRemote ? props.active?.remotePath : props.active?.filePath;
-                            const isActive = props.active?.type === "markdown" && sameDocumentPath(activePath, file, isRemote);
-                            return (
-                              <button
-                                key={file}
-                                ref={isActive ? activeDocumentRowRef : undefined}
-                                className={clsx("text-file-row", isActive && "active")}
-                                aria-current={isActive ? "page" : undefined}
-                                onClick={() => props.onOpenMarkdownFile?.(file)}
-                                title={file}
-                              >
-                                <FileText size={13} />
-                                <span>{file.split(/[\\/]/).pop()}</span>
-                                {isActive && <span className="text-file-current">{lang === "zh-CN" ? "当前" : "Open"}</span>}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </section>
-                    )}
-
-                    <section className="text-file-section text-file-section-grow">
-                      <div className="text-file-section-title">{t(lang, "recentTextFiles")}<span>{(props.recentMarkdown || []).length}</span></div>
-                      <div className="text-file-list text-file-list-scroll">
-                        {(props.recentMarkdown || []).map((item) => (
-                          <div key={item.id} className="text-file-row text-file-recent-row">
-                            <button className="text-file-main" onClick={() => props.onOpenRecentMarkdown?.(item)} title={item.path}>
-                              <FileText size={13} className={item.source === "remote" ? "text-accent" : "text-muted"} />
-                              <span><strong>{item.title}</strong><small>{item.source === "remote" ? (item.host || t(lang, "remote")) : t(lang, "local")} · {item.path}</small></span>
-                            </button>
-                            <button className="mini-btn danger text-file-remove" onClick={(event) => { event.stopPropagation(); props.onRemoveRecentMarkdown?.(item.id); }} title={t(lang, "remove")}><X size={11} /></button>
-                          </div>
-                        ))}
-                        {!(props.recentMarkdown || []).length && <div className="text-file-empty">{t(lang, "noRecentTextFiles")}</div>}
-                      </div>
-                    </section>
-                  </div>
+                {!canBrowseRemote ? <div className="file-workspace-empty"><FolderOpen size={22} /><span>{t(lang, "connectFirstSftp")}</span></div> : (
+                  <SftpPanel active={props.active} path={props.remotePath} files={props.remoteFiles} busy={props.sftpBusy} locale={lang} onRefresh={props.onRefreshSftp} onNotify={props.onNotify} setCtxMenu={props.setCtxMenu} onOpenMarkdownFile={props.onOpenRemoteMarkdownFile} onOpenTerminalInDir={props.onOpenTerminalInDir} />
                 )}
               </div>
             </div>

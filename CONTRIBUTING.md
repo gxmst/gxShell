@@ -23,6 +23,7 @@ good predictor of CI:
 ```bash
 cd frontend
 npm ci
+npm audit --audit-level=moderate
 npm run lint
 npm test
 npm run build   # runs check:i18n, check:version, check:bindings, check:css
@@ -42,8 +43,8 @@ go vet ./...
   `check:i18n` enforces it. Avoid inline `lang === "zh-CN"` ternaries.
 - `backend/version/version.go` is the single source of truth for the version.
   `wails.json` and `frontend/package.json` carry literals that
-  `check:version` compares against it; bump all three together (plus a
-  CHANGELOG entry).
+  `check:version` compares against it; bump all three and the root versions
+  in `frontend/package-lock.json` together (plus a CHANGELOG entry).
 - Commits follow conventional style with optional scopes, e.g.
   `fix(ui): …`, `feat(sftp): …`, `docs: …`, `chore: …`.
 - Match the surrounding code: the codebase keeps manager state behind

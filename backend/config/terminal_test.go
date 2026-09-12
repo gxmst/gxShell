@@ -32,6 +32,14 @@ func TestTerminalAndLoggingBounds(t *testing.T) {
 	if logs.Enabled || logs.MaxFileMB != 100 || logs.MaxSessionMB < logs.MaxFileMB {
 		t.Fatalf("bad log bounds: %+v", logs)
 	}
+	retention := NormalizeSessionLogRetention(types.SessionLogRetentionSettings{})
+	if retention.Enabled || retention.MaxAgeDays != 30 || retention.MaxTotalMB != 1024 {
+		t.Fatalf("unsafe retention defaults: %+v", retention)
+	}
+	retention = NormalizeSessionLogRetention(types.SessionLogRetentionSettings{Enabled: true, MaxAgeDays: -1, MaxTotalMB: 102401})
+	if retention.Enabled || retention.MaxAgeDays != 30 || retention.MaxTotalMB != 1024 {
+		t.Fatalf("invalid retention bounds: %+v", retention)
+	}
 }
 
 func TestTerminalCompatibilityDefaultsAndAliases(t *testing.T) {

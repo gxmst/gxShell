@@ -12,6 +12,7 @@ import { useSessions } from "./hooks/useSessions";
 import { useSftp } from "./hooks/useSftp";
 import { useHotkeys } from "./hooks/useHotkeys";
 import { useMarkdownTabs } from "./hooks/useMarkdownTabs";
+import { useContextualSidebar } from "./hooks/useContextualSidebar";
 import { usePersistedState } from "./hooks/usePersistedState";
 import { useUpdateCheck } from "./hooks/useUpdateCheck";
 import { Sidebar } from "./components/Sidebar/Sidebar";
@@ -123,9 +124,11 @@ function App() {
   const [terminalSearchResult, setTerminalSearchResult] = useState<{ id: string; index: number; count: number } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("gx:sidebarCollapsed", false);
   const [sidebarPanelWidth, setSidebarPanelWidth] = useState(SIDEBAR_PANEL_DEFAULT);
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
   const [sidebarResizing, setSidebarResizing] = useState(false);
-  const sidebarPanelWidthRef = useRef(sidebarPanelWidth);
-  sidebarPanelWidthRef.current = sidebarPanelWidth;
+  const effectiveSidebarWidth = clampSidebarPanelWidth(sidebarPanelWidth, viewportWidth);
+  const sidebarPanelWidthRef = useRef(effectiveSidebarWidth);
+  sidebarPanelWidthRef.current = effectiveSidebarWidth;
   const [logViewer, setLogViewer] = useState<{ name: string; content: string } | null>(null);
   const [floatingTabIds, setFloatingTabIds] = usePersistedState<string[]>("gx:floatingTabIds", []);
   const [splitPane, setSplitPane] = useState<SplitPane | null>(null);
@@ -327,19 +330,24 @@ function App() {
   };
 
   const activeIsTerminal = !!sessions.active && sessions.active.type !== "markdown";
+  useContextualSidebar(sessions.active, drawer, requestDrawer);
   const handleTerminalSearchResults = useCallback((id: string, index: number, count: number) => {
     setTerminalSearchResult({ id, index, count });
   }, []);
+  const terminalPreferences = useMemo(() => new Map(profileState.profiles.map((profile) => [profile.id, profile.terminal])), [profileState.profiles]);
   const terminalOverrides = useMemo(() => Object.fromEntries(sessions.tabs.flatMap((tab) => {
-    const terminal = profileState.profiles.find((profile) => profile.id === tab.profileId)?.terminal;
+    const terminal = terminalPreferences.get(tab.profileId);
     return terminal ? [[tab.id, terminal]] : [];
-  })), [sessions.tabs, profileState.profiles]);
-  const activeTerminal = useTerminal(sessions.activeTab, activeIsTerminal, profileState.settings, notify, sidebarCollapsed, splitPane, broadcastRef, linkHandlersRef, setCtxMenu, handleTerminalSearchResults, setPasteRequest, terminalOverrides);
+  })), [sessions.tabs, terminalPreferences]);
+  const activeTerminal = useTerminal(sessions.activeTab, activeIsTerminal, profileState.settings, notify, splitPane, broadcastRef, linkHandlersRef, setCtxMenu, handleTerminalSearchResults, setPasteRequest, terminalOverrides);
   const { writeOutput, disposeTerminal, findNext, findPrev, focusTerminal, refitTerminal, reattachTerminal } = activeTerminal;
   terminalBridge.current.disposeTerminal = disposeTerminal;
 
   const {
     markdownSiblings,
+    markdownSiblingsBusy,
+    markdownSiblingsError,
+    refreshMarkdownSiblings,
     recentMarkdown,
     openMarkdownFile,
     openRemoteMarkdownFile,
@@ -794,14 +802,13 @@ function App() {
   useEffect(() => {
     const stored = profileState.settings?.sidebarWidth;
     if (!stored || stored <= 0) return;
-    setSidebarPanelWidth(clampSidebarPanelWidth(stored, window.innerWidth));
+    setSidebarPanelWidth(stored);
   }, [profileState.settings?.sidebarWidth]);
 
-  // A window that shrinks past the stored width pulls the panel back in. The
-  // CSS clamp below does this for the rendered value on its own; re-clamping the
-  // state keeps the number the next drag starts from honest.
+  // Keep the preferred width when the window shrinks. Both modes use the same
+  // effective width, and enlarging the window restores the user's preference.
   useEffect(() => {
-    const onResize = () => setSidebarPanelWidth((width) => clampSidebarPanelWidth(width, window.innerWidth));
+    const onResize = () => setViewportWidth(window.innerWidth);
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
@@ -831,9 +838,8 @@ function App() {
     const rail = document.querySelector<HTMLElement>(".left-rail");
     const shell = document.querySelector<HTMLElement>(".app-shell");
     if (!rail || !shell) return;
-    const railWidth = parseFloat(window.getComputedStyle(shell).getPropertyValue("--rail-width")) || 48;
     const startX = event.clientX;
-    const startWidth = rail.getBoundingClientRect().width - railWidth;
+    const startWidth = sidebarPanelWidthRef.current;
     const handle = event.currentTarget;
     // Pointer capture retargets the move/up events to the handle, so the drag
     // survives the cursor outracing the panel edge or leaving the window.
@@ -1428,10 +1434,7 @@ function App() {
       data-zen={zenMode ? "true" : "false"}
       data-maximized={windowMaximized ? "true" : "false"}
       data-resizing={sidebarResizing ? "true" : "false"}
-      // The clamp is what keeps a chosen width from crowding the terminal on a
-      // small window; it supersedes the narrow-window media queries that used to
-      // set this variable, since an inline value would always outrank them.
-      style={{ ["--sidebar-panel-width" as string]: `clamp(${SIDEBAR_PANEL_MIN}px, ${sidebarPanelWidth}px, ${SIDEBAR_PANEL_MAX_VW * 100}vw)` } as React.CSSProperties}
+      style={{ ["--sidebar-panel-width" as string]: `${effectiveSidebarWidth}px` } as React.CSSProperties}
     >
       {zenMode && (
         <button
@@ -1497,9 +1500,9 @@ function App() {
           onResizeStart={beginSidebarResize}
           onResizeReset={resetSidebarResize}
           onResizeAdjust={adjustSidebarWidth}
-          panelWidth={sidebarPanelWidth}
+          panelWidth={effectiveSidebarWidth}
           panelWidthMin={SIDEBAR_PANEL_MIN}
-          panelWidthMax={Math.max(SIDEBAR_PANEL_MIN, Math.round(window.innerWidth * SIDEBAR_PANEL_MAX_VW))}
+          panelWidthMax={Math.max(SIDEBAR_PANEL_MIN, Math.round(viewportWidth * SIDEBAR_PANEL_MAX_VW))}
           setCtxMenu={setCtxMenu}
           drawer={drawer}          setDrawer={requestDrawer}
           onSettingsDirtyChange={handleSettingsDirtyChange}
@@ -1512,6 +1515,9 @@ function App() {
           remoteFiles={sftp.remoteFiles}
           sftpBusy={sftp.sftpBusy}
           markdownSiblings={markdownSiblings}
+          markdownSiblingsBusy={markdownSiblingsBusy}
+          markdownSiblingsError={markdownSiblingsError}
+          onRefreshMarkdownSiblings={refreshMarkdownSiblings}
           recentMarkdown={recentMarkdown}
           onOpenMarkdownFile={handleOpenMarkdownSibling}
           onOpenRemoteMarkdownFile={openRemoteMarkdownFile}

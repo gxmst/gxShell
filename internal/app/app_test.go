@@ -261,7 +261,7 @@ func TestReadLocalMarkdownResourceDataURLRejectsParentTraversal(t *testing.T) {
 }
 
 func TestResolveRemoteMarkdownLinkAllowsCurrentDirSibling(t *testing.T) {
-	got, err := resolveRemoteMarkdownRelativePath("readme.md", "other.md#intro", map[string]bool{".md": true})
+	got, err := resolveRemoteMarkdownRelativePath("readme.md", "other.md#intro", isRemoteMarkdownPath)
 	if err != nil {
 		t.Fatalf("resolveRemoteMarkdownRelativePath error: %v", err)
 	}

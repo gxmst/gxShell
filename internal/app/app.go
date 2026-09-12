@@ -57,6 +57,21 @@ func (c *appContext) Get() context.Context {
 	return nil
 }
 
+// secretStore allows application tests to exercise credential failures without
+// reading or changing the user's native credential manager.
+type secretStore interface {
+	SavePassword(string, string) error
+	SavePassphrase(string, string) error
+	GetPassword(string) (string, error)
+	GetPassphrase(string) (string, error)
+	Delete(string)
+	SaveNamed(string, string, string) error
+	GetNamed(string, string) (string, error)
+	DeleteNamed(string, string)
+	NamedValues(string) (map[string]string, error)
+	ApplyMigration([]secrets.Value, func() error) error
+}
+
 // App is the main application struct that coordinates all managers.
 type App struct {
 	ctx   appContext
@@ -69,9 +84,10 @@ type App struct {
 	domReadyFired atomic.Bool
 	forceClose    atomic.Bool
 	ssh           *sshmanager.Manager
+	sessionLogs   *sessionlog.Manager
 	sftp          *sftpmanager.Manager
 	monitor       *monitor.Manager
-	secrets       *secrets.Store
+	secrets       secretStore
 	net           *network.Manager
 	tunnels       *tunnel.Manager
 	ai            *ai.Manager
@@ -258,6 +274,17 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	a.ssh = sshmanager.NewManager(filepath.Join(a.store.DataDir(), "known_hosts"), emit, confirm)
+	a.sessionLogs = sessionlog.NewManager(filepath.Join(a.store.DataDir(), "session-logs"), func(err error) {
+		a.log.ErrorFields("Session log retention failed", logger.LogFields{"error": err.Error()})
+		emit("session-log:error", map[string]any{"error": err.Error()})
+	})
+	if settings, err := a.store.GetSettings(); err == nil {
+		if err := a.sessionLogs.UpdateRetention(settings.SessionLogRetention); err != nil {
+			a.log.ErrorFields("Session log retention failed", logger.LogFields{"error": err.Error()})
+		}
+	} else {
+		a.log.ErrorFields("Session log retention not started because settings could not be read", logger.LogFields{"error": err.Error()})
+	}
 	a.ssh.SetOutputLogFactory(func(profile types.Profile) (sshmanager.OutputLog, error) {
 		settings, err := a.store.GetSettings()
 		if err != nil {
@@ -270,7 +297,7 @@ func (a *App) startup(ctx context.Context) {
 		if !options.Enabled {
 			return nil, nil
 		}
-		writer, err := sessionlog.New(filepath.Join(a.store.DataDir(), "session-logs"), profile.Name, options, func(err error) {
+		writer, err := a.sessionLogs.New(profile.Name, options, func(err error) {
 			emit("session-log:error", map[string]any{"profileId": profile.ID, "error": err.Error()})
 		})
 		if err != nil {

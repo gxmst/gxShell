@@ -19,14 +19,16 @@ separate release-notes source.
 
 ## Local preparation
 
-1. Update `backend/version/version.go`, `wails.json`, and `frontend/package.json` to the same version.
+1. Update `backend/version/version.go`, `wails.json`, `frontend/package.json`, and the root versions in `frontend/package-lock.json` to the same version.
 2. Add the release section to `CHANGELOG.md` using `## [x.y.z] - YYYY-MM-DD`.
 3. Run the checks in [development.md](development.md).
 4. Review the staged file names and make sure local staging directories, credentials, and build caches are excluded.
-5. Push the commit and tag, for example:
+5. Push the commit and wait for all `verify` jobs on that exact commit to pass.
+6. Create and push the version tag from the verified commit, for example:
 
 ```powershell
 git push origin main
+# Wait for the main-branch verify run before creating the release tag.
 git tag -a v<version> -m "gxShell v<version>"
 git push origin v<version>
 ```

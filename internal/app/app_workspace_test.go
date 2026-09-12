@@ -221,7 +221,11 @@ func TestExplicitOpenPersistsOnlySelectedSessionDocument(t *testing.T) {
 	if err := first.loadHistory(history); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := first.allowSessionMany([]string{opened, sibling}); err != nil {
+	directory, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.allowSessionMany([]string{opened, sibling}, directory); err != nil {
 		t.Fatal(err)
 	}
 	if restored := first.restore(sibling); !restored {

@@ -31,6 +31,10 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Audit frontend dependencies
+        working-directory: frontend
+        run: npm audit --audit-level=moderate
+
       # Lint and test before the build: both fail faster, and a build that
       # succeeds on code the linter rejects is not a useful signal.
       - name: Lint frontend
@@ -121,6 +125,10 @@ jobs:
 
       - name: Build experimental Linux desktop app
         run: wails build -s -skipbindings -platform linux/amd64 -tags webkit2_41
+
+      # Exercise symlink cases even when the Windows runner cannot create links.
+      - name: Test document authorization and file safety
+        run: go test -race -tags webkit2_41 ./internal/app -run 'Test(Document|BinaryDocuments|TextDocument|NamedDocument)'
 
       - name: Package experimental Linux build
         run: |

@@ -687,6 +687,10 @@
 .backup-summary > div { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
 .backup-summary dt { color: var(--muted); font-size: var(--text-xs); }
 .backup-summary dd { margin: 2px 0 0; font-weight: 600; }
+.backup-ai-changes { min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; }
+.backup-ai-changes table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: var(--text-xs); }
+.backup-ai-changes th, .backup-ai-changes td { padding: 6px; text-align: left; vertical-align: top; overflow-wrap: anywhere; border-bottom: 1px solid var(--border); }
+.backup-ai-changes th:first-child { width: 24%; }
 .backup-details { min-width: 0; font-size: var(--text-sm); }
 .backup-details summary { cursor: pointer; padding: 4px 0; font-weight: 600; }
 .backup-details ul { max-height: 170px; overflow: auto; margin: 4px 0; padding: 0; list-style: none; }

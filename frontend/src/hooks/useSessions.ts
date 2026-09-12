@@ -5,6 +5,7 @@ import { types } from "../../wailsjs/go/models";
 import type { SecretRequest, Tab } from "../types";
 import { needsSecret, tabTitle } from "../utils/format";
 import { sameTerminal, terminalKey } from "../utils/sessionIdentity";
+import { t } from "../i18n";
 
 type UseSessionsOptions = {
   profiles: types.Profile[];
@@ -134,6 +135,7 @@ export function useSessions(options: UseSessionsOptions) {
   const [secretRequest, setSecretRequest] = useState<SecretRequest | null>(null);
   const workspaceProfiles = useRef(readWorkspaceProfiles());
   const workspaceRestoreStarted = useRef(false);
+  const pendingWorkspaceActiveProfile = useRef("");
   const [workspaceRestoreReady, setWorkspaceRestoreReady] = useState(false);
   const [sessionsHydrated, setSessionsHydrated] = useState(false);
   const runtimeGenerations = useRef<Map<string, number>>(new Map());
@@ -181,7 +183,7 @@ export function useSessions(options: UseSessionsOptions) {
   // Auto-reconnect bookkeeping. Keyed by the tab id that owned the session that
   // dropped. userClosing marks ids the user is intentionally closing so their
   // disconnect does not trigger a reconnect.
-  const autoReconnect = useRef<Record<string, { attempts: number; timer: number; inFlight?: boolean; cancelledByClose?: boolean }>>({});
+  const autoReconnect = useRef<Record<string, { attempts: number; timer: number; inFlight?: boolean; gaveUp?: boolean; cancelledByClose?: boolean }>>({});
   const userClosing = useRef<Set<string>>(new Set());
   // Session ids whose backend-owned reconnect this renderer observed on a live
   // tab. The cli-session-replaced handler consumes the record to tell a
@@ -490,16 +492,20 @@ export function useSessions(options: UseSessionsOptions) {
       notifyRef.current(zh ? `正在恢复 ${restorable.length} 个工作区连接` : `Restoring ${restorable.length} workspace connection${restorable.length === 1 ? "" : "s"}`, "info");
     }
     restoreProfilesInBatches(restorable, (item) => connectProfile(item.profile, { preserveActiveTab: true, instanceId: item.instanceId })).finally(() => {
+      pendingWorkspaceActiveProfile.current = workspaceProfiles.current.activeProfileId;
       setWorkspaceRestoreReady(true);
-      const activeProfileId = workspaceProfiles.current.activeProfileId;
-      if (activeProfileId) {
-        window.setTimeout(() => {
-          const restoredActive = tabsRef.current.find((tab) => tab.type !== "markdown" && terminalKey(tab.profileId, tab.instanceId) === activeProfileId && tab.state === "connected");
-          if (restoredActive) restoreActiveTab(restoredActive.id);
-        }, 0);
-      }
     });
-  }, [connectProfile, options.language, options.profiles, options.restoreWorkspace, sessionsHydrated, restoreActiveTab]);
+  }, [connectProfile, options.language, options.profiles, options.restoreWorkspace, sessionsHydrated]);
+
+  useEffect(() => {
+    if (!workspaceRestoreReady || !pendingWorkspaceActiveProfile.current) return;
+    // Read committed tabs. A zero-delay timer can beat React's batched updates
+    // and miss the saved session, leaving the first restored tab selected.
+    const activeProfileId = pendingWorkspaceActiveProfile.current;
+    pendingWorkspaceActiveProfile.current = "";
+    const restoredActive = tabs.find((tab) => tab.type !== "markdown" && terminalKey(tab.profileId, tab.instanceId) === activeProfileId && tab.state === "connected");
+    if (restoredActive) restoreActiveTab(restoredActive.id);
+  }, [workspaceRestoreReady, tabs, restoreActiveTab]);
 
   useEffect(() => {
     if (!workspaceRestoreReady || options.restoreWorkspace !== true) return;
@@ -750,7 +756,8 @@ export function useSessions(options: UseSessionsOptions) {
     // If a reconnect timer is already pending for this tab, do not schedule a
     // second one — that would double-Connect and race two id replacements. The
     // failed-attempt path stores timer: 0, so retries are not blocked by this.
-    if (autoReconnect.current[tabId]?.timer || autoReconnect.current[tabId]?.inFlight || navigator.onLine === false) return;
+    const pending = autoReconnect.current[tabId];
+    if (pending?.timer || pending?.inFlight || pending?.gaveUp || navigator.onLine === false) return;
     const tab = tabsRef.current.find((item) => item.id === tabId);
     if (!tab || tab.local || tab.type === "markdown") return;
     const profile = profilesRef.current.find((item) => item.id === tab.profileId);
@@ -760,38 +767,43 @@ export function useSessions(options: UseSessionsOptions) {
 
     const prior = autoReconnect.current[tabId]?.attempts ?? 0;
     if (prior >= AUTO_RECONNECT_MAX) {
-      clearAutoReconnect(tabId);
+      autoReconnect.current[tabId] = { attempts: prior, timer: 0, gaveUp: true };
+      const message = t(options.language || "en", "autoReconnectGaveUp", { count: String(AUTO_RECONNECT_MAX) });
       setTabs((items) => items.map((item) => item.id === tabId
-        ? { ...item, state: "error", error: `Auto-reconnect gave up after ${AUTO_RECONNECT_MAX} attempts` }
+        ? { ...item, state: "error", error: message }
         : item));
-      notifyRef.current(`${tab.title}: auto-reconnect gave up after ${AUTO_RECONNECT_MAX} attempts`, "error");
+      notifyRef.current(`${tab.title}: ${message}`, "error");
       return;
     }
     const attempt = prior;
     const delay = autoReconnectBackoffMs(attempt);
     setTabs((items) => items.map((item) => item.id === tabId ? { ...item, state: "reconnecting" } : item));
-    notifyRef.current(`${tab.title}: reconnecting (attempt ${attempt + 1}/${AUTO_RECONNECT_MAX})...`, "info");
+    notifyRef.current(`${tab.title}: ${t(options.language || "en", "autoReconnectAttempt", { attempt: String(attempt + 1), count: String(AUTO_RECONNECT_MAX) })}`, "info");
 
     const timer = window.setTimeout(async () => {
       const attemptState = autoReconnect.current[tabId];
       if (!attemptState) return;
       attemptState.timer = 0;
-      attemptState.inFlight = true;
       // The tab may have been closed while we waited.
-      if (!tabsRef.current.some((item) => item.id === tabId)) {
+      const currentTab = tabsRef.current.find((item) => item.id === tabId);
+      const currentProfile = profilesRef.current.find((item) => item.id === tab.profileId);
+      if (!currentTab || currentTab.state === "connected" || !currentProfile || !currentProfile.autoReconnect || needsSecret(currentProfile)) {
         clearAutoReconnect(tabId);
+        setTabs((items) => items.map((item) => item.id === tabId && item.state === "reconnecting" ? { ...item, state: "disconnected" } : item));
         return;
       }
       if (navigator.onLine === false) {
-        clearAutoReconnect(tabId);
+        // A timer that never started a connection does not consume an attempt.
         setTabs((items) => items.map((item) => item.id === tabId ? { ...item, state: "disconnected" } : item));
         return;
       }
+      attemptState.inFlight = true;
+      attemptState.attempts = attempt + 1;
       try {
         disposeTerminalRef.current(tabId);
         const info = tab.instanceId
-          ? await ConnectTerminal(profile.id, tab.instanceId, "", "", 120, 36)
-          : await Connect(profile.id, 120, 36);
+          ? await ConnectTerminal(currentProfile.id, tab.instanceId, "", "", 120, 36)
+          : await Connect(currentProfile.id, 120, 36);
         if (autoReconnect.current[tabId] !== attemptState) {
           // A closing tab stays mounted during backend cleanup, but can no
           // longer claim the replacement. Other consumers may still own it.
@@ -808,7 +820,7 @@ export function useSessions(options: UseSessionsOptions) {
         // The same-session-id dedupe as replaceReconnectedTab: a concurrent CLI
         // attach may already show info.id on the strip.
         setTabs((items) => {
-          return replaceSessionTabs(items, tabId, info, tabTitle(profile, info.name));
+          return replaceSessionTabs(items, tabId, info, tabTitle(currentProfile, info.name));
         });
         setActiveTabState((current) => current === tabId ? info.id : current);
         clearAutoReconnect(tabId);
@@ -825,8 +837,8 @@ export function useSessions(options: UseSessionsOptions) {
       }
     }, delay);
 
-    autoReconnect.current[tabId] = { attempts: attempt + 1, timer };
-  }, [clearAutoReconnect, discardUnclaimedSession, rememberSessionInfo]);
+    autoReconnect.current[tabId] = { attempts: attempt, timer };
+  }, [clearAutoReconnect, discardUnclaimedSession, rememberSessionInfo, options.language]);
 
   scheduleAutoReconnectRef.current = scheduleAutoReconnect;
 
@@ -836,8 +848,7 @@ export function useSessions(options: UseSessionsOptions) {
       if (navigator.onLine === false || document.visibilityState === "hidden") return;
       for (const tab of tabsRef.current) {
         if (tab.local || tab.type === "markdown" || !["error", "disconnected"].includes(tab.state)) continue;
-        if (autoReconnect.current[tab.id]?.inFlight) continue;
-        clearAutoReconnect(tab.id);
+        if (autoReconnect.current[tab.id]?.inFlight || autoReconnect.current[tab.id]?.gaveUp) continue;
         scheduleAutoReconnectRef.current(tab.id);
       }
     };

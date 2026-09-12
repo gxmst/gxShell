@@ -158,13 +158,15 @@
 .topbar .tabs-scroll {
   flex: 1 1 auto;
   align-items: center;
+  container-type: inline-size;
 }
 
 .topbar .tab {
   height: 29px;
   align-self: center;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-width: 120px;
+  max-width: min(280px, 100cqi);
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
   padding: 0 4px 0 10px;
@@ -180,6 +182,7 @@
 }
 
 .topbar .tab-active {
+  max-width: min(420px, 100cqi);
   border-color: var(--border-strong);
   background: var(--panel-raised);
   box-shadow: var(--shadow-sm);

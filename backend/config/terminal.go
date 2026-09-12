@@ -18,6 +18,28 @@ func NormalizeSessionLog(value types.SessionLogSettings) types.SessionLogSetting
 	return value
 }
 
+func NormalizeSessionLogRetention(value types.SessionLogRetentionSettings) types.SessionLogRetentionSettings {
+	// Invalid persisted deletion settings fail closed. Defaulting an oversized
+	// requested quota down to 1 GiB must not silently delete historical logs.
+	if ValidateSessionLogRetention(value) != nil {
+		value.Enabled = false
+	}
+	if value.MaxAgeDays < 1 || value.MaxAgeDays > 3650 {
+		value.MaxAgeDays = 30
+	}
+	if value.MaxTotalMB < 1 || value.MaxTotalMB > 102400 {
+		value.MaxTotalMB = 1024
+	}
+	return value
+}
+
+func ValidateSessionLogRetention(value types.SessionLogRetentionSettings) error {
+	if value.Enabled && (value.MaxAgeDays < 1 || value.MaxAgeDays > 3650 || value.MaxTotalMB < 1 || value.MaxTotalMB > 102400) {
+		return fmt.Errorf("session log retention requires 1–3650 days and 1–102400 MB")
+	}
+	return nil
+}
+
 var highlightColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
 
 func ValidateHighlightRules(rules []types.HighlightRule) error {

@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DocumentTestWorker } from '../../test/documentWorker';
 import MarkdownViewer from './MarkdownViewer';
 
 const appMocks = vi.hoisted(() => ({
@@ -27,11 +28,12 @@ vi.mock('../../../wailsjs/go/app/App', () => ({
 }));
 
 vi.mock('./SourceEditor', () => ({
-  default: ({ value, onChange }: { value: string; onChange: (value: string) => void }) => (
+  default: ({ value, onChange, readOnly, ariaLabel }: { value: string; onChange: (value: string) => void; readOnly?: boolean; ariaLabel?: string }) => (
     <div className="source-editor">
       <div className="cm-editor">
         <textarea
-          aria-label="Source editor"
+          aria-label={ariaLabel || 'Source editor'}
+          readOnly={readOnly}
           value={value}
           onChange={(event) => onChange(event.target.value)}
         />
@@ -51,7 +53,9 @@ function deferred<T>() {
 }
 
 describe('MarkdownViewer saving', () => {
+  afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
+    DocumentTestWorker.instances = [];
     appMocks.readLocalFile.mockResolvedValue('original\n');
     appMocks.writeLocalFile.mockReset();
     appMocks.readRemoteFile.mockReset();
@@ -178,7 +182,7 @@ describe('MarkdownViewer saving', () => {
     );
 
     await screen.findByText('{"ok":true}');
-    fireEvent.click(screen.getByTitle('Edit'));
+    fireEvent.click(screen.getByTitle('编辑'));
     const editor = await screen.findByLabelText('Source editor');
     fireEvent.change(editor, { target: { value: '{"ok":}' } });
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true, expect.any(Function)));
@@ -198,7 +202,7 @@ describe('MarkdownViewer saving', () => {
     );
 
     await screen.findByText('{"a":1,"nested":{"ok":true}}');
-    fireEvent.click(screen.getByTitle('Edit'));
+    fireEvent.click(screen.getByTitle('编辑'));
     const editor = await screen.findByLabelText('Source editor');
     fireEvent.click(screen.getByTitle('格式化 JSON'));
 
@@ -218,6 +222,145 @@ describe('MarkdownViewer saving', () => {
 
     fireEvent.click(await screen.findByTitle('Edit'));
     expect(await screen.findByText('Large document: validate on save')).toBeInTheDocument();
+  });
+
+  it('uses a read-only source view for large text previews and enables editing explicitly', async () => {
+    const text = '{"big":9007199254740993}\n'.repeat(15_000);
+    appMocks.readLocalFile.mockResolvedValue(text);
+    const { container } = render(<MarkdownViewer active filePath="/events.ndjson" onClose={vi.fn()} />);
+    const preview = await screen.findByLabelText('Read-only document preview');
+    expect(preview).toHaveAttribute('readonly');
+    expect(preview).toHaveValue(text);
+    expect(container.querySelector('pre.text-document')).toBeNull();
+    expect(appMocks.writeLocalFile).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByTitle('Edit'));
+    expect(await screen.findByLabelText('Source editor')).not.toHaveAttribute('readonly');
+  });
+
+  it('keeps edits made while background formatting is in flight', async () => {
+    vi.stubGlobal('Worker', DocumentTestWorker);
+    const initial = '{"big":9007199254740993}\n'.repeat(15_000);
+    appMocks.readLocalFile.mockResolvedValue(initial);
+    const notify = vi.fn();
+    render(<MarkdownViewer active filePath="/events.ndjson" onClose={vi.fn()} onNotify={notify} />);
+    fireEvent.click(await screen.findByTitle('Edit'));
+    const editor = await screen.findByLabelText('Source editor');
+    fireEvent.click(screen.getByTitle('Format JSON'));
+    await waitFor(() => expect(DocumentTestWorker.instances).toHaveLength(1));
+    expect(screen.getByRole('status')).toHaveTextContent('Processing document');
+    fireEvent.change(editor, { target: { value: '{"new":true}\n' } });
+    await act(async () => { DocumentTestWorker.instances[0].reply({ result: { ok: true, text: initial } }); });
+    expect(editor).toHaveValue('{"new":true}\n');
+    expect(notify).toHaveBeenCalledWith(expect.stringContaining('document changed while formatting'), 'info');
+    expect(appMocks.writeLocalFile).not.toHaveBeenCalled();
+  });
+
+  it('validates the save snapshot in the worker without overwriting newer edits', async () => {
+    vi.stubGlobal('Worker', DocumentTestWorker);
+    const initial = '{"big":9007199254740993}\n'.repeat(15_000);
+    appMocks.readLocalFile.mockResolvedValue(initial);
+    appMocks.writeLocalFile.mockResolvedValue(undefined);
+    let saveCurrent = async () => false;
+    render(<MarkdownViewer active filePath="/events.ndjson" onClose={vi.fn()} onDirtyChange={(dirty, save) => { if (dirty) saveCurrent = save; }} />);
+    fireEvent.click(await screen.findByTitle('Edit'));
+    const editor = await screen.findByLabelText('Source editor');
+    const snapshot = initial + '{"last":true}\n';
+    fireEvent.change(editor, { target: { value: snapshot } });
+    let operation!: Promise<boolean>;
+    act(() => { operation = saveCurrent(); });
+    await waitFor(() => expect(DocumentTestWorker.instances).toHaveLength(1));
+    expect(appMocks.writeLocalFile).not.toHaveBeenCalled();
+    fireEvent.change(editor, { target: { value: '{"latest":true}\n' } });
+    let saved = true;
+    await act(async () => {
+      DocumentTestWorker.instances[0].reply({ result: { valid: true } });
+      saved = await operation;
+    });
+    expect(saved).toBe(false);
+    expect(appMocks.writeLocalFile).toHaveBeenCalledWith('/events.ndjson', snapshot);
+    expect(editor).toHaveValue('{"latest":true}\n');
+  });
+
+  it('cancels background validation when its document is closed', async () => {
+    vi.stubGlobal('Worker', DocumentTestWorker);
+    appMocks.readLocalFile.mockResolvedValue('{"big":9007199254740993}\n'.repeat(15_000));
+    const { unmount } = render(<MarkdownViewer active filePath="/events.ndjson" onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByTitle('Edit'));
+    await screen.findByLabelText('Source editor');
+    fireEvent.click(screen.getByTitle('Save (Ctrl+S)'));
+    await waitFor(() => expect(DocumentTestWorker.instances).toHaveLength(1));
+    const worker = DocumentTestWorker.instances[0];
+    unmount();
+    await act(async () => { worker.reply({ result: { valid: true } }); });
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+    expect(appMocks.writeLocalFile).not.toHaveBeenCalled();
+  });
+
+  it('saves through the replacement SSH session when reconnect happens during validation', async () => {
+    vi.stubGlobal('Worker', DocumentTestWorker);
+    const initial = '{"big":9007199254740993}\n'.repeat(15_000);
+    appMocks.readRemoteFile.mockResolvedValue(initial);
+    appMocks.writeRemoteFile.mockResolvedValue(undefined);
+    const props = { active: true, source: 'remote' as const, remotePath: '/events.ndjson', onClose: vi.fn() };
+    const { rerender } = render(<MarkdownViewer {...props} sessionId="old" />);
+    fireEvent.click(await screen.findByTitle('Edit'));
+    await screen.findByLabelText('Source editor');
+    fireEvent.click(screen.getByTitle('Save (Ctrl+S)'));
+    await waitFor(() => expect(DocumentTestWorker.instances).toHaveLength(1));
+
+    rerender(<MarkdownViewer {...props} sessionId="new" />);
+    expect(appMocks.readRemoteFile).toHaveBeenCalledTimes(1);
+    await act(async () => { DocumentTestWorker.instances[0].reply({ result: { valid: true } }); });
+    await waitFor(() => expect(appMocks.writeRemoteFile).toHaveBeenCalledWith('new', '/events.ndjson', initial));
+    expect(appMocks.writeRemoteFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels pending validation before reusing the viewer for another document', async () => {
+    vi.stubGlobal('Worker', DocumentTestWorker);
+    appMocks.readLocalFile.mockResolvedValueOnce('{"big":9007199254740993}\n'.repeat(15_000)).mockResolvedValueOnce('other document');
+    const props = { active: true, onClose: vi.fn() };
+    const { rerender } = render(<MarkdownViewer {...props} filePath="/events.ndjson" />);
+    fireEvent.click(await screen.findByTitle('Edit'));
+    await screen.findByLabelText('Source editor');
+    fireEvent.click(screen.getByTitle('Save (Ctrl+S)'));
+    await waitFor(() => expect(DocumentTestWorker.instances).toHaveLength(1));
+    const worker = DocumentTestWorker.instances[0];
+
+    rerender(<MarkdownViewer {...props} filePath="/other.txt" />);
+    await screen.findByText('other document');
+    await act(async () => { worker.reply({ result: { valid: true } }); });
+    expect(worker.terminate).toHaveBeenCalledTimes(1);
+    expect(appMocks.writeLocalFile).not.toHaveBeenCalled();
+    expect(screen.getByText('other document')).toBeInTheDocument();
+  });
+
+  it('explains a rejected binary document without exposing an editor', async () => {
+    appMocks.readLocalFile.mockRejectedValue(new Error('GX_DOCUMENT_NOT_TEXT: binary content'));
+    render(<MarkdownViewer active locale="zh-CN" filePath="/Dockerfile.exe" onClose={vi.fn()} />);
+    await screen.findByText('此文件包含二进制数据或使用了不支持的编码。请使用 UTF-8 文本文件进行编辑。');
+    expect(screen.queryByTitle('编辑')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Source editor')).not.toBeInTheDocument();
+  });
+
+  it('leaves Chinese search candidate confirmation and cancellation to the IME', async () => {
+    appMocks.readLocalFile.mockResolvedValue('中文 中文');
+    const { container } = render(<MarkdownViewer active locale="zh-CN" filePath="/notes.txt" onClose={vi.fn()} />);
+    await screen.findByText('中文 中文');
+    // Edit search shares the input handler without requiring CSS Highlights in jsdom.
+    fireEvent.click(screen.getByTitle('编辑'));
+    await screen.findByLabelText('Source editor');
+    fireEvent.click(screen.getByRole('button', { name: '查找' }));
+    const input = screen.getByPlaceholderText('查找');
+    fireEvent.change(input, { target: { value: '中文' } });
+    await waitFor(() => expect(container.querySelector('.markdown-search-count')).toHaveTextContent('1/2'));
+    for (const composition of [{ isComposing: true }, { keyCode: 229 }]) {
+      fireEvent.keyDown(input, { key: 'Enter', ...composition });
+      fireEvent.keyDown(input, { key: 'Escape', ...composition });
+    }
+    expect(input).toBeInTheDocument();
+    expect(container.querySelector('.markdown-search-count')).toHaveTextContent('1/2');
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(container.querySelector('.markdown-search-count')).toHaveTextContent('2/2');
   });
 });
 

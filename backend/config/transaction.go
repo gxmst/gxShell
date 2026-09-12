@@ -67,9 +67,26 @@ func (s *Store) ApplyMigration(before, after map[string][]byte) error {
 	return s.applyMigration(before, after, os.Rename)
 }
 
+// ValidateMigrationFiles is shared by preview and apply so every planned file,
+// including merged known_hosts and imported keys, has the same size boundary.
+func ValidateMigrationFiles(files map[string][]byte) error {
+	for name, data := range files {
+		if !migrationFile(name) {
+			return errors.New("invalid migration file")
+		}
+		if len(data) > maxConfigFileSize {
+			return fmt.Errorf("invalid migration file or size: %s exceeds %d MiB", name, maxConfigFileSize/(1024*1024))
+		}
+	}
+	return nil
+}
+
 func (s *Store) applyMigration(before, after map[string][]byte, replace func(string, string) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ValidateMigrationFiles(after); err != nil {
+		return err
+	}
 	names := make([]string, 0, len(after))
 	staged := map[string]string{}
 	defer func() {
@@ -79,7 +96,7 @@ func (s *Store) applyMigration(before, after map[string][]byte, replace func(str
 	}()
 	for name, data := range after {
 		prior, ok := before[name]
-		if !ok || !migrationFile(name) || len(data) > maxConfigFileSize {
+		if !ok {
 			return errors.New("invalid migration file or size")
 		}
 		path := filepath.Join(s.dir, name)

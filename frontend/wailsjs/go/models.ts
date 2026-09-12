@@ -20,6 +20,20 @@ export namespace sshmanager {
 }
 
 export namespace types {
+	export class BackupExportResult {
+	    path: string;
+	    warnings: string[];
+
+	    static createFrom(source: any = {}) {
+	        return new BackupExportResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.warnings = source["warnings"] || [];
+	    }
+	}
 	
 	export class AiFunctionCall {
 	    name: string;
@@ -233,6 +247,9 @@ export namespace types {
 	export type SessionLogSettings = {
 	    enabled: boolean; timestamps: boolean; maxFileMb: number; maxSessionMb: number;
 	};
+	export type SessionLogRetentionSettings = {
+	    enabled: boolean; maxAgeDays: number; maxTotalMb: number;
+	};
 	export class AppSettings {
 	    themeName: string;
 	    language: string;
@@ -243,6 +260,7 @@ export namespace types {
 	    highlightLevel: string;
 	    highlightRules?: HighlightRule[];
 	    sessionLog?: SessionLogSettings;
+	    sessionLogRetention?: SessionLogRetentionSettings;
 	    sidebarWidth: number;
 	    sidebarSplitPct: number;
 	    savePasswords: boolean;
@@ -271,6 +289,7 @@ export namespace types {
 	        this.highlightLevel = source["highlightLevel"];
 	        this.highlightRules = source["highlightRules"];
 	        this.sessionLog = source["sessionLog"];
+	        this.sessionLogRetention = source["sessionLogRetention"];
 	        this.sidebarWidth = source["sidebarWidth"];
 	        this.sidebarSplitPct = source["sidebarSplitPct"];
 	        this.savePasswords = source["savePasswords"];

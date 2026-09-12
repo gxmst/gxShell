@@ -32,7 +32,9 @@ func mergeBackupKnownHosts(existing, incoming string) (string, int, []string, er
 	for _, line := range strings.Split(existing, "\n") {
 		seen[strings.TrimSpace(line)] = true
 	}
-	result := strings.TrimRight(existing, "\r\n")
+	var result strings.Builder
+	result.Grow(len(existing) + len(incoming) + 1)
+	result.WriteString(strings.TrimRight(existing, "\r\n"))
 	added := 0
 	var warnings []string
 	newKeys := map[string]string{}
@@ -83,24 +85,25 @@ func mergeBackupKnownHosts(existing, incoming string) (string, int, []string, er
 		if len(accepted) == 0 {
 			continue
 		}
-		if result != "" {
-			result += "\n"
+		if result.Len() > 0 {
+			result.WriteByte('\n')
 		}
 		if marker != "" {
-			result += "@" + marker + " "
+			result.WriteString("@" + marker + " ")
 		}
-		result += knownhosts.Line(accepted, key)
+		result.WriteString(knownhosts.Line(accepted, key))
 		added++
 	}
-	if result != "" {
-		result += "\n"
+	if result.Len() > 0 {
+		result.WriteByte('\n')
 	}
+	merged := result.String()
 	// The SSH parser also validates hashed-host encodings and marker semantics.
-	if err := os.WriteFile(file.Name(), []byte(result), 0600); err != nil {
+	if err := os.WriteFile(file.Name(), []byte(merged), 0600); err != nil {
 		return "", 0, nil, err
 	}
 	if _, err := knownhosts.New(file.Name()); err != nil {
 		return "", 0, nil, errors.New("invalid merged host keys")
 	}
-	return result, added, warnings, nil
+	return merged, added, warnings, nil
 }

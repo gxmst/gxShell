@@ -240,6 +240,7 @@ const (
 func NormalizeSettings(settings types.AppSettings) types.AppSettings {
 	settings.Terminal = NormalizeTerminalSettings(settings.Terminal)
 	settings.SessionLog = NormalizeSessionLog(settings.SessionLog)
+	settings.SessionLogRetention = NormalizeSessionLogRetention(settings.SessionLogRetention)
 	return settings
 }
 

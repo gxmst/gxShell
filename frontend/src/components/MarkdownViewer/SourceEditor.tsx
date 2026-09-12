@@ -21,6 +21,7 @@ export interface EditorStats {
 
 export interface SourceEditorHandle {
   focus: () => void;
+  selectAll: () => void;
   /** 0..1 scroll position, for handing scroll continuity across mode switches. */
   scrollRatio: () => number;
   setScrollRatio: (ratio: number) => void;
@@ -34,7 +35,7 @@ export interface SourceEditorHandle {
   redo: () => void;
 }
 
-export type SourceEditorMode = 'plain' | 'markdown' | 'json' | 'jsonl';
+export type SourceEditorMode = 'plain' | 'markdown' | 'json' | 'jsonc' | 'jsonl';
 
 const WORD_COUNT_DEBOUNCE_MS = 240;
 
@@ -49,6 +50,8 @@ interface SourceEditorProps {
   fontSize: number;
   wrap: boolean;
   mode: SourceEditorMode;
+  readOnly?: boolean;
+  ariaLabel?: string;
   handleRef?: Ref<SourceEditorHandle>;
 }
 
@@ -77,6 +80,7 @@ function languageExtension(mode: SourceEditorMode) {
     case 'markdown':
       return markdown({ base: markdownLanguage });
     case 'json':
+    case 'jsonc':
     case 'jsonl':
       // JSON Lines has one JSON value per physical line. The JSON grammar
       // still provides correct token highlighting for every line; document
@@ -86,6 +90,18 @@ function languageExtension(mode: SourceEditorMode) {
     default:
       return [];
   }
+}
+
+function accessExtensions(readOnly: boolean, ariaLabel?: string) {
+  return [
+    EditorState.readOnly.of(readOnly),
+    EditorView.editable.of(!readOnly),
+    EditorView.contentAttributes.of({
+      'aria-readonly': String(readOnly),
+      ...(readOnly ? { tabindex: '0' } : {}),
+      ...(ariaLabel ? { 'aria-label': ariaLabel } : {}),
+    }),
+  ];
 }
 
 const editorTheme = EditorView.theme({
@@ -164,6 +180,7 @@ const editorTheme = EditorView.theme({
 /** Wraps or unwraps each selected range in `marker` (e.g. ** for bold). */
 function toggleWrapCommand(marker: string) {
   return (view: EditorView): boolean => {
+    if (view.state.readOnly) return false;
     const changes = view.state.changeByRange((range) => {
       const doc = view.state.doc;
       const before = doc.sliceString(Math.max(0, range.from - marker.length), range.from);
@@ -200,6 +217,7 @@ function toggleWrapCommand(marker: string) {
 /** Sets (or clears, when already at that level) the ATX heading level. */
 function setHeadingCommand(level: number) {
   return (view: EditorView): boolean => {
+    if (view.state.readOnly) return false;
     const changes = view.state.changeByRange((range) => {
       const line = view.state.doc.lineAt(range.head);
       const existing = /^(#{1,6})\s+/.exec(line.text);
@@ -220,6 +238,7 @@ function setHeadingCommand(level: number) {
 
 /** Wraps the selection as a link, leaving the caret in the empty URL slot. */
 function insertLinkCommand(view: EditorView): boolean {
+  if (view.state.readOnly) return false;
   const range = view.state.selection.main;
   const label = view.state.doc.sliceString(range.from, range.to);
   const insert = `[${label}]()`;
@@ -243,6 +262,8 @@ export function SourceEditor({
   fontSize,
   wrap,
   mode,
+  readOnly = false,
+  ariaLabel,
   handleRef,
 }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -250,6 +271,7 @@ export function SourceEditor({
   const emittedValueRef = useRef<string | null>(null);
   const wrapCompartment = useRef(new Compartment());
   const langCompartment = useRef(new Compartment());
+  const readOnlyCompartment = useRef(new Compartment());
 
   // Latest callbacks, read through refs so the editor is built once and never
   // torn down just because a parent re-rendered.
@@ -273,7 +295,7 @@ export function SourceEditor({
     const host = hostRef.current;
     if (!host) return;
 
-    let wordCount = countWords(value);
+    let wordCount = onStatsRef.current ? countWords(value) : 0;
     let wordCountTimer = 0;
 
     const reportStats = (view: EditorView) => {
@@ -295,6 +317,7 @@ export function SourceEditor({
 
     const scheduleWordCount = (view: EditorView, text: string) => {
       window.clearTimeout(wordCountTimer);
+      if (!onStatsRef.current) return;
       wordCountTimer = window.setTimeout(() => {
         if (viewRef.current !== view) return;
         wordCount = countWords(text);
@@ -324,10 +347,11 @@ export function SourceEditor({
           syntaxHighlighting(highlightStyle),
           langCompartment.current.of(languageExtension(mode)),
           wrapCompartment.current.of(wrap ? EditorView.lineWrapping : []),
+          readOnlyCompartment.current.of(accessExtensions(readOnly, ariaLabel)),
           editorTheme,
           // Ordering matters: these bindings must win over defaultKeymap.
           keymap.of([
-            { key: 'Mod-s', preventDefault: true, run: () => { onSaveRef.current(); return true; } },
+            { key: 'Mod-s', preventDefault: true, run: (view) => { if (!view.state.readOnly) onSaveRef.current(); return true; } },
             { key: 'Mod-b', preventDefault: true, run: toggleWrapCommand('**') },
             { key: 'Mod-i', preventDefault: true, run: toggleWrapCommand('*') },
             { key: 'Mod-`', preventDefault: true, run: toggleWrapCommand('`') },
@@ -352,7 +376,7 @@ export function SourceEditor({
             if (update.docChanged) {
               const text = update.state.doc.toString();
               emittedValueRef.current = text;
-              onChangeRef.current(text);
+              if (!update.state.readOnly) onChangeRef.current(text);
               scheduleWordCount(update.view, text);
             }
             if (update.docChanged || update.selectionSet) reportStats(update.view);
@@ -360,12 +384,13 @@ export function SourceEditor({
           EditorView.domEventHandlers({
             scroll: () => { onScrollRef.current?.(); },
             paste: (event, editorView) => {
+              if (editorView.state.readOnly) return false;
               const image = Array.from(event.clipboardData?.files || []).find((file) => file.type.startsWith('image/'));
               const handler = onImageRef.current;
               if (!image || !handler) return false;
               event.preventDefault();
               void handler(image).then((snippet) => {
-                if (!snippet) return;
+                if (!snippet || viewRef.current !== editorView || editorView.state.readOnly) return;
                 const range = editorView.state.selection.main;
                 editorView.dispatch({
                   changes: { from: range.from, to: range.to, insert: snippet },
@@ -376,12 +401,13 @@ export function SourceEditor({
               return true;
             },
             drop: (event, editorView) => {
+              if (editorView.state.readOnly) return false;
               const image = Array.from(event.dataTransfer?.files || []).find((file) => file.type.startsWith('image/'));
               const handler = onImageRef.current;
               if (!image || !handler) return false;
               event.preventDefault();
               void handler(image).then((snippet) => {
-                if (!snippet) return;
+                if (!snippet || viewRef.current !== editorView || editorView.state.readOnly) return;
                 const pos = editorView.posAtCoords({ x: event.clientX, y: event.clientY }) ?? editorView.state.selection.main.from;
                 editorView.dispatch({
                   changes: { from: pos, insert: snippet },
@@ -400,7 +426,6 @@ export function SourceEditor({
       parent: host,
     });
     viewRef.current = view;
-    view.focus();
     reportStats(view);
 
     return () => {
@@ -444,8 +469,21 @@ export function SourceEditor({
     });
   }, [mode]);
 
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: readOnlyCompartment.current.reconfigure(accessExtensions(readOnly, ariaLabel)) });
+    if (!readOnly) view.focus();
+  }, [readOnly, ariaLabel]);
+
   useImperativeHandle(handleRef, (): SourceEditorHandle => ({
     focus: () => viewRef.current?.focus(),
+    selectAll: () => {
+      const view = viewRef.current;
+      if (!view) return;
+      view.dispatch({ selection: EditorSelection.range(0, view.state.doc.length) });
+      view.focus();
+    },
     scrollRatio: () => {
       const el = viewRef.current?.scrollDOM;
       if (!el) return 0;
@@ -468,14 +506,14 @@ export function SourceEditor({
         selection: EditorSelection.range(start, end),
         effects: EditorView.scrollIntoView(EditorSelection.range(start, end), { y: 'center' }),
       });
-      view.focus();
+      // Find-bar navigation selects the match without stealing its input focus.
     },
     toggleWrap: (marker) => { const v = viewRef.current; if (v) { toggleWrapCommand(marker)(v); v.focus(); } },
     setHeading: (level) => { const v = viewRef.current; if (v) { setHeadingCommand(level)(v); v.focus(); } },
     insertLink: () => { const v = viewRef.current; if (v) { insertLinkCommand(v); v.focus(); } },
     insertText: (text) => {
       const view = viewRef.current;
-      if (!view) return;
+      if (!view || view.state.readOnly) return;
       const range = view.state.selection.main;
       view.dispatch({
         changes: { from: range.from, to: range.to, insert: text },
@@ -484,8 +522,8 @@ export function SourceEditor({
       });
       view.focus();
     },
-    undo: () => { const v = viewRef.current; if (v) { undo(v); v.focus(); } },
-    redo: () => { const v = viewRef.current; if (v) { redo(v); v.focus(); } },
+    undo: () => { const v = viewRef.current; if (v && !v.state.readOnly) { undo(v); v.focus(); } },
+    redo: () => { const v = viewRef.current; if (v && !v.state.readOnly) { redo(v); v.focus(); } },
   }), []);
 
   return (

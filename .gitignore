@@ -10,6 +10,7 @@ release/
 gxShell.exe
 gxshell-cli.exe
 *.bak
+*.gxbak
 *.dat
 .secretkey
 todo.md

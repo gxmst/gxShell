@@ -5,11 +5,11 @@ import { BrowserOpenURL } from "../../../wailsjs/runtime/runtime";
 import { types, version as versionModel } from "../../../wailsjs/go/models";
 import { appThemes, fontPresets, terminalThemes, themeDisplayName } from "../../constants";
 import { normalizeAppTheme } from "../../utils/format";
-import { defaultSessionLog, normalizeFontSize, normalizeLineHeight, normalizeScrollbackLines } from "../../utils/terminalSettings";
+import { defaultSessionLog, defaultSessionLogRetention, normalizeFontSize, normalizeLineHeight, normalizeScrollbackLines } from "../../utils/terminalSettings";
 import { t } from "../../i18n";
 import { KnownHostsManager } from "./KnownHostsManager";
 import { HighlightRulesEditor } from "./HighlightRulesEditor";
-import { SessionLogFields } from "./SessionLogFields";
+import { SessionLogFields, SessionLogRetentionFields } from "./SessionLogFields";
 import { TerminalCompatibilityFields } from "./TerminalCompatibilityFields";
 import { highlightRuleError } from "../../utils/highlight";
 
@@ -323,6 +323,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
           <SettingsToggle checked={draft.smartHighlight !== false} onChange={(checked) => update({ smartHighlight: checked })} label={t(lang, "clickableLinks")} hint={t(lang, "clickableLinksHint")} />
           <HighlightRulesEditor rules={draft.highlightRules || []} onChange={(highlightRules) => update({ highlightRules })} zh={zh} />
           <SessionLogFields value={draft.sessionLog || defaultSessionLog} onChange={(sessionLog) => update({ sessionLog })} zh={zh} />
+          <SessionLogRetentionFields value={draft.sessionLogRetention || defaultSessionLogRetention} onChange={(sessionLogRetention) => update({ sessionLogRetention })} language={lang} />
         </SettingsSection>
 
         <SettingsSection icon={<Activity size={15} />} title={zh ? "连接与自动化" : "Connections & automation"} description={zh ? "监控频率、连接保护和 CLI 接入" : "Monitoring cadence, connection safeguards and CLI access"}>

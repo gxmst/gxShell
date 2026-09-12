@@ -1,4 +1,5 @@
-import { act, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
+import { EditorView } from '@codemirror/view';
 import { createRef } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SourceEditor, type SourceEditorHandle } from './SourceEditor';
@@ -61,5 +62,38 @@ describe('SourceEditor statistics', () => {
 
     expect(container.querySelector('.cm-editor')).toBe(editor);
     expect(container.querySelectorAll('.cm-line span').length).toBeGreaterThan(plainSpanCount);
+  });
+
+  it('keeps read-only previews selectable while rejecting edit commands and accepting a reload', () => {
+    const handle = createRef<SourceEditorHandle>();
+    const onChange = vi.fn();
+    const onSave = vi.fn();
+    const props = { handleRef: handle, onChange, onSave, fontSize: 13, wrap: false, mode: 'plain' as const, ariaLabel: 'Preview' };
+    const { container, rerender } = render(<SourceEditor {...props} value="original" readOnly />);
+    const content = container.querySelector<HTMLElement>('.cm-content')!;
+    const view = EditorView.findFromDOM(content)!;
+    expect(content).toHaveAttribute('contenteditable', 'false');
+    expect(content).toHaveAttribute('aria-readonly', 'true');
+    act(() => {
+      handle.current?.selectAll();
+      handle.current?.insertText('overwrite');
+      handle.current?.toggleWrap('**');
+      handle.current?.setHeading(1);
+      handle.current?.insertLink();
+    });
+    fireEvent.keyDown(content, { key: 's', ctrlKey: true });
+    expect(view.state.doc.toString()).toBe('original');
+    expect(view.state.selection.main.to).toBe('original'.length);
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(wordCountMock).not.toHaveBeenCalled();
+
+    rerender(<SourceEditor {...props} value="reloaded" readOnly />);
+    expect(view.state.doc.toString()).toBe('reloaded');
+    expect(onChange).not.toHaveBeenCalled();
+    rerender(<SourceEditor {...props} value="reloaded" />);
+    expect(content).toHaveAttribute('contenteditable', 'true');
+    act(() => handle.current?.insertText('edited'));
+    expect(onChange).toHaveBeenCalledTimes(1);
   });
 });

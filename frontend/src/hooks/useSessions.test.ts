@@ -185,10 +185,81 @@ describe("useSessions workspace restore", () => {
     await act(async () => { fail(new Error("network unavailable")); });
     online.mockReturnValue(true);
     act(() => window.dispatchEvent(new Event("online")));
-    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    // The failed request still counts; recovery continues at the second delay.
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
     expect(appMocks.connect).toHaveBeenCalledTimes(2);
     expect(result.current.tabs[0]).toMatchObject({ id: "new", state: "connected" });
     expect(result.current.activeTab).toBe("new");
+  });
+
+  it("keeps the retry limit across visibility and online events until manual reconnect", async () => {
+    vi.useFakeTimers();
+    const profile = makeProfile("one");
+    profile.autoReconnect = true;
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    appMocks.connect.mockRejectedValue(new Error("host unavailable"));
+    appMocks.reconnect.mockResolvedValue(new types.SessionInfo({ id: "recovered", profileId: "one", state: "connected" }));
+    const notify = vi.fn();
+    const { result, unmount } = renderHook(() => useSessions({ profiles: [profile], notify, reload: vi.fn(async () => undefined), disposeTerminal: vi.fn(), restoreWorkspace: false }));
+    await act(async () => {});
+    act(() => result.current.setTabs([{ id: "old", profileId: "one", title: "one", state: "connected" }]));
+    act(() => appMocks.events.get("terminal:disconnected")?.({ id: "old", state: "disconnected" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(21000); });
+    expect(appMocks.connect).toHaveBeenCalledTimes(3);
+    expect(result.current.tabs[0].error).toContain("gave up after 3 attempts");
+    for (let index = 0; index < 3; index++) {
+      act(() => { window.dispatchEvent(new Event("online")); document.dispatchEvent(new Event("visibilitychange")); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+    }
+    expect(appMocks.connect).toHaveBeenCalledTimes(3);
+    expect(notify.mock.calls.filter(([message]) => message.includes("gave up"))).toHaveLength(1);
+    await act(async () => { await result.current.reconnectTab(result.current.tabs[0]); });
+    expect(result.current.tabs[0].id).toBe("recovered");
+    act(() => appMocks.events.get("terminal:disconnected")?.({ id: "recovered", state: "disconnected" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(appMocks.connect).toHaveBeenCalledTimes(4);
+    unmount();
+  });
+
+  it("preserves completed attempts when the network goes offline before a retry timer fires", async () => {
+    vi.useFakeTimers();
+    const profile = makeProfile("one");
+    profile.autoReconnect = true;
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    appMocks.connect.mockRejectedValue(new Error("host unavailable"));
+    const { result, unmount } = renderHook(() => useSessions({ profiles: [profile], notify: vi.fn(), reload: vi.fn(async () => undefined), disposeTerminal: vi.fn(), restoreWorkspace: false }));
+    await act(async () => {});
+    act(() => result.current.setTabs([{ id: "old", profileId: "one", title: "one", state: "connected" }]));
+    act(() => appMocks.events.get("terminal:disconnected")?.({ id: "old", state: "disconnected" }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(appMocks.connect).toHaveBeenCalledTimes(1);
+    online.mockReturnValue(false);
+    await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
+    expect(appMocks.connect).toHaveBeenCalledTimes(1);
+    online.mockReturnValue(true);
+    act(() => window.dispatchEvent(new Event("online")));
+    await act(async () => { await vi.advanceTimersByTimeAsync(5999); });
+    expect(appMocks.connect).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1 + 12000); });
+    expect(appMocks.connect).toHaveBeenCalledTimes(3);
+    expect(result.current.tabs[0].error).toContain("gave up after 3 attempts");
+    unmount();
+  });
+
+  it("honors disabling automatic reconnect while its timer is pending", async () => {
+    vi.useFakeTimers();
+    const profile = makeProfile("one");
+    profile.autoReconnect = true;
+    const { result, rerender, unmount } = renderHook(({ profiles }) => useSessions({ profiles, notify: vi.fn(), reload: vi.fn(async () => undefined), disposeTerminal: vi.fn(), restoreWorkspace: false }), { initialProps: { profiles: [profile] } });
+    await act(async () => {});
+    act(() => result.current.setTabs([{ id: "old", profileId: "one", title: "one", state: "connected" }]));
+    act(() => appMocks.events.get("terminal:disconnected")?.({ id: "old", state: "disconnected" }));
+    rerender({ profiles: [new types.Profile({ ...profile, autoReconnect: false })] });
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(appMocks.connect).not.toHaveBeenCalled();
+    expect(result.current.tabs[0].state).toBe("disconnected");
+    unmount();
   });
 
   it.each(["manual", "cli", "automatic", "quick"])("rebinds remote documents after %s reconnect", async (mode) => {
@@ -293,6 +364,7 @@ describe("useSessions workspace restore", () => {
   });
 
   it.each(["two", ""])("selects a restored server with saved active profile '%s' when no document was opened", async (activeProfile) => {
+    vi.useFakeTimers();
     const profiles = [makeProfile("one"), makeProfile("two")];
     profiles.forEach((profile) => { profile.rememberPassword = true; });
     localStorage.setItem("gx:workspaceProfiles", JSON.stringify(profiles.map((profile) => profile.id)));
@@ -305,7 +377,10 @@ describe("useSessions workspace restore", () => {
       disposeTerminal: vi.fn(), restoreWorkspace: true, language: "en",
     }));
 
-    await waitFor(() => expect(result.current.activeTab).toBe(`session-${activeProfile || "one"}`));
+    // Both connections finish in one batch; selection must follow the committed
+    // tabs without a timer racing React's render.
+    await act(async () => {});
+    expect(result.current.activeTab).toBe(`session-${activeProfile || "one"}`);
     expect(result.current.tabs).toHaveLength(2);
   });
 

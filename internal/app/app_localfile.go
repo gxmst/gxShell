@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"gxShell/backend/localfs"
@@ -60,11 +61,18 @@ func (a *App) LocalHomeDir() string {
 // path normalization live in allowedFileSet; this stays a method so callers
 // across the app read naturally.
 func (a *App) allowFile(path string) string {
-	abs, err := a.allowedFiles.allow(path)
+	return a.allowFileInDirectory(path, nil)
+}
+
+func (a *App) allowFileInDirectory(path string, directory os.FileInfo) string {
+	paths, err := a.allowedFiles.authorizeMany([]string{path}, true, directory)
 	if err != nil && a.log != nil {
 		a.log.ErrorFields("Failed to persist document authorization", LogFields{"error": err.Error()})
 	}
-	return abs
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
 }
 
 // isFileAllowed reports whether path was previously authorized via allowFile.
@@ -84,27 +92,18 @@ func (a *App) ReadLocalFile(filePath string) (string, error) {
 	if !isSupportedTextPath(absPath) {
 		return "", fmt.Errorf("file is not a supported text file")
 	}
-	if !a.isFileAllowed(absPath) {
-		return "", fmt.Errorf("access denied: file was not opened by the user")
-	}
-
-	info, err := os.Stat(absPath)
+	root, err := a.allowedFiles.openRoot(absPath)
 	if err != nil {
-		return "", fmt.Errorf("file not found: %w", err)
+		return "", err
 	}
-	if info.IsDir() {
-		return "", fmt.Errorf("path is a directory, not a file")
-	}
-
-	if info.Size() > maxTextFileSize {
-		return "", fmt.Errorf("file too large (max 5MB)")
-	}
-
-	data, err := os.ReadFile(absPath)
+	defer root.Close()
+	data, _, err := readRegularDocument(root, filepath.Base(absPath), maxTextFileSize)
 	if err != nil {
 		return "", fmt.Errorf("failed to read file: %w", err)
 	}
-
+	if err := validateTextDocument(data); err != nil {
+		return "", err
+	}
 	return string(data), nil
 }
 
@@ -120,20 +119,12 @@ func (a *App) ReadLocalPDFBase64(filePath string) (string, error) {
 	if !isPDFPath(absPath) {
 		return "", fmt.Errorf("file is not a PDF")
 	}
-	if !a.isFileAllowed(absPath) {
-		return "", fmt.Errorf("access denied: file was not opened by the user")
-	}
-	info, err := os.Stat(absPath)
+	root, err := a.allowedFiles.openRoot(absPath)
 	if err != nil {
-		return "", fmt.Errorf("file not found: %w", err)
+		return "", err
 	}
-	if info.IsDir() {
-		return "", fmt.Errorf("path is a directory, not a file")
-	}
-	if info.Size() > maxPDFFileSize {
-		return "", fmt.Errorf("PDF is too large (max 50MB)")
-	}
-	data, err := os.ReadFile(absPath)
+	defer root.Close()
+	data, _, err := readRegularDocument(root, filepath.Base(absPath), maxPDFFileSize)
 	if err != nil {
 		return "", fmt.Errorf("failed to read PDF: %w", err)
 	}
@@ -153,21 +144,29 @@ func (a *App) WriteLocalFile(filePath string, content string) error {
 	if !isSupportedTextPath(absPath) {
 		return fmt.Errorf("file is not a supported text file")
 	}
-	// Writing is only permitted to a path the user already opened. We never
-	// auto-allow on write, so the renderer cannot overwrite an arbitrary file.
-	if !a.isFileAllowed(absPath) {
-		return fmt.Errorf("access denied: file was not opened by the user")
-	}
-
 	if len(content) > maxTextFileSize {
 		return fmt.Errorf("content too large (max 5MB)")
 	}
+	if err := validateTextDocument([]byte(content)); err != nil {
+		return err
+	}
+	root, err := a.allowedFiles.openRoot(absPath)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	name := filepath.Base(absPath)
 
-	// Preserve existing file mode when the file already exists.
+	// Recheck the existing bytes as another program may have replaced the file
+	// since preview. Never overwrite a binary/unsupported encoding with text.
 	mode := os.FileMode(0644)
-	if info, statErr := os.Stat(absPath); statErr == nil {
-		if info.IsDir() {
-			return fmt.Errorf("path is a directory, not a file")
+	original, info, readErr := readRegularDocument(root, name, maxTextFileSize)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return readErr
+	}
+	if readErr == nil {
+		if err := validateTextDocument(original); err != nil {
+			return err
 		}
 		mode = info.Mode().Perm()
 	}
@@ -176,16 +175,16 @@ func (a *App) WriteLocalFile(filePath string, content string) error {
 	// rename it over the original, mirroring the SFTP editor save. An in-place
 	// truncating write would destroy the document if the app or machine died
 	// mid-write.
-	tmp, err := os.CreateTemp(filepath.Dir(absPath), "."+filepath.Base(absPath)+".gxshell-*.tmp")
+	tmpName := "." + name + ".gxshell-" + types.NewID("document") + ".tmp"
+	tmp, err := root.OpenFile(tmpName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to create temporary file: %w", err)
 	}
-	tmpPath := tmp.Name()
 	removeTemp := true
 	defer func() {
 		_ = tmp.Close()
 		if removeTemp {
-			_ = os.Remove(tmpPath)
+			_ = root.Remove(tmpName)
 		}
 	}()
 	if err := tmp.Chmod(mode); err != nil {
@@ -200,7 +199,13 @@ func (a *App) WriteLocalFile(filePath string, content string) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("failed to close temporary file: %w", err)
 	}
-	if err := replaceLocalFile(tmpPath, absPath); err != nil {
+	if info != nil {
+		current, err := root.Lstat(name)
+		if err != nil || !current.Mode().IsRegular() || !os.SameFile(info, current) || current.Size() != info.Size() || !current.ModTime().Equal(info.ModTime()) {
+			return fmt.Errorf("document changed while saving; reload before retrying")
+		}
+	}
+	if err := replaceDocumentFile(root, tmpName, name); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 	removeTemp = false
@@ -320,38 +325,36 @@ func (a *App) OpenRecentMarkdownFile(filePath string) (string, error) {
 // already opened Markdown file. Links may point inside the opened file's folder
 // tree, but never above it.
 func (a *App) ResolveLocalMarkdownLink(markdownPath string, href string) (string, error) {
-	target, err := a.resolveLocalMarkdownRelativePath(markdownPath, href, supportedTextFileExts())
+	target, err := a.resolveLocalMarkdownRelativePath(markdownPath, href, isSupportedTextPath)
 	if err != nil {
 		return "", err
 	}
-	info, err := os.Stat(target)
+	root, directory, err := a.openLocalMarkdownTarget(markdownPath, target)
 	if err != nil {
 		return "", fmt.Errorf("linked file not found: %w", err)
 	}
-	if info.IsDir() {
-		return "", fmt.Errorf("linked path is a directory")
+	defer root.Close()
+	file, _, err := openRegularDocument(root, filepath.Base(target))
+	if err != nil {
+		return "", err
 	}
-	return a.allowFile(target), nil
+	file.Close()
+	return a.allowFileInDirectory(target, directory), nil
 }
 
 // ReadLocalMarkdownResourceDataURL reads a relative image used by an opened
 // Markdown file and returns it as a data URL for the sanitized renderer.
 func (a *App) ReadLocalMarkdownResourceDataURL(markdownPath string, href string) (string, error) {
-	target, err := a.resolveLocalMarkdownRelativePath(markdownPath, href, supportedMarkdownImageExts())
+	target, err := a.resolveLocalMarkdownRelativePath(markdownPath, href, func(p string) bool { return isAllowedMarkdownExt(p, supportedMarkdownImageExts()) })
 	if err != nil {
 		return "", err
 	}
-	info, err := os.Stat(target)
+	root, _, err := a.openLocalMarkdownTarget(markdownPath, target)
 	if err != nil {
 		return "", fmt.Errorf("resource not found: %w", err)
 	}
-	if info.IsDir() {
-		return "", fmt.Errorf("resource path is a directory")
-	}
-	if info.Size() > maxMarkdownResourceSize {
-		return "", fmt.Errorf("resource too large (max 8MB)")
-	}
-	data, err := os.ReadFile(target)
+	defer root.Close()
+	data, _, err := readRegularDocument(root, filepath.Base(target), maxMarkdownResourceSize)
 	if err != nil {
 		return "", fmt.Errorf("failed to read resource: %w", err)
 	}
@@ -403,77 +406,86 @@ func (a *App) SelectMarkdownFile() (string, error) {
 // The returned siblings are authorized only for this session, letting the user
 // step between documents without adding the whole folder to persistent history.
 func (a *App) ListTextFilesInDir(filePath string) ([]string, error) {
-	absPath, err := filepath.Abs(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("invalid file path: %w", err)
-	}
-	absPath = filepath.Clean(absPath)
-	if !isSupportedDocumentPath(absPath) {
-		return nil, fmt.Errorf("file is not a supported document")
-	}
-	if !a.isFileAllowed(absPath) {
-		return nil, fmt.Errorf("access denied: file was not opened by the user")
-	}
-	info, err := os.Stat(absPath)
-	if err != nil {
-		return nil, fmt.Errorf("file not found: %w", err)
-	}
-	if info.IsDir() {
-		return nil, fmt.Errorf("path is a directory, not a file")
-	}
-
-	dir := filepath.Dir(absPath)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-
-	var textFiles []string
-	for _, entry := range entries {
-		if !entry.IsDir() && isSupportedDocumentPath(entry.Name()) {
-			full := filepath.Join(dir, entry.Name())
-			textFiles = append(textFiles, full)
-		}
-	}
-	return a.allowedFiles.allowSessionMany(textFiles)
+	return a.listLocalDocumentSiblings(filePath, isSupportedDocumentPath)
 }
 
-// ListMarkdownFilesInDir is kept for older frontend builds and preserves the
-// original Markdown-only sibling list with session-only authorization.
+// ListMarkdownFilesInDir retains the older Markdown-only contract.
 func (a *App) ListMarkdownFilesInDir(filePath string) ([]string, error) {
+	return a.listLocalDocumentSiblings(filePath, isMarkdownPath)
+}
+
+func (a *App) listLocalDocumentSiblings(filePath string, supported func(string) bool) ([]string, error) {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("invalid file path: %w", err)
 	}
 	absPath = filepath.Clean(absPath)
-	if !isMarkdownPath(absPath) {
-		return nil, fmt.Errorf("file is not a Markdown file")
+	if !supported(absPath) {
+		return nil, fmt.Errorf("file is not a supported document")
 	}
-	if !a.isFileAllowed(absPath) {
-		return nil, fmt.Errorf("access denied: file was not opened by the user")
-	}
-	info, err := os.Stat(absPath)
+	root, err := a.allowedFiles.openRoot(absPath)
 	if err != nil {
-		return nil, fmt.Errorf("file not found: %w", err)
+		return nil, err
 	}
-	if info.IsDir() {
-		return nil, fmt.Errorf("path is a directory, not a file")
+	defer root.Close()
+	file, _, err := openRegularDocument(root, filepath.Base(absPath))
+	if err != nil {
+		return nil, err
 	}
-
-	dir := filepath.Dir(absPath)
-	entries, err := os.ReadDir(dir)
+	file.Close()
+	directory, err := root.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	info, err := directory.Stat()
+	if err != nil {
+		return nil, err
+	}
+	entries, err := directory.ReadDir(-1)
 	if err != nil {
 		return nil, err
 	}
 
-	var mdFiles []string
+	var files []string
 	for _, entry := range entries {
-		if !entry.IsDir() && isMarkdownPath(entry.Name()) {
-			full := filepath.Join(dir, entry.Name())
-			mdFiles = append(mdFiles, full)
+		if entry.Type().IsRegular() && supported(entry.Name()) {
+			files = append(files, filepath.Join(filepath.Dir(absPath), entry.Name()))
 		}
 	}
-	return a.allowedFiles.allowSessionMany(mdFiles)
+	sort.Strings(files)
+	return a.allowedFiles.allowSessionMany(files, info)
+}
+
+func (a *App) openLocalMarkdownTarget(markdownPath, target string) (*os.Root, os.FileInfo, error) {
+	base, err := filepath.Abs(markdownPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	root, err := a.allowedFiles.openRoot(filepath.Clean(base))
+	if err != nil {
+		return nil, nil, err
+	}
+	defer root.Close()
+	baseFile, _, err := openRegularDocument(root, filepath.Base(base))
+	if err != nil {
+		return nil, nil, err
+	}
+	baseFile.Close()
+	relative, err := filepath.Rel(filepath.Dir(base), filepath.Dir(target))
+	if err != nil {
+		return nil, nil, err
+	}
+	directory, err := root.OpenRoot(relative)
+	if err != nil {
+		return nil, nil, err
+	}
+	info, err := directory.Stat(".")
+	if err != nil {
+		directory.Close()
+		return nil, nil, err
+	}
+	return directory, info, nil
 }
 
 func isMarkdownPath(path string) bool {
@@ -482,7 +494,29 @@ func isMarkdownPath(path string) bool {
 }
 
 func isSupportedTextPath(path string) bool {
-	return supportedTextFileExts()[strings.ToLower(filepath.Ext(path))]
+	return isSupportedTextName(filepath.Base(path))
+}
+
+func supportedTextFileNames() []string {
+	return []string{"Dockerfile", "Containerfile", "Makefile", "GNUmakefile", "Justfile", ".gitignore", ".gitattributes", ".dockerignore", ".editorconfig", ".bashrc", ".zshrc", ".profile"}
+}
+
+func isSupportedTextName(name string) bool {
+	name = strings.ToLower(name)
+	if supportedTextFileExts()[filepath.Ext(name)] {
+		return true
+	}
+	for _, supported := range supportedTextFileNames() {
+		if name == strings.ToLower(supported) {
+			return true
+		}
+	}
+	for _, prefix := range []string{".env.", "dockerfile.", "containerfile."} {
+		if strings.HasPrefix(name, prefix) && len(name) > len(prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func isPDFPath(path string) bool {
@@ -506,6 +540,8 @@ func supportedTextFileDialogPattern() string {
 	for _, ext := range supportedTextFileExtensionList() {
 		patterns = append(patterns, "*"+ext)
 	}
+	patterns = append(patterns, supportedTextFileNames()...)
+	patterns = append(patterns, ".env.*", "Dockerfile.*", "Containerfile.*")
 	return strings.Join(patterns, ";")
 }
 
@@ -513,10 +549,12 @@ func supportedTextFileExtensionList() []string {
 	return []string{
 		".md", ".markdown", ".txt", ".text", ".log",
 		".conf", ".cfg", ".ini", ".env",
-		".json", ".jsonl", ".yaml", ".yml", ".toml", ".xml",
+		".json", ".jsonc", ".jsonl", ".ndjson", ".yaml", ".yml", ".toml", ".xml",
 		".csv", ".tsv",
 		".sh", ".bash", ".zsh", ".fish",
 		".ps1", ".bat", ".cmd", ".sql", ".service",
+		".py", ".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx", ".go",
+		".html", ".htm", ".css",
 	}
 }
 
@@ -528,7 +566,7 @@ func supportedTextFileExts() map[string]bool {
 	return exts
 }
 
-func (a *App) resolveLocalMarkdownRelativePath(markdownPath string, href string, allowedExts map[string]bool) (string, error) {
+func (a *App) resolveLocalMarkdownRelativePath(markdownPath string, href string, isAllowed func(string) bool) (string, error) {
 	absBase, err := filepath.Abs(markdownPath)
 	if err != nil {
 		return "", fmt.Errorf("invalid markdown path: %w", err)
@@ -552,7 +590,7 @@ func (a *App) resolveLocalMarkdownRelativePath(markdownPath string, href string,
 	if rel == "." || rel == "" || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return "", fmt.Errorf("path must stay inside the Markdown folder")
 	}
-	if !isAllowedMarkdownExt(rel, allowedExts) {
+	if !isAllowed(rel) {
 		return "", fmt.Errorf("unsupported linked file type")
 	}
 

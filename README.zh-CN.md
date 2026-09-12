@@ -10,8 +10,8 @@ gxShell 是一个 Windows SSH 工作台，把终端会话、SFTP、监控、隧�
 
 与常规 SSH 客户端不同的地方：本地工具和 AI agent 可以**通过**正在运行的
 gxShell 在你的服务器上执行命令，全程拿不到 SSH 凭据。它们只能用 alias 指定目标
-——不给 hostname、用户名、端口和跳板机信息——超出只读范围的动作会弹出原生确认对
-话框。信任可以按 1、4、8、24 小时授予，没有永久开关。
+——不给 hostname、用户名、端口和跳板机信息——操作由原生确认和可选的限时信任管控。
+信任可以按 1、4、8、24 小时授予，没有永久开关；敏感及高风险命令在信任期间仍需确认。
 
 [English](README.md)
 
@@ -38,11 +38,13 @@ Get-FileHash .\gxShell-v<版本>-windows-amd64.zip -Algorithm SHA256
 
 - 本地 CLI 和 HTTP API，让脚本和 AI agent 借助本应用操作服务器：只能用 alias 指定目标、原生确认、限时信任，以及 `secret://` 引用（凭据不进入模型提示词和进程参数）。
 - 内置 AI 助手，支持任意 OpenAI 兼容 API，流式回复、终端上下文，远程工具调用前必须确认。
-- 多会话 SSH 终端，支持重连、搜索、分屏、浮动标签、同步广播输入和自适应标签栏。
+- 多会话 SSH 终端，同一服务器可开多个独立终端，支持二／四分屏、命名工作区、重连、同步广播输入和标签搜索。
+- 按服务器保存终端外观、SSH 字符编码、TERM 类型及退格／删除键配置。
 - SFTP 浏览、上传、下载、断点续传，以及本地/远程文档工作流。
 - 通过 SSH 提供 Linux 监控、Docker、隧道、服务、防火墙、Cron 和网站工具。
-- Markdown 和文本查看/编辑支持代码高亮与 Mermaid；另支持本地/远程 PDF 查看，以及带语法提示、校验和格式化的 JSON/JSONL 编辑。
-- 终端录制为 asciinema `.cast` 文件，内置播放器。
+- 本地／远程文档导航与编辑，支持 Markdown、JSON／JSONC／JSONL／NDJSON、源码和部署文件；支持 Mermaid 缩放、PDF 只读查看和大文本按需预览。
+- 加密配置备份，支持导入预览、冲突处理、可选凭据／私钥，以及导入失败回滚。
+- 终端录制为 asciinema `.cast` 文件，内置播放器；另可启用文本日志，并按保留期和总量自动清理。
 - Windows 托盘、文件关联、拖放打开和更新提示。
 
 ## 快捷键
@@ -70,6 +72,8 @@ Get-FileHash .\gxShell-v<版本>-windows-amd64.zip -Algorithm SHA256
 | 主题 | 文档 |
 | --- | --- |
 | 功能说明 | [docs/features.md](docs/features.md) |
+| 加密备份与迁移 | [docs/development/backup-migration.md](docs/development/backup-migration.md) |
+| 会话日志清理 | [docs/development/session-log-retention.md](docs/development/session-log-retention.md) |
 | CLI 和本地 API | [docs/cli.md](docs/cli.md) |
 | Agent 执行规范 | [docs/agent-guide.md](docs/agent-guide.md) |
 | 架构说明 | [docs/architecture.md](docs/architecture.md) |
@@ -82,7 +86,8 @@ Get-FileHash .\gxShell-v<版本>-windows-amd64.zip -Algorithm SHA256
 - 正式发布支持 Windows x64；Linux 和 macOS 桌面构建仅是实验性 CI 产物。
 - WebView2、托盘、系统凭据存储和文件关联在非支持版本上可能存在差异。
 - 主机监控按 Linux 风格远程主机设计，Docker 工具通过 SSH 工作而不是本地 Docker Socket。
-- ProxyJump 支持一层跳板机；终端分屏设计为同时显示两个终端。
+- ProxyJump 支持一层跳板机；终端分屏最多同时显示四个终端。
+- 文本编辑支持最大 5 MiB 的 UTF-8 文件；PDF 为只读查看，最大 50 MiB。
 
 ## 许可证
 

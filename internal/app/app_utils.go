@@ -18,6 +18,8 @@ import (
 	"gxShell/backend/config"
 	"gxShell/backend/types"
 	"gxShell/backend/version"
+
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 const logViewerTailBytes int64 = 1024 * 1024
@@ -134,6 +136,9 @@ func (a *App) UpdateSettings(settings types.AppSettings) (types.AppSettings, err
 	if err := config.ValidateHighlightRules(settings.HighlightRules); err != nil {
 		return settings, err
 	}
+	if err := config.ValidateSessionLogRetention(settings.SessionLogRetention); err != nil {
+		return settings, err
+	}
 	previous, previousErr := a.store.GetSettings()
 	settings = config.NormalizeSettings(settings)
 	// Never persist or revive the deprecated permanent trust switch.
@@ -155,6 +160,15 @@ func (a *App) UpdateSettings(settings types.AppSettings) (types.AppSettings, err
 	settings.Ai.APIKey = ""
 	if err := a.store.SaveSettings(settings); err != nil {
 		return settings, err
+	}
+	if a.sessionLogs != nil {
+		if err := a.sessionLogs.UpdateRetention(settings.SessionLogRetention); err != nil {
+			// Settings are already saved. Report cleanup separately so the UI
+			// does not claim persistence failed or roll back unrelated changes.
+			if ctx := a.ctx.Get(); ctx != nil {
+				wailsruntime.EventsEmit(ctx, "session-log:error", map[string]any{"error": fmt.Sprintf("session log cleanup failed: %v", err)})
+			}
+		}
 	}
 
 	// Apply monitor settings only after persistence succeeds, keeping runtime

@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { formatJsonDocument, validateJsonDocument } from './jsonDocuments';
 
 describe('validateJsonDocument', () => {
+  it('accepts comments and trailing commas only in JSONC mode', () => {
+    const text = '{\n// deployment note\n"enabled":true,\n}';
+    expect(validateJsonDocument(text, 'jsonc')).toEqual({ valid: true });
+    expect(validateJsonDocument(text, 'json').valid).toBe(false);
+    expect(validateJsonDocument('{"broken":}', 'jsonc').valid).toBe(false);
+  });
   it('accepts every JSON root type', () => {
     for (const text of ['{"ok":true}', '[1,2]', '"text"', '42', 'false', 'null']) {
       expect(validateJsonDocument(text, 'json')).toEqual({ valid: true });
@@ -38,6 +44,17 @@ describe('validateJsonDocument', () => {
 });
 
 describe('formatJsonDocument', () => {
+  it('preserves JSONC comments, large numeric tokens, trailing commas and CRLF', () => {
+    const result = formatJsonDocument('// keep this note\r\n{"big":9007199254740993,/* keep inline */"items":[1,2,],}\r\n', 'jsonc');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.text).toContain('// keep this note');
+    expect(result.text).toContain('/* keep inline */');
+    expect(result.text).toContain('9007199254740993');
+    expect(result.text.endsWith('\r\n')).toBe(true);
+    expect(validateJsonDocument(result.text, 'jsonc')).toEqual({ valid: true });
+    expect(result.text.replace(/\s/g, '')).toBe('//keepthisnote{"big":9007199254740993,/*keepinline*/"items":[1,2,],}');
+  });
   it('pretty-prints JSON without changing its value', () => {
     const result = formatJsonDocument('{"a":1,"nested":{"ok":true}}', 'json');
     expect(result).toEqual({

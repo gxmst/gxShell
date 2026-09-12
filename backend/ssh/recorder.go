@@ -20,7 +20,7 @@ import (
 // commands are output and can appear in recordings; password prompts with echo
 // disabled are not captured.
 //
-// forwardOutput runs one goroutine each for stdout and stderr, so writeOutput
+// forwardOutputStream runs one goroutine each for stdout and stderr, so writeOutput
 // can be called concurrently; every write goes through mu.
 type castRecorder struct {
 	mu     sync.Mutex
@@ -83,7 +83,7 @@ func newCastRecorder(path, title string, cols, rows int, terminalType string) (*
 	return r, nil
 }
 
-// writeOutput appends a terminal-output event. Because forwardOutput reads on
+// writeOutput appends a terminal-output event. Because forwardOutputStream reads on
 // arbitrary 4096-byte boundaries, a chunk may end mid-way through a multi-byte
 // UTF-8 rune. json.Marshal replaces invalid UTF-8 with U+FFFD rather than
 // preserving the bytes, which would corrupt CJK/emoji output that straddles a

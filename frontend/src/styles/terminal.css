@@ -361,11 +361,16 @@
 }
 
 .tab-overflow-dropdown {
-  width: min(300px, calc(100vw - 24px));
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  right: auto;
+  width: min(440px, calc(100vw - 24px));
   padding: 6px;
 }
 
 .tab-overflow-heading {
+  flex: 0 0 auto;
   padding: 5px 7px 7px;
   color: var(--muted);
   font-size: var(--text-xs);
@@ -373,7 +378,8 @@
 }
 
 .tab-overflow-list {
-  max-height: min(420px, calc(100vh - 120px));
+  min-height: 0;
+  max-height: 420px;
   overflow-y: auto;
 }
 
@@ -385,6 +391,7 @@
 }
 
 .tab-overflow-row:hover,
+.tab-overflow-row:focus-within,
 .tab-overflow-row.active {
   background: color-mix(in srgb, var(--accent) 11%, transparent);
 }
@@ -400,12 +407,21 @@
   text-align: left;
 }
 
-.tab-overflow-main > span:not(.status-dot):not(.tab-dirty-dot) {
-  overflow: hidden;
+.tab-overflow-text {
+  display: grid;
+  min-width: 0;
   flex: 1;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  gap: 4px;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
+
+.tab-overflow-text strong { font-size: 12px; font-weight: 550; line-height: 1.45; }
+.tab-overflow-text small { color: var(--muted); font-family: var(--font-mono); font-size: 10px; line-height: 1.4; }
+.tab-overflow-filter { display: flex; flex: 0 0 auto; align-items: center; gap: 7px; padding: 7px 9px; margin: 0 3px 6px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); }
+.tab-overflow-filter:focus-within { border-color: var(--accent); }
+.tab-overflow-filter input { width: 0; min-width: 0; flex: 1; background: transparent; outline: none; color: var(--text); font-size: 11px; }
+.tab-overflow-empty { padding: 18px 9px; color: var(--muted); font-size: 12px; }
 
 .tab-overflow-close {
   display: inline-flex;

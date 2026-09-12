@@ -12,6 +12,7 @@ import type { Drawer, MarkdownOpenTarget, RecentMarkdownItem, Tab } from "../typ
 import { isWindowsPlatform } from "../utils/clipboard";
 import { usePersistedState } from "./usePersistedState";
 import { t } from "../i18n";
+import { documentDirectory } from "../utils/textFiles";
 
 const normalizeLocalPath = (filePath: string) => filePath.replace(/\\/g, "/");
 const localPathKey = (filePath: string) => {
@@ -52,6 +53,9 @@ interface UseMarkdownTabsParams {
 
 export interface MarkdownTabs {
   markdownSiblings: string[];
+  markdownSiblingsBusy: boolean;
+  markdownSiblingsError: string;
+  refreshMarkdownSiblings: () => Promise<void>;
   recentMarkdown: RecentMarkdownItem[];
   openMarkdownFile: (filePath: string) => Promise<void>;
   openRemoteMarkdownFile: (sessionID: string, remotePath: string) => Promise<void>;
@@ -78,7 +82,8 @@ export function useMarkdownTabs({
   setDrawer,
   notify,
 }: UseMarkdownTabsParams): MarkdownTabs {
-  const [markdownSiblings, setMarkdownSiblings] = useState<string[]>([]);
+  const [siblingListing, setSiblingListing] = useState({ key: "", files: [] as string[], busy: false, error: "" });
+  const siblingRequest = useRef(0);
   const [recentMarkdown, setRecentMarkdown] = usePersistedState<RecentMarkdownItem[]>("gx:recentMarkdown", []);
   const workspaceFiles = useRef(readWorkspaceFiles());
   const workspaceRestoreStarted = useRef(false);
@@ -157,7 +162,7 @@ export function useMarkdownTabs({
     rememberMarkdown({ source: "local", path: filePath, title: fileNameFromPath(filePath) });
     if (existing) {
       setActiveTab(existing.id);
-      setDrawer("sftp");
+      setDrawer("documents");
       return;
     }
 
@@ -174,7 +179,7 @@ export function useMarkdownTabs({
 
     setTabs(prev => [...prev, newTab]);
     setActiveTab(newTab.id);
-    setDrawer("sftp");
+    setDrawer("documents");
   }, [rememberMarkdown, setActiveTab, setTabs, setDrawer]);
 
   const openRemoteMarkdownFile = useCallback(async (sessionID: string, remotePath: string) => {
@@ -197,7 +202,7 @@ export function useMarkdownTabs({
     });
     if (existing) {
       setActiveTab(existing.id);
-      setDrawer("sftp");
+      setDrawer("documents");
       return;
     }
 
@@ -214,7 +219,7 @@ export function useMarkdownTabs({
 
     setTabs(prev => [...prev, newTab]);
     setActiveTab(newTab.id);
-    setDrawer("sftp");
+    setDrawer("documents");
   }, [rememberMarkdown, setActiveTab, setTabs, setDrawer]);
 
   const openMarkdownTarget = useCallback((target: MarkdownOpenTarget) => {
@@ -272,45 +277,52 @@ export function useMarkdownTabs({
     openMarkdownFile(path);
   }, [openMarkdownFile, openRemoteMarkdownFile]);
 
-  // Stable identity of the active markdown document. Derived as a string so
-  // unrelated tab-state churn (session connect/disconnect, reorder) does not
-  // change it — only actually switching document triggers the effect below.
+  // Folder identity includes the remote session, so an old listing can never
+  // appear under another server. Moving between siblings reuses the same list.
   const activeMarkdownKey = useMemo(() => {
     const active = tabs.find(t => t.id === activeTab);
     if (active?.type !== "markdown") return "";
     if (active.markdownSource === "remote" && active.remoteSessionId && active.remotePath) {
-      return `remote|${active.id}|${active.remoteSessionId}|${active.remotePath}`;
+      return JSON.stringify(["remote", active.remoteSessionId, documentDirectory(active.remotePath)]);
     }
-    if (active.filePath) return `local|${active.id}|${active.filePath}`;
+    if (active.filePath) return JSON.stringify(["local", localPathKey(documentDirectory(active.filePath))]);
     return "";
   }, [activeTab, tabs]);
 
-  // Refresh the sibling list whenever the active markdown document changes.
-  // Depends only on the derived key above (not on tabs), so a remote SFTP
-  // directory listing is never re-fired by unrelated tab updates.
-  useEffect(() => {
-    let cancelled = false;
+  const activeFolderRef = useRef(activeMarkdownKey);
+  activeFolderRef.current = activeMarkdownKey;
+  const refreshMarkdownSiblings = useCallback(async () => {
+    const key = activeFolderRef.current;
+    if (!key) return;
+    const request = ++siblingRequest.current;
     const active = tabsRef.current.find(t => t.id === activeTabRef.current);
-    if (active?.type === 'markdown' && active.markdownSource === "remote" && active.remoteSessionId && active.remotePath) {
-      ListRemoteTextFilesInDir(active.remoteSessionId, active.remotePath).then(siblings => {
-        if (!cancelled) setMarkdownSiblings(siblings || []);
-      }).catch(() => {
-        if (!cancelled) setMarkdownSiblings([]);
-      });
-    } else if (active?.type === 'markdown' && active.filePath) {
-      ListTextFilesInDir(active.filePath).then(siblings => {
-        if (!cancelled) setMarkdownSiblings(siblings || []);
-      }).catch(() => {
-        if (!cancelled) setMarkdownSiblings([]);
-      });
-    } else {
-      setMarkdownSiblings([]);
+    setSiblingListing((current) => ({ key, files: current.key === key ? current.files : [], busy: true, error: "" }));
+    try {
+      const files = active?.markdownSource === "remote"
+        ? await ListRemoteTextFilesInDir(active.remoteSessionId!, active.remotePath!)
+        : await ListTextFilesInDir(active!.filePath!);
+      if (request === siblingRequest.current && key === activeFolderRef.current) {
+        setSiblingListing({ key, files: files || [], busy: false, error: "" });
+      }
+    } catch (err) {
+      if (request === siblingRequest.current && key === activeFolderRef.current) {
+        setSiblingListing({ key, files: [], busy: false, error: String(err) });
+      }
     }
-    return () => { cancelled = true; };
-  }, [activeMarkdownKey]);
+  }, []);
+
+  useEffect(() => {
+    void refreshMarkdownSiblings();
+    return () => { siblingRequest.current += 1; };
+  }, [activeMarkdownKey, refreshMarkdownSiblings]);
+
+  const currentListing = siblingListing.key === activeMarkdownKey ? siblingListing : null;
 
   return {
-    markdownSiblings,
+    markdownSiblings: activeMarkdownKey ? currentListing?.files || [] : [],
+    markdownSiblingsBusy: !!activeMarkdownKey && (currentListing?.busy ?? true),
+    markdownSiblingsError: activeMarkdownKey ? currentListing?.error || "" : "",
+    refreshMarkdownSiblings,
     recentMarkdown,
     openMarkdownFile,
     openRemoteMarkdownFile,

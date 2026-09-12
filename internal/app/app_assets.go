@@ -104,12 +104,16 @@ func (a *App) openAuthorizedPDF(filePath string) (*os.File, os.FileInfo, error) 
 	if !isPDFPath(absPath) || !a.isFileAllowed(absPath) {
 		return nil, nil, fmt.Errorf("access denied")
 	}
-	file, err := os.Open(absPath)
+	root, err := a.allowedFiles.openRoot(absPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("file not found")
+		return nil, nil, err
 	}
-	info, err := file.Stat()
-	if err != nil || info.IsDir() || info.Size() > maxPDFFileSize {
+	defer root.Close()
+	file, info, err := openRegularDocument(root, filepath.Base(absPath))
+	if err != nil {
+		return nil, nil, err
+	}
+	if info.Size() > maxPDFFileSize {
 		file.Close()
 		return nil, nil, fmt.Errorf("invalid PDF")
 	}

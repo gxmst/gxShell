@@ -440,21 +440,10 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 	return info, nil
 }
 
-// forwardOutput streams one output pipe (stdout or stderr) to the frontend and
+// forwardOutputStream streams one output pipe (stdout or stderr) to the frontend and
 // the recorder. termio.Pump batches the raw reads (16ms/32KB) and re-splits
 // them on UTF-8 rune boundaries, so high-throughput output does not flood the
 // IPC bridge and CJK/emoji never straddle a chunk as invalid UTF-8.
-func (m *Manager) forwardOutput(id string, reader io.Reader) {
-	m.mu.RLock()
-	session := m.sessions[id]
-	m.mu.RUnlock()
-	if session == nil {
-		return
-	}
-	session.outputWG.Add(1)
-	m.forwardOutputStream(session, reader, 0)
-}
-
 func (m *Manager) forwardOutputStream(session *Session, reader io.Reader, stream int) {
 	defer panicHandler(session, m)
 	defer session.outputWG.Done()

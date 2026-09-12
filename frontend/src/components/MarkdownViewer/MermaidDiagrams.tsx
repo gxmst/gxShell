@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Check, Code, Copy, Maximize2, Minus, Plus, RefreshCw, ScanLine, X } from 'lucide-react';
 import { ModalShell } from '../modals/ModalShell';
 import { writeClipboardText } from '../../utils/clipboard';
+import { t } from '../../i18n';
 import { mermaidThemeFor, renderMermaid, type MermaidDrawing, type MermaidTheme } from './mermaidRenderer';
 
 type Notify = (message: string, tone?: 'info' | 'error' | 'success') => void;
@@ -15,6 +16,7 @@ function sourceFor(host: HTMLElement) {
 function MermaidDiagram({ host, source, theme, index, zh, visible, onNotify }: {
   host: HTMLElement; source: string; theme: MermaidTheme; index: number; zh: boolean; visible: boolean; onNotify?: Notify;
 }) {
+  const language = zh ? 'zh-CN' : 'en';
   const [state, setState] = useState<DiagramState>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
   const [showSource, setShowSource] = useState(false);
@@ -28,7 +30,7 @@ function MermaidDiagram({ host, source, theme, index, zh, visible, onNotify }: {
   const lastRender = useRef<{ source: string; theme: MermaidTheme; attempt: number; drawing: MermaidDrawing }>();
   const inlineView = useRef<{ zoom: number | null; top: number; left: number }>({ zoom: null, top: 0, left: 0 });
   const restoreInlineScroll = useRef(false);
-  const title = zh ? `Mermaid 图表 ${index + 1}` : `Mermaid diagram ${index + 1}`;
+  const title = t(language, "diagramTitle", { count: String(index + 1) });
 
   useEffect(() => {
     if (!visible) return;
@@ -109,7 +111,7 @@ function MermaidDiagram({ host, source, theme, index, zh, visible, onNotify }: {
       clearTimeout(copyTimer.current);
       copyTimer.current = setTimeout(() => setCopied(false), 1800);
     } catch {
-      onNotify?.(zh ? '复制失败' : 'Copy failed', 'error');
+      onNotify?.(t(language, "diagramCopyFailed"), 'error');
     }
   };
 
@@ -117,37 +119,37 @@ function MermaidDiagram({ host, source, theme, index, zh, visible, onNotify }: {
     <div className="md-diagram-toolbar" data-md-search-ignore>
       <span className="md-diagram-title">Mermaid</span>
       <div className="md-diagram-controls">
-        <button type="button" disabled={!drawing || showSource || scale <= 0.1} onClick={() => changeZoom(-0.2)} title={zh ? '缩小图表' : 'Zoom out diagram'} aria-label={zh ? '缩小图表' : 'Zoom out diagram'}><Minus size={14} /></button>
-        <button type="button" className="md-diagram-percent" disabled={!drawing || showSource} onClick={() => setZoom(1)} title={zh ? '原始大小（100%）' : 'Actual size (100%)'}>{Math.round(scale * 100)}%</button>
-        <button type="button" disabled={!drawing || showSource || scale >= 4} onClick={() => changeZoom(0.2)} title={zh ? '放大图表' : 'Zoom in diagram'} aria-label={zh ? '放大图表' : 'Zoom in diagram'}><Plus size={14} /></button>
-        <button type="button" disabled={!drawing || showSource} onClick={() => setZoom(null)} aria-pressed={zoom === null} title={zh ? '适应宽度' : 'Fit width'} aria-label={zh ? '适应宽度' : 'Fit width'}><ScanLine size={14} /></button>
-        <button type="button" onClick={() => setShowSource((value) => !value)} aria-pressed={showSource} title={zh ? '查看图表源码' : 'View diagram source'}><Code size={14} /><span>{zh ? '源码' : 'Source'}</span></button>
-        <button type="button" onClick={copySource} title={zh ? '复制图表源码' : 'Copy diagram source'} aria-label={zh ? '复制图表源码' : 'Copy diagram source'}>{copied ? <Check size={14} /> : <Copy size={14} />}<span aria-live="polite">{copied ? (zh ? '已复制' : 'Copied') : ''}</span></button>
+        <button type="button" disabled={!drawing || showSource || scale <= 0.1} onClick={() => changeZoom(-0.2)} title={t(language, "diagramZoomOut")} aria-label={t(language, "diagramZoomOut")}><Minus size={14} /></button>
+        <button type="button" className="md-diagram-percent" disabled={!drawing || showSource} onClick={() => setZoom(1)} title={t(language, "diagramActualSize")}>{Math.round(scale * 100)}%</button>
+        <button type="button" disabled={!drawing || showSource || scale >= 4} onClick={() => changeZoom(0.2)} title={t(language, "diagramZoomIn")} aria-label={t(language, "diagramZoomIn")}><Plus size={14} /></button>
+        <button type="button" disabled={!drawing || showSource} onClick={() => setZoom(null)} aria-pressed={zoom === null} title={t(language, "diagramFitWidth")} aria-label={t(language, "diagramFitWidth")}><ScanLine size={14} /></button>
+        <button type="button" onClick={() => setShowSource((value) => !value)} aria-pressed={showSource} title={t(language, "diagramViewSource")}><Code size={14} /><span>{t(language, "diagramSourceToggle")}</span></button>
+        <button type="button" onClick={copySource} title={t(language, "diagramCopySource")} aria-label={t(language, "diagramCopySource")}>{copied ? <Check size={14} /> : <Copy size={14} />}<span aria-live="polite">{copied ? (t(language, "diagramCopied")) : ''}</span></button>
         {expanded
-          ? <button type="button" onClick={closeExpanded} title={zh ? '关闭图表（Esc）' : 'Close diagram (Esc)'} aria-label={zh ? '关闭图表' : 'Close diagram'}><X size={15} /></button>
-          : <button type="button" disabled={!drawing && state.status !== 'error'} onClick={openExpanded} title={zh ? '展开图表' : 'Expand diagram'} aria-label={zh ? '展开图表' : 'Expand diagram'}><Maximize2 size={14} /></button>}
+          ? <button type="button" onClick={closeExpanded} title={t(language, "diagramCloseHint")} aria-label={t(language, "diagramClose")}><X size={15} /></button>
+          : <button type="button" disabled={!drawing && state.status !== 'error'} onClick={openExpanded} title={t(language, "diagramExpand")} aria-label={t(language, "diagramExpand")}><Maximize2 size={14} /></button>}
       </div>
     </div>
-    {state.status === 'loading' && <div className="md-diagram-status" role="status">{zh ? '正在绘制图表…' : 'Rendering diagram…'}</div>}
+    {state.status === 'loading' && <div className="md-diagram-status" role="status">{t(language, "diagramRendering")}</div>}
     {state.status === 'error' && <div className="md-diagram-error" role="status">
-      <strong>{zh ? '图表解析失败' : 'Unable to render diagram'}</strong>
+      <strong>{t(language, "diagramRenderFailed")}</strong>
       <pre>{state.message}</pre>
-      <button type="button" onClick={() => setAttempt((value) => value + 1)}><RefreshCw size={14} />{zh ? '重试' : 'Retry'}</button>
+      <button type="button" onClick={() => setAttempt((value) => value + 1)}><RefreshCw size={14} />{t(language, "diagramRetry")}</button>
     </div>}
     {showSource || state.status === 'error'
-      ? <pre className="md-diagram-source" tabIndex={0} aria-label={zh ? '图表源码' : 'Diagram source'}><code>{source}</code></pre>
-      : drawing && <div ref={viewportRef} className="md-diagram-viewport" tabIndex={0} role="region" aria-label={zh ? '图表，可滚动查看' : 'Scrollable diagram'}>
+      ? <pre className="md-diagram-source" tabIndex={0} aria-label={t(language, "diagramSource")}><code>{source}</code></pre>
+      : drawing && <div ref={viewportRef} className="md-diagram-viewport" tabIndex={0} role="region" aria-label={t(language, "diagramScrollable")}>
         <div className="md-diagram-svg" style={{ width: drawing.width * scale, height: drawing.height * scale }} dangerouslySetInnerHTML={{ __html: drawing.svg }} />
       </div>}
     {drawing && !showSource && !expanded && scale < 0.6 && <button type="button" className="md-diagram-expand-hint" data-md-search-ignore onClick={openExpanded}>
-      <Maximize2 size={13} />{zh ? '展开阅读图表' : 'Expand for easier reading'}
+      <Maximize2 size={13} />{t(language, "diagramExpandHint")}
     </button>}
   </section>;
 
   // Render a single SVG instance. Duplicating it into a dialog would duplicate
   // marker/label IDs and break references in some browsers.
   return expanded && visible ? <>
-    <div className="md-diagram-status" style={{ height: placeholderHeight }}>{zh ? '图表已展开' : 'Diagram expanded'}</div>
+    <div className="md-diagram-status" style={{ height: placeholderHeight }}>{t(language, "diagramExpanded")}</div>
     <ModalShell className="md-diagram-modal" ariaLabel={title} onClose={closeExpanded}>{diagram}</ModalShell>
   </> : diagram;
 }

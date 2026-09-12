@@ -1,11 +1,16 @@
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, Circle, Columns2, CopyPlus, FileText, List, Pin, PinOff, Plus, Radio, RefreshCw, Rows2, Server, Terminal, X } from "lucide-react";
+import { ChevronDown, Circle, Columns2, CopyPlus, FileText, List, Pin, PinOff, Plus, Radio, RefreshCw, Rows2, Search, Server, Terminal, X } from "lucide-react";
 import type { AutomationIndicator, SplitDirection, Tab } from "../../types";
 import { Grid2X2 } from "lucide-react";
 import { stateClass } from "../../utils/format";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
+
+function tabContext(tab: Tab, profile?: types.Profile) {
+  if (tab.type === "markdown") return tab.remotePath || tab.filePath || "";
+  return profile?.host ? `${profile.username || ""}@${profile.host}:${profile.port || 22}` : "";
+}
 
 // The tab strip. It is mounted inside AppTopBar, so it owns no window chrome
 // and no sidebar affordance: the activity rail is always visible and carries
@@ -26,6 +31,8 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
 
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
+  const [tabsQuery, setTabsQuery] = useState("");
+  const [tabsMenuPosition, setTabsMenuPosition] = useState({ left: 12, top: 40, maxHeight: 480 });
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [contextTabId, setContextTabId] = useState("");
   const actionsRef = useRef<HTMLDivElement>(null);
@@ -35,6 +42,13 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
   const tabsScrollRef = useRef<HTMLDivElement>(null);
   const profileByID = useMemo(() => new Map(profiles.map((profile) => [profile.id, profile])), [profiles]);
   const dirtySet = useMemo(() => new Set(dirtyTabIds || []), [dirtyTabIds]);
+  const filteredTabs = useMemo(() => {
+    const query = tabsQuery.trim().toLocaleLowerCase();
+    return tabs.filter((tab) => {
+      const profile = profileByID.get(tab.profileId);
+      return [tab.title, tabContext(tab, profile), profile?.name, profile?.group].join(" ").toLocaleLowerCase().includes(query);
+    });
+  }, [tabs, tabsQuery, profileByID]);
 
   useEffect(() => {
     if (!newMenuOpen && !tabsMenuOpen && !toolsMenuOpen && !contextTabId) return;
@@ -47,12 +61,13 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
       }
     };
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
       event.preventDefault();
       const returnFocus = toolsMenuOpen ? toolsMenuButtonRef.current : tabsMenuOpen ? tabsMenuButtonRef.current : newMenuButtonRef.current;
       setNewMenuOpen(false);
       setTabsMenuOpen(false);
       setToolsMenuOpen(false);
+      setContextTabId("");
       window.requestAnimationFrame(() => returnFocus?.focus());
     };
     window.addEventListener("click", close);
@@ -63,13 +78,55 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
     };
   }, [contextTabId, newMenuOpen, tabsMenuOpen, toolsMenuOpen]);
 
+  const onTabsMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    const target = event.target as HTMLElement;
+    const input = target instanceof HTMLInputElement;
+    if (input && event.key === "Enter" && filteredTabs[0]) {
+      event.preventDefault();
+      onActive(filteredTabs[0].id);
+      setTabsMenuOpen(false);
+      return;
+    }
+    const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(".tab-overflow-main"));
+    if (!buttons.length) return;
+    const row = target.closest(".tab-overflow-row");
+    const index = buttons.findIndex((button) => button.closest(".tab-overflow-row") === row);
+    let next = -1;
+    if (event.key === "ArrowDown") next = input ? 0 : (index + 1) % buttons.length;
+    if (event.key === "ArrowUp") next = input ? buttons.length - 1 : (index - 1 + buttons.length) % buttons.length;
+    if (!input && event.key === "Home") next = 0;
+    if (!input && event.key === "End") next = buttons.length - 1;
+    if (next < 0) return;
+    event.preventDefault();
+    buttons[next].focus();
+    buttons[next].scrollIntoView?.({ block: "nearest" });
+  };
+
   useEffect(() => {
     const host = tabsScrollRef.current;
     if (!host || !activeTab) return;
     const activeElement = Array.from(host.querySelectorAll<HTMLElement>(".tab[data-tab-id]"))
       .find((element) => element.dataset.tabId === activeTab);
-    activeElement?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    if (!activeElement) return;
+    const reveal = () => {
+      const bounds = host.getBoundingClientRect();
+      const tab = activeElement.getBoundingClientRect();
+      if (tab.left < bounds.left) host.scrollLeft += tab.left - bounds.left;
+      else if (tab.right > bounds.right) host.scrollLeft += tab.right - bounds.right;
+    };
+    reveal();
+    const observer = new ResizeObserver(reveal);
+    observer.observe(host);
+    observer.observe(activeElement);
+    return () => observer.disconnect();
   }, [activeTab, tabs.length]);
+
+  useEffect(() => {
+    const close = () => setTabsMenuOpen(false);
+    window.addEventListener("resize", close);
+    return () => window.removeEventListener("resize", close);
+  }, []);
 
   useEffect(() => {
     const host = tabsScrollRef.current;
@@ -99,6 +156,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
   }, [onActive, tabs]);
 
   const onTabKeyDown = useCallback((event: React.KeyboardEvent, index: number) => {
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
     let nextIndex = -1;
     if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
     if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
@@ -174,8 +232,8 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
         {tabs.map((tab, index) => {
           const profile = profileByID.get(tab.profileId);
           const automation = automationActivity?.[tab.id];
-          const hostInfo = profile ? `${profile.username}@${profile.host}:${profile.port}` : "";
-          const full = hostInfo ? (profile?.name ? `${profile.name}\n${hostInfo}` : hostInfo) : tab.title;
+          const hostInfo = tabContext(tab, profile);
+          const full = [tab.title, tab.type !== "markdown" && profile?.name !== tab.title ? profile?.name : "", hostInfo].filter(Boolean).join("\n");
           const tooltip = tab.error ? `${full}\n${tab.error}` : full;
           const isDragging = dragState?.draggedId === tab.id;
           const isDragOver = dragState?.overId === tab.id;
@@ -222,24 +280,33 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
         })}
       </div>
       <div className="tab-actions" ref={actionsRef}>
-        {tabs.length > 1 && <div className="relative">
-          <button ref={tabsMenuButtonRef} className="tab-action" aria-label={lang === "zh-CN" ? "全部标签" : "All tabs"} aria-haspopup="menu" aria-expanded={tabsMenuOpen} onClick={(event) => { event.stopPropagation(); setNewMenuOpen(false); setToolsMenuOpen(false); setTabsMenuOpen((value) => !value); }} title={lang === "zh-CN" ? "全部标签" : "All tabs"}>
+        {tabs.length > 0 && <div className="relative">
+          <button ref={tabsMenuButtonRef} className="tab-action" aria-label={t(lang, "allTabs")} aria-haspopup="dialog" aria-expanded={tabsMenuOpen} onClick={(event) => {
+            event.stopPropagation();
+            const bounds = event.currentTarget.getBoundingClientRect();
+            const width = Math.min(440, window.innerWidth - 24);
+            const top = bounds.bottom + 7;
+            setTabsMenuPosition({ left: Math.max(12, Math.min(bounds.right - width, window.innerWidth - width - 12)), top, maxHeight: Math.max(0, window.innerHeight - top - 12) });
+            setNewMenuOpen(false); setToolsMenuOpen(false); setTabsQuery(""); setTabsMenuOpen((value) => !value);
+          }} title={t(lang, "allTabs")}>
             <List size={14} />
           </button>
-          {tabsMenuOpen && <div className="tab-action-dropdown tab-overflow-dropdown" role="menu" onClick={(event) => event.stopPropagation()}>
-            <div className="tab-overflow-heading">{lang === "zh-CN" ? `${tabs.length} 个标签` : `${tabs.length} tabs`}</div>
+          {tabsMenuOpen && <div className="tab-action-dropdown tab-overflow-dropdown" role="dialog" aria-label={t(lang, "allTabs")} style={tabsMenuPosition} onClick={(event) => event.stopPropagation()} onKeyDown={onTabsMenuKeyDown}>
+            <div className="tab-overflow-heading">{t(lang, "tabsCount", { count: String(tabs.length) })}</div>
+            <label className="tab-overflow-filter"><Search size={13} /><input autoFocus value={tabsQuery} onChange={(event) => setTabsQuery(event.target.value)} aria-label={t(lang, "filterTabs")} placeholder={t(lang, "filterTabs")} /></label>
             <div className="tab-overflow-list">
-              {tabs.map((tab) => (
+              {filteredTabs.map((tab) => (
                 <div key={tab.id} className={clsx("tab-overflow-row", activeTab === tab.id && "active")}>
-                  <button className="tab-overflow-main" role="menuitem" onClick={() => { onActive(tab.id); setTabsMenuOpen(false); }}>
+                  <button className="tab-overflow-main" aria-label={tab.title} title={[tab.title, tabContext(tab, profileByID.get(tab.profileId))].filter(Boolean).join("\n")} onClick={() => { onActive(tab.id); setTabsMenuOpen(false); }}>
                     {tab.type === "markdown" ? <FileText size={12} /> : tab.local ? <Terminal size={12} /> : <span className={clsx("status-dot", stateClass(tab.state))} />}
-                    <span>{tab.title}</span>
+                    <span className="tab-overflow-text"><strong>{tab.title}</strong><small>{tabContext(tab, profileByID.get(tab.profileId))}</small></span>
                     {tab.unread && activeTab !== tab.id && <span className="tab-unread-dot" />}
                     {dirtySet.has(tab.id) && <span className="tab-dirty-dot" />}
                   </button>
                   <button className="tab-overflow-close" aria-label={`${t(lang, "close")} ${tab.title}`} onClick={() => onClose(tab.id)}><X size={12} /></button>
                 </div>
               ))}
+              {!filteredTabs.length && <div className="tab-overflow-empty" role="status">{t(lang, "noMatchingTabs")}</div>}
             </div>
           </div>}
         </div>}

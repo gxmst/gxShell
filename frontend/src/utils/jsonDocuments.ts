@@ -1,7 +1,7 @@
 import { jsonLanguage } from '@codemirror/lang-json';
-import { applyEdits, createScanner, format } from 'jsonc-parser';
+import { applyEdits, createScanner, format, visit } from 'jsonc-parser';
 
-export type JsonDocumentMode = 'json' | 'jsonl';
+export type JsonDocumentMode = 'json' | 'jsonc' | 'jsonl';
 
 export interface JsonDocumentError {
   code: 'syntax';
@@ -103,6 +103,16 @@ function validateJsonLines(text: string): JsonValidationResult {
 }
 
 export function validateJsonDocument(text: string, mode: JsonDocumentMode): JsonValidationResult {
+  if (mode === 'jsonc') {
+    let offset: number | null = null;
+    try {
+      visit(text, { onError: (_error, at) => { if (offset === null) offset = at; } }, { disallowComments: false, allowTrailingComma: true });
+    } catch {
+      // Extremely deep documents can exhaust the parser's call stack.
+      offset = offset ?? 0;
+    }
+    return offset === null ? { valid: true } : { valid: false, error: syntaxError(text, offset) };
+  }
   return mode === 'jsonl' ? validateJsonLines(text) : validateJson(text);
 }
 
@@ -131,7 +141,7 @@ export function formatJsonDocument(text: string, mode: JsonDocumentMode): JsonFo
   const validation = validateJsonDocument(text, mode);
   if (!validation.valid) return { ok: false, error: validation.error };
 
-  if (mode === 'json') {
+  if (mode !== 'jsonl') {
     const ending = detectedLineEnding(text);
     const hadTrailingEnding = /(?:\r\n|\r|\n)$/.test(text);
     // jsonc-parser's formatter edits whitespace only. Keeping the original

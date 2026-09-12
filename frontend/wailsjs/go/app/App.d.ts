@@ -72,7 +72,7 @@ export function DuplicateProfile(arg1:string):Promise<types.Profile>;
 export function ExportHistory():Promise<void>;
 
 export function ExportProfiles(arg1:boolean):Promise<string>;
-export function ExportBackup(passphrase:string,workspaces:string,includeSecrets:boolean,includePrivateKeys:boolean):Promise<string>;
+export function ExportBackup(passphrase:string,workspaces:string,includeSecrets:boolean,includePrivateKeys:boolean):Promise<types.BackupExportResult>;
 export function PreviewBackup(passphrase:string,workspaces:string,policy:string,restoreSettings:boolean):Promise<string>;
 export function ApplyBackup(token:string,previousWorkspaces:string):Promise<void>;
 export function DiscardBackupPreview(token:string):Promise<void>;

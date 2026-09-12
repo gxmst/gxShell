@@ -29,7 +29,7 @@ func (a *App) planBackup(payload backupPayload, workspaces, policy string, resto
 	if err != nil {
 		return nil, err
 	}
-	plan := &backupPlan{preview: backupPreview{Token: types.NewID("backup"), CreatedAt: payload.CreatedAt, Settings: restoreSettings, Warnings: []string{}}, after: map[string][]byte{}, previousWorkspaces: workspaces, expires: time.Now().Add(15 * time.Minute)}
+	plan := &backupPlan{preview: backupPreview{Token: types.NewID("backup"), CreatedAt: payload.CreatedAt, Settings: restoreSettings, Warnings: append([]string{}, payload.ExportWarnings...)}, after: map[string][]byte{}, previousWorkspaces: workspaces, expires: time.Now().Add(15 * time.Minute)}
 	err = sshmanager.WithKnownHostsLock(func() error {
 		var err error
 		plan.before, err = a.store.SnapshotFiles("profiles.json", "commands.json", "settings.json", "known_hosts")
@@ -112,14 +112,15 @@ func (a *App) planBackup(payload backupPayload, workspaces, policy string, resto
 			return nil, fmt.Errorf("imported jump host for %s: %w", profiles[i].Name, err)
 		}
 	}
+	type commandIdentity struct{ name, category string }
+	commandIDs := make(map[string]bool, len(commands))
+	commandNames := make(map[commandIdentity]bool, len(commands))
+	for _, command := range commands {
+		commandIDs[command.ID] = true
+		commandNames[commandIdentity{command.Name, command.Category}] = true
+	}
 	for _, command := range payload.Commands {
-		conflict := false
-		for _, existing := range commands {
-			if existing.ID == command.ID || (existing.Name == command.Name && existing.Category == command.Category) {
-				conflict = true
-				break
-			}
-		}
+		conflict := commandIDs[command.ID] || commandNames[commandIdentity{command.Name, command.Category}]
 		if conflict && policy == "keep" {
 			plan.preview.Skipped++
 			plan.preview.Changes = append(plan.preview.Changes, backupChange{"command", command.Name, "keep"})
@@ -130,6 +131,8 @@ func (a *App) planBackup(payload backupPayload, workspaces, policy string, resto
 			command.Name += " (imported)"
 		}
 		commands = append(commands, command)
+		commandIDs[command.ID] = true
+		commandNames[commandIdentity{command.Name, command.Category}] = true
 		plan.preview.Commands++
 		plan.preview.Changes = append(plan.preview.Changes, backupChange{"command", command.Name, "add"})
 	}
@@ -239,9 +242,20 @@ func (a *App) planBackup(payload backupPayload, workspaces, policy string, resto
 		imported.UpdateCheckEnabled = settings.UpdateCheckEnabled
 		imported.ConsentDefaultsVersion = config.DefaultSettings().ConsentDefaultsVersion
 		imported.RestoreWorkspace = false
+		// Importing settings must not opt this computer into deleting its logs.
+		imported.SessionLogRetention = config.NormalizeSessionLogRetention(settings.SessionLogRetention)
 		imported.Terminal.LocalShell = settings.Terminal.LocalShell
 		imported.Terminal.LocalStartDirectory = settings.Terminal.LocalStartDirectory
 		imported.Ai.APIKey = ""
+		for _, change := range []backupSettingChange{
+			{Field: "provider", Before: settings.Ai.Provider, After: imported.Ai.Provider},
+			{Field: "endpoint", Before: settings.Ai.Endpoint, After: imported.Ai.Endpoint},
+			{Field: "model", Before: settings.Ai.Model, After: imported.Ai.Model},
+		} {
+			if change.Before != change.After {
+				plan.preview.AIChanges = append(plan.preview.AIChanges, change)
+			}
+		}
 		if payload.IncludesSecret {
 			plan.aiKey = payload.AiAPIKey
 		}
@@ -297,10 +311,10 @@ func (a *App) planBackup(payload backupPayload, workspaces, policy string, resto
 		if err != nil {
 			return nil, err
 		}
-		if len(data) > 10*1024*1024 {
-			return nil, fmt.Errorf("%s would exceed 10 MiB", name)
-		}
 		plan.after[name] = data
+	}
+	if err := config.ValidateMigrationFiles(plan.after); err != nil {
+		return nil, err
 	}
 	return plan, nil
 }

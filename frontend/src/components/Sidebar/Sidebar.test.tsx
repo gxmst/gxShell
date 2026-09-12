@@ -91,7 +91,7 @@ describe("Sidebar shell", () => {
     const { container, props } = renderSidebar();
 
     const rail = screen.getByRole("navigation");
-    expect(within(rail).getAllByRole("button")).toHaveLength(6);
+    expect(within(rail).getAllByRole("button")).toHaveLength(7);
     expect(container.querySelector(".brand-row")).toBeNull();
     expect(container.querySelector(".nav-strip")).toBeNull();
     expect(container.querySelector(".group-tabs")).toBeNull();
@@ -99,6 +99,8 @@ describe("Sidebar shell", () => {
 
     fireEvent.click(within(rail).getByRole("button", { name: "Files" }));
     expect(props.setDrawer).toHaveBeenCalledWith("sftp");
+    fireEvent.click(within(rail).getByRole("button", { name: "Documents" }));
+    expect(props.setDrawer).toHaveBeenLastCalledWith("documents");
   });
 
   it("folds the panel when the section already showing is clicked again", () => {

@@ -68,7 +68,7 @@ function readBufferCells(term: Terminal, row: number): { text: string; spans: Bu
   return { text: text.trimEnd(), spans };
 }
 
-export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, sidebarCollapsed: boolean, splitPane?: SplitPane | null, broadcastRef?: MutableRefObject<{ enabled: boolean; targets: string[] }>, linkHandlersRef?: MutableRefObject<TerminalLinkAppHandlers>, setContextMenu?: (menu: AppContextMenu | null) => void, onSearchResults?: (id: string, index: number, count: number) => void, onPasteRequest?: (request: TerminalPasteRequest) => void, terminalOverrides?: Record<string, types.TerminalSettings>) {
+export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, splitPane?: SplitPane | null, broadcastRef?: MutableRefObject<{ enabled: boolean; targets: string[] }>, linkHandlersRef?: MutableRefObject<TerminalLinkAppHandlers>, setContextMenu?: (menu: AppContextMenu | null) => void, onSearchResults?: (id: string, index: number, count: number) => void, onPasteRequest?: (request: TerminalPasteRequest) => void, terminalOverrides?: Record<string, types.TerminalSettings>) {
   const terminals = useRef<Record<string, Terminal>>({});
   const fits = useRef<Record<string, FitAddon>>({});
   const searches = useRef<Record<string, SearchAddon>>({});
@@ -104,6 +104,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   pasteRequestRef.current = onPasteRequest;
   const runtimeFontSize = useRef<Record<string, number>>({});
   const settingsFontSize = useRef<Record<string, number>>({});
+  const appliedDisplaySettings = useRef<Record<string, { appearance: string; metrics: string; highlights: string }>>({});
   const overridesRef = useRef(terminalOverrides);
   overridesRef.current = terminalOverrides;
 
@@ -566,32 +567,6 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, activeIsTerminal, enqueueTerminalInput, settingsReady, scheduleDisplayHighlights, splitPane]);
 
-  useEffect(() => {
-    const ids = Object.keys(terminals.current);
-    if (!ids.length) return;
-    const timer = window.setTimeout(() => {
-      ids.forEach((id) => {
-        const fit = fits.current[id];
-        const term = terminals.current[id];
-        const host = terminalHosts.current[id];
-        if (!fit || !term || !host) return;
-        if (host.clientWidth <= 0 || host.clientHeight <= 0) return;
-        try {
-          fit.fit();
-          const { cols, rows } = term;
-          const prev = lastDimensions.current[id];
-          if (!prev || prev.cols !== cols || prev.rows !== rows) {
-            lastDimensions.current[id] = { cols, rows };
-            ResizeTerminal(id, cols, rows).catch(() => {
-              delete lastDimensions.current[id];
-            });
-          }
-        } catch {}
-      });
-    }, 220);
-    return () => window.clearTimeout(timer);
-  }, [sidebarCollapsed]);
-
   const flushPendingOutput = useCallback((sessionId: string) => {
     const chunks = pendingOutput.current[sessionId];
     delete pendingOutput.current[sessionId];
@@ -691,6 +666,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     delete throughputRef.current[id];
     delete runtimeFontSize.current[id];
     delete settingsFontSize.current[id];
+    delete appliedDisplaySettings.current[id];
   }, [clearHighlightDecorations]);
 
   const findNext = useCallback((id: string, query: string) => {
@@ -756,31 +732,43 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   // vim/htop layouts stay stale until the next window resize.
   useEffect(() => {
     if (!settings) return;
+    const highlights = JSON.stringify([settings.highlightLevel, settings.highlightRules]);
     Object.keys(terminals.current).forEach((id) => {
       const terminal = terminalOverrides?.[id] || settings.terminal;
       const configuredFontSize = normalizeFontSize(terminal.fontSize);
-      if (settingsFontSize.current[id] !== configuredFontSize) {
-        settingsFontSize.current[id] = configuredFontSize;
-        delete runtimeFontSize.current[id];
-      }
+      const theme = getTerminalTheme({ ...settings, terminal });
+      const lineHeight = normalizeLineHeight(terminal.lineHeight);
+      const cursorStyle = (terminal.cursorStyle || "block") as "block" | "underline" | "bar";
+      const metrics = JSON.stringify([terminal.fontFamily, configuredFontSize, lineHeight]);
+      const appearance = JSON.stringify([metrics, theme, cursorStyle, terminal.cursorBlink]);
+      const previous = appliedDisplaySettings.current[id];
       const term = terminals.current[id];
-      term.options.theme = getTerminalTheme({ ...settings, terminal });
-      const host = terminalHosts.current[id];
-      if (host) {
-        host.style.setProperty("--terminal", term.options.theme?.background || "");
-        host.style.backgroundColor = "var(--terminal)";
+      // Tab titles, connection states and document edits rebuild the overrides
+      // map without changing display settings. Leave unaffected terminals alone.
+      if (previous?.appearance !== appearance) {
+        if (settingsFontSize.current[id] !== configuredFontSize) {
+          settingsFontSize.current[id] = configuredFontSize;
+          delete runtimeFontSize.current[id];
+        }
+        term.options.theme = theme;
+        const host = terminalHosts.current[id];
+        if (host) {
+          host.style.setProperty("--terminal", theme?.background || "");
+          host.style.backgroundColor = "var(--terminal)";
+        }
+        term.options.fontFamily = terminal.fontFamily;
+        term.options.fontSize = runtimeFontSize.current[id] ?? configuredFontSize;
+        term.options.lineHeight = lineHeight;
+        term.options.cursorStyle = cursorStyle;
+        term.options.cursorBlink = terminal.cursorBlink;
       }
-      term.options.fontFamily = terminal.fontFamily;
-      term.options.fontSize = runtimeFontSize.current[id] ?? configuredFontSize;
-      term.options.lineHeight = normalizeLineHeight(terminal.lineHeight);
-      // Cursor options do not affect the grid, so they need no refit. Scrollback
-      // is deliberately absent: changing it reallocates the buffer and would
-      // discard existing history, so it stays a new-terminal setting.
-      term.options.cursorStyle = (terminal.cursorStyle || "block") as "block" | "underline" | "bar";
-      term.options.cursorBlink = terminal.cursorBlink;
-      refitTerminal(id);
-      clearHighlightDecorations(id);
-      scheduleDisplayHighlights(id, term);
+      if (previous?.metrics !== metrics) refitTerminal(id);
+      if (previous?.highlights !== highlights || previous?.metrics !== metrics) {
+        clearHighlightDecorations(id);
+        scheduleDisplayHighlights(id, term);
+      }
+      // Scrollback remains a new-terminal setting to preserve existing history.
+      appliedDisplaySettings.current[id] = { appearance, metrics, highlights };
     });
   }, [settings, terminalOverrides, refitTerminal, clearHighlightDecorations, scheduleDisplayHighlights]);
 

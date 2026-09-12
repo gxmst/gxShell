@@ -73,20 +73,21 @@ type Profile struct {
 }
 
 type AppSettings struct {
-	ThemeName           string             `json:"themeName"`
-	Language            string             `json:"language"`
-	Terminal            TerminalSettings   `json:"terminal"`
-	MonitorEnabled      bool               `json:"monitorEnabled"`
-	MonitorIntervalSec  int                `json:"monitorIntervalSec"`
-	ConnectionTimeout   int                `json:"connectionTimeout"`
-	HighlightLevel      string             `json:"highlightLevel"`
-	HighlightRules      []HighlightRule    `json:"highlightRules,omitempty"`
-	SessionLog          SessionLogSettings `json:"sessionLog"`
-	SidebarWidth        int                `json:"sidebarWidth"`
-	SidebarSplitPct     int                `json:"sidebarSplitPct"`
-	SavePasswords       bool               `json:"savePasswords"`
-	SmartHighlight      bool               `json:"smartHighlight"`
-	ConfirmOnDisconnect bool               `json:"confirmOnDisconnect"`
+	ThemeName           string                      `json:"themeName"`
+	Language            string                      `json:"language"`
+	Terminal            TerminalSettings            `json:"terminal"`
+	MonitorEnabled      bool                        `json:"monitorEnabled"`
+	MonitorIntervalSec  int                         `json:"monitorIntervalSec"`
+	ConnectionTimeout   int                         `json:"connectionTimeout"`
+	HighlightLevel      string                      `json:"highlightLevel"`
+	HighlightRules      []HighlightRule             `json:"highlightRules,omitempty"`
+	SessionLog          SessionLogSettings          `json:"sessionLog"`
+	SessionLogRetention SessionLogRetentionSettings `json:"sessionLogRetention"`
+	SidebarWidth        int                         `json:"sidebarWidth"`
+	SidebarSplitPct     int                         `json:"sidebarSplitPct"`
+	SavePasswords       bool                        `json:"savePasswords"`
+	SmartHighlight      bool                        `json:"smartHighlight"`
+	ConfirmOnDisconnect bool                        `json:"confirmOnDisconnect"`
 	// RestoreWorkspace reconnects profiles that were still open when the app
 	// last exited. It is opt-in because reconnecting is an external side effect.
 	RestoreWorkspace bool `json:"restoreWorkspace"`
@@ -137,6 +138,14 @@ type SessionLogSettings struct {
 	Timestamps   bool `json:"timestamps"`
 	MaxFileMB    int  `json:"maxFileMb"`
 	MaxSessionMB int  `json:"maxSessionMb"`
+}
+
+// SessionLogRetentionSettings is global: a per-server override must never
+// delete another server's logs. Cleanup requires an explicit local opt-in.
+type SessionLogRetentionSettings struct {
+	Enabled    bool `json:"enabled"`
+	MaxAgeDays int  `json:"maxAgeDays"`
+	MaxTotalMB int  `json:"maxTotalMb"`
 }
 
 type TerminalSettings struct {

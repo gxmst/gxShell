@@ -22,6 +22,7 @@ For the frontend:
 ```powershell
 cd frontend
 npm ci
+npm audit --audit-level=moderate
 npm run lint
 npm test
 npm run build
@@ -91,5 +92,7 @@ adding a backend method, hand-edit `App.d.ts`, `App.js`, and any new type in
 ## Further reading
 
 - [CLI implementation notes](development/cli-implementation.md)
+- [Session log retention](development/session-log-retention.md)
+- [Document navigation and sidebar geometry](development/document-workspace.md)
 - [Windows context menu integration](development/windows-context-menu.md)
 - [Original project brief](history/todo-genesis-prompt.md) (historical)

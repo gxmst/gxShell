@@ -16,6 +16,7 @@ import { isWindowsPlatform, toClipboardText, writeClipboardText } from '../../ut
 import { applyEol, detectEol, eolLabel, toLf, type Eol } from '../../utils/eol';
 import { documentEditorMode, isMarkdownPath, isPdfPath } from '../../utils/textFiles';
 import type { JsonValidationResult } from '../../utils/jsonDocuments';
+import { MAX_SYNC_JSON_CHARS } from '../../utils/jsonDocumentTasks';
 import type { EditorStats, SourceEditorHandle } from './SourceEditor';
 import type { RenderedMarkdown } from './markdownRenderer';
 import { t } from '../../i18n';
@@ -48,11 +49,11 @@ const MAX_ZOOM = 2.2;
 const MIN_TOC_WIDTH = 150;
 const MAX_TOC_WIDTH = 320;
 const DEFAULT_TOC_WIDTH = 210;
-const MAX_LIVE_JSON_VALIDATION_CHARS = 256 * 1024;
+const MAX_INLINE_TEXT_CHARS = 256 * 1024;
 const HL_ALL = 'md-search';
 const HL_ACTIVE = 'md-search-active';
 let markdownRendererModulePromise: Promise<typeof import('./markdownRenderer')> | null = null;
-let jsonDocumentsModulePromise: Promise<typeof import('../../utils/jsonDocuments')> | null = null;
+let jsonDocumentsModulePromise: Promise<typeof import('../../utils/jsonDocumentTasks')> | null = null;
 const markdownImageLoadTokens = new WeakMap<HTMLImageElement, object>();
 
 function clamp(value: number, min: number, max: number) {
@@ -73,8 +74,15 @@ function getMarkdownRenderer() {
 }
 
 function getJsonDocuments() {
-  if (!jsonDocumentsModulePromise) jsonDocumentsModulePromise = import('../../utils/jsonDocuments');
+  if (!jsonDocumentsModulePromise) jsonDocumentsModulePromise = import('../../utils/jsonDocumentTasks');
   return jsonDocumentsModulePromise;
+}
+
+function documentErrorMessage(error: unknown, lang: string) {
+  const message = String(error);
+  if (message.includes('GX_DOCUMENT_NOT_TEXT')) return t(lang, 'documentNotText');
+  if (message.includes('GX_DOCUMENT_TASK_FAILED')) return t(lang, 'documentProcessingFailed');
+  return message;
 }
 
 function initialTocWidth() {
@@ -120,6 +128,7 @@ export default function MarkdownViewer({
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [formatting, setFormatting] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [tocOpen, setTocOpen] = useState(true);
   const [compactReading, setCompactReading] = useState(false);
@@ -140,6 +149,8 @@ export default function MarkdownViewer({
   const draftRef = useRef(draft);
   const eolRef = useRef(eol);
   const saveInFlightRef = useRef<Promise<boolean> | null>(null);
+  const saveControllerRef = useRef<AbortController | null>(null);
+  const formatControllerRef = useRef<AbortController | null>(null);
   const loadGenerationRef = useRef(0);
   const loadedDocumentRef = useRef<string | null>(null);
   const editingRef = useRef(editing);
@@ -177,12 +188,17 @@ export default function MarkdownViewer({
 
   const displayPath = source === 'remote' ? remotePath : filePath;
   const documentKey = JSON.stringify([source, displayPath]);
+  const documentTargetRef = useRef({ key: documentKey, source, path: displayPath || '', sessionId: sessionId || '' });
   const fileName = (displayPath || '').split(/[\\/]/).pop() || '';
   const editorMode = documentEditorMode(displayPath || '');
-  const jsonMode = editorMode === 'json' || editorMode === 'jsonl' ? editorMode : null;
-  const deferJsonValidation = !!jsonMode && draft.length > MAX_LIVE_JSON_VALIDATION_CHARS;
+  const jsonMode = editorMode === 'json' || editorMode === 'jsonc' || editorMode === 'jsonl' ? editorMode : null;
+  const deferJsonValidation = !!jsonMode && draft.length > MAX_SYNC_JSON_CHARS;
   const markdownMode = isMarkdownPath(displayPath || '');
   const pdfMode = isPdfPath(displayPath || '');
+  // A single huge <pre> can stall Chromium's compositor even though parsing
+  // happens in a worker. CodeMirror keeps only the visible lines in the DOM.
+  const virtualTextPreview = !markdownMode && !pdfMode && content.length > MAX_INLINE_TEXT_CHARS;
+  const sourceView = editing || virtualTextPreview;
   const [previewDoc, setPreviewDoc] = useState<RenderedMarkdown>(EMPTY_RENDERED_MARKDOWN);
   const [draftDoc, setDraftDoc] = useState<RenderedMarkdown>(EMPTY_RENDERED_MARKDOWN);
   const visibleDoc = editing && splitPreview ? draftDoc : previewDoc;
@@ -191,6 +207,22 @@ export default function MarkdownViewer({
   const viewerMainStyle = canShowToc && outlineOpen
     ? ({ '--md-outline-width': `${tocWidth}px` } as React.CSSProperties)
     : undefined;
+
+  useLayoutEffect(() => {
+    documentTargetRef.current = { key: documentKey, source, path: displayPath || '', sessionId: sessionId || '' };
+  }, [documentKey, source, displayPath, sessionId]);
+
+  useLayoutEffect(() => {
+    setSaving(false);
+    setFormatting(false);
+    return () => {
+      saveControllerRef.current?.abort();
+      formatControllerRef.current?.abort();
+      saveControllerRef.current = null;
+      formatControllerRef.current = null;
+      saveInFlightRef.current = null;
+    };
+  }, [documentKey]);
 
   useLayoutEffect(() => {
     const viewer = viewerRef.current;
@@ -243,9 +275,11 @@ export default function MarkdownViewer({
     }
     let cancelled = false;
     const timer = window.setTimeout(() => {
-      void getJsonDocuments().then(({ validateJsonDocument }) => {
-        if (!cancelled) setJsonValidation(validateJsonDocument(draft, jsonMode));
-      });
+      void getJsonDocuments().then(async ({ validateJsonDocument }) => {
+        if (cancelled) return;
+        const result = await validateJsonDocument(draft, jsonMode);
+        if (!cancelled) setJsonValidation(result);
+      }).catch(() => { if (!cancelled) setJsonValidation(null); });
     }, 280);
     return () => {
       cancelled = true;
@@ -336,7 +370,7 @@ export default function MarkdownViewer({
   }, [editing, isVisible, splitPreview]);
 
   const captureScrollRatio = () => {
-    if (editing) {
+    if (sourceView) {
       pendingScrollRatioRef.current = editorRef.current?.scrollRatio() ?? 0;
       return;
     }
@@ -349,7 +383,7 @@ export default function MarkdownViewer({
   useLayoutEffect(() => {
     const ratio = pendingScrollRatioRef.current;
     if (ratio == null) return;
-    if (editing) {
+    if (sourceView) {
       // The editor is lazy-loaded, so its handle may not exist on this pass.
       // Leave the pending ratio in place and let the mount effect apply it.
       const handle = editorRef.current;
@@ -363,7 +397,7 @@ export default function MarkdownViewer({
     if (!el) return;
     const max = el.scrollHeight - el.clientHeight;
     el.scrollTop = max > 0 ? ratio * max : 0;
-  }, [editing]);
+  }, [editing, sourceView]);
 
   // Applies a scroll ratio that was captured before the editor finished
   // loading. Passed as the editor's ref callback so it runs on mount.
@@ -392,7 +426,9 @@ export default function MarkdownViewer({
   };
 
   const cancelEdit = () => {
+    if (saveInFlightRef.current) return;
     if (dirty && !window.confirm(t(lang, 'discardChanges'))) return;
+    formatControllerRef.current?.abort();
     captureScrollRatio();
     draftRef.current = content;
     setDraft(content);
@@ -411,19 +447,38 @@ export default function MarkdownViewer({
   };
 
   const formatJson = async () => {
-    if (!jsonMode) return;
-    const { formatJsonDocument } = await getJsonDocuments();
-    const result = formatJsonDocument(draftRef.current, jsonMode);
-    if (!result.ok) {
-      const validation: JsonValidationResult = { valid: false, error: result.error };
-      setJsonValidation(validation);
-      onNotify?.(jsonErrorMessage(validation), 'error');
-      return;
+    if (!jsonMode || formatControllerRef.current || saveInFlightRef.current) return;
+    const controller = new AbortController();
+    formatControllerRef.current = controller;
+    const snapshot = draftRef.current;
+    setFormatting(true);
+    try {
+      const { formatJsonDocument } = await getJsonDocuments();
+      const result = await formatJsonDocument(snapshot, jsonMode, controller.signal);
+      controller.signal.throwIfAborted();
+      if (documentTargetRef.current.key !== documentKey) return;
+      if (!editingRef.current || draftRef.current !== snapshot) {
+        onNotify?.(t(lang, 'documentFormatChanged'), 'info');
+        return;
+      }
+      if (!result.ok) {
+        const validation: JsonValidationResult = { valid: false, error: result.error };
+        setJsonValidation(validation);
+        onNotify?.(jsonErrorMessage(validation), 'error');
+        return;
+      }
+      draftRef.current = result.text;
+      setDraft(result.text);
+      setJsonValidation({ valid: true });
+      requestAnimationFrame(() => editorRef.current?.focus());
+    } catch (err) {
+      if (!controller.signal.aborted) onNotify?.(documentErrorMessage(err, lang), 'error');
+    } finally {
+      if (formatControllerRef.current === controller) {
+        formatControllerRef.current = null;
+        setFormatting(false);
+      }
     }
-    draftRef.current = result.text;
-    setDraft(result.text);
-    setJsonValidation({ valid: true });
-    requestAnimationFrame(() => editorRef.current?.focus());
   };
 
   const save = () => {
@@ -431,6 +486,10 @@ export default function MarkdownViewer({
     // two Ctrl+S/click events from starting writes in the same render frame.
     // Every caller joins the one in-flight operation instead.
     if (saveInFlightRef.current) return saveInFlightRef.current;
+
+    formatControllerRef.current?.abort();
+    const controller = new AbortController();
+    saveControllerRef.current = controller;
 
     const snapshot = { draft: draftRef.current, eol: eolRef.current };
     // Schedule the body after the ref assignment below. Besides making the
@@ -441,21 +500,29 @@ export default function MarkdownViewer({
         setSaving(true);
         if (jsonMode) {
           const { validateJsonDocument } = await getJsonDocuments();
-          const validation = validateJsonDocument(snapshot.draft, jsonMode);
-          setJsonValidation(validation);
+          const validation = await validateJsonDocument(snapshot.draft, jsonMode, controller.signal);
+          controller.signal.throwIfAborted();
+          if (documentTargetRef.current.key !== documentKey) return false;
+          if (draftRef.current === snapshot.draft) setJsonValidation(validation);
           if (!validation.valid) {
             onNotify?.(jsonErrorMessage(validation), 'error');
             return false;
           }
         }
+        controller.signal.throwIfAborted();
+        const target = documentTargetRef.current;
+        if (target.key !== documentKey) return false;
         // Restore the selected line ending on the snapshot written to disk.
-        // Edits made while this await is pending stay in draftRef/eolRef.
+        // Resolve the transport after validation, as SSH may have reconnected
+        // while a worker was parsing. Newer edits stay in draftRef/eolRef.
         const payload = applyEol(snapshot.draft, snapshot.eol);
-        if (source === 'remote') {
-          await WriteRemoteTextFile(sessionId || '', remotePath || '', payload);
+        if (target.source === 'remote') {
+          await WriteRemoteTextFile(target.sessionId, target.path, payload);
         } else {
-          await WriteLocalFile(filePath || '', payload);
+          await WriteLocalFile(target.path, payload);
         }
+
+        if (controller.signal.aborted || documentTargetRef.current.key !== documentKey) return false;
 
         const savedCurrentDraft = draftRef.current === snapshot.draft && eolRef.current === snapshot.eol;
         setContent(snapshot.draft);
@@ -469,12 +536,15 @@ export default function MarkdownViewer({
         // The unsaved-changes dialog may close the tab only when the bytes just
         // written still represent the current draft and EOL selection.
         return savedCurrentDraft;
-      } catch (err: any) {
-        onNotify?.(err.toString(), 'error');
+      } catch (err) {
+        if (!controller.signal.aborted) onNotify?.(documentErrorMessage(err, lang), 'error');
         return false;
       } finally {
-        saveInFlightRef.current = null;
-        setSaving(false);
+        if (saveControllerRef.current === controller) {
+          saveControllerRef.current = null;
+          saveInFlightRef.current = null;
+          setSaving(false);
+        }
       }
     });
 
@@ -534,8 +604,8 @@ export default function MarkdownViewer({
       return;
     }
 
-    if (editing) {
-      const hay = draft.toLowerCase();
+    if (sourceView) {
+      const hay = (editing ? draft : content).toLowerCase();
       const needle = q.toLowerCase();
       const found: { start: number; end: number }[] = [];
       let from = 0;
@@ -585,12 +655,12 @@ export default function MarkdownViewer({
       observer.disconnect();
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [query, searchOpen, editing, content, draft, active, visibleDoc.html]);
+  }, [query, searchOpen, editing, sourceView, content, draft, active, visibleDoc.html]);
 
   useEffect(() => {
     if (!searchOpen || !active || current < 0) return;
 
-    if (editing) {
+    if (sourceView) {
       const m = editMatchesRef.current[current];
       if (!m) {
         pendingEditorRevealRef.current = null;
@@ -615,7 +685,7 @@ export default function MarkdownViewer({
     reg.set(HL_ACTIVE, new (window as any).Highlight(range));
     const target = range.startContainer.parentElement;
     target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [current, matchCount, matchRevision, query, searchOpen, editing, active, draft]);
+  }, [current, matchCount, matchRevision, query, searchOpen, editing, sourceView, active, draft]);
 
   const goNext = useCallback(() => {
     if (matchCount === 0) return;
@@ -638,6 +708,12 @@ export default function MarkdownViewer({
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && !editing && !pdfMode) {
         const target = e.target;
         const nativeSelectionTarget = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable);
+        if (!nativeSelectionTarget && virtualTextPreview && editorRef.current) {
+          editorRef.current.selectAll();
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
         const root = contentRootRef.current;
         if (!nativeSelectionTarget && root) {
           const selection = window.getSelection();
@@ -657,9 +733,10 @@ export default function MarkdownViewer({
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [active, compactReading, compactTocOpen, editing, pdfMode, searchOpen, openSearch, closeSearch]);
+  }, [active, compactReading, compactTocOpen, editing, pdfMode, virtualTextPreview, searchOpen, openSearch, closeSearch]);
 
   const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
     if (e.key === 'Enter') {
       e.preventDefault();
       if (e.shiftKey) goPrev();
@@ -907,7 +984,7 @@ export default function MarkdownViewer({
   }, [canShowToc, editing, isVisible, splitPreview, visibleDoc.html, zoom]);
 
   if (loading) return <div className="markdown-viewer-loading">{t(lang, "loading")}</div>;
-  if (error) return <div className="markdown-viewer-error">{error}</div>;
+  if (error) return <div className="markdown-viewer-error">{documentErrorMessage(error, lang)}</div>;
 
   return (
     <div
@@ -934,12 +1011,12 @@ export default function MarkdownViewer({
           max={MAX_ZOOM}
           step={0.05}
           defaultValue={zoom}
-          aria-label="Document zoom"
-          title={`Zoom ${Math.round(zoom * 100)}%`}
+          aria-label={t(lang, 'documentZoom')}
+          title={t(lang, 'documentZoomPercent', { percent: String(Math.round(zoom * 100)) })}
           onPointerDown={onZoomPointerDown}
           onInput={(e) => {
             const next = Number(e.currentTarget.value);
-            e.currentTarget.title = `Zoom ${Math.round(next * 100)}%`;
+            e.currentTarget.title = t(lang, 'documentZoomPercent', { percent: String(Math.round(next * 100)) });
             previewZoom(next);
           }}
           onChange={(e) => {
@@ -952,8 +1029,8 @@ export default function MarkdownViewer({
           type="button"
           className="markdown-viewer-zoom-reset"
           onClick={() => setZoom(1)}
-          title={lang === 'zh-CN' ? '重置缩放（100%）' : 'Reset zoom (100%)'}
-          aria-label={lang === 'zh-CN' ? '重置文档缩放' : 'Reset document zoom'}
+          title={t(lang, 'documentZoomResetTitle')}
+          aria-label={t(lang, 'documentZoomReset')}
         >{Math.round(zoom * 100)}%</button>}
         {!pdfMode && <button
           type="button"
@@ -982,43 +1059,43 @@ export default function MarkdownViewer({
           <button
             onClick={() => setSplitPreview((v) => !v)}
             className={clsx('markdown-viewer-tbtn', splitPreview && 'active')}
-            title="Split preview"
+            title={t(lang, 'documentSplitPreview')}
           >
             <Columns2 size={15} />
           </button>
         )}
         {jsonMode && editing && (
-          <button onClick={formatJson} className="markdown-viewer-tbtn" title={t(lang, 'formatJson')}>
+          <button onClick={formatJson} className="markdown-viewer-tbtn" disabled={formatting || saving} title={t(lang, 'formatJson')}>
             <Braces size={15} />
           </button>
         )}
         {pdfMode ? (
           <>
-            <button onClick={loadFile} className="markdown-viewer-tbtn" title="Refresh">
+            <button onClick={loadFile} className="markdown-viewer-tbtn" title={t(lang, 'refresh')}>
               <RefreshCw size={15} />
             </button>
-            <button onClick={onClose} className="markdown-viewer-tbtn" title="Close">
+            <button onClick={onClose} className="markdown-viewer-tbtn" title={t(lang, 'close')}>
               <X size={15} />
             </button>
           </>
         ) : editing ? (
           <>
-            <button onClick={save} className="markdown-viewer-tbtn" disabled={saving || jsonValidation?.valid === false} title="Save (Ctrl+S)">
+            <button onClick={save} className="markdown-viewer-tbtn" disabled={saving || formatting || jsonValidation?.valid === false} title={`${t(lang, 'save')} (Ctrl+S)`}>
               <Save size={15} />
             </button>
-            <button onClick={cancelEdit} className="markdown-viewer-tbtn" title="Cancel">
+            <button onClick={cancelEdit} className="markdown-viewer-tbtn" disabled={saving} title={t(lang, 'cancel')}>
               <X size={15} />
             </button>
           </>
         ) : (
           <>
-            <button onClick={startEdit} className="markdown-viewer-tbtn" title="Edit">
+            <button onClick={startEdit} className="markdown-viewer-tbtn" title={t(lang, 'documentEdit')}>
               <Pencil size={15} />
             </button>
-            <button onClick={loadFile} className="markdown-viewer-tbtn" title="Refresh">
+            <button onClick={loadFile} className="markdown-viewer-tbtn" title={t(lang, 'refresh')}>
               <RefreshCw size={15} />
             </button>
-            <button onClick={onClose} className="markdown-viewer-tbtn" title="Close">
+            <button onClick={onClose} className="markdown-viewer-tbtn" title={t(lang, 'close')}>
               <X size={15} />
             </button>
           </>
@@ -1039,10 +1116,10 @@ export default function MarkdownViewer({
           <span className="markdown-search-count">
             {matchCount ? `${current + 1}/${matchCount}` : (query ? '0/0' : '')}
           </span>
-          <button className="markdown-viewer-tbtn" onClick={goPrev} disabled={!matchCount} title="Previous (Shift+Enter)">
+          <button className="markdown-viewer-tbtn" onClick={goPrev} disabled={!matchCount} title={t(lang, 'documentPreviousMatch')}>
             <ChevronUp size={15} />
           </button>
-          <button className="markdown-viewer-tbtn" onClick={goNext} disabled={!matchCount} title="Next (Enter)">
+          <button className="markdown-viewer-tbtn" onClick={goNext} disabled={!matchCount} title={t(lang, 'documentNextMatch')}>
             <ChevronDown size={15} />
           </button>
           <button className="markdown-viewer-tbtn" onClick={closeSearch} title={t(lang, "closeEsc")}>
@@ -1087,24 +1164,28 @@ export default function MarkdownViewer({
           <div className="pdf-viewer-content">
             {pdfURL && <iframe className="pdf-viewer-frame" src={pdfURL} title={displayPath || 'PDF document'} />}
           </div>
-        ) : editing ? (
-          <div className={clsx('markdown-viewer-edit-shell', splitPreview && 'markdown-viewer-edit-split')}>
+        ) : sourceView ? (
+          <div className={clsx('markdown-viewer-edit-shell', !editing && 'text-document-virtual', editing && splitPreview && 'markdown-viewer-edit-split')}>
             <Suspense fallback={<div className="markdown-viewer-loading">{t(lang, 'loading')}</div>}>
               <SourceEditor
+                key={editing ? 'edit' : 'preview'}
                 handleRef={attachEditor}
-                value={draft}
+                value={editing ? draft : content}
+                readOnly={!editing}
+                ariaLabel={!editing ? t(lang, 'documentReadOnlyPreview') : undefined}
                 onChange={(next) => {
+                  if (!editing) return;
                   draftRef.current = next;
                   setDraft(next);
                 }}
                 onSave={save}
-                onStats={setEditorStats}
-                onScroll={syncSplitPreviewScroll}
+                onStats={editing ? setEditorStats : undefined}
+                onScroll={editing ? syncSplitPreviewScroll : undefined}
                 // The base font size is scaled by the same zoom slider the
                 // preview uses, so both modes track one control.
-                fontSize={Math.round(14 * zoom)}
+                fontSize={Math.round((editing ? 14 : 13) * zoom)}
                 wrap={wrapCode}
-                mode={editorMode}
+                mode={editing ? editorMode : 'plain'}
               />
             </Suspense>
             {markdownMode && splitPreview && (
@@ -1167,7 +1248,8 @@ export default function MarkdownViewer({
               {t(lang, 'statusSelected', { count: String(editorStats.selected) })}
             </span>
           )}
-          {jsonMode && deferJsonValidation && (
+          {(formatting || saving) && <span className="source-editor-status-item" role="status">{t(lang, 'documentProcessing')}</span>}
+          {jsonMode && deferJsonValidation && !formatting && !saving && (
             <span className="source-editor-status-item">{t(lang, 'jsonValidateOnSave')}</span>
           )}
           {jsonMode && !deferJsonValidation && jsonValidation && (

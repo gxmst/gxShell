@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,25 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 )
+
+type backupTestSecrets struct {
+	secretStore
+	passwords   map[string]string
+	passphrases map[string]string
+	readErr     error
+}
+
+func (s *backupTestSecrets) GetPassword(id string) (string, error) {
+	return s.passwords[id], s.readErr
+}
+
+func (s *backupTestSecrets) GetPassphrase(id string) (string, error) {
+	return s.passphrases[id], s.readErr
+}
+
+func (s *backupTestSecrets) NamedValues(string) (map[string]string, error) {
+	return nil, s.readErr
+}
 
 func backupTestApp(t *testing.T) *App {
 	t.Helper()
@@ -325,5 +345,107 @@ func TestBackupExportOmitsCredentialsAndOptionallyIncludesPrivateKeys(t *testing
 	}
 	if _, err := a.collectBackup("[]", true, false); err == nil {
 		t.Fatal("missing credential storage was ignored")
+	}
+}
+
+func TestBackupExportPreservesLegacyCredentialsUntilSecureStorageHasValues(t *testing.T) {
+	for _, tc := range []struct {
+		name                     string
+		include, remember        bool
+		passwords, passphrases   map[string]string
+		wantPassword, wantPhrase string
+		wantAI                   string
+	}{
+		{name: "legacy", include: true, remember: true, wantPassword: "legacy-password", wantPhrase: "legacy-passphrase", wantAI: "legacy-api-key"},
+		{name: "native takes precedence", include: true, remember: true, passwords: map[string]string{"source": "current-password", aiConfigSecretID: "current-api-key"}, passphrases: map[string]string{"source": "current-passphrase"}, wantPassword: "current-password", wantPhrase: "current-passphrase", wantAI: "current-api-key"},
+		{name: "partial migration", include: true, remember: true, passwords: map[string]string{"source": "current-password"}, wantPassword: "current-password", wantPhrase: "legacy-passphrase", wantAI: "legacy-api-key"},
+		{name: "credentials excluded", remember: true},
+		{name: "remember disabled", include: true, wantAI: "legacy-api-key"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := backupTestApp(t)
+			a.secrets = &backupTestSecrets{passwords: tc.passwords, passphrases: tc.passphrases}
+			profile := backupTestPayload().Profiles[0]
+			profile.AuthType, profile.RememberPassword = types.AuthPassword, tc.remember
+			profile.Password, profile.PrivateKeyPassphrase = "legacy-password", "legacy-passphrase"
+			if err := a.store.SaveProfilesPreservingSecrets([]types.Profile{profile}, map[string]bool{profile.ID: true}); err != nil {
+				t.Fatal(err)
+			}
+			settings := config.DefaultSettings()
+			settings.Ai.APIKey = "legacy-api-key"
+			if err := a.store.SaveSettings(settings); err != nil {
+				t.Fatal(err)
+			}
+			before, err := a.store.SnapshotFiles("profiles.json", "settings.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			payload, err := a.collectBackup("[]", tc.include, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := payload.Profiles[0]
+			if got.Password != tc.wantPassword || got.PrivateKeyPassphrase != tc.wantPhrase || payload.AiAPIKey != tc.wantAI {
+				t.Fatal("backup credential values do not match the export policy")
+			}
+			if payload.Settings.Ai.APIKey != "" || got.RememberPassword != (tc.include && tc.remember) {
+				t.Fatal("credentials escaped their intended backup fields")
+			}
+			after, err := a.store.SnapshotFiles("profiles.json", "settings.json")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for name, data := range before {
+				if string(after[name]) != string(data) {
+					t.Fatalf("export changed %s", name)
+				}
+			}
+			if tc.name != "legacy" {
+				return
+			}
+			plain, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			envelope, err := encryptBackup(plain, "test backup passphrase")
+			if err != nil {
+				t.Fatal(err)
+			}
+			decrypted, err := decryptBackup(envelope, "test backup passphrase")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var restored backupPayload
+			if err := json.Unmarshal(decrypted, &restored); err != nil {
+				t.Fatal(err)
+			}
+			plan, err := backupTestApp(t).planBackup(restored, "[]", "copy", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(plan.secrets) != 2 || plan.secrets[0].Text != tc.wantPassword || plan.secrets[1].Text != tc.wantPhrase {
+				t.Fatal("legacy credentials did not survive encrypted export and import planning")
+			}
+			preview, _ := json.Marshal(plan.preview)
+			for _, value := range []string{tc.wantPassword, tc.wantPhrase, tc.wantAI} {
+				if strings.Contains(string(preview), value) || strings.Contains(string(plan.after["profiles.json"]), value) {
+					t.Fatal("credentials leaked into the preview or plaintext profile configuration")
+				}
+			}
+		})
+	}
+}
+
+func TestBackupExportReportsCredentialReadFailure(t *testing.T) {
+	a := backupTestApp(t)
+	cause := errors.New("credential storage is locked")
+	a.secrets = &backupTestSecrets{readErr: cause}
+	profile := backupTestPayload().Profiles[0]
+	profile.RememberPassword, profile.Password = true, "legacy-password"
+	if err := a.store.SaveProfilesPreservingSecrets([]types.Profile{profile}, map[string]bool{profile.ID: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.collectBackup("[]", true, false); !errors.Is(err, cause) {
+		t.Fatalf("credential read failure was hidden: %v", err)
 	}
 }

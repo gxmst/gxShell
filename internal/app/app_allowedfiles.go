@@ -27,12 +27,13 @@ const maxDocumentAuthorizationBytes = 1024 * 1024
 type allowedFileSet struct {
 	mu          sync.Mutex
 	paths       map[string]bool
+	directories map[string]os.FileInfo
 	history     map[string]bool
 	historyPath string
 }
 
 func newAllowedFileSet() *allowedFileSet {
-	return &allowedFileSet{paths: map[string]bool{}, history: map[string]bool{}}
+	return &allowedFileSet{paths: map[string]bool{}, directories: map[string]os.FileInfo{}, history: map[string]bool{}}
 }
 
 func allowedFileKey(path string) string {
@@ -122,29 +123,44 @@ func (s *allowedFileSet) allow(path string) (string, error) {
 
 // allowMany authorizes explicitly opened paths and persists their history once.
 func (s *allowedFileSet) allowMany(paths []string) ([]string, error) {
-	return s.authorizeMany(paths, true)
+	return s.authorizeMany(paths, true, nil)
 }
 
 // allowSessionMany authorizes directory siblings without granting restore access
 // after a restart. Listing a document is not an explicit file-open action.
-func (s *allowedFileSet) allowSessionMany(paths []string) ([]string, error) {
-	return s.authorizeMany(paths, false)
+func (s *allowedFileSet) allowSessionMany(paths []string, directory os.FileInfo) ([]string, error) {
+	return s.authorizeMany(paths, false, directory)
 }
 
-func (s *allowedFileSet) authorizeMany(paths []string, persist bool) ([]string, error) {
+func (s *allowedFileSet) authorizeMany(paths []string, persist bool, directory os.FileInfo) ([]string, error) {
 	absPaths := make([]string, 0, len(paths))
+	directories := make(map[string]os.FileInfo)
 	for _, path := range paths {
 		abs, err := filepath.Abs(path)
 		if err != nil {
 			return nil, err
 		}
-		absPaths = append(absPaths, filepath.Clean(abs))
+		abs = filepath.Clean(abs)
+		absPaths = append(absPaths, abs)
+		dir := filepath.Dir(abs)
+		if _, exists := directories[dir]; !exists {
+			info := directory
+			if info == nil {
+				// Missing parents can still appear in explicit-open history, but
+				// cannot grant IO access until the user opens the file again.
+				info, _ = os.Stat(dir)
+			}
+			directories[dir] = info
+		}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var added []string
 	for _, abs := range absPaths {
 		key := allowedFileKey(abs)
+		if !s.paths[key] || persist {
+			s.directories[key] = directories[filepath.Dir(abs)]
+		}
 		s.paths[key] = true
 		if persist && !s.history[key] {
 			s.history[key] = true
@@ -170,6 +186,9 @@ func (s *allowedFileSet) restore(absPath string) bool {
 	if !s.history[key] && !s.paths[key] {
 		return false
 	}
+	if !s.paths[key] {
+		s.directories[key], _ = os.Stat(filepath.Dir(absPath))
+	}
 	s.paths[key] = true
 	return true
 }
@@ -180,4 +199,27 @@ func (s *allowedFileSet) contains(absPath string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.paths[allowedFileKey(absPath)]
+}
+
+// Bind IO to the directory that was authorized, not a pathname that can later
+// be replaced by a symlink/junction. Root also prevents leaf-link escapes while
+// opening, reading and renaming files; no directory handles survive the call.
+func (s *allowedFileSet) openRoot(absPath string) (*os.Root, error) {
+	s.mu.Lock()
+	key := allowedFileKey(absPath)
+	allowed, directory := s.paths[key], s.directories[key]
+	s.mu.Unlock()
+	if !allowed || directory == nil {
+		return nil, fmt.Errorf("access denied: file was not opened by the user")
+	}
+	root, err := os.OpenRoot(filepath.Dir(absPath))
+	if err != nil {
+		return nil, err
+	}
+	info, err := root.Stat(".")
+	if err != nil || !os.SameFile(directory, info) {
+		root.Close()
+		return nil, fmt.Errorf("access denied: document directory changed; open the file again")
+	}
+	return root, nil
 }

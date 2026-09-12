@@ -92,8 +92,13 @@ func validateBackup(payload *backupPayload) error {
 	if payload.Format != backupFormat {
 		return errors.New("unsupported gxShell backup")
 	}
-	if len(payload.Profiles) > 10000 || len(payload.Commands) > 10000 || len(payload.NamedSecrets) > 10000 || len(payload.KnownHosts) > 5*1024*1024 {
+	if len(payload.Profiles) > 10000 || len(payload.Commands) > 10000 || len(payload.NamedSecrets) > 10000 || len(payload.KnownHosts) > 5*1024*1024 || len(payload.ExportWarnings) > 1000 {
 		return errors.New("backup contains too many items")
+	}
+	for _, warning := range payload.ExportWarnings {
+		if len(warning) > 8192 || strings.ContainsRune(warning, 0) {
+			return errors.New("invalid backup export warning")
+		}
 	}
 	ids := map[string]bool{}
 	for i := range payload.Profiles {

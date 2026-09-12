@@ -244,6 +244,7 @@ export const terminalThemes: Record<string, any> = {
 export function drawerIcon(item: Drawer, size = 15) {
   if (item === "monitor") return <Activity size={size} />;
   if (item === "sftp") return <Folder size={size} />;
+  if (item === "documents") return <FileText size={size} />;
   if (item === "commands") return <Command size={size} />;
   if (item === "tunnels") return <ArrowRightLeft size={size} />;
   if (item === "logs") return <FileText size={size} />;

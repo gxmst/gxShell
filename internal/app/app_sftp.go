@@ -48,6 +48,9 @@ func (a *App) ReadRemoteTextFile(sessionID, remotePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := validateTextDocument(data); err != nil {
+		return "", err
+	}
 	return string(data), nil
 }
 
@@ -70,6 +73,16 @@ func (a *App) WriteRemoteTextFile(sessionID, remotePath, content string) error {
 	}
 	if len(content) > maxTextFileSize {
 		return fmt.Errorf("content too large (max 5MB)")
+	}
+	if err := validateTextDocument([]byte(content)); err != nil {
+		return err
+	}
+	current, err := a.sftp.ReadRemoteFile(sessionID, remotePath, maxTextFileSize)
+	if err != nil {
+		return err
+	}
+	if err := validateTextDocument(current); err != nil {
+		return err
 	}
 	return a.sftp.WriteRemoteFile(sessionID, remotePath, []byte(content))
 }
@@ -129,13 +142,13 @@ func (a *App) ListRemoteMarkdownFilesInDir(sessionID, remotePath string) ([]stri
 // ResolveRemoteMarkdownLink resolves a relative .md link from a remote Markdown
 // file. It mirrors local link behavior but returns a remote POSIX path.
 func (a *App) ResolveRemoteMarkdownLink(markdownPath string, href string) (string, error) {
-	return resolveRemoteMarkdownRelativePath(markdownPath, href, supportedTextFileExts())
+	return resolveRemoteMarkdownRelativePath(markdownPath, href, isRemoteSupportedTextPath)
 }
 
 // ReadRemoteMarkdownResourceDataURL resolves a relative image from a remote
 // Markdown file and returns it as a data URL for preview rendering.
 func (a *App) ReadRemoteMarkdownResourceDataURL(sessionID, markdownPath, href string) (string, error) {
-	target, err := resolveRemoteMarkdownRelativePath(markdownPath, href, supportedMarkdownImageExts())
+	target, err := resolveRemoteMarkdownRelativePath(markdownPath, href, func(p string) bool { return supportedMarkdownImageExts()[strings.ToLower(path.Ext(p))] })
 	if err != nil {
 		return "", err
 	}
@@ -199,7 +212,7 @@ func (a *App) SelectDownloadPath(defaultName string) (string, error) {
 	})
 }
 
-func resolveRemoteMarkdownRelativePath(markdownPath string, href string, allowedExts map[string]bool) (string, error) {
+func resolveRemoteMarkdownRelativePath(markdownPath string, href string, isAllowed func(string) bool) (string, error) {
 	base := cleanRemoteMarkdownPath(markdownPath)
 	if !isRemoteMarkdownPath(base) {
 		return "", fmt.Errorf("base file is not a Markdown file")
@@ -215,7 +228,7 @@ func resolveRemoteMarkdownRelativePath(markdownPath string, href string, allowed
 	if rel == "." || rel == "" || rel == ".." || strings.HasPrefix(rel, "../") {
 		return "", fmt.Errorf("path must stay inside the Markdown folder")
 	}
-	if len(allowedExts) > 0 && !allowedExts[strings.ToLower(path.Ext(rel))] {
+	if !isAllowed(rel) {
 		return "", fmt.Errorf("unsupported linked file type")
 	}
 	baseDir := path.Dir(base)
@@ -247,7 +260,7 @@ func isRemoteMarkdownPath(p string) bool {
 }
 
 func isRemoteSupportedTextPath(p string) bool {
-	return supportedTextFileExts()[strings.ToLower(path.Ext(p))]
+	return isSupportedTextName(path.Base(p))
 }
 
 func isRemoteSupportedDocumentPath(p string) bool {

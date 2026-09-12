@@ -34,6 +34,15 @@ function deferred<T>() {
 }
 
 describe('MarkdownViewer deferred rendering', () => {
+  it('shows HTML documents as source text without executing or rendering their markup', async () => {
+    const source = '<script>window.untrusted = true</script><h1>HTML source</h1>';
+    appMocks.readLocalFile.mockResolvedValue(source);
+    const { container } = render(<MarkdownViewer active filePath='/docs/index.html' onClose={vi.fn()} />);
+    await waitFor(() => expect(container.querySelector('.text-document')).toHaveTextContent(source));
+    expect(container.querySelector('script')).toBeNull();
+    expect(container.querySelector('.text-document h1')).toBeNull();
+    expect(rendererMocks.buildMarkdown).not.toHaveBeenCalled();
+  });
   afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
     appMocks.readLocalFile.mockReset();

@@ -34,7 +34,7 @@ describe("workspace restoration lifecycle", () => {
     const { result } = renderHook(useHarness);
     act(() => { result.current.sessions.setTabs([server("a"), server("b")]); result.current.sessions.setActiveTab("session-a"); });
     const workspace = captureWorkspace("Files", [document], profiles, document.id, null);
-    let opening!: Promise<string[]>;
+    let opening!: Promise<string[] | null>;
     act(() => { opening = result.current.manager.open(workspace); });
     act(() => result.current.sessions.setActiveTab("session-b"));
     await act(async () => { resolveFiles(["/notes.md"]); await opening; });
@@ -47,7 +47,7 @@ describe("workspace restoration lifecycle", () => {
     const { result } = renderHook(useHarness);
     act(() => result.current.sessions.setTabs([document]));
     const workspace = captureWorkspace("Servers", [server("a"), server("b"), document], profiles, "session-b", { left: "session-a", right: "session-b", direction: "vertical", ratio: 0.35 });
-    let opening!: Promise<string[]>;
+    let opening!: Promise<string[] | null>;
     act(() => { opening = result.current.manager.open(workspace); });
     await waitFor(() => expect(result.current.manager.secretPrompt?.profile.id).toBe("a"));
     await act(async () => result.current.manager.secretPrompt!.submit("one", ""));
@@ -63,7 +63,7 @@ describe("workspace restoration lifecycle", () => {
   it("cancels pending authentication without opening the next server", async () => {
     const { result } = renderHook(useHarness);
     const workspace = captureWorkspace("Servers", [server("a"), server("b")], profiles, "session-a", null);
-    let opening!: Promise<string[]>;
+    let opening!: Promise<string[] | null>;
     act(() => { opening = result.current.manager.open(workspace); });
     await waitFor(() => expect(result.current.manager.secretPrompt).not.toBeNull());
     await act(async () => { result.current.manager.cancel(); await opening; });
@@ -77,7 +77,7 @@ describe("workspace restoration lifecycle", () => {
     const { result } = renderHook(useHarness);
     const tabs = ["first", "second"].map((instanceId) => ({ ...server("a"), id: `session-${instanceId}`, instanceId }));
     const workspace = captureWorkspace("Instances", tabs, profiles, tabs[1].id, { left: tabs[0].id, right: tabs[1].id, direction: "horizontal", ratio: 0.5 });
-    let opening!: Promise<string[]>;
+    let opening!: Promise<string[] | null>;
     act(() => { opening = result.current.manager.open(workspace); });
     await waitFor(() => expect(result.current.manager.secretPrompt).not.toBeNull());
     await act(async () => { await result.current.manager.secretPrompt!.submit("one", ""); });
@@ -94,7 +94,7 @@ describe("workspace restoration lifecycle", () => {
     const { result } = renderHook(useHarness);
     act(() => result.current.sessions.setTabs([{ ...server("a"), state: "reconnecting" }]));
     const workspace = captureWorkspace("Servers", [server("a"), server("b")], profiles, "session-a", { left: "session-a", right: "session-b", direction: "horizontal", ratio: 0.4 });
-    let opening!: Promise<string[]>;
+    let opening!: Promise<string[] | null>;
     act(() => { opening = result.current.manager.open(workspace); });
     await waitFor(() => expect(result.current.manager.secretPrompt?.profile.id).toBe("b"));
     act(() => bridge.events.get("terminal:cli-session-replaced")?.({ oldSessionId: "session-a", session: new types.SessionInfo({ id: "replacement-a", profileId: "a", state: "connected" }) }));

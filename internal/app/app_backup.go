@@ -27,7 +27,8 @@ import (
 
 const (
 	backupFormat        = "gxShell-backup-v1"
-	backupKDFRounds     = 210000
+	backupKDFRounds     = 600000
+	backupLegacyRounds  = 210000
 	backupSaltBytes     = 16
 	backupMaxFileBytes  = 50 * 1024 * 1024
 	backupMaxPlainBytes = 30 * 1024 * 1024
@@ -45,6 +46,7 @@ type backupPayload struct {
 	AiAPIKey       string                  `json:"aiApiKey,omitempty"`
 	PrivateKeys    map[string][]byte       `json:"privateKeys,omitempty"`
 	NamedSecrets   map[string]string       `json:"namedSecrets,omitempty"`
+	ExportWarnings []string                `json:"exportWarnings,omitempty"`
 }
 
 type backupEnvelope struct {
@@ -57,25 +59,34 @@ type backupEnvelope struct {
 }
 
 type backupPreview struct {
-	Token           string         `json:"token"`
-	CreatedAt       time.Time      `json:"createdAt"`
-	Profiles        int            `json:"profiles"`
-	Commands        int            `json:"commands"`
-	WorkspacesAdded int            `json:"workspacesAdded"`
-	Skipped         int            `json:"skipped"`
-	PrivateKeys     int            `json:"privateKeys"`
-	NamedSecrets    int            `json:"namedSecrets"`
-	KnownHosts      int            `json:"knownHosts"`
-	Settings        bool           `json:"settings"`
-	Workspaces      string         `json:"workspaces"`
-	Warnings        []string       `json:"warnings"`
-	Changes         []backupChange `json:"changes"`
+	Token           string                `json:"token"`
+	CreatedAt       time.Time             `json:"createdAt"`
+	Profiles        int                   `json:"profiles"`
+	Commands        int                   `json:"commands"`
+	WorkspacesAdded int                   `json:"workspacesAdded"`
+	Skipped         int                   `json:"skipped"`
+	PrivateKeys     int                   `json:"privateKeys"`
+	NamedSecrets    int                   `json:"namedSecrets"`
+	KnownHosts      int                   `json:"knownHosts"`
+	Settings        bool                  `json:"settings"`
+	AIChanges       []backupSettingChange `json:"aiChanges,omitempty"`
+	Workspaces      string                `json:"workspaces"`
+	Warnings        []string              `json:"warnings"`
+	Changes         []backupChange        `json:"changes"`
 }
 
 type backupChange struct {
 	Kind   string `json:"kind"`
 	Name   string `json:"name"`
 	Action string `json:"action"`
+}
+
+// Only these non-secret settings enter the preview. Never serialize AiConfig,
+// which may still contain an API key awaiting migration to secure storage.
+type backupSettingChange struct {
+	Field  string `json:"field"`
+	Before string `json:"before"`
+	After  string `json:"after"`
 }
 
 type backupPlan struct {
@@ -108,42 +119,43 @@ func readBackupFile(path string, limit int64) ([]byte, error) {
 	return data, err
 }
 
-func (a *App) ExportBackup(passphrase, workspaces string, includeSecrets, includePrivateKeys bool) (string, error) {
+func (a *App) ExportBackup(passphrase, workspaces string, includeSecrets, includePrivateKeys bool) (types.BackupExportResult, error) {
+	result := types.BackupExportResult{Warnings: []string{}}
 	if err := validateBackupPassphrase(passphrase); err != nil {
-		return "", err
+		return result, err
 	}
 	if (includeSecrets || includePrivateKeys) && !a.confirmEncryptedSecretExport() {
-		return "", nil
+		return result, nil
 	}
 	payload, err := a.collectBackup(workspaces, includeSecrets, includePrivateKeys)
 	if err != nil {
-		return "", err
+		return result, err
 	}
 	plain, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return result, err
 	}
 	envelope, err := encryptBackup(plain, passphrase)
 	if err != nil {
-		return "", err
+		return result, err
 	}
 	data, err := json.Marshal(envelope)
 	if err != nil {
-		return "", err
+		return result, err
 	}
 	if len(data) > backupMaxFileBytes {
-		return "", errors.New("backup exceeds 50 MiB")
+		return result, errors.New("backup exceeds 50 MiB")
 	}
 	filePath, err := runtime.SaveFileDialog(a.ctx.Get(), runtime.SaveDialogOptions{Title: "Export gxShell backup", DefaultFilename: "gxShell-backup-" + time.Now().Format("20060102") + ".gxbak", Filters: backupFileFilters()})
 	if err != nil || filePath == "" {
-		return filePath, err
+		return result, err
 	}
 	if filepath.Ext(filePath) == "" {
 		filePath += ".gxbak"
 	}
 	file, err := os.CreateTemp(filepath.Dir(filePath), ".gxshell-backup-*")
 	if err != nil {
-		return "", err
+		return result, err
 	}
 	tmp := file.Name()
 	defer os.Remove(tmp)
@@ -152,12 +164,14 @@ func (a *App) ExportBackup(passphrase, workspaces string, includeSecrets, includ
 	syncErr := file.Sync()
 	closeErr := file.Close()
 	if err := errors.Join(modeErr, writeErr, syncErr, closeErr); err != nil {
-		return "", err
+		return result, err
 	}
 	if err := os.Rename(tmp, filePath); err != nil {
-		return "", err
+		return result, err
 	}
-	return filePath, nil
+	result.Path = filePath
+	result.Warnings = append(result.Warnings, payload.ExportWarnings...)
+	return result, nil
 }
 
 func (a *App) collectBackup(workspaces string, includeSecrets, includePrivateKeys bool) (backupPayload, error) {
@@ -189,17 +203,23 @@ func (a *App) collectBackup(workspaces string, includeSecrets, includePrivateKey
 	}
 	settings = config.NormalizeSettings(settings)
 	known := files["known_hosts"]
-	payload := backupPayload{Format: backupFormat, CreatedAt: time.Now().UTC(), IncludesSecret: includeSecrets, Profiles: profiles, Settings: settings, Commands: commands, KnownHosts: string(known), Workspaces: workspaces, PrivateKeys: map[string][]byte{}}
+	exportedWorkspaces, warnings, err := prepareBackupWorkspaces(workspaces, profiles)
+	if err != nil {
+		return backupPayload{}, err
+	}
+	payload := backupPayload{Format: backupFormat, CreatedAt: time.Now().UTC(), IncludesSecret: includeSecrets, Profiles: profiles, Settings: settings, Commands: commands, KnownHosts: string(known), Workspaces: exportedWorkspaces, PrivateKeys: map[string][]byte{}, ExportWarnings: warnings}
 	payload.Settings.Ai.APIKey = ""
 	for i := range payload.Profiles {
 		profile := &payload.Profiles[i]
 		profile.CliTrustUntil = time.Time{}
-		profile.Password, profile.PrivateKeyPassphrase = "", ""
 		if includeSecrets && profile.RememberPassword {
+			// Failed startup migrations retain legacy credentials in the config.
+			// loadProfileSecrets replaces them only when secure storage has a value.
 			if err := a.loadProfileSecrets(profile); err != nil {
 				return backupPayload{}, fmt.Errorf("read credentials for %s: %w", profile.Name, err)
 			}
 		} else {
+			profile.Password, profile.PrivateKeyPassphrase = "", ""
 			profile.RememberPassword = false
 		}
 		if includePrivateKeys && profile.AuthType == types.AuthPrivateKey {
@@ -217,6 +237,9 @@ func (a *App) collectBackup(workspaces string, includeSecrets, includePrivateKey
 		payload.AiAPIKey, err = a.secrets.GetPassword(aiConfigSecretID)
 		if err != nil {
 			return backupPayload{}, err
+		}
+		if payload.AiAPIKey == "" {
+			payload.AiAPIKey = settings.Ai.APIKey
 		}
 		payload.NamedSecrets, err = a.secrets.NamedValues(cliSecretNamespace)
 		if err != nil {
@@ -382,7 +405,10 @@ func encryptBackup(plain []byte, passphrase string) (backupEnvelope, error) {
 }
 
 func decryptBackup(envelope backupEnvelope, passphrase string) ([]byte, error) {
-	if envelope.Format != backupFormat || envelope.KDF != "PBKDF2-HMAC-SHA256" || envelope.Iterations != backupKDFRounds {
+	// Keep legacy exports readable when the write cost increases. A bounded
+	// allowlist also rejects hostile iteration counts before doing any KDF work.
+	supportedRounds := envelope.Iterations == backupKDFRounds || envelope.Iterations == backupLegacyRounds
+	if envelope.Format != backupFormat || envelope.KDF != "PBKDF2-HMAC-SHA256" || !supportedRounds {
 		return nil, errors.New("unsupported backup encryption")
 	}
 	salt, err := base64.RawStdEncoding.DecodeString(envelope.Salt)

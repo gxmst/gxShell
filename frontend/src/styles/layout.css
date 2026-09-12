@@ -11,8 +11,8 @@
   flex: 1;
   min-height: 0;
   min-width: 0;
-  /* Always transition so expand + collapse both animate smoothly. */
-  transition: grid-template-columns var(--dur-sidebar, 320ms) var(--ease-out);
+  /* Commit geometry once. Animating grid tracks refits every xterm/WebGL pane
+     and reflows document text on each frame; the panel fades in separately. */
 }
 
 .app-shell[data-collapsed="true"] .workspace {
@@ -22,13 +22,6 @@
   grid-template-columns: var(--rail-width, 48px) minmax(0, 1fr);
 }
 
-/* Width changes are animated everywhere except under the hand that is making
-   them: a 320ms ease on every pointer move turns a drag into a rubber band. */
-.app-shell[data-resizing="true"] .workspace,
-.app-shell[data-resizing="true"] .left-rail > .side-content {
-  transition: none;
-}
-
 /* A drag that outruns the panel edge must not select text or leave the cursor
    flicking between arrows on whatever it passes over. */
 .app-shell[data-resizing="true"] {
@@ -36,7 +29,9 @@
   user-select: none;
 }
 
-/* Clip the rail and slide it out instead of display:none (which cannot animate).
+/* Clip the panel during collapse without making the sidebar scrollable.
+   overflow:hidden lets focus / scrollIntoView pan the whole sidebar, moving the
+   activity rail out of view when a document opens in the collapsed panel.
    NOTE: Do NOT put transform / will-change:transform on this node — it creates a
    containing block for position:fixed descendants and used to trap floating
    transfer panels inside the half-width sidebar. Floats/modals now portal to
@@ -45,12 +40,8 @@
    anchors .rail-resizer to the panel's trailing edge. */
 .left-rail {
   position: relative;
-  overflow: hidden;
+  overflow: clip;
   min-width: 0;
-  transition:
-    opacity var(--dur-sidebar, 320ms) var(--ease),
-    border-color var(--dur-sidebar, 320ms) var(--ease),
-    box-shadow var(--dur-sidebar, 320ms) var(--ease);
 }
 
 /* The resize grip. It sits on top of the rail's own border-right rather than
@@ -79,12 +70,18 @@
 }
 
 .app-shell[data-collapsed="true"] .side-content {
+  visibility: hidden;
   opacity: 0;
   pointer-events: none;
 }
 
-/* Keep inner content at full panel width while the rail clips — prevents
-   squashed layout and distorted wrapping during the collapse animation. */
+.app-shell[data-collapsed="false"] .left-rail > .side-content {
+  /* Transition only after a collapsed state; initial mount stays fully visible. */
+  transition: opacity 120ms ease-out;
+}
+
+/* Keep hidden content at the shared panel width so collapse does not squash
+   its layout or wrap the document list into the activity rail. */
 .left-rail > .side-content {
   width: var(--sidebar-panel-width, 328px);
   min-width: var(--sidebar-panel-width, 328px);
@@ -100,14 +97,8 @@
    actually observed, fix it on the Go side (WM_NCCALCSIZE / window options)
    where the real frame metrics are available, not with padding here. */
 
-/* Narrow windows used to get a tighter panel from two media queries here. App
-   now sets --sidebar-panel-width inline as clamp(240px, <chosen>, 32vw), which
-   does the same job continuously instead of in two steps — and has to, because
-   an inline custom property outranks any media query in this file, so the old
-   rules would have been dead the moment the width became draggable. The 32vw
-   ceiling is what keeps the terminal primary on a small window; the fallbacks
-   below the inline value still read 328px for anything rendered before App
-   mounts. */
+/* App computes the shared effective panel width once from the saved preference
+   and viewport. Shell, panel content and the resize grip all use that value. */
 
 .panel,
 .command-row,

@@ -107,6 +107,30 @@ describe('useMarkdownTabs sibling loading', () => {
     expect(appMocks.listRemote).toHaveBeenCalledWith('session-1', '/srv/notes.txt');
   });
 
+  it('reuses a sibling listing and refreshes it on request', async () => {
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await result.current.documents.openMarkdownFile('/docs/first.md'); });
+    await act(async () => { await result.current.documents.openMarkdownFile('/docs/second.md'); });
+    expect(appMocks.listLocal).toHaveBeenCalledTimes(1);
+    await act(async () => { await result.current.documents.refreshMarkdownSiblings(); });
+    expect(appMocks.listLocal).toHaveBeenCalledTimes(2);
+    expect(appMocks.listLocal).toHaveBeenLastCalledWith('/docs/second.md');
+  });
+
+  it('hides the previous server listing while the next server is still loading', async () => {
+    let finish!: (files: string[]) => void;
+    appMocks.listRemote.mockResolvedValueOnce(['/srv/server-a.txt']).mockImplementationOnce(() => new Promise<string[]>((resolve) => { finish = resolve; }));
+    const { result } = renderHook(() => useHarness());
+    await act(async () => { await result.current.documents.openRemoteMarkdownFile('server-a', '/srv/notes.txt'); });
+    expect(result.current.documents.markdownSiblings).toEqual(['/srv/server-a.txt']);
+    await act(async () => { await result.current.documents.openRemoteMarkdownFile('server-b', '/srv/notes.txt'); });
+    expect(result.current.documents.markdownSiblings).toEqual([]);
+    expect(result.current.documents.markdownSiblingsBusy).toBe(true);
+    await act(async () => { finish(['/srv/server-b.txt']); });
+    expect(result.current.documents.markdownSiblings).toEqual(['/srv/server-b.txt']);
+    expect(result.current.documents.markdownSiblingsBusy).toBe(false);
+  });
+
   it('ignores an older directory response after the active document changes', async () => {
     let resolveFirst!: (paths: string[]) => void;
     const first = new Promise<string[]>((resolve) => { resolveFirst = resolve; });

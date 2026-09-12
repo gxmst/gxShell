@@ -82,8 +82,9 @@ export function useNamedWorkspaces(options: { sessions: ReturnType<typeof useSes
     setSecretPrompt(null);
   }, []);
 
-  const open = useCallback(async (workspace: NamedWorkspace): Promise<string[]> => {
-    if (running.current || importing.current) return [];
+  const open = useCallback(async (workspace: NamedWorkspace): Promise<string[] | null> => {
+    // A skipped reentrant call is not a successfully completed restoration.
+    if (running.current || importing.current) return null;
     running.current = true;
     const token = ++operation.current;
     const revision = current.current.sessions.beginFocusRequest();

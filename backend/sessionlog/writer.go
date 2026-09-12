@@ -30,6 +30,7 @@ type Writer struct {
 	closed                         bool
 	err                            error
 	onError                        func(error)
+	onClosed                       func(*Writer)
 	dir, prefix, day               string
 	settings                       types.SessionLogSettings
 	file                           *os.File
@@ -39,6 +40,10 @@ type Writer struct {
 }
 
 func New(dir, name string, settings types.SessionLogSettings, onError func(error)) (*Writer, error) {
+	return newWriter(dir, name, settings, onError, nil)
+}
+
+func newWriter(dir, name string, settings types.SessionLogSettings, onError func(error), onClosed func(*Writer)) (*Writer, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
@@ -52,7 +57,7 @@ func New(dir, name string, settings types.SessionLogSettings, onError func(error
 		name = name[:48]
 	}
 	settings = config.NormalizeSessionLog(settings)
-	w := &Writer{dir: dir, prefix: name + "-" + types.NewID("log"), settings: settings, queue: make(chan chunk, 64), done: make(chan struct{}), onError: onError, now: time.Now, maxFile: int64(settings.MaxFileMB) * 1024 * 1024, maxTotal: int64(settings.MaxSessionMB) * 1024 * 1024}
+	w := &Writer{dir: dir, prefix: name + "-" + types.NewID("log"), settings: settings, queue: make(chan chunk, 64), done: make(chan struct{}), onError: onError, onClosed: onClosed, now: time.Now, maxFile: int64(settings.MaxFileMB) * 1024 * 1024, maxTotal: int64(settings.MaxSessionMB) * 1024 * 1024}
 	if err := w.rotate(w.now()); err != nil {
 		return nil, err
 	}
@@ -153,6 +158,9 @@ func (w *Writer) run() {
 	defer func() {
 		if w.file != nil {
 			w.fail(w.file.Close())
+		}
+		if w.onClosed != nil {
+			w.onClosed(w)
 		}
 	}()
 	type streamState struct {
