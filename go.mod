@@ -5,7 +5,7 @@ go 1.26.8
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/charmbracelet/x/ansi v0.10.1
-	github.com/charmbracelet/x/xpty v0.1.3
+	github.com/charmbracelet/x/xpty v0.1.4
 	github.com/danieljoos/wincred v1.2.3
 	github.com/getlantern/systray v1.2.2
 	github.com/pkg/sftp v1.13.10
@@ -19,9 +19,8 @@ require (
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
-	github.com/charmbracelet/x/conpty v0.1.1 // indirect
-	github.com/charmbracelet/x/errors v0.0.0-20240508181413-e8d8b6e2de86 // indirect
-	github.com/charmbracelet/x/term v0.2.1 // indirect
+	github.com/charmbracelet/x/conpty v0.2.0 // indirect
+	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/creack/pty v1.1.24 // indirect
 	github.com/getlantern/context v0.0.0-20190109183933-c447772a6520 // indirect
