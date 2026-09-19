@@ -40,6 +40,9 @@ release:
 Get-FileHash .\gxShell-v<version>-windows-amd64.zip -Algorithm SHA256
 ```
 
+On Git Bash, WSL, Linux, or macOS, you can verify the same file with
+`sha256sum -c SHA256SUMS.txt`.
+
 ## Highlights
 
 - Local CLI and HTTP API that let scripts and AI agents work on your servers through the app, with alias-only targeting, native approvals, expiring trust, and `secret://` references that keep credentials out of prompts and process arguments.
