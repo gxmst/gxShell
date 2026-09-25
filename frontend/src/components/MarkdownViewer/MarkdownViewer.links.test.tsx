@@ -137,6 +137,31 @@ describe('MarkdownViewer link clicks', () => {
     }
   });
 
+  it('scrolls to a heading whose slug would clobber a DOM property', async () => {
+    // `## Scripts` is rendered with `id="md-scripts"` because DOMPurify drops a
+    // bare `id="scripts"`; the plain slug survives in data-md-heading. Both the
+    // heading's own anchor and a hand-written `[x](#scripts)` link address the
+    // heading by slug, so the click has to resolve through that attribute.
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function scrollIntoView(this: Element) { scrolled.push(this); };
+    try {
+      const { container } = await renderWithHtml(
+        '<h2 id="md-scripts" data-md-heading="scripts"><a class="md-heading-anchor" href="#scripts">#</a>Scripts</h2><p><a href="#scripts">jump</a></p>',
+      );
+      const heading = container.querySelector('h2')!;
+      const link = await waitFor(() => {
+        const found = container.querySelector('p a[href="#scripts"]');
+        expect(found).not.toBeNull();
+        return found!;
+      });
+      expect(click(link)).toBe(false);
+      expect(scrolled).toContain(heading);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
   it('does not navigate even when a fragment has no matching element', async () => {
     // Previously this branch returned without preventing the default, so the
     // WebView followed the href and the app was replaced by the anchor URL.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildMarkdown, sanitizeMermaidSVG, stripAnimationKeyframes } from './markdownRenderer';
+import { findHeadingElement } from '../../utils/markdownHeadings';
 import workflowMarkdown from '../../test/fixtures/mermaid-workflows.md?raw';
 
 describe('markdownRenderer', () => {
@@ -62,6 +63,35 @@ describe('markdownRenderer', () => {
         }
       }
     }
+  });
+
+  // A heading whose slug is a property of `document` (`## Scripts`) used to
+  // lose its id to DOMPurify's clobbering guard, so the outline entry and any
+  // hand-written `[jump](#scripts)` link scrolled nowhere. The renderer now
+  // prefixes the DOM id and keeps the plain slug in data-md-heading.
+  it('keeps a heading whose slug would clobber a DOM property addressable', () => {
+    const names = ['Scripts', 'Title', 'Name', 'Body', 'Location', 'Images', 'Forms', 'Cookie', 'Length', 'Attributes', 'Open', 'Close', 'Head', 'Children', 'Style'];
+    const rendered = buildMarkdown(names.map((name) => `## ${name}`).join('\n\n'));
+    const root = document.createElement('div');
+    root.innerHTML = rendered.html;
+
+    for (const name of names) {
+      const slug = name.toLowerCase();
+      const heading = root.querySelector<HTMLElement>(`[data-md-heading="${slug}"]`);
+      expect(heading, `${name} lost its data-md-heading`).not.toBeNull();
+      expect(heading!.id, `${name} lost its DOM id`).toBe(`md-${slug}`);
+      expect(findHeadingElement(root, slug), `${name} cannot be resolved by slug`).toBe(heading);
+      // The heading's own anchor carries the slug, which is what a
+      // hand-written fragment and the outline both use.
+      expect(heading!.querySelector('a.md-heading-anchor')?.getAttribute('href')).toBe(`#${slug}`);
+      expect(rendered.toc.some((item) => item.id === slug)).toBe(true);
+    }
+
+    // Why the prefix is needed: DOMPurify drops a bare clobbering id, so a
+    // plain `#scripts` lookup finds nothing. Should this ever start passing,
+    // the sanitizer changed and the prefix is merely belt-and-braces — every
+    // assertion above still holds.
+    expect(root.querySelector('#scripts')).toBeNull();
   });
 
   it('still renders the Markdown that needs those tags', () => {

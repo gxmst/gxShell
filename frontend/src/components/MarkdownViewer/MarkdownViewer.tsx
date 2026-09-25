@@ -26,6 +26,7 @@ import { hasActiveOverlay } from '../../utils/overlayManager';
 import { MermaidDiagrams } from './MermaidDiagrams';
 import { findPreviewRanges, findTextMatches, MAX_SEARCH_MATCHES } from './previewSearch';
 import { useReadingPosition } from './useReadingPosition';
+import { findHeadingElement, headingSlugOf } from '../../utils/markdownHeadings';
 import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime';
 import '../../styles/markdown-viewer.css';
 
@@ -105,10 +106,6 @@ function clearHighlights() {
   if (!reg) return;
   reg.delete(HL_ALL);
   reg.delete(HL_ACTIVE);
-}
-
-function cssEscape(value: string) {
-  return (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(value) : value.replace(/"/g, '\\"');
 }
 
 export default function MarkdownViewer({
@@ -887,7 +884,10 @@ export default function MarkdownViewer({
       const fragment = anchor.getAttribute('href')?.slice(1) || '';
       let id = fragment;
       try { id = decodeURIComponent(fragment); } catch { /* Handwritten anchors may contain a literal %. */ }
-      const el = contentRootRef.current?.querySelector<HTMLElement>(`#${cssEscape(id)}`);
+      // Resolved by slug, not by a bare `#id` selector: a heading whose slug
+      // is a DOM property name (`## Scripts`) has a prefixed DOM id, and this
+      // is also the path a hand-written `[jump](#scripts)` link takes.
+      const el = findHeadingElement(contentRootRef.current, id);
       el?.scrollIntoView({ block: 'start', behavior: 'smooth' });
       return;
     }
@@ -936,7 +936,7 @@ export default function MarkdownViewer({
       editorRef.current?.revealRange(heading.from, heading.from);
       setActiveHeading(id);
     } else {
-      const el = contentRootRef.current?.querySelector<HTMLElement>(`#${cssEscape(id)}`);
+      const el = findHeadingElement(contentRootRef.current, id);
       el?.scrollIntoView({ block: 'start', behavior: 'smooth' });
     }
     if (compactReading) setCompactTocOpen(false);
@@ -1092,7 +1092,9 @@ export default function MarkdownViewer({
     let headings: Array<{ id: string; top: number }> = [];
     const measureHeadings = () => {
       headings = Array.from(root.querySelectorAll<HTMLElement>('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]'))
-        .map((heading) => ({ id: heading.id, top: heading.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop }));
+        // The slug, not the prefixed DOM id: `activeHeading` is compared
+        // against the outline entries, which are keyed by slug.
+        .map((heading) => ({ id: headingSlugOf(heading), top: heading.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop }));
     };
     const updateActiveHeading = () => {
       frame = 0;

@@ -16,6 +16,7 @@ import typescript from 'highlight.js/lib/languages/typescript';
 import xml from 'highlight.js/lib/languages/xml';
 import yaml from 'highlight.js/lib/languages/yaml';
 import { sanitizeRenderedHtml } from '../../utils/sanitizeHtml';
+import { headingDomId } from '../../utils/markdownHeadings';
 
 export type TocItem = { id: string; text: string; depth: number };
 export type RenderedMarkdown = { html: string; toc: TocItem[] };
@@ -128,7 +129,13 @@ export function buildMarkdown(markdown: string): RenderedMarkdown {
     const id = slugify(rawText, seen);
     toc.push({ id, text: rawText || id, depth });
     const inner = this.parser.parseInline(token.tokens || []);
-    return `<h${depth} id="${escapeAttr(id)}" data-md-heading="${escapeAttr(id)}"><a class="md-heading-anchor" href="#${escapeAttr(id)}">#</a>${inner}</h${depth}>\n`;
+    // The DOM id is prefixed so a heading whose slug is a DOM property name
+    // (`## Scripts`, `## Title`, `## Name`) survives sanitizing — DOMPurify
+    // drops such an id to prevent clobbering, which left the outline and the
+    // fragment links pointing at nothing. `data-md-heading` keeps the plain
+    // slug: the outline, the active-heading tracker, and hand-written
+    // `[jump](#scripts)` fragments all address headings by slug.
+    return `<h${depth} id="${escapeAttr(headingDomId(id))}" data-md-heading="${escapeAttr(id)}"><a class="md-heading-anchor" href="#${escapeAttr(id)}">#</a>${inner}</h${depth}>\n`;
   };
 
   renderer.code = function code(token: any) {
