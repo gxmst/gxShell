@@ -38,63 +38,57 @@ func (a *App) DownloadFileWithPolicy(sessionID, remotePath, localPath string, ov
 }
 
 // ReadRemoteTextFile reads a remote text file through the active SFTP session.
-// It is intentionally extension-limited and size-limited for viewer use.
-func (a *App) ReadRemoteTextFile(sessionID, remotePath string) (string, error) {
+// It is intentionally extension-limited and size-limited for viewer use, and it
+// returns the version the editor must send back when saving.
+func (a *App) ReadRemoteTextFile(sessionID, remotePath string) (types.DocumentContent, error) {
 	remotePath = cleanRemoteMarkdownPath(remotePath)
 	if !isRemoteSupportedTextPath(remotePath) {
-		return "", fmt.Errorf("remote file is not a supported text file")
+		return types.DocumentContent{}, fmt.Errorf("remote file is not a supported text file")
 	}
 	data, err := a.sftp.ReadRemoteFile(sessionID, remotePath, maxTextFileSize)
 	if err != nil {
-		return "", err
+		return types.DocumentContent{}, err
 	}
 	if err := validateTextDocument(data); err != nil {
-		return "", err
+		return types.DocumentContent{}, err
 	}
-	return string(data), nil
-}
-
-// ReadRemoteMarkdownFile is kept for older frontend builds and preserves the
-// original Markdown-only contract.
-func (a *App) ReadRemoteMarkdownFile(sessionID, remotePath string) (string, error) {
-	remotePath = cleanRemoteMarkdownPath(remotePath)
-	if !isRemoteMarkdownPath(remotePath) {
-		return "", fmt.Errorf("remote file is not a Markdown file")
-	}
-	return a.ReadRemoteTextFile(sessionID, remotePath)
+	return types.DocumentContent{Content: string(data), Version: documentVersion(data)}, nil
 }
 
 // WriteRemoteTextFile writes edited text content back to the remote server.
 // Unsupported paths and oversized content are rejected.
-func (a *App) WriteRemoteTextFile(sessionID, remotePath, content string) error {
+//
+// expectedVersion is the version ReadRemoteTextFile returned. When the file on
+// disk no longer matches it, nothing is written and the result reports a
+// conflict, so a tab left open while certbot or ansible rewrote the file cannot
+// silently discard that work. An empty expectedVersion writes unconditionally,
+// which is what the overwrite branch of the conflict dialog sends.
+func (a *App) WriteRemoteTextFile(sessionID, remotePath, content, expectedVersion string) (types.DocumentSaveResult, error) {
 	remotePath = cleanRemoteMarkdownPath(remotePath)
 	if !isRemoteSupportedTextPath(remotePath) {
-		return fmt.Errorf("remote file is not a supported text file")
+		return types.DocumentSaveResult{}, fmt.Errorf("remote file is not a supported text file")
 	}
 	if len(content) > maxTextFileSize {
-		return fmt.Errorf("content too large (max %d MiB)", maxTextFileSize/(1024*1024))
+		return types.DocumentSaveResult{}, fmt.Errorf("content too large (max %d MiB)", maxTextFileSize/(1024*1024))
 	}
 	if err := validateTextDocument([]byte(content)); err != nil {
-		return err
+		return types.DocumentSaveResult{}, err
 	}
 	current, err := a.sftp.ReadRemoteFile(sessionID, remotePath, maxTextFileSize)
 	if err != nil {
-		return err
+		return types.DocumentSaveResult{}, err
 	}
 	if err := validateTextDocument(current); err != nil {
-		return err
+		return types.DocumentSaveResult{}, err
 	}
-	return a.sftp.WriteRemoteFile(sessionID, remotePath, []byte(content))
-}
-
-// WriteRemoteMarkdownFile is kept for older frontend builds and preserves the
-// original Markdown-only contract.
-func (a *App) WriteRemoteMarkdownFile(sessionID, remotePath, content string) error {
-	remotePath = cleanRemoteMarkdownPath(remotePath)
-	if !isRemoteMarkdownPath(remotePath) {
-		return fmt.Errorf("remote file is not a Markdown file")
+	currentVersion := documentVersion(current)
+	if documentSaveConflict(expectedVersion, currentVersion) {
+		return types.DocumentSaveResult{Conflict: true, Version: currentVersion}, nil
 	}
-	return a.WriteRemoteTextFile(sessionID, remotePath, content)
+	if err := a.sftp.WriteRemoteFile(sessionID, remotePath, []byte(content)); err != nil {
+		return types.DocumentSaveResult{}, err
+	}
+	return types.DocumentSaveResult{Saved: true, Version: documentVersion([]byte(content))}, nil
 }
 
 // ListRemoteTextFilesInDir lists supported document siblings for a remote

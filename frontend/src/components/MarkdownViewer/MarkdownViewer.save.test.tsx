@@ -14,18 +14,33 @@ const appMocks = vi.hoisted(() => ({
   resolveRemoteLink: vi.fn(),
   writeLocalFile: vi.fn(),
   writeRemoteFile: vi.fn(),
+  // The version every loaded document reports, and the envelope the write
+  // adapter returns. A test that exercises the conflict dialog swaps
+  // saveResult for a conflict envelope.
+  documentVersion: 'v1',
+  saveResult: { saved: true, conflict: false, version: 'v2' },
 }));
 
+// The viewer loads a document together with the version it has to send back
+// when saving. These tests are about the text, so the adapter fills the version
+// in and the mocks keep their plain-string contract; the write mocks still see
+// the version so the assertions can check it is the one that was loaded.
 vi.mock('../../../wailsjs/go/app/App', () => ({
-  ReadLocalFile: appMocks.readLocalFile,
+  ReadLocalFile: async (path: string) => ({ content: await appMocks.readLocalFile(path), version: appMocks.documentVersion }),
   ReadLocalPDFBase64: appMocks.readLocalPdf,
   ReadLocalMarkdownResourceDataURL: appMocks.readLocalResource,
-  ReadRemoteTextFile: appMocks.readRemoteFile,
+  ReadRemoteTextFile: async (sessionId: string, path: string) => ({ content: await appMocks.readRemoteFile(sessionId, path), version: appMocks.documentVersion }),
   ReadRemoteMarkdownResourceDataURL: appMocks.readRemoteResource,
   ResolveLocalMarkdownLink: appMocks.resolveLocalLink,
   ResolveRemoteMarkdownLink: appMocks.resolveRemoteLink,
-  WriteLocalFile: appMocks.writeLocalFile,
-  WriteRemoteTextFile: appMocks.writeRemoteFile,
+  WriteLocalFile: async (path: string, content: string, version: string) => {
+    await appMocks.writeLocalFile(path, content, version);
+    return { ...appMocks.saveResult };
+  },
+  WriteRemoteTextFile: async (sessionId: string, path: string, content: string, version: string) => {
+    await appMocks.writeRemoteFile(sessionId, path, content, version);
+    return { ...appMocks.saveResult };
+  },
 }));
 
 vi.mock('./SourceEditor', () => ({
@@ -61,6 +76,9 @@ describe('MarkdownViewer saving', () => {
     appMocks.writeLocalFile.mockReset();
     appMocks.readRemoteFile.mockReset();
     appMocks.writeRemoteFile.mockReset();
+    // A test that exercises the conflict dialog swaps this envelope; reset it
+    // so the swap cannot leak into the next test.
+    appMocks.saveResult = { saved: true, conflict: false, version: 'v2' };
   });
 
   it('keeps the draft and saves through the replacement SSH session', async () => {
@@ -80,7 +98,7 @@ describe('MarkdownViewer saving', () => {
     expect(screen.getByLabelText('Source editor')).toHaveValue('unsaved draft\n');
     expect(appMocks.readRemoteFile).toHaveBeenCalledTimes(1);
     await act(async () => { expect(await saveCurrent()).toBe(true); });
-    expect(appMocks.writeRemoteFile).toHaveBeenCalledWith('new', '/notes.txt', 'unsaved draft\n');
+    expect(appMocks.writeRemoteFile).toHaveBeenCalledWith('new', '/notes.txt', 'unsaved draft\n', 'v1');
   });
 
   it('ignores a read from the old SSH session that finishes after reconnect', async () => {
@@ -132,7 +150,7 @@ describe('MarkdownViewer saving', () => {
 
     expect(duplicateSave).toBe(firstSave);
     await waitFor(() => expect(appMocks.writeLocalFile).toHaveBeenCalledTimes(1));
-    expect(appMocks.writeLocalFile).toHaveBeenCalledWith('C:\\notes.txt', 'first draft\n');
+    expect(appMocks.writeLocalFile).toHaveBeenCalledWith('C:\\notes.txt', 'first draft\n', 'v1');
 
     // These changes happen after the write has started. They must remain in the
     // editor and must not be reported as saved by the first operation.
@@ -159,7 +177,7 @@ describe('MarkdownViewer saving', () => {
 
     expect(secondResult).toBe(true);
     expect(appMocks.writeLocalFile).toHaveBeenCalledTimes(2);
-    expect(appMocks.writeLocalFile).toHaveBeenLastCalledWith('C:\\notes.txt', 'second draft\r\n');
+    expect(appMocks.writeLocalFile).toHaveBeenLastCalledWith('C:\\notes.txt', 'second draft\r\n', 'v2');
     await waitFor(() => expect(screen.queryByLabelText('Source editor')).not.toBeInTheDocument());
   });
 
@@ -278,7 +296,7 @@ describe('MarkdownViewer saving', () => {
       saved = await operation;
     });
     expect(saved).toBe(false);
-    expect(appMocks.writeLocalFile).toHaveBeenCalledWith('/events.ndjson', snapshot);
+    expect(appMocks.writeLocalFile).toHaveBeenCalledWith('/events.ndjson', snapshot, 'v1');
     expect(editor).toHaveValue('{"latest":true}\n');
   });
 
@@ -312,7 +330,7 @@ describe('MarkdownViewer saving', () => {
     rerender(<MarkdownViewer {...props} sessionId="new" />);
     expect(appMocks.readRemoteFile).toHaveBeenCalledTimes(1);
     await act(async () => { DocumentTestWorker.instances[0].reply({ result: { valid: true } }); });
-    await waitFor(() => expect(appMocks.writeRemoteFile).toHaveBeenCalledWith('new', '/events.ndjson', initial));
+    await waitFor(() => expect(appMocks.writeRemoteFile).toHaveBeenCalledWith('new', '/events.ndjson', initial, 'v1'));
     expect(appMocks.writeRemoteFile).toHaveBeenCalledTimes(1);
   });
 
@@ -362,6 +380,105 @@ describe('MarkdownViewer saving', () => {
     expect(container.querySelector('.markdown-search-count')).toHaveTextContent('1/2');
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(container.querySelector('.markdown-search-count')).toHaveTextContent('2/2');
+  });
+
+  // A tab can sit open for hours while certbot, ansible or a colleague's SSH
+  // session rewrites the file underneath it. Saving has to report that instead
+  // of quietly discarding the other change.
+  it('asks which version to keep instead of overwriting a file changed on disk', async () => {
+    appMocks.saveResult = { saved: false, conflict: true, version: 'disk-v2' };
+    let saveCurrent = async () => false;
+    render(
+      <MarkdownViewer
+        active
+        filePath={'C:\\nginx.conf'}
+        onClose={vi.fn()}
+        onDirtyChange={(dirty, save) => { if (dirty) saveCurrent = save; }}
+      />,
+    );
+
+    await screen.findByText('original');
+    fireEvent.click(screen.getByTitle('Edit'));
+    fireEvent.change(await screen.findByLabelText('Source editor'), { target: { value: 'edited\n' } });
+
+    let saved = true;
+    await act(async () => { saved = await saveCurrent(); });
+
+    expect(saved).toBe(false);
+    // The save carried the version the editor loaded, which is what let the
+    // backend notice the file had moved on.
+    expect(appMocks.writeLocalFile).toHaveBeenCalledWith('C:\\nginx.conf', 'edited\n', 'v1');
+
+    const dialog = await screen.findByRole('dialog', { name: 'File changed on disk' });
+    // Nothing was written and the draft is intact, so the question is a real
+    // choice rather than a warning about work already lost.
+    expect(screen.getByLabelText('Source editor')).toHaveValue('edited\n');
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Keep editing' }));
+    expect(screen.queryByRole('dialog', { name: 'File changed on disk' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Source editor')).toHaveValue('edited\n');
+
+    // Saving again asks again: the file on disk is still not the one the editor
+    // loaded, so the answer cannot be assumed from last time.
+    await act(async () => { saved = await saveCurrent(); });
+    expect(saved).toBe(false);
+    expect(await screen.findByRole('dialog', { name: 'File changed on disk' })).toBeInTheDocument();
+  });
+
+  it('overwrites with the version the conflict reported, and only when asked', async () => {
+    appMocks.saveResult = { saved: false, conflict: true, version: 'disk-v2' };
+    let saveCurrent = async () => false;
+    render(
+      <MarkdownViewer
+        active
+        filePath={'C:\\nginx.conf'}
+        onClose={vi.fn()}
+        onDirtyChange={(dirty, save) => { if (dirty) saveCurrent = save; }}
+      />,
+    );
+
+    await screen.findByText('original');
+    fireEvent.click(screen.getByTitle('Edit'));
+    fireEvent.change(await screen.findByLabelText('Source editor'), { target: { value: 'edited\n' } });
+    await act(async () => { await saveCurrent(); });
+
+    const dialog = await screen.findByRole('dialog', { name: 'File changed on disk' });
+    // The retry has to send the version the conflict reported. Sending the one
+    // the editor loaded would conflict again and never land.
+    appMocks.saveResult = { saved: true, conflict: false, version: 'v3' };
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Overwrite with mine' }));
+
+    await waitFor(() => expect(appMocks.writeLocalFile).toHaveBeenLastCalledWith('C:\\nginx.conf', 'edited\n', 'disk-v2'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'File changed on disk' })).not.toBeInTheDocument());
+  });
+
+  it('takes the version on disk when the user chooses to reload', async () => {
+    appMocks.readLocalFile
+      .mockResolvedValueOnce('original\n')
+      .mockResolvedValueOnce('changed by certbot\n');
+    appMocks.saveResult = { saved: false, conflict: true, version: 'disk-v2' };
+    let saveCurrent = async () => false;
+    render(
+      <MarkdownViewer
+        active
+        filePath={'C:\\nginx.conf'}
+        onClose={vi.fn()}
+        onDirtyChange={(dirty, save) => { if (dirty) saveCurrent = save; }}
+      />,
+    );
+
+    await screen.findByText('original');
+    fireEvent.click(screen.getByTitle('Edit'));
+    fireEvent.change(await screen.findByLabelText('Source editor'), { target: { value: 'my draft\n' } });
+    await act(async () => { await saveCurrent(); });
+
+    const dialog = await screen.findByRole('dialog', { name: 'File changed on disk' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Use the version on disk' }));
+
+    // The draft is gone because the user asked for it to be, and the editor now
+    // holds what is actually on disk.
+    await waitFor(() => expect(screen.getByLabelText('Source editor')).toHaveValue('changed by certbot\n'));
+    expect(screen.queryByRole('dialog', { name: 'File changed on disk' })).not.toBeInTheDocument();
   });
 
   it('asks before discarding a draft instead of using the one native prompt left', async () => {

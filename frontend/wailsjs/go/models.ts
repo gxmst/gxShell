@@ -410,6 +410,50 @@ export namespace types {
 	        this.enabled = source["enabled"];
 	    }
 	}
+	export class DocumentContent {
+	    content: string;
+	    /**
+	     * Version is the fingerprint to send back as expectedVersion when saving.
+	     */
+	    version: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DocumentContent(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.content = source["content"];
+	        this.version = source["version"];
+	    }
+	}
+
+	export class DocumentSaveResult {
+	    saved: boolean;
+	    /**
+	     * Conflict is true when the file on disk no longer matches the version the
+	     * editor loaded, so expectedVersion was not honoured and nothing was
+	     * written.
+	     */
+	    conflict: boolean;
+	    /**
+	     * Version of the content now on disk. A retry that chooses to overwrite
+	     * must send this as expectedVersion, or it will conflict again.
+	     */
+	    version: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DocumentSaveResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.saved = source["saved"];
+	        this.conflict = source["conflict"];
+	        this.version = source["version"];
+	    }
+	}
+
 	export class FirewallRule {
 	    index: number;
 	    raw: string;

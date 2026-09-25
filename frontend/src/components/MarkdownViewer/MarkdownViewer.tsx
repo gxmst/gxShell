@@ -27,6 +27,7 @@ import { MermaidDiagrams } from './MermaidDiagrams';
 import { findPreviewRanges, findTextMatches, MAX_SEARCH_MATCHES } from './previewSearch';
 import { useReadingPosition } from './useReadingPosition';
 import { ConfirmDialog } from '../modals/ConfirmDialog';
+import { DocumentConflictDialog } from '../modals/DocumentConflictDialog';
 import { findHeadingElement, headingSlugOf } from '../../utils/markdownHeadings';
 import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime';
 import '../../styles/markdown-viewer.css';
@@ -135,6 +136,9 @@ export default function MarkdownViewer({
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // Version of the content now on disk, set when a save finds the file changed
+  // under the editor. Null means no conflict is being asked about.
+  const [conflictVersion, setConflictVersion] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [formatting, setFormatting] = useState(false);
   const [initialAppearance] = useState(readDocumentAppearance);
@@ -165,6 +169,15 @@ export default function MarkdownViewer({
   const formatControllerRef = useRef<AbortController | null>(null);
   const loadGenerationRef = useRef(0);
   const loadedDocumentRef = useRef<string | null>(null);
+  // Fingerprint of the bytes the editor is holding. A save sends it so the
+  // backend can tell "the file is what I opened" from "someone rewrote it while
+  // this tab sat open", which is how certbot and ansible changes used to be
+  // silently overwritten.
+  const loadedVersionRef = useRef('');
+  // Version the last save attempt found on disk, or null when it landed. Read
+  // synchronously by the conflict dialog, which has to know whether a retry
+  // succeeded or ran into a newer version again.
+  const lastConflictRef = useRef<string | null>(null);
   const editingRef = useRef(editing);
   editingRef.current = editing;
   draftRef.current = draft;
@@ -386,13 +399,16 @@ export default function MarkdownViewer({
         setContent('');
         draftRef.current = '';
         setDraft('');
+        loadedVersionRef.current = '';
         setError('');
         return;
       }
-      const text = source === 'remote'
+      const loaded = source === 'remote'
         ? await ReadRemoteTextFile(sessionId || '', remotePath || '')
         : await ReadLocalFile(filePath || '');
       if (generation !== loadGenerationRef.current) return;
+      const text = loaded.content;
+      loadedVersionRef.current = loaded.version;
       // A single-line file has no detectable ending. Use the local platform
       // default for local files; remote hosts are unknown, so keep the portable
       // LF default and let the status control change it explicitly if needed.
@@ -422,8 +438,10 @@ export default function MarkdownViewer({
     } else {
       setActiveHeading('');
       setEditing(false);
-      // A discard prompt belongs to the document it was opened for.
+      // A discard prompt and a conflict question both belong to the document
+      // they were opened for.
       setConfirmDiscard(false);
+      setConflictVersion(null);
       setSplitPreview(false);
       void loadFile();
     }
@@ -570,7 +588,10 @@ export default function MarkdownViewer({
     }
   };
 
-  const save = () => {
+  // expectedVersionOverride is how the overwrite branch of the conflict dialog
+  // retries with the version the conflict reported. Everything else sends the
+  // version the editor loaded.
+  const save = (expectedVersionOverride?: string) => {
     // React state does not update synchronously, so `saving` alone cannot stop
     // two Ctrl+S/click events from starting writes in the same render frame.
     // Every caller joins the one in-flight operation instead.
@@ -605,13 +626,22 @@ export default function MarkdownViewer({
         // Resolve the transport after validation, as SSH may have reconnected
         // while a worker was parsing. Newer edits stay in draftRef/eolRef.
         const payload = applyEol(snapshot.draft, snapshot.eol);
-        if (target.source === 'remote') {
-          await WriteRemoteTextFile(target.sessionId, target.path, payload);
-        } else {
-          await WriteLocalFile(target.path, payload);
-        }
+        const expectedVersion = expectedVersionOverride ?? loadedVersionRef.current;
+        const result = target.source === 'remote'
+          ? await WriteRemoteTextFile(target.sessionId, target.path, payload, expectedVersion)
+          : await WriteLocalFile(target.path, payload, expectedVersion);
 
         if (controller.signal.aborted || documentTargetRef.current.key !== documentKey) return false;
+        if (result.conflict) {
+          // The file changed on disk while this tab was open. Nothing was
+          // written, so the draft is intact; ask which version to keep instead
+          // of overwriting the other change without a word.
+          lastConflictRef.current = result.version;
+          setConflictVersion(result.version);
+          return false;
+        }
+        lastConflictRef.current = null;
+        loadedVersionRef.current = result.version;
 
         const savedCurrentDraft = draftRef.current === snapshot.draft && eolRef.current === snapshot.eol;
         setContent(snapshot.draft);
@@ -641,6 +671,21 @@ export default function MarkdownViewer({
     return operation;
   };
   saveRef.current = save;
+
+  const reloadConflict = () => {
+    setConflictVersion(null);
+    // Deliberate: the user chose the version on disk over their draft.
+    void loadFile();
+  };
+
+  const overwriteConflict = async () => {
+    const version = conflictVersion;
+    if (version == null) return;
+    await save(version);
+    // A retry that conflicted again has already put a fresh version here, so
+    // the question stays open with the version that actually won.
+    setConflictVersion(lastConflictRef.current);
+  };
 
   useEffect(() => {
     dirtyCallbackRef.current?.(dirty, () => saveRef.current());
@@ -1275,7 +1320,7 @@ export default function MarkdownViewer({
           </>
         ) : editing ? (
           <>
-            <button onClick={save} className="markdown-viewer-tbtn" disabled={saving || formatting || jsonValidation?.valid === false} title={`${t(lang, 'save')} (Ctrl+S)`}>
+            <button onClick={() => { void save(); }} className="markdown-viewer-tbtn" disabled={saving || formatting || jsonValidation?.valid === false} title={`${t(lang, 'save')} (Ctrl+S)`}>
               <Save size={15} />
             </button>
             <button onClick={cancelEdit} className="markdown-viewer-tbtn" disabled={saving} title={t(lang, 'cancel')}>
@@ -1483,6 +1528,16 @@ export default function MarkdownViewer({
           confirmText={t(lang, 'confirm')}
           onConfirm={discardEdit}
           onClose={() => setConfirmDiscard(false)}
+        />
+      )}
+
+      {conflictVersion !== null && (
+        <DocumentConflictDialog
+          locale={lang}
+          busy={saving}
+          onReload={reloadConflict}
+          onOverwrite={overwriteConflict}
+          onKeepEditing={() => setConflictVersion(null)}
         />
       )}
     </div>

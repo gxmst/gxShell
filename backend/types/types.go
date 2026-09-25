@@ -354,6 +354,35 @@ type LocalFile struct {
 	ModTime time.Time `json:"modTime"`
 }
 
+// DocumentContent is a loaded text document together with a fingerprint of the
+// bytes it was loaded from.
+//
+// An editor that only keeps the text cannot tell "the file is what I opened"
+// from "someone rewrote the file while I had it open". A tab left open for
+// hours is the normal case: certbot, ansible, or a colleague's SSH session
+// changes the file underneath it, and saving then silently discards that work.
+type DocumentContent struct {
+	Content string `json:"content"`
+	// Version is the fingerprint to send back as expectedVersion when saving.
+	Version string `json:"version"`
+}
+
+// DocumentSaveResult reports whether a save landed.
+//
+// A conflict is deliberately not an error: the file on disk is intact and the
+// user has to choose between reloading it and overwriting it. Returning an
+// error would leave the caller with nothing to offer but "try again".
+type DocumentSaveResult struct {
+	Saved bool `json:"saved"`
+	// Conflict is true when the file on disk no longer matches the version the
+	// editor loaded, so expectedVersion was not honoured and nothing was
+	// written.
+	Conflict bool `json:"conflict"`
+	// Version of the content now on disk. A retry that chooses to overwrite
+	// must send this as expectedVersion, or it will conflict again.
+	Version string `json:"version"`
+}
+
 type LogFile struct {
 	Name    string    `json:"name"`
 	Path    string    `json:"path"`

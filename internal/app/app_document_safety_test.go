@@ -36,7 +36,7 @@ func TestBinaryDocumentsCannotBeReadOrOverwrittenAsText(t *testing.T) {
 			if _, err := a.ReadLocalFile(path); err == nil || !strings.Contains(err.Error(), documentNotText) {
 				t.Fatalf("binary read was not rejected: %v", err)
 			}
-			if err := a.WriteLocalFile(path, "replacement"); err == nil || !strings.Contains(err.Error(), documentNotText) {
+			if _, err := a.WriteLocalFile(path, "replacement", ""); err == nil || !strings.Contains(err.Error(), documentNotText) {
 				t.Fatalf("binary overwrite was not rejected: %v", err)
 			}
 			got, err := os.ReadFile(path)
@@ -53,18 +53,18 @@ func TestTextDocumentPreservesUTF8AndRefusesAFileChangedToBinary(t *testing.T) {
 	writeDocumentFixture(t, path, original)
 	a := NewApp()
 	a.allowFile(path)
-	if got, err := a.ReadLocalFile(path); err != nil || got != string(original) {
+	if got, err := a.ReadLocalFile(path); err != nil || got.Content != string(original) {
 		t.Fatalf("UTF-8 read changed content: %q %v", got, err)
 	}
-	if err := a.WriteLocalFile(path, string(original)); err != nil {
+	if _, err := a.WriteLocalFile(path, string(original), ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.WriteLocalFile(path, "invalid\x00text"); err == nil {
+	if _, err := a.WriteLocalFile(path, "invalid\x00text", ""); err == nil {
 		t.Fatal("binary payload accepted")
 	}
 	binary := []byte{'P', 'K', 0, 0}
 	writeDocumentFixture(t, path, binary)
-	if err := a.WriteLocalFile(path, "stale editor text"); err == nil {
+	if _, err := a.WriteLocalFile(path, "stale editor text", ""); err == nil {
 		t.Fatal("file changed to binary was overwritten")
 	}
 	got, err := os.ReadFile(path)
@@ -126,7 +126,7 @@ func TestDocumentReadsRejectLinksReplacedAfterListing(t *testing.T) {
 				if _, err := a.ReadLocalFile(document); err == nil {
 					t.Fatal("replacement link was read")
 				}
-				if err := a.WriteLocalFile(document, "overwrite"); err == nil {
+				if _, err := a.WriteLocalFile(document, "overwrite", ""); err == nil {
 					t.Fatal("replacement link was writable")
 				}
 			} else {
@@ -174,7 +174,7 @@ func TestDocumentAuthorizationRejectsReplacedDirectories(t *testing.T) {
 	if _, err := a.ReadLocalFile(sibling); err == nil {
 		t.Fatal("replacement directory inherited read access")
 	}
-	if err := a.WriteLocalFile(sibling, "overwrite"); err == nil {
+	if _, err := a.WriteLocalFile(sibling, "overwrite", ""); err == nil {
 		t.Fatal("replacement directory inherited write access")
 	}
 	if _, err := a.ListTextFilesInDir(base); err == nil {
@@ -188,7 +188,7 @@ func TestDocumentAuthorizationRejectsReplacedDirectories(t *testing.T) {
 		t.Fatalf("replacement directory changed: %q %v", got, err)
 	}
 	a.allowFile(sibling)
-	if got, err := a.ReadLocalFile(sibling); err != nil || got != "replacement" {
+	if got, err := a.ReadLocalFile(sibling); err != nil || got.Content != "replacement" {
 		t.Fatalf("explicitly reopening should restore access: %q %v", got, err)
 	}
 }

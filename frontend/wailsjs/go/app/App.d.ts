@@ -159,7 +159,7 @@ export function OpenRecordingsDir():Promise<void>;
 
 export function PingHost(arg1:string,arg2:number):Promise<types.NetworkPath>;
 
-export function ReadLocalFile(arg1:string):Promise<string>;
+export function ReadLocalFile(arg1:string):Promise<types.DocumentContent>;
 
 export function ReadLocalMarkdownResourceDataURL(arg1:string,arg2:string):Promise<string>;
 
@@ -173,11 +173,9 @@ export function ReadLogs(arg1:number):Promise<Array<types.LogEntry>>;
 
 export function ReadRecording(arg1:string):Promise<string>;
 
-export function ReadRemoteMarkdownFile(arg1:string,arg2:string):Promise<string>;
-
 export function ReadRemoteMarkdownResourceDataURL(arg1:string,arg2:string,arg3:string):Promise<string>;
 
-export function ReadRemoteTextFile(arg1:string,arg2:string):Promise<string>;
+export function ReadRemoteTextFile(arg1:string,arg2:string):Promise<types.DocumentContent>;
 
 export function Reconnect(arg1:string):Promise<types.SessionInfo>;
 
@@ -289,11 +287,9 @@ export function UploadFile(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function UploadFileWithPolicy(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
 
-export function WriteLocalFile(arg1:string,arg2:string):Promise<void>;
+export function WriteLocalFile(arg1:string,arg2:string,arg3:string):Promise<types.DocumentSaveResult>;
 
-export function WriteRemoteMarkdownFile(arg1:string,arg2:string,arg3:string):Promise<void>;
-
-export function WriteRemoteTextFile(arg1:string,arg2:string,arg3:string):Promise<void>;
+export function WriteRemoteTextFile(arg1:string,arg2:string,arg3:string,arg4:string):Promise<types.DocumentSaveResult>;
 
 export function WriteToTerminal(arg1:string,arg2:string):Promise<void>;
 

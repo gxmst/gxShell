@@ -17,14 +17,14 @@ func TestTextDocumentsReadAndSaveTwentyMiBWithoutChangingUTF8(t *testing.T) {
 			writeDocumentFixture(t, file, []byte(payload))
 			a := NewApp()
 			a.allowFile(file)
-			if got, err := a.ReadLocalFile(file); err != nil || got != payload {
+			if got, err := a.ReadLocalFile(file); err != nil || got.Content != payload {
 				t.Fatalf("20 MiB read failed or changed bytes: %v", err)
 			}
 			replacement := payload[:len(payload)-1] + "c"
-			if err := a.WriteLocalFile(file, replacement); err != nil {
+			if _, err := a.WriteLocalFile(file, replacement, ""); err != nil {
 				t.Fatalf("20 MiB save failed: %v", err)
 			}
-			if err := a.WriteLocalFile(file, replacement+"x"); err == nil || !strings.Contains(err.Error(), "20 MiB") {
+			if _, err := a.WriteLocalFile(file, replacement+"x", ""); err == nil || !strings.Contains(err.Error(), "20 MiB") {
 				t.Fatalf("oversized save was not rejected with the current limit: %v", err)
 			}
 			if got, err := os.ReadFile(file); err != nil || string(got) != replacement {
@@ -40,7 +40,7 @@ func TestTextDocumentsReadAndSaveTwentyMiBWithoutChangingUTF8(t *testing.T) {
 
 func TestRemoteTextSaveRejectsOversizeBeforeTransport(t *testing.T) {
 	a := NewApp()
-	err := a.WriteRemoteTextFile("missing-session", "/notes.txt", strings.Repeat("x", 20*1024*1024+1))
+	_, err := a.WriteRemoteTextFile("missing-session", "/notes.txt", strings.Repeat("x", 20*1024*1024+1), "")
 	if err == nil || !strings.Contains(err.Error(), "20 MiB") {
 		t.Fatalf("remote limit should be checked before contacting SFTP: %v", err)
 	}

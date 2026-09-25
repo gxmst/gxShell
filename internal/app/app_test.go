@@ -120,7 +120,7 @@ func TestReadLocalFileRequiresAllowedFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("allowed file should be readable: %v", err)
 	}
-	if got != "# hello" {
+	if got.Content != "# hello" {
 		t.Fatalf("content = %q, want %q", got, "# hello")
 	}
 }
@@ -722,7 +722,7 @@ func TestWriteLocalFileDoesNotTouchFixedSidecars(t *testing.T) {
 	}
 	app := NewApp()
 	app.allowFile(target)
-	if err := app.WriteLocalFile(target, "new"); err != nil {
+	if _, err := app.WriteLocalFile(target, "new", ""); err != nil {
 		t.Fatalf("WriteLocalFile: %v", err)
 	}
 	for _, sidecar := range sidecars {

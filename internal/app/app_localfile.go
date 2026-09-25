@@ -5,7 +5,9 @@ package app
 // cannot touch arbitrary files on disk.
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"mime"
 	"net/http"
@@ -80,31 +82,32 @@ func (a *App) isFileAllowed(absPath string) bool {
 	return a.allowedFiles.contains(absPath)
 }
 
-// ReadLocalFile reads a local file and returns its content. Only files the user
-// has explicitly opened (see allowFile) may be read, so a compromised renderer
+// ReadLocalFile reads a local file and returns its content along with the
+// version the editor must send back when saving. Only files the user has
+// explicitly opened (see allowFile) may be read, so a compromised renderer
 // cannot exfiltrate arbitrary files from disk.
-func (a *App) ReadLocalFile(filePath string) (string, error) {
+func (a *App) ReadLocalFile(filePath string) (types.DocumentContent, error) {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
-		return "", fmt.Errorf("invalid file path: %w", err)
+		return types.DocumentContent{}, fmt.Errorf("invalid file path: %w", err)
 	}
 	absPath = filepath.Clean(absPath)
 	if !isSupportedTextPath(absPath) {
-		return "", fmt.Errorf("file is not a supported text file")
+		return types.DocumentContent{}, fmt.Errorf("file is not a supported text file")
 	}
 	root, err := a.allowedFiles.openRoot(absPath)
 	if err != nil {
-		return "", err
+		return types.DocumentContent{}, err
 	}
 	defer root.Close()
 	data, _, err := readRegularDocument(root, filepath.Base(absPath), maxTextFileSize)
 	if err != nil {
-		return "", fmt.Errorf("failed to read file: %w", err)
+		return types.DocumentContent{}, fmt.Errorf("failed to read file: %w", err)
 	}
 	if err := validateTextDocument(data); err != nil {
-		return "", err
+		return types.DocumentContent{}, err
 	}
-	return string(data), nil
+	return types.DocumentContent{Content: string(data), Version: documentVersion(data)}, nil
 }
 
 // ReadLocalPDFBase64 returns an explicitly opened local PDF for a read-only
@@ -134,25 +137,52 @@ func (a *App) ReadLocalPDFBase64(filePath string) (string, error) {
 	return base64.StdEncoding.EncodeToString(data), nil
 }
 
-// WriteLocalFile writes content to a local file, preserving its existing permissions.
-func (a *App) WriteLocalFile(filePath string, content string) error {
+// documentVersion fingerprints the bytes a document was loaded from, so a save
+// can tell whether the file on disk is still the one the editor is holding.
+// Size and modification time are not enough: certbot and ansible rewrite
+// configuration files in place, and a same-length edit keeps the size.
+func documentVersion(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// documentSaveConflict reports whether a save must stop and ask.
+//
+// An empty expectedVersion is "write regardless": that is what a brand new
+// document sends, and what the overwrite branch of the conflict dialog sends
+// after the user has seen the newer content. A current version of "" means the
+// file is gone or is no longer a text document, which is exactly the case where
+// recreating it silently would be the wrong call.
+func documentSaveConflict(expectedVersion, currentVersion string) bool {
+	return expectedVersion != "" && expectedVersion != currentVersion
+}
+
+// WriteLocalFile writes content to a local file, preserving its existing
+// permissions.
+//
+// expectedVersion is the version ReadLocalFile returned. When the file on disk
+// no longer matches it, nothing is written and the result reports a conflict:
+// silently overwriting is what discarded an external edit made while a tab sat
+// open. An empty expectedVersion writes unconditionally, which is what the
+// overwrite branch of the conflict dialog sends.
+func (a *App) WriteLocalFile(filePath string, content string, expectedVersion string) (types.DocumentSaveResult, error) {
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
-		return fmt.Errorf("invalid file path: %w", err)
+		return types.DocumentSaveResult{}, fmt.Errorf("invalid file path: %w", err)
 	}
 	absPath = filepath.Clean(absPath)
 	if !isSupportedTextPath(absPath) {
-		return fmt.Errorf("file is not a supported text file")
+		return types.DocumentSaveResult{}, fmt.Errorf("file is not a supported text file")
 	}
 	if len(content) > maxTextFileSize {
-		return fmt.Errorf("content too large (max %d MiB)", maxTextFileSize/(1024*1024))
+		return types.DocumentSaveResult{}, fmt.Errorf("content too large (max %d MiB)", maxTextFileSize/(1024*1024))
 	}
 	if err := validateTextDocument([]byte(content)); err != nil {
-		return err
+		return types.DocumentSaveResult{}, err
 	}
 	root, err := a.allowedFiles.openRoot(absPath)
 	if err != nil {
-		return err
+		return types.DocumentSaveResult{}, err
 	}
 	defer root.Close()
 	name := filepath.Base(absPath)
@@ -160,15 +190,20 @@ func (a *App) WriteLocalFile(filePath string, content string) error {
 	// Recheck the existing bytes as another program may have replaced the file
 	// since preview. Never overwrite a binary/unsupported encoding with text.
 	mode := os.FileMode(0644)
+	var currentVersion string
 	original, info, readErr := readRegularDocument(root, name, maxTextFileSize)
 	if readErr != nil && !os.IsNotExist(readErr) {
-		return readErr
+		return types.DocumentSaveResult{}, readErr
 	}
 	if readErr == nil {
 		if err := validateTextDocument(original); err != nil {
-			return err
+			return types.DocumentSaveResult{}, err
 		}
 		mode = info.Mode().Perm()
+		currentVersion = documentVersion(original)
+	}
+	if documentSaveConflict(expectedVersion, currentVersion) {
+		return types.DocumentSaveResult{Conflict: true, Version: currentVersion}, nil
 	}
 
 	// This is the local editor's save path: write a sibling temp file and
@@ -178,7 +213,7 @@ func (a *App) WriteLocalFile(filePath string, content string) error {
 	tmpName := "." + name + ".gxshell-" + types.NewID("document") + ".tmp"
 	tmp, err := root.OpenFile(tmpName, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
-		return fmt.Errorf("failed to create temporary file: %w", err)
+		return types.DocumentSaveResult{}, fmt.Errorf("failed to create temporary file: %w", err)
 	}
 	removeTemp := true
 	defer func() {
@@ -188,28 +223,28 @@ func (a *App) WriteLocalFile(filePath string, content string) error {
 		}
 	}()
 	if err := tmp.Chmod(mode); err != nil {
-		return fmt.Errorf("failed to set temporary file mode: %w", err)
+		return types.DocumentSaveResult{}, fmt.Errorf("failed to set temporary file mode: %w", err)
 	}
 	if _, err := tmp.WriteString(content); err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
+		return types.DocumentSaveResult{}, fmt.Errorf("failed to write file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("failed to flush file: %w", err)
+		return types.DocumentSaveResult{}, fmt.Errorf("failed to flush file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("failed to close temporary file: %w", err)
+		return types.DocumentSaveResult{}, fmt.Errorf("failed to close temporary file: %w", err)
 	}
 	if info != nil {
 		current, err := root.Lstat(name)
 		if err != nil || !current.Mode().IsRegular() || !os.SameFile(info, current) || current.Size() != info.Size() || !current.ModTime().Equal(info.ModTime()) {
-			return fmt.Errorf("document changed while saving; reload before retrying")
+			return types.DocumentSaveResult{}, fmt.Errorf("document changed while saving; reload before retrying")
 		}
 	}
 	if err := replaceDocumentFile(root, tmpName, name); err != nil {
-		return fmt.Errorf("failed to write file: %w", err)
+		return types.DocumentSaveResult{}, fmt.Errorf("failed to write file: %w", err)
 	}
 	removeTemp = false
-	return nil
+	return types.DocumentSaveResult{Saved: true, Version: documentVersion([]byte(content))}, nil
 }
 
 // replaceLocalFile promotes a fully written sibling temp file over target.

@@ -33,7 +33,7 @@ func TestRestoreTextFilesAllowsSupportedExistingFilesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if content != "hello" {
+	if content.Content != "hello" {
 		t.Fatalf("unexpected restored content: %q", content)
 	}
 }
@@ -50,7 +50,7 @@ func TestRestoreTextFilesRejectsUnapprovedPaths(t *testing.T) {
 	if _, err := app.ReadLocalFile(path); err == nil {
 		t.Fatal("unapproved path became readable")
 	}
-	if err := app.WriteLocalFile(path, "changed"); err == nil {
+	if _, err := app.WriteLocalFile(path, "changed", ""); err == nil {
 		t.Fatal("unapproved path became writable")
 	}
 }
@@ -73,7 +73,7 @@ func TestDocumentAuthorizationSurvivesRestart(t *testing.T) {
 	if _, err := first.ResolveLocalMarkdownLink(approved, documentAuthorizationFilename); err == nil {
 		t.Fatal("authorization history must not be an editable sibling")
 	}
-	if err := first.WriteLocalFile(history, "[]"); err == nil {
+	if _, err := first.WriteLocalFile(history, "[]", ""); err == nil {
 		t.Fatal("renderer must not edit authorization history")
 	}
 	second := NewApp()
@@ -87,7 +87,7 @@ func TestDocumentAuthorizationSurvivesRestart(t *testing.T) {
 	if len(restored) != 1 || restored[0] != approved {
 		t.Fatalf("restored = %v", restored)
 	}
-	if text, err := second.ReadLocalFile(approved); err != nil || text != "content" {
+	if text, err := second.ReadLocalFile(approved); err != nil || text.Content != "content" {
 		t.Fatalf("restored read: %q, %v", text, err)
 	}
 }
@@ -183,7 +183,7 @@ func TestSiblingDocumentAuthorizationIsSessionOnly(t *testing.T) {
 					t.Fatalf("listed document should be readable in this session: %v", err)
 				}
 			}
-			if err := first.WriteLocalFile(sibling, "edited"); err != nil {
+			if _, err := first.WriteLocalFile(sibling, "edited", ""); err != nil {
 				t.Fatalf("listed sibling should be writable in this session: %v", err)
 			}
 			if markdownOnly && first.isFileAllowed(text) {
@@ -204,7 +204,7 @@ func TestSiblingDocumentAuthorizationIsSessionOnly(t *testing.T) {
 				if _, err := second.ReadLocalFile(path); err == nil {
 					t.Fatalf("listed sibling became readable after restart: %s", path)
 				}
-				if err := second.WriteLocalFile(path, "changed"); err == nil {
+				if _, err := second.WriteLocalFile(path, "changed", ""); err == nil {
 					t.Fatalf("listed sibling became writable after restart: %s", path)
 				}
 			}

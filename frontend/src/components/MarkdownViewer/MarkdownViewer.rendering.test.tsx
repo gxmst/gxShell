@@ -13,14 +13,16 @@ const rendererMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../../wailsjs/go/app/App', () => ({
-  ReadLocalFile: appMocks.readLocalFile,
+  // The viewer loads a document together with the version it has to send back
+  // when saving; these tests are about the text.
+  ReadLocalFile: async (path: string) => ({ content: await appMocks.readLocalFile(path), version: 'v1' }),
   ReadLocalMarkdownResourceDataURL: vi.fn(),
   ReadRemoteTextFile: vi.fn(),
   ReadRemoteMarkdownResourceDataURL: vi.fn(),
   ResolveLocalMarkdownLink: vi.fn(),
   ResolveRemoteMarkdownLink: vi.fn(),
-  WriteLocalFile: vi.fn(),
-  WriteRemoteTextFile: vi.fn(),
+  WriteLocalFile: vi.fn(async () => ({ saved: true, conflict: false, version: 'v1' })),
+  WriteRemoteTextFile: vi.fn(async () => ({ saved: true, conflict: false, version: 'v1' })),
 }));
 
 vi.mock('./markdownRenderer', () => ({

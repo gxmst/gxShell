@@ -354,10 +354,6 @@ export function ReadRecording(arg1) {
   return window['go']['app']['App']['ReadRecording'](arg1);
 }
 
-export function ReadRemoteMarkdownFile(arg1, arg2) {
-  return window['go']['app']['App']['ReadRemoteMarkdownFile'](arg1, arg2);
-}
-
 export function ReadRemoteMarkdownResourceDataURL(arg1, arg2, arg3) {
   return window['go']['app']['App']['ReadRemoteMarkdownResourceDataURL'](arg1, arg2, arg3);
 }
@@ -586,16 +582,12 @@ export function UploadFileWithPolicy(arg1, arg2, arg3, arg4) {
   return window['go']['app']['App']['UploadFileWithPolicy'](arg1, arg2, arg3, arg4);
 }
 
-export function WriteLocalFile(arg1, arg2) {
-  return window['go']['app']['App']['WriteLocalFile'](arg1, arg2);
+export function WriteLocalFile(arg1, arg2, arg3) {
+  return window['go']['app']['App']['WriteLocalFile'](arg1, arg2, arg3);
 }
 
-export function WriteRemoteMarkdownFile(arg1, arg2, arg3) {
-  return window['go']['app']['App']['WriteRemoteMarkdownFile'](arg1, arg2, arg3);
-}
-
-export function WriteRemoteTextFile(arg1, arg2, arg3) {
-  return window['go']['app']['App']['WriteRemoteTextFile'](arg1, arg2, arg3);
+export function WriteRemoteTextFile(arg1, arg2, arg3, arg4) {
+  return window['go']['app']['App']['WriteRemoteTextFile'](arg1, arg2, arg3, arg4);
 }
 
 export function WriteToTerminal(arg1, arg2) {

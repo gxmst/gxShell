@@ -36,7 +36,7 @@ func TestNamedDocumentLinksRetainFileAuthorization(t *testing.T) {
 	if _, err := a.ResolveLocalMarkdownLink(readme, "Dockerfile"); err != nil {
 		t.Fatal(err)
 	}
-	if content, err := a.ReadLocalFile(dockerfile); err != nil || content != "FROM scratch\n" {
+	if content, err := a.ReadLocalFile(dockerfile); err != nil || content.Content != "FROM scratch\n" {
 		t.Fatalf("read named document: %q %v", content, err)
 	}
 	if _, err := a.ReadLocalMarkdownResourceDataURL(readme, "Dockerfile"); err == nil {

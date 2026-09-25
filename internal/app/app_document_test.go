@@ -172,7 +172,7 @@ func TestPDFCannotUseTextReadOrWritePaths(t *testing.T) {
 	if _, err := app.ReadLocalFile(path); err == nil {
 		t.Fatal("PDF should not pass through the text reader")
 	}
-	if err := app.WriteLocalFile(path, "overwritten"); err == nil {
+	if _, err := app.WriteLocalFile(path, "overwritten", ""); err == nil {
 		t.Fatal("PDF should not pass through the text writer")
 	}
 	got, err := os.ReadFile(path)
