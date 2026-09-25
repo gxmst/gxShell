@@ -15,6 +15,7 @@ function context(event: KeyboardEvent, overrides: Partial<ActionContext> = {}) {
     isOverlay: false,
     activeTab: "tab-1",
     activeIsMarkdown: false,
+    floatingTabId: "",
     ...overrides,
   };
 }

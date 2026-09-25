@@ -143,6 +143,16 @@ func (a *App) UpdateSettings(settings types.AppSettings) (types.AppSettings, err
 	settings = config.NormalizeSettings(settings)
 	// Never persist or revive the deprecated permanent trust switch.
 	settings.CliAutoApprove = false
+	// Two settings have dedicated setters that write through the store —
+	// SkipUpdateVersion and SaveAiConfig — while this method takes a whole
+	// snapshot from the renderer, and that snapshot can be minutes old. Letting
+	// it win would undo them: a window resize would resurrect a version the user
+	// just chose to skip, or revert an AI configuration saved from the AI panel
+	// since the snapshot was taken. The store's own values are authoritative.
+	if previousErr == nil {
+		settings.UpdateSkippedVersion = previous.UpdateSkippedVersion
+		settings.Ai = previous.Ai
+	}
 	if settings.ConnectionTimeout <= 0 {
 		settings.ConnectionTimeout = 15
 	}

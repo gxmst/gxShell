@@ -242,7 +242,19 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
 
   const cycleSpeed = () => {
     const idx = SPEEDS.indexOf(speed);
-    setSpeed(SPEEDS[(idx + 1) % SPEEDS.length]);
+    const next = SPEEDS[(idx + 1) % SPEEDS.length];
+    // The anchor maps wall-clock time to playhead at the *old* speed, so
+    // changing speed without re-anchoring moves the playhead: going 1x -> 2x
+    // doubles the elapsed position and skips that much recorded content. While
+    // playing, re-anchor at the current position under the new speed; while
+    // paused, play() builds the anchor when playback resumes.
+    if (playing) {
+      anchorRef.current = performance.now() - (elapsedRef.current / next) * 1000;
+    }
+    // Set the ref directly too: step() may fire from its timer before React
+    // re-renders, and it would then pair the new anchor with the old speed.
+    speedRef.current = next;
+    setSpeed(next);
   };
 
   return (

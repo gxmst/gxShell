@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { ArrowRightLeft, Circle, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { AddTunnelRule, ListTunnelStatus, RemoveTunnelRule, RestartTunnels } from "../../../wailsjs/go/app/App";
 import type { Tab, Toast } from "../../types";
 import { t, type LangKey } from "../../i18n";
+
+const ARM_TIMEOUT_MS = 3000;
 
 const PRESETS: { label: LangKey; type: string; local: string; remote: string }[] = [
   { label: "presetWeb", type: "local", local: "127.0.0.1:8080", remote: "127.0.0.1:80" },
@@ -19,6 +21,12 @@ export function TunnelPanel({ active, locale, onNotify }: { active?: Tab; locale
   const [loading, setLoading] = useState(false);
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ type: "local", local: "127.0.0.1:8080", remote: "127.0.0.1:80", bindHost: "" });
+  const [armedRemove, setArmedRemove] = useState("");
+  const armedRemoveTimerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (armedRemoveTimerRef.current !== null) window.clearTimeout(armedRemoveTimerRef.current);
+  }, []);
 
   const refresh = async () => {
     if (!active) return;
@@ -66,6 +74,23 @@ export function TunnelPanel({ active, locale, onNotify }: { active?: Tab; locale
 
   const removeTunnel = async (ruleID: string) => {
     if (!active) return;
+    // Deleting a rule drops a forward that may be in active use, and the button
+    // sits beside the status dot, so it arms first and deletes on the second
+    // click within three seconds.
+    if (armedRemove !== ruleID) {
+      if (armedRemoveTimerRef.current !== null) window.clearTimeout(armedRemoveTimerRef.current);
+      setArmedRemove(ruleID);
+      armedRemoveTimerRef.current = window.setTimeout(() => {
+        armedRemoveTimerRef.current = null;
+        setArmedRemove("");
+      }, ARM_TIMEOUT_MS);
+      return;
+    }
+    if (armedRemoveTimerRef.current !== null) {
+      window.clearTimeout(armedRemoveTimerRef.current);
+      armedRemoveTimerRef.current = null;
+    }
+    setArmedRemove("");
     try {
       await RemoveTunnelRule(active.id, ruleID);
       refresh();
@@ -146,7 +171,11 @@ export function TunnelPanel({ active, locale, onNotify }: { active?: Tab; locale
             {tunnel.error && <div className="text-[9px] text-bad truncate">{tunnel.error}</div>}
           </div>
           <Circle size={8} className={clsx("shrink-0", tunnel.active ? "fill-ok text-ok" : "fill-muted text-muted")} />
-          <button className="tunnel-icon-btn ml-0.5" onClick={() => tunnel.rule?.id && removeTunnel(tunnel.rule.id)} title={t(lang, "removeTunnel")}><Trash2 size={9} /></button>
+          <button
+            className={clsx("tunnel-icon-btn", "ml-0.5", armedRemove === tunnel.rule?.id && "action-armed")}
+            onClick={() => tunnel.rule?.id && void removeTunnel(tunnel.rule.id)}
+            title={armedRemove === tunnel.rule?.id ? t(lang, "confirm") : t(lang, "removeTunnel")}
+          ><Trash2 size={9} /></button>
         </div>
       ))}</div>
     </div>

@@ -8,6 +8,7 @@ import { t } from "../../i18n";
 import type { Tab, Toast } from "../../types";
 import { writeClipboardText } from "../../utils/clipboard";
 import { sanitizeRenderedHtml } from "../../utils/sanitizeHtml";
+import { isRemoteSession } from "../../utils/sessionIdentity";
 import { Label } from "../modals/ModalShell";
 
 type ToolCallData = {
@@ -80,10 +81,6 @@ export const MarkdownContent = memo(function MarkdownContent({ content }: { cont
   const html = useMemo(() => sanitizeRenderedHtml(marked.parse(content) as string), [content]);
   return <div className="ai-markdown" dangerouslySetInnerHTML={{ __html: html }} />;
 });
-
-function isConnectedRemote(tab?: Tab): tab is Tab {
-  return !!tab && tab.state === "connected" && !tab.local && tab.type !== "markdown";
-}
 
 function requestId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
@@ -217,12 +214,12 @@ export function AiPanel(props: {
   const messages = activeSession?.messages || [];
   const boundTerminal = props.tabs.find((tab) => tab.id === activeSession?.terminalSessionId);
   const boundTerminalSessionId = activeSession?.terminalSessionId || "";
-  const targetConnected = isConnectedRemote(boundTerminal);
+  const targetConnected = isRemoteSession(boundTerminal);
   const activeStreaming = !!streamingByChat[activeSessionId];
   const activeHasPendingTools = messages.some((message) => message.toolResults?.some((result) => !result.executed));
   const activeHasExecutingTools = messages.some((message) => message.toolResults?.some((result) => result.executing));
   const activeHasUncontinuedTools = messages.some((message) => !!message.toolResults?.length && !message.toolContinued);
-  const activeBindableTerminal = props.tabs.find((tab) => tab.id === props.activeTabId && isConnectedRemote(tab));
+  const activeBindableTerminal = props.tabs.find((tab) => tab.id === props.activeTabId && isRemoteSession(tab));
 
   const MAX_STORED_SESSIONS = 20;
   const MAX_MSG_LENGTH = 8000;
@@ -371,7 +368,7 @@ export function AiPanel(props: {
   const launchAiRequest = useCallback((session: ChatSession, apiMessages: types.AiMessage[], terminalContext: string, continuing: boolean) => {
     const currentRequestId = requestId();
     const target = tabsRef.current.find((tab) => tab.id === session.terminalSessionId);
-    const toolsEnabled = isConnectedRemote(target);
+    const toolsEnabled = isRemoteSession(target);
     activeRequestsRef.current[session.id] = currentRequestId;
     setStreamingByChat((previous) => ({ ...previous, [session.id]: currentRequestId }));
 
@@ -398,7 +395,7 @@ export function AiPanel(props: {
     if (toolCallIds.length === 0) return;
     const session = sessionsRef.current.find((item) => item.id === chatId);
     const target = tabsRef.current.find((tab) => tab.id === session?.terminalSessionId);
-    if (!session || !isConnectedRemote(target)) {
+    if (!session || !isRemoteSession(target)) {
       onNotifyRef.current(t(lang, "aiTargetDisconnected"), "error");
       return;
     }
@@ -475,7 +472,7 @@ export function AiPanel(props: {
 
   const newSession = useCallback(() => {
     const id = "ai-sess-" + Date.now() + "-" + (++sessionCounter);
-    const candidate = tabsRef.current.find((tab) => tab.id === props.activeTabId && isConnectedRemote(tab));
+    const candidate = tabsRef.current.find((tab) => tab.id === props.activeTabId && isRemoteSession(tab));
     const session: ChatSession = {
       id,
       title: t(lang, "aiNewChat") + " " + (sessionsRef.current.length + 1),
@@ -484,7 +481,18 @@ export function AiPanel(props: {
       terminalSessionId: candidate?.id,
       terminalTitle: candidate?.title,
     };
-    setSessions((previous) => [session, ...previous]);
+    // Bound the in-memory list to what persistence keeps. Messages hold
+    // reasoning and tool output that is never written back to storage, so
+    // without this a long-lived panel grows without limit while localStorage
+    // stays at MAX_STORED_SESSIONS. A chat with a request in flight is never
+    // dropped: its stream events would have nowhere to land.
+    setSessions((previous) => {
+      const next = [session, ...previous];
+      if (next.length <= MAX_STORED_SESSIONS) return next;
+      const keep = new Set(next.slice(0, MAX_STORED_SESSIONS).map((item) => item.id));
+      for (const chatId of Object.keys(activeRequestsRef.current)) keep.add(chatId);
+      return next.filter((item) => keep.has(item.id));
+    });
     setActiveSessionId(id);
     setInput("");
   }, [lang, props.activeTabId]);
@@ -505,6 +513,17 @@ export function AiPanel(props: {
   const deleteSession = useCallback((id: string) => {
     const currentRequestId = activeRequestsRef.current[id];
     if (currentRequestId) CancelAiChat(id, currentRequestId).catch(() => {});
+    // Drop the request bookkeeping with the session. A cancelled stream may
+    // never send a terminal event, and a leftover entry would keep the deleted
+    // chat flagged as streaming — and, because the entry is keyed by chat id,
+    // would also make a later event for that id look current.
+    delete activeRequestsRef.current[id];
+    setStreamingByChat((previous) => {
+      if (!(id in previous)) return previous;
+      const next = { ...previous };
+      delete next[id];
+      return next;
+    });
     setSessions((previous) => previous.filter((session) => session.id !== id));
     setActiveSessionId((current) => {
       if (current !== id) return current;
@@ -592,7 +611,7 @@ export function AiPanel(props: {
   }, [activeSessionId, enqueueStreamEvent]);
 
   const rebindTarget = useCallback(() => {
-    const target = tabsRef.current.find((tab) => tab.id === props.activeTabId && isConnectedRemote(tab));
+    const target = tabsRef.current.find((tab) => tab.id === props.activeTabId && isRemoteSession(tab));
     if (!target) {
       onNotifyRef.current(t(lang, "aiNoConnectedTarget"), "error");
       return;

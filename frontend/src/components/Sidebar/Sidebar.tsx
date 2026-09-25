@@ -249,6 +249,11 @@ export function Sidebar(props: {
   }, []);
 
   const onDragEnd = useCallback(() => {
+    // This listener is on window, so it fires for every mouseup in the app, not
+    // just the divider drag. Without the guard, any click wrote settings.json
+    // from a renderer snapshot that may be minutes old — re-running log-dir
+    // retention and restarting every monitor poller for nothing.
+    if (!dragRef.current.active) return;
     dragRef.current.active = false;
     if (props.settings) {
       const next = new types.AppSettings({ ...props.settings, sidebarSplitPct: Math.round(splitRef.current) });

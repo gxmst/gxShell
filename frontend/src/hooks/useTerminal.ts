@@ -68,6 +68,18 @@ function readBufferCells(term: Terminal, row: number): { text: string; spans: Bu
   return { text: text.trimEnd(), spans };
 }
 
+// Passed to every find call. onDidChangeResults only fires for a search made
+// with decorations, so without this the search bar's "3 / 12" counter — and the
+// "0/0" that tells the user nothing matched — never appears. The colours are the
+// ones xterm's own search UI uses; decoration backgrounds are drawn behind the
+// text layer, so the characters stay readable.
+const SEARCH_DECORATIONS = {
+  matchBackground: "#ffff00",
+  matchOverviewRuler: "#ffff00",
+  activeMatchBackground: "#ff9632",
+  activeMatchColorOverviewRuler: "#ff9632",
+};
+
 export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, splitPane?: SplitPane | null, broadcastRef?: MutableRefObject<{ enabled: boolean; targets: string[] }>, linkHandlersRef?: MutableRefObject<TerminalLinkAppHandlers>, setContextMenu?: (menu: AppContextMenu | null) => void, onSearchResults?: (id: string, index: number, count: number) => void, onPasteRequest?: (request: TerminalPasteRequest) => void, terminalOverrides?: Record<string, types.TerminalSettings>) {
   const terminals = useRef<Record<string, Terminal>>({});
   const fits = useRef<Record<string, FitAddon>>({});
@@ -671,12 +683,12 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
 
   const findNext = useCallback((id: string, query: string) => {
     if (!id || !query) return;
-    searches.current[id]?.findNext(query);
+    searches.current[id]?.findNext(query, { decorations: SEARCH_DECORATIONS });
   }, []);
 
   const findPrev = useCallback((id: string, query: string) => {
     if (!id || !query) return;
-    searches.current[id]?.findPrevious(query);
+    searches.current[id]?.findPrevious(query, { decorations: SEARCH_DECORATIONS });
   }, []);
 
   const refitTerminal = useCallback((id: string, _depth = 0) => {

@@ -728,3 +728,53 @@ describe("CLI session replacement", () => {
     expect(result.current.tabs[0]?.id).toBe("new-1");
   });
 });
+
+describe("closeTab outcome", () => {
+  it("reports a cancelled close so the caller keeps a live tab in place", async () => {
+    const profile = makeProfile("one");
+    const beforeCloseTab = vi.fn(() => false);
+    const { result } = renderHook(() => useSessions({
+      profiles: [profile],
+      notify: vi.fn(),
+      reload: vi.fn(async () => undefined),
+      disposeTerminal: vi.fn(),
+      restoreWorkspace: false,
+      language: "en",
+      beforeCloseTab,
+    }));
+    act(() => {
+      result.current.setTabs([{ id: "session-1", profileId: "one", title: "one", state: "connected" }]);
+    });
+
+    let closed: boolean | undefined;
+    await act(async () => { closed = await result.current.closeTab("session-1"); });
+
+    // The floating-window host undocks only on a real close; a cancelled
+    // confirmation must not report success.
+    expect(closed).toBe(false);
+    expect(appMocks.disconnect).not.toHaveBeenCalled();
+    expect(result.current.tabs.map((tab) => tab.id)).toEqual(["session-1"]);
+  });
+
+  it("reports a completed close", async () => {
+    const profile = makeProfile("one");
+    const { result } = renderHook(() => useSessions({
+      profiles: [profile],
+      notify: vi.fn(),
+      reload: vi.fn(async () => undefined),
+      disposeTerminal: vi.fn(),
+      restoreWorkspace: false,
+      language: "en",
+    }));
+    act(() => {
+      result.current.setTabs([{ id: "session-1", profileId: "one", title: "one", state: "connected" }]);
+    });
+
+    let closed: boolean | undefined;
+    await act(async () => { closed = await result.current.closeTab("session-1"); });
+
+    expect(closed).toBe(true);
+    expect(appMocks.disconnect).toHaveBeenCalledWith("session-1");
+    expect(result.current.tabs).toHaveLength(0);
+  });
+});

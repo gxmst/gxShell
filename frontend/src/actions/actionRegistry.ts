@@ -25,6 +25,13 @@ export type ActionContext = {
   isOverlay: boolean;
   activeTab: string;
   activeIsMarkdown: boolean;
+  /**
+   * The floating terminal the event came from, or "" when it did not come from
+   * one. A shortcut that acts on "the terminal" must act on the one the user is
+   * typing into: with a floating terminal focused, the main area's active tab is
+   * a different session entirely.
+   */
+  floatingTabId: string;
 };
 
 export type ActionDefinition<Context = ActionContext> = {
@@ -150,7 +157,7 @@ export class ActionRegistry<Context = ActionContext> {
 
 export type HotkeyCallbacks = {
   onGlobalSearch: () => void;
-  onTerminalSearch: () => void;
+  onTerminalSearch: (tabId: string) => void;
   onCloseTab: (id: string) => void;
   onNextTab: () => void;
   onPrevTab: () => void;
@@ -207,10 +214,10 @@ export function createDefaultActionRegistry(
       category: "Terminal",
       scope: "terminal",
       defaultShortcuts: ["Mod+F"],
-      availability: (context) => !context.activeIsMarkdown && !!context.activeTab,
+      availability: (context) => !!context.floatingTabId || (!context.activeIsMarkdown && !!context.activeTab),
       matches: (event, context) => !!context.target?.closest(".xterm, .terminal-host, .floating-terminal")
         && shortcutMatches(event, { key: "f", mod: true }),
-      run: () => callbacks.onTerminalSearch(),
+      run: (context) => callbacks.onTerminalSearch(context.floatingTabId || context.activeTab || getState().activeTab),
     },
     {
       id: "workspace.close-tab",
@@ -219,8 +226,8 @@ export function createDefaultActionRegistry(
       scope: "global",
       defaultShortcuts: ["Mod+Shift+W"],
       shortcuts: [{ key: "w", mod: true, shift: true }],
-      availability: (context) => !!context.activeTab,
-      run: (context) => callbacks.onCloseTab(context.activeTab || getState().activeTab),
+      availability: (context) => !!(context.floatingTabId || context.activeTab),
+      run: (context) => callbacks.onCloseTab(context.floatingTabId || context.activeTab || getState().activeTab),
     },
   ]);
   return registry;

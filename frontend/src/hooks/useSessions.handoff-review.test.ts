@@ -61,7 +61,7 @@ it.each(["monitor cleanup", "old-session disconnect", "tab removal"])("disconnec
   act(() => bridge.events.get("terminal:disconnected")?.({ id: "old", state: "disconnected" }));
   await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
   expect(bridge.connect).toHaveBeenCalledTimes(1);
-  let closing!: Promise<void>;
+  let closing!: Promise<boolean>;
   act(() => { closing = result.current.closeTab("old", true); });
   await act(async () => { if (phase === "tab removal") await closing; });
   expect(bridge.stopMonitor).toHaveBeenCalledWith("old");
@@ -85,7 +85,7 @@ it.each(["another tab", "a pending connection"])("preserves a replacement claime
   act(() => bridge.events.get("terminal:disconnected")?.({ id: "old", state: "disconnected" }));
   await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
   const replacement = new types.SessionInfo({ id: "replacement", profileId: "one", state: "connected" });
-  let closing!: Promise<void>;
+  let closing!: Promise<boolean>;
   let connecting: Promise<void> | undefined;
   act(() => { closing = result.current.closeTab("old", true); });
   if (owner === "another tab") {

@@ -19,6 +19,25 @@ type UseSessionsOptions = {
 
 const isSessionNotFoundError = (err: unknown) => String(err).toLowerCase().includes("session not found");
 
+// Errors that waiting cannot fix. A rejected or changed host key needs a human
+// decision, and a rejected credential needs a new secret, so retrying only
+// repeats the same prompt on every backoff step — and for password auth it also
+// risks tripping the server's own brute-force protection. The messages are
+// matched on the Go and golang.org/x/crypto wording, which is what the backend
+// returns for these cases.
+const isPermanentConnectError = (message: string) => {
+  const text = message.toLowerCase();
+  return [
+    "host key",                    // changed, or rejected by the user
+    "unable to authenticate",
+    "authentication failed",
+    "no supported methods remain",
+    "permission denied",
+    "no such host",                // DNS
+  ].some((marker) => text.includes(marker));
+};
+
+
 // A profile can be present in the tab strip while its transport is being
 // replaced or restored. Treat those states as occupied so a second connect
 // cannot race the recovery path and create duplicate sessions.
@@ -800,7 +819,6 @@ export function useSessions(options: UseSessionsOptions) {
       attemptState.inFlight = true;
       attemptState.attempts = attempt + 1;
       try {
-        disposeTerminalRef.current(tabId);
         const info = tab.instanceId
           ? await ConnectTerminal(currentProfile.id, tab.instanceId, "", "", 120, 36)
           : await Connect(currentProfile.id, 120, 36);
@@ -815,6 +833,13 @@ export function useSessions(options: UseSessionsOptions) {
           clearAutoReconnect(tabId);
           return;
         }
+        // Release the dead session's terminal only now that its replacement
+        // exists. Disposing before every attempt blanked the tab for the whole
+        // backoff, so three failed attempts left the user staring at an empty
+        // screen with the pre-disconnect output gone — a manual reconnect keeps
+        // it, and this now matches. A reconnect that reuses the same id keeps
+        // the terminal as it is.
+        if (info.id !== tabId) disposeTerminalRef.current(tabId);
         // Replace the old tab id in place so ordering and active state persist.
         rememberSessionInfo(info);
         // The same-session-id dedupe as replaceReconnectedTab: a concurrent CLI
@@ -827,11 +852,19 @@ export function useSessions(options: UseSessionsOptions) {
         await reloadRef.current();
       } catch (err) {
         if (autoReconnect.current[tabId] !== attemptState || !tabsRef.current.some((item) => item.id === tabId)) return;
+        const message = String(err);
+        setTabs((items) => items.map((item) => item.id === tabId
+          ? { ...item, state: "error", error: message }
+          : item));
+        if (isPermanentConnectError(message)) {
+          // Give up rather than re-prompting on every backoff step. gaveUp also
+          // stops the online/visibility retry path from scheduling another one;
+          // a manual reconnect still works once the cause is fixed.
+          autoReconnect.current[tabId] = { attempts: AUTO_RECONNECT_MAX, timer: 0, gaveUp: true };
+          return;
+        }
         // Keep failures eligible for the online/visibility retry path when the
         // network disappears during the request and no new timer can start.
-        setTabs((items) => items.map((item) => item.id === tabId
-          ? { ...item, state: "error", error: String(err) }
-          : item));
         autoReconnect.current[tabId] = { attempts: attempt + 1, timer: 0 };
         scheduleAutoReconnectRef.current(tabId);
       }
@@ -876,11 +909,13 @@ export function useSessions(options: UseSessionsOptions) {
   }, []);
 
   const beforeCloseTab = options.beforeCloseTab;
-  const closeTab = useCallback(async (id: string, skipConfirm = false) => {
+  const closeTab = useCallback(async (id: string, skipConfirm = false): Promise<boolean> => {
     const tab = tabs.find((item) => item.id === id);
     const isMarkdown = tab?.type === "markdown";
     if (!skipConfirm && tab && beforeCloseTab && !(await beforeCloseTab(tab))) {
-      return;
+      // The user cancelled the confirmation. Report that nothing was closed so
+      // callers do not run their own post-close cleanup for a live tab.
+      return false;
     }
     if (tab && tab.type !== "markdown") {
       const quickProfile = tab.profileId ? quickProfiles.current.get(tab.profileId) : undefined;
@@ -915,6 +950,7 @@ export function useSessions(options: UseSessionsOptions) {
       }
       return next;
     });
+    return true;
   }, [beforeCloseTab, tabs, setActiveTab]);
 
   return {

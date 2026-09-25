@@ -20,6 +20,7 @@ import {
 import { t } from "../../i18n";
 import { ConfirmDialog } from "../modals/ConfirmDialog";
 import type { Tab, Toast } from "../../types";
+import { isRemoteSession } from "../../utils/sessionIdentity";
 
 const PORT_RE = /^\d{1,5}([:\-]\d{1,5})?$/;
 const ARM_TIMEOUT_MS = 3000;
@@ -117,8 +118,13 @@ export function FirewallPanel(props: {
   const onNotifyRef = useRef(props.onNotify);
   onNotifyRef.current = props.onNotify;
 
+  // Only a live remote session has a firewall to inspect. A local terminal or a
+  // Markdown document has a tab id too, and polling one only produced
+  // "session not found" every interval.
+  const sessionId = isRemoteSession(props.active) ? props.active.id : "";
+
   const refresh = useCallback(async () => {
-    const sessionID = props.active?.id;
+    const sessionID = sessionId;
     if (!sessionID) return;
     const seq = ++refreshSeqRef.current;
     setLoading(true);
@@ -145,7 +151,7 @@ export function FirewallPanel(props: {
       )
         setLoading(false);
     }
-  }, [props.active?.id, props.onNotify]);
+  }, [sessionId, props.onNotify]);
 
   useEffect(() => {
     refresh();

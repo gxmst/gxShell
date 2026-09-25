@@ -26,6 +26,7 @@ import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import { t, type LangKey } from "../../i18n";
 import { ConfirmDialog } from "../modals/ConfirmDialog";
 import type { Tab, Toast } from "../../types";
+import { isRemoteSession } from "../../utils/sessionIdentity";
 
 const MAX_LOG_CHARS = 512 * 1024;
 const LOG_FLUSH_MS = 75;
@@ -145,8 +146,13 @@ export function ServicePanel(props: {
     [flushPendingLogs],
   );
 
+  // Only a live remote session can be listed. A local terminal or a Markdown
+  // document has a tab id too, and polling one only produced "session not
+  // found" every interval.
+  const sessionId = isRemoteSession(props.active) ? props.active.id : "";
+
   const refresh = useCallback(async () => {
-    const sessionID = props.active?.id;
+    const sessionID = sessionId;
     if (!sessionID) return;
     const seq = ++refreshSeqRef.current;
     setLoading(true);
@@ -180,7 +186,7 @@ export function ServicePanel(props: {
       )
         setLoading(false);
     }
-  }, [props.active?.id, props.onNotify]);
+  }, [sessionId, props.onNotify]);
 
   useEffect(() => {
     logRequestSeqRef.current++;

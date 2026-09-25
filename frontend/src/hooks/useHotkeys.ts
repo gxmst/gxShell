@@ -42,6 +42,7 @@ export function useHotkeys(options: HotkeyOptions) {
         isOverlay,
         activeTab: opts.activeTab,
         activeIsMarkdown: opts.activeIsMarkdown,
+        floatingTabId: target?.closest("[data-floating-tab]")?.getAttribute("data-floating-tab") || "",
       };
       const action = registryRef.current.dispatch(event, context);
       if (action) {

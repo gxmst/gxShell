@@ -72,6 +72,7 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
   const [conflict, setConflict] = useState<PendingConflict | null>(null);
   const { transfers, history, cancelTransfer, pauseTransfer, resumeTransfer, retryTransfer } = useTransfers();
   const remoteSeq = useRef(0);
+  const localSeq = useRef(0);
   const remoteSessionRef = useRef(activeSessionId);
   if (remoteSessionRef.current !== activeSessionId) {
     remoteSessionRef.current = activeSessionId;
@@ -111,15 +112,26 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
     setConflict(null);
   }, [activeSessionId, localPath, remotePath]);
 
+  // Local navigation is sequenced like remote navigation: without it, a slow
+  // listing for a directory the user already left lands last and overwrites the
+  // current one, and an upload started afterwards would use that stale
+  // directory as its context.
   const loadLocalDir = async (dir: string) => {
+    const seq = ++localSeq.current;
     setLocalBusy(true);
+    let files: types.LocalFile[] | null = null;
     try {
-      const files = await ListLocalDir(dir);
-      setLocalFiles(files || []);
+      files = (await ListLocalDir(dir)) || [];
+    } catch {
+      files = null;
+    }
+    if (seq !== localSeq.current) return;
+    if (files) {
+      setLocalFiles(files);
       setLocalPath(dir);
       setSelectedLocal(new Set());
       setLastLocalIdx(-1);
-    } catch {}
+    }
     setLocalBusy(false);
   };
 

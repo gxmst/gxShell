@@ -1,6 +1,11 @@
 import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { hasActiveOverlay } from "../../utils/overlayManager";
+
+// Open cards, oldest first. Every card listens for Escape on document, so an
+// order is needed: without one a single Escape closed all of them at once.
+const openCards: object[] = [];
 
 interface FloatingCardProps {
   initialLeft?: number;
@@ -61,6 +66,9 @@ export function FloatingCard({
   const dragRef = useRef({ active: false, startX: 0, startY: 0, startLeft: 0, startTop: 0 });
   const livePosRef = useRef(pos);
   const frameRef = useRef(0);
+  // Stable identity for this card's slot in the Escape order.
+  const cardTokenRef = useRef<object | null>(null);
+  if (cardTokenRef.current === null) cardTokenRef.current = {};
 
   // Re-clamp on resize so wide cards (dual-pane) stay fully visible.
   useEffect(() => {
@@ -119,15 +127,32 @@ export function FloatingCard({
   }, [pos]);
 
   useEffect(() => {
+    const token = cardTokenRef.current;
+    if (!token) return;
+    openCards.push(token);
     const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
+      if (e.key !== "Escape") return;
+      // A modal owns Escape while it is open, so Escape must not also dismiss
+      // the card behind it — that is how pressing Escape in a transfer conflict
+      // dialog used to close the whole transfer window.
+      if (hasActiveOverlay()) return;
+      // Only the topmost card closes.
+      if (openCards[openCards.length - 1] !== token) return;
+      const target = e.target instanceof Element ? e.target : null;
+      const panel = panelRef.current;
+      const ownsFocus = !!panel && !!target && panel.contains(target);
+      // Escape belongs to whoever holds the focus: a terminal running vim, a
+      // search field, an editor. Only a card that owns the focus — or one open
+      // with the focus on the app chrome — claims the key.
+      if (!ownsFocus && target?.closest(".xterm, input, textarea, select, [contenteditable='true']")) return;
+      e.stopPropagation();
+      onClose();
     };
     document.addEventListener("keydown", handleEsc, true);
     return () => {
       document.removeEventListener("keydown", handleEsc, true);
+      const index = openCards.lastIndexOf(token);
+      if (index >= 0) openCards.splice(index, 1);
     };
   }, [onClose]);
 

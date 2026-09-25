@@ -124,6 +124,9 @@ function App() {
   const [globalQuery, setGlobalQuery] = useState("");
   const [terminalSearchOpen, setTerminalSearchOpen] = useState(false);
   const [terminalSearch, setTerminalSearch] = useState("");
+  // The session the search bar acts on. Ctrl+F from a focused floating terminal
+  // must search that terminal, not whichever tab is active in the main area.
+  const [terminalSearchTab, setTerminalSearchTab] = useState("");
   const [terminalSearchResult, setTerminalSearchResult] = useState<{ id: string; index: number; count: number } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("gx:sidebarCollapsed", false);
   const [sidebarPanelWidth, setSidebarPanelWidth] = useState(SIDEBAR_PANEL_DEFAULT);
@@ -224,6 +227,9 @@ function App() {
   splitPaneRef.current = splitPane;
   const floatingTabIdsRef = useRef(floatingTabIds);
   floatingTabIdsRef.current = floatingTabIds;
+  // Whether any tab has ever been present, so persisted floating ids are not
+  // pruned against the empty list the first render always sees.
+  const hadTabsRef = useRef(false);
   const previousSessionStates = useRef<Record<string, string>>({});
 
   useEffect(() => {
@@ -500,13 +506,27 @@ function App() {
     // which includes a delayed refitTerminal, so no extra call is needed here.
   }, [sessions.setActiveTab]);
 
-  const handleCloseFloating = useCallback(async (id: string) => {
-    await sessions.closeTab(id);
-    setFloatingTabIds((prev) => prev.filter((fid) => fid !== id));
+  // Closing a tab that is floating must also clear its floating flag, and only
+  // when the close really happened: closeTab returns false when the disconnect
+  // confirmation was cancelled, and undocking a still-live session back into the
+  // main area is not what "cancel" means.
+  const closeTabForgettingFloating = useCallback(async (id: string) => {
+    if (!id) return;
+    if (await sessions.closeTab(id)) setFloatingTabIds((prev) => prev.filter((fid) => fid !== id));
   }, [sessions.closeTab]);
+
+  const handleCloseFloating = useCallback(async (id: string) => {
+    await closeTabForgettingFloating(id);
+  }, [closeTabForgettingFloating]);
 
   useEffect(() => {
     const tabIds = new Set(sessions.tabs.map((t) => t.id));
+    // The workspace restores asynchronously, so the first render sees an empty
+    // tab list. Pruning the persisted floating ids against it erased them before
+    // their tabs existed — which is why a floating layout never survived a
+    // restart. Once any tab has existed, pruning means "the user closed it".
+    if (tabIds.size === 0 && !hadTabsRef.current) return;
+    hadTabsRef.current = true;
     setFloatingTabIds((prev) => { const next = prev.filter((id) => tabIds.has(id)); return next.length === prev.length ? prev : next; });
     setAutomationActivity((prev) => {
       const next = Object.fromEntries(Object.entries(prev).filter(([id]) => tabIds.has(id)));
@@ -973,8 +993,8 @@ function App() {
     const zh = lang === "zh-CN";
     const registry = createDefaultActionRegistry({
       onGlobalSearch: () => { setGlobalQuery(""); setGlobalSearchOpen(true); },
-      onTerminalSearch: () => setTerminalSearchOpen(true),
-      onCloseTab: sessions.closeTab,
+      onTerminalSearch: (tabId) => { setTerminalSearchTab(tabId); setTerminalSearchOpen(true); },
+      onCloseTab: (tabId) => { void closeTabForgettingFloating(tabId); },
       onNextTab: () => activateTabByOffset(1),
       onPrevTab: () => activateTabByOffset(-1),
       onSelectTab: activateTabByIndex,
@@ -1083,7 +1103,7 @@ function App() {
       },
     ]);
     return registry;
-  }, [activityCenterOpen, activateTabByIndex, activateTabByOffset, adjustTerminalFontSize, profileState.settings?.language, renameActiveTab, reopenClosedTab, resetTerminalFontSize, sessions.closeTab, setActivityCenterOpen, zenMode]);
+  }, [activityCenterOpen, activateTabByIndex, activateTabByOffset, adjustTerminalFontSize, closeTabForgettingFloating, profileState.settings?.language, renameActiveTab, reopenClosedTab, resetTerminalFontSize, setActivityCenterOpen, zenMode]);
 
   useHotkeys({
     activeTab: sessions.activeTab,
@@ -1384,6 +1404,7 @@ function App() {
       isOverlay: false,
       activeTab: sessions.activeTab,
       activeIsMarkdown: sessions.active?.type === "markdown",
+      floatingTabId: "",
     };
     const registeredActionResults = appActionRegistry.list()
       .filter((action) => !action.availability || action.availability(paletteContext))
@@ -1685,14 +1706,14 @@ function App() {
         query={terminalSearch}
         onQuery={(value) => {
           setTerminalSearch(value);
-          if (value) findNext(sessions.activeTab, value);
+          if (value) findNext(terminalSearchTab, value);
           else setTerminalSearchResult(null);
         }}
-        onNext={() => findNext(sessions.activeTab, terminalSearch)}
-        onPrev={() => findPrev(sessions.activeTab, terminalSearch)}
+        onNext={() => findNext(terminalSearchTab, terminalSearch)}
+        onPrev={() => findPrev(terminalSearchTab, terminalSearch)}
         onClose={() => { setTerminalSearchOpen(false); setTerminalSearchResult(null); }}
-        matchIndex={terminalSearchResult?.id === sessions.activeTab ? terminalSearchResult.index : undefined}
-        matchCount={terminalSearchResult?.id === sessions.activeTab ? terminalSearchResult.count : undefined}
+        matchIndex={terminalSearchResult?.id === terminalSearchTab ? terminalSearchResult.index : undefined}
+        matchCount={terminalSearchResult?.id === terminalSearchTab ? terminalSearchResult.count : undefined}
         locale={profileState.settings?.language || "en"}
       />}
       {pasteRequest && <PasteConfirmDialog

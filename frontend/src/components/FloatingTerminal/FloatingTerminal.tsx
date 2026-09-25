@@ -134,7 +134,7 @@ export function FloatingTerminal({ tab, terminalHosts, onDock, onClose, refitTer
   }, [pos, size, tab.id, refitTerminal]);
 
   return (
-    <div ref={panelRef} className="floating-terminal" style={{ left: pos.left, top: pos.top, width: size.width, height: size.height }}>
+    <div ref={panelRef} className="floating-terminal" data-floating-tab={tab.id} style={{ left: pos.left, top: pos.top, width: size.width, height: size.height }}>
       <div
         className="floating-terminal-header"
         onPointerDown={onHeaderPointerDown}

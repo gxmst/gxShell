@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import clsx from "clsx";
 import { Box, Eye, Loader2, Play, RefreshCw, RotateCcw, Square, StopCircle, Trash2 } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { ListContainers, StreamContainerLogs, StopContainerLogs, RestartContainer, StopContainer, StartContainer, RemoveContainer } from "../../../wailsjs/go/app/App";
 import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import { t } from "../../i18n";
 import type { Tab, Toast } from "../../types";
+import { isRemoteSession } from "../../utils/sessionIdentity";
 
 const MAX_LOG_CHARS = 512 * 1024;
 const LOG_FLUSH_MS = 75;
+const ARM_TIMEOUT_MS = 3000;
 
 // Payload of the Go-side "docker:log" event (a map[string]string). The backend
 // may batch several log lines into one event, so `data` can contain embedded
@@ -41,6 +44,8 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   const [logs, setLogs] = useState("");
   const [logStreaming, setLogStreaming] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [armedRemove, setArmedRemove] = useState("");
+  const armedRemoveTimerRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval>>();
   const logEndRef = useRef<HTMLDivElement>(null);
   const logStreamIdRef = useRef<string | null>(null);
@@ -68,26 +73,38 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
     }
   }, [flushPendingLogs]);
 
-  const refresh = useCallback(async () => {
-    if (!props.active?.id) return;
+  // Only a live remote session can be inspected. A local terminal or a Markdown
+  // document has a tab id too, and polling one produced a "session not found"
+  // toast every interval; a host without docker produced one every interval as
+  // well. Both are gone with the session gate and the silent background poll.
+  const sessionId = isRemoteSession(props.active) ? props.active.id : "";
+
+  const refresh = useCallback(async (notifyOnError = true) => {
+    if (!sessionId) return;
     setLoading(true);
     try {
-      const list = await ListContainers(props.active.id, showAll);
+      const list = await ListContainers(sessionId, showAll);
       setContainers(list || []);
     } catch (err) {
-      props.onNotify(String(err), "error");
+      if (notifyOnError) props.onNotify(String(err), "error");
       setContainers([]);
     } finally {
       setLoading(false);
     }
-  }, [props.active?.id, showAll, props.onNotify]);
+  }, [sessionId, showAll, props.onNotify]);
 
   useEffect(() => {
-    refresh();
+    if (!sessionId) {
+      setContainers([]);
+      return;
+    }
+    // The first load reports failures; the interval does not, so a panel left
+    // open on a host without docker stays quiet.
+    void refresh(true);
     if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(refresh, 10000);
+    timerRef.current = setInterval(() => { void refresh(false); }, 10000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [refresh]);
+  }, [sessionId, refresh]);
 
   useEffect(() => {
     if (logEndRef.current) {
@@ -169,6 +186,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
         StopContainerLogs(logStreamIdRef.current).catch(() => {});
       }
       if (pendingLogTimerRef.current !== null) window.clearTimeout(pendingLogTimerRef.current);
+      if (armedRemoveTimerRef.current !== null) window.clearTimeout(armedRemoveTimerRef.current);
     };
   }, []);
 
@@ -215,6 +233,23 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   }, [props.active?.id, refresh, props.onNotify]);
 
   const remove = useCallback(async (c: types.ContainerInfo) => {
+    // `docker rm -f` cannot be undone, and the button sits directly next to
+    // "start", so removal takes two clicks within three seconds — the same
+    // arming the service panel uses for stop/restart/disable.
+    if (armedRemove !== c.id) {
+      if (armedRemoveTimerRef.current !== null) window.clearTimeout(armedRemoveTimerRef.current);
+      setArmedRemove(c.id);
+      armedRemoveTimerRef.current = window.setTimeout(() => {
+        armedRemoveTimerRef.current = null;
+        setArmedRemove("");
+      }, ARM_TIMEOUT_MS);
+      return;
+    }
+    if (armedRemoveTimerRef.current !== null) {
+      window.clearTimeout(armedRemoveTimerRef.current);
+      armedRemoveTimerRef.current = null;
+    }
+    setArmedRemove("");
     if (!props.active?.id) return;
     setActionLoading(c.id);
     try {
@@ -226,7 +261,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
     } finally {
       setActionLoading(null);
     }
-  }, [props.active?.id, refresh, props.onNotify]);
+  }, [armedRemove, props.active?.id, refresh, props.onNotify]);
 
   const stateColor = (state: string) => {
     switch (state) {
@@ -271,7 +306,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
             <input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} className="w-2.5 h-2.5" />
             {t(lang, "showAll")}
           </label>
-          <button className="panel-page-action" onClick={refresh} disabled={loading}><RefreshCw size={11} className={loading ? "animate-spin" : ""} /></button>
+          <button className="panel-page-action" onClick={() => void refresh()} disabled={loading}><RefreshCw size={11} className={loading ? "animate-spin" : ""} /></button>
         </div>
       </div>
 
@@ -333,7 +368,12 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
                   <button className="container-action-btn text-green-400" onClick={() => start(c)} title={t(lang, "start")} disabled={actionLoading === c.id}>
                     {actionLoading === c.id ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
                   </button>
-                  <button className="container-action-btn text-red-400" onClick={() => remove(c)} title={t(lang, "remove")} disabled={actionLoading === c.id}>
+                  <button
+                    className={clsx("container-action-btn", "text-red-400", armedRemove === c.id && "action-armed")}
+                    onClick={() => void remove(c)}
+                    title={armedRemove === c.id ? t(lang, "confirm") : t(lang, "remove")}
+                    disabled={actionLoading === c.id}
+                  >
                     <Trash2 size={11} />
                   </button>
                 </>

@@ -204,6 +204,63 @@ func newSettingsMonitorTestApp(t *testing.T) (*App, *appMonitorExecutor, types.A
 	return app, executor, settings
 }
 
+// UpdateSettings takes a whole snapshot from the renderer, and that snapshot can
+// be minutes old. Two settings have dedicated setters that write through the
+// store — SkipUpdateVersion and SaveAiConfig — so the snapshot must not be able
+// to undo them; every other field still comes from the caller.
+func TestUpdateSettingsKeepsBackendOwnedFields(t *testing.T) {
+	store, err := config.NewStoreAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := config.DefaultSettings()
+	current.UpdateSkippedVersion = "9.9.9"
+	current.Ai = types.AiConfig{Provider: "openai", Endpoint: "https://ai.test/v1", Model: "gpt-test"}
+	current.SidebarWidth = 200
+	if err := store.SaveSettings(current); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{store: store}
+
+	// A stale renderer snapshot: it predates both the "skip this version" click
+	// and the AI configuration saved from the AI panel.
+	stale := config.DefaultSettings()
+	stale.UpdateSkippedVersion = ""
+	stale.Ai = types.AiConfig{}
+	stale.SidebarWidth = 320
+
+	saved, err := app.UpdateSettings(stale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.UpdateSkippedVersion != "9.9.9" {
+		t.Errorf("UpdateSkippedVersion = %q, want 9.9.9", saved.UpdateSkippedVersion)
+	}
+	if saved.Ai.Provider != "openai" || saved.Ai.Model != "gpt-test" || saved.Ai.Endpoint != "https://ai.test/v1" {
+		t.Errorf("Ai = %#v, want the stored configuration", saved.Ai)
+	}
+	if saved.SidebarWidth != 320 {
+		t.Errorf("SidebarWidth = %d, want 320 (a field the renderer owns)", saved.SidebarWidth)
+	}
+
+	persisted, err := store.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.UpdateSkippedVersion != "9.9.9" {
+		t.Errorf("persisted UpdateSkippedVersion = %q, want 9.9.9", persisted.UpdateSkippedVersion)
+	}
+	if persisted.Ai.Provider != "openai" || persisted.Ai.Model != "gpt-test" {
+		t.Errorf("persisted Ai = %#v, want the stored configuration", persisted.Ai)
+	}
+	if persisted.SidebarWidth != 320 {
+		t.Errorf("persisted SidebarWidth = %d, want 320", persisted.SidebarWidth)
+	}
+	if persisted.Ai.APIKey != "" {
+		t.Errorf("persisted Ai.APIKey = %q, want it to stay out of settings.json", persisted.Ai.APIKey)
+	}
+}
+
 func TestMonitorDisabledSettingStopsAndBlocksCollectors(t *testing.T) {
 	app, executor, settings := newSettingsMonitorTestApp(t)
 	if err := app.StartMonitor("session-1"); err != nil {
