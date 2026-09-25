@@ -35,7 +35,13 @@ func (m *Manager) Status(sessionID string) (types.WebsiteStatus, error) {
 	// /etc/nginx/sites-available but not read the files in it, which used to
 	// surface as "backend detected, zero sites" with no hint that permission was
 	// the reason. UNREADABLE lets the UI tell those two states apart.
+	//
+	// The PATH extension matters for the detection itself: nginx and apache2ctl
+	// live in /usr/sbin, which Debian omits from the PATH of a non-interactive
+	// command run by a non-root user. Without it a host that is serving sites
+	// perfectly well looks like it has no web server installed.
 	const script = `
+PATH="$PATH:/usr/sbin:/sbin"; export PATH
 enc() { printf '%s' "$1" | base64 | tr -d '\n'; }
 emit_site() {
   backend=$1; mode=$2; enabled=$3; name=$4; file=$5

@@ -101,6 +101,46 @@ func TestDuplicateProfileRequiresCredentialsToBeEnteredAgain(t *testing.T) {
 	}
 }
 
+func TestDuplicateProfileDropsTheCliIdentity(t *testing.T) {
+	app := newProfileTestApp(t)
+	original := types.Profile{
+		ID:         types.NewID("profile-test"),
+		Name:       "production",
+		Host:       "example.test",
+		Port:       22,
+		Username:   "root",
+		AuthType:   types.AuthPassword,
+		CliEnabled: true,
+		CliAlias:   "prod-web",
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+	if err := app.store.SaveProfiles([]types.Profile{original}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The alias is unique per profile, so copying it used to fail the whole
+	// operation with "CLI alias is already used".
+	duplicate, err := app.DuplicateProfile(original.ID)
+	if err != nil {
+		t.Fatalf("duplicating a CLI-enabled profile failed: %v", err)
+	}
+	if duplicate.CliEnabled || duplicate.CliAlias != "" {
+		t.Fatalf("duplicate inherited CLI access: enabled=%v alias=%q", duplicate.CliEnabled, duplicate.CliAlias)
+	}
+	// The original keeps its own identity. Read the store directly: ListProfiles
+	// on App sanitises credentials and this assertion is about the raw record.
+	stored, err := app.store.ListProfiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, profile := range stored {
+		if profile.ID == original.ID && (!profile.CliEnabled || profile.CliAlias != "prod-web") {
+			t.Fatalf("original profile lost its CLI access: %+v", profile)
+		}
+	}
+}
+
 func TestUpdateProfileRejectsNestedProxyJump(t *testing.T) {
 	app := newProfileTestApp(t)
 	profiles := []types.Profile{

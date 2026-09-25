@@ -237,6 +237,239 @@ func TestSanitizeRawRule(t *testing.T) {
 	}
 }
 
+func TestParseSSHConnectionPort(t *testing.T) {
+	tests := []struct {
+		name string
+		out  string
+		want int
+	}{
+		{"direct", "203.0.113.9 51000 10.0.0.5 22\n", 22},
+		{"behind a forward", "203.0.113.9 51000 10.0.0.5 20022\n", 20022},
+		{"unset variable", "\n", 0},
+		{"empty", "", 0},
+		{"truncated", "203.0.113.9 51000 10.0.0.5\n", 0},
+		{"not a number", "a b c nope\n", 0},
+		{"out of range", "a b c 70000\n", 0},
+		{"zero", "a b c 0\n", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseSSHConnectionPort(tt.out); got != tt.want {
+				t.Errorf("parseSSHConnectionPort(%q) = %d, want %d", tt.out, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSSHPortsCandidates(t *testing.T) {
+	tests := []struct {
+		name     string
+		ports    sshPorts
+		wantKeep []int
+		wantGd   []int
+	}{
+		{
+			// The common case: no forward, so both views agree.
+			name:     "direct",
+			ports:    sshPorts{Server: 2222, Dial: 2222},
+			wantKeep: []int{2222},
+			wantGd:   []int{2222},
+		},
+		{
+			// Public 20022 -> internal 22. Only 22 keeps the session alive;
+			// allowing 20022 on the host would open an unrelated port.
+			name:     "behind a forward",
+			ports:    sshPorts{Server: 22, Dial: 20022},
+			wantKeep: []int{22},
+			wantGd:   []int{22, 20022},
+		},
+		{
+			// The host would not tell us. Both candidates are kept open.
+			name:     "unknown server port",
+			ports:    sshPorts{Dial: 20022},
+			wantKeep: []int{20022, 22},
+			wantGd:   []int{20022, 22},
+		},
+		{
+			name:     "nothing probed",
+			ports:    sshPorts{},
+			wantKeep: []int{22},
+			wantGd:   []int{22},
+		},
+		{
+			name:     "server only",
+			ports:    sshPorts{Server: 2222},
+			wantKeep: []int{2222},
+			wantGd:   []int{2222},
+		},
+		{
+			// A dialled 22 with an unknown server port must not be listed twice.
+			name:     "unknown server, dial is the default",
+			ports:    sshPorts{Dial: 22},
+			wantKeep: []int{22},
+			wantGd:   []int{22},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.ports.keepOpenPorts(); !equalPorts(got, tt.wantKeep) {
+				t.Errorf("keepOpenPorts() = %v, want %v", got, tt.wantKeep)
+			}
+			if got := tt.ports.guardPorts(); !equalPorts(got, tt.wantGd) {
+				t.Errorf("guardPorts() = %v, want %v", got, tt.wantGd)
+			}
+		})
+	}
+}
+
+func equalPorts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// natFirewallSSH models a host reached through a port forward: the profile
+// dials 20022 while sshd listens on 22.
+func natFirewallSSH() *fakeFirewallSSH {
+	fake := &fakeFirewallSSH{port: 20022}
+	fake.exec = func(command string) (string, error) {
+		switch {
+		case command == sshConnectionProbe:
+			return "203.0.113.9 51000 10.0.0.5 22\n", nil
+		case strings.Contains(command, "has_ufw=0"):
+			return "ufw\n", nil
+		case command == "id -u":
+			return "0\n", nil
+		case strings.Contains(command, "ufw status verbose"):
+			return "Status: inactive\n", nil
+		default:
+			return "", nil
+		}
+	}
+	return fake
+}
+
+func TestEnableUfwOpensTheServerSidePortBehindAForward(t *testing.T) {
+	fake := natFirewallSSH()
+	m := NewManager(nil)
+	m.ssh = fake
+	if err := m.SetFirewallEnabled("session", true, false); err != nil {
+		t.Fatalf("SetFirewallEnabled: %v", err)
+	}
+	var allowed []string
+	for _, command := range fake.commands {
+		if strings.HasPrefix(command, "ufw allow ") {
+			allowed = append(allowed, strings.TrimPrefix(command, "ufw allow "))
+		}
+	}
+	if len(allowed) != 1 || allowed[0] != "22/tcp" {
+		t.Fatalf("opened the wrong port behind a forward: %#v (commands %#v)", allowed, fake.commands)
+	}
+}
+
+func TestEnableUfwKeepsBothPortsWhenTheHostWontSay(t *testing.T) {
+	fake := &fakeFirewallSSH{port: 20022}
+	fake.exec = func(command string) (string, error) {
+		switch {
+		case strings.Contains(command, "has_ufw=0"):
+			return "ufw\n", nil
+		case command == "id -u":
+			return "0\n", nil
+		default:
+			// The probe returns nothing: $SSH_CONNECTION is unset.
+			return "", nil
+		}
+	}
+	m := NewManager(nil)
+	m.ssh = fake
+	if err := m.SetFirewallEnabled("session", true, false); err != nil {
+		t.Fatalf("SetFirewallEnabled: %v", err)
+	}
+	allowed := map[string]bool{}
+	for _, command := range fake.commands {
+		if strings.HasPrefix(command, "ufw allow ") {
+			allowed[strings.TrimPrefix(command, "ufw allow ")] = true
+		}
+	}
+	if !allowed["20022/tcp"] || !allowed["22/tcp"] {
+		t.Fatalf("an unprobeable host must keep both candidates open, got %#v", allowed)
+	}
+}
+
+func TestDenyGuardCoversTheServerSidePortBehindAForward(t *testing.T) {
+	m := NewManager(nil)
+	m.ssh = natFirewallSSH()
+	// The profile dials 20022, so comparing against it would let a deny on 22
+	// through even though that is the port this session is actually using.
+	if err := m.AddFirewallRule("session", "deny", "22", "tcp", "", false); err == nil {
+		t.Fatal("deny on the server-side SSH port was accepted without force")
+	}
+	if err := m.AddFirewallRule("session", "deny", "22", "tcp", "", true); err != nil {
+		t.Fatalf("force should override the lockout guard: %v", err)
+	}
+}
+
+func TestDeleteGuardTreatsLimitAsAllow(t *testing.T) {
+	m := NewManager(nil)
+	m.ssh = natFirewallSSH()
+	limit := types.FirewallRule{Action: "limit", Port: "22", Protocol: "tcp"}
+	if err := m.guardAllowDeletion("session", limit, false); err == nil {
+		t.Fatal("deleting a limit rule that keeps SSH open was allowed without force")
+	}
+	if err := m.guardAllowDeletion("session", limit, true); err != nil {
+		t.Fatalf("force should override the guard: %v", err)
+	}
+}
+
+func TestDeleteGuardForcesRulesWithoutAParsedPort(t *testing.T) {
+	m := NewManager(nil)
+	m.ssh = natFirewallSSH()
+	// `ufw allow OpenSSH` and `22/tcp on eth0` both parse with no port, yet
+	// either may be the only rule keeping this session reachable.
+	for _, rule := range []types.FirewallRule{
+		{Action: "allow", Raw: "OpenSSH                    ALLOW IN    Anywhere"},
+		{Action: "allow", Raw: "22/tcp on eth0             ALLOW IN    Anywhere"},
+	} {
+		if err := m.guardAllowDeletion("session", rule, false); err == nil {
+			t.Fatalf("portless rule %q was deletable without force", rule.Raw)
+		}
+	}
+	// A deny is not holding the session open, so it stays unguarded.
+	if err := m.guardAllowDeletion("session", types.FirewallRule{Action: "deny", Port: "22"}, false); err != nil {
+		t.Fatalf("deny rule should not need force: %v", err)
+	}
+	// An allow on an unrelated port is safe to delete.
+	if err := m.guardAllowDeletion("session", types.FirewallRule{Action: "allow", Port: "8080", Protocol: "tcp"}, false); err != nil {
+		t.Fatalf("unrelated allow rule should not need force: %v", err)
+	}
+}
+
+func TestDetectBackendExtendsPathForSbinTools(t *testing.T) {
+	fake := &fakeFirewallSSH{}
+	fake.exec = func(command string) (string, error) {
+		return "none\n", nil
+	}
+	m := NewManager(nil)
+	m.ssh = fake
+	if _, err := m.detectBackend("session"); err != nil {
+		t.Fatalf("detectBackend: %v", err)
+	}
+	if len(fake.commands) == 0 {
+		t.Fatal("detectBackend ran no command")
+	}
+	// ufw lives in /usr/sbin, which Debian leaves out of the PATH for a
+	// non-interactive command run by a non-root user.
+	if !strings.Contains(fake.commands[0], `PATH="$PATH:/usr/sbin:/sbin"`) {
+		t.Fatalf("probe does not extend PATH: %q", fake.commands[0])
+	}
+}
+
 func TestRuleCoversPort(t *testing.T) {
 	tests := []struct {
 		name string
@@ -294,6 +527,8 @@ func TestEnableFirewalldOpensSSHPortOfflineBeforeStart(t *testing.T) {
 	fake := &fakeFirewallSSH{port: 2222}
 	fake.exec = func(command string) (string, error) {
 		switch {
+		case command == sshConnectionProbe:
+			return "203.0.113.9 51000 10.0.0.5 2222\n", nil
 		case strings.Contains(command, "has_ufw=0"):
 			return "firewalld\n", nil
 		case command == "id -u":
@@ -332,6 +567,8 @@ func TestEnableFirewalldRefusesUnsafeStartWithoutOfflineTool(t *testing.T) {
 	fake := &fakeFirewallSSH{port: 2222}
 	fake.exec = func(command string) (string, error) {
 		switch {
+		case command == sshConnectionProbe:
+			return "203.0.113.9 51000 10.0.0.5 2222\n", nil
 		case strings.Contains(command, "has_ufw=0"):
 			return "firewalld\n", nil
 		case command == "id -u":

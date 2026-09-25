@@ -21,73 +21,21 @@ import { t } from "../../i18n";
 import { ConfirmDialog } from "../modals/ConfirmDialog";
 import type { Tab, Toast } from "../../types";
 import { isRemoteSession } from "../../utils/sessionIdentity";
+import {
+  deleteLockoutBody,
+  groupFirewallRules,
+  portCoversSsh,
+  ruleNeedsDeleteForce,
+  type FirewallRuleGroup,
+} from "./firewallGuards";
 
 const PORT_RE = /^\d{1,5}([:\-]\d{1,5})?$/;
 const ARM_TIMEOUT_MS = 3000;
-
-// Does a rule's port spec ("8080", "8000:8100", "8000-8100") cover the SSH port?
-function portCoversSsh(port: string, sshPort: number): boolean {
-  if (!sshPort || !port) return false;
-  const m = port.match(/^(\d{1,5})(?:[:\-](\d{1,5}))?$/);
-  if (!m) return false;
-  const lo = parseInt(m[1], 10);
-  const hi = m[2] ? parseInt(m[2], 10) : lo;
-  return sshPort >= Math.min(lo, hi) && sshPort <= Math.max(lo, hi);
-}
 
 type FirewallDialog =
   | { kind: "disable" }
   | { kind: "delete"; group: FirewallRuleGroup }
   | { kind: "deny" };
-
-type FirewallRuleGroup = {
-  key: string;
-  rules: types.FirewallRule[];
-  rule: types.FirewallRule;
-  hasV4: boolean;
-  hasV6: boolean;
-};
-
-function groupFirewallRules(
-  rules: types.FirewallRule[],
-  backend?: string,
-): FirewallRuleGroup[] {
-  const groups: FirewallRuleGroup[] = [];
-  const buckets = new Map<string, FirewallRuleGroup[]>();
-  for (const rule of rules) {
-    const semanticKey = [
-      rule.action,
-      rule.port,
-      rule.protocol,
-      rule.source,
-    ].join("\u0000");
-    const bucket = buckets.get(semanticKey) || [];
-    // Pair one IPv4 and one IPv6 rule. Repeated rules of the same family stay
-    // separate instead of being hidden inside an accidental mega-group.
-    let group = bucket.find((candidate) =>
-      rule.v6 ? !candidate.hasV6 : !candidate.hasV4,
-    );
-    if (!group) {
-      group = {
-        key: `${semanticKey}\u0000${bucket.length}`,
-        rules: [],
-        rule,
-        hasV4: false,
-        hasV6: false,
-      };
-      bucket.push(group);
-      buckets.set(semanticKey, bucket);
-      groups.push(group);
-    }
-    group.rules.push(rule);
-    const firewalldDualFamily =
-      backend === "firewalld" && !/family="ipv[46]"/.test(rule.raw || "");
-    group.hasV6 ||= rule.v6 || firewalldDualFamily;
-    group.hasV4 ||= !rule.v6 || firewalldDualFamily;
-    if (!rule.v6) group.rule = rule;
-  }
-  return groups;
-}
 
 export function FirewallPanel(props: {
   active?: Tab;
@@ -114,6 +62,19 @@ export function FirewallPanel(props: {
   const activeSessionRef = useRef(props.active?.id || "");
   const refreshSeqRef = useRef(0);
   activeSessionRef.current = props.active?.id || "";
+
+  // Every mutation runs behind the previous one. UFW deletes by index and the
+  // backend checks a rule before deleting it, so two deletes in flight at once
+  // can remove the wrong rule: deleting #3 and #5 together drops the original
+  // #6 instead of #5 — and if #6 allowed the SSH port, the session is cut and
+  // the lockout guard never ran. The chain also keeps a rejected task from
+  // wedging the queue.
+  const mutationChainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const runExclusive = useCallback(<T,>(task: () => Promise<T>): Promise<T> => {
+    const next = mutationChainRef.current.then(task, task);
+    mutationChainRef.current = next.catch(() => {});
+    return next;
+  }, []);
 
   const onNotifyRef = useRef(props.onNotify);
   onNotifyRef.current = props.onNotify;
@@ -169,6 +130,10 @@ export function FirewallPanel(props: {
     setDialog(null);
     setArmedRule(null);
     setBusyRule(null);
+    // In-flight flags too: a reply from the host that was on screen must not
+    // clear the spinner of an action started on the host replacing it.
+    setToggling(false);
+    setSubmitting(false);
   }, [props.active?.id]);
 
   useEffect(() => {
@@ -197,7 +162,8 @@ export function FirewallPanel(props: {
   }, []);
 
   const toggleEnabled = useCallback(async () => {
-    if (!props.active?.id || !status) return;
+    const sessionID = props.active?.id;
+    if (!sessionID || !status) return;
     if (status.enabled) {
       // Disabling always requires force=true on the backend; ask first.
       setDialog({ kind: "disable" });
@@ -205,7 +171,8 @@ export function FirewallPanel(props: {
     }
     setToggling(true);
     try {
-      const result = await SetFirewallEnabled(props.active.id, true, false);
+      const result = await runExclusive(() => SetFirewallEnabled(sessionID, true, false));
+      if (activeSessionRef.current !== sessionID) return;
       if (result.status?.backend) setStatus(result.status);
       onNotifyRef.current(
         result.verified
@@ -214,61 +181,68 @@ export function FirewallPanel(props: {
         result.verified ? "success" : "error",
       );
     } catch (err) {
+      if (activeSessionRef.current !== sessionID) return;
       onNotifyRef.current(String(err), "error");
     } finally {
-      setToggling(false);
+      if (activeSessionRef.current === sessionID) setToggling(false);
     }
-  }, [props.active?.id, status, lang]);
+  }, [props.active?.id, status, lang, runExclusive]);
 
   const confirmDisable = useCallback(async () => {
-    if (!props.active?.id) return;
+    const sessionID = props.active?.id;
+    if (!sessionID) return;
     setDialog(null);
     setToggling(true);
     try {
-      const result = await SetFirewallEnabled(props.active.id, false, true);
+      const result = await runExclusive(() => SetFirewallEnabled(sessionID, false, true));
+      if (activeSessionRef.current !== sessionID) return;
       if (result.status?.backend) setStatus(result.status);
       onNotifyRef.current(
         result.verified ? t(lang, "fwDisabledNotice") : (lang === "zh-CN" ? `停用命令已执行，但回读未确认：${result.verification}` : `Disable command completed but did not verify: ${result.verification}`),
         result.verified ? "success" : "error",
       );
     } catch (err) {
+      if (activeSessionRef.current !== sessionID) return;
       onNotifyRef.current(String(err), "error");
     } finally {
-      setToggling(false);
+      if (activeSessionRef.current === sessionID) setToggling(false);
     }
-  }, [props.active?.id, lang]);
+  }, [props.active?.id, lang, runExclusive]);
 
   const deleteRuleGroup = useCallback(
     async (group: FirewallRuleGroup, force: boolean) => {
-      if (!props.active?.id) return;
+      const sessionID = props.active?.id;
+      if (!sessionID) return;
       const key = group.key;
       setBusyRule(key);
       try {
         // UFW indices shift after deletion, so remove numbered members from
         // highest to lowest. firewalld rules use index -1 and are raw-addressed.
+        // The sequence is one exclusive task: an interleaved delete would shift
+        // the indices this list was built from.
         const ordered = [...group.rules].sort((a, b) => b.index - a.index);
-        let lastResult: types.FirewallActionResult | null = null;
-        for (const rule of ordered) {
-          lastResult = await DeleteFirewallRule(
-            props.active.id,
-            rule.index,
-            rule.raw,
-            force,
-          );
-        }
+        const lastResult = await runExclusive(async () => {
+          let last: types.FirewallActionResult | null = null;
+          for (const rule of ordered) {
+            last = await DeleteFirewallRule(sessionID, rule.index, rule.raw, force);
+          }
+          return last;
+        });
+        if (activeSessionRef.current !== sessionID) return;
         if (lastResult?.status?.backend) setStatus(lastResult.status);
         onNotifyRef.current(
           lastResult?.verified ? t(lang, "fwRuleDeleted") : (lang === "zh-CN" ? `删除命令已执行，但回读未确认：${lastResult?.verification || "unknown"}` : `Delete command completed but did not verify: ${lastResult?.verification || "unknown"}`),
           lastResult?.verified ? "success" : "error",
         );
       } catch (err) {
+        if (activeSessionRef.current !== sessionID) return;
         const msg = String(err);
         // Backend refuses to drop a rule covering the SSH port without force;
         // surface the lockout warning as an explicit second confirmation.
         if (
           !force &&
           (group.rules.some((rule) =>
-            portCoversSsh(rule.port, status?.sshPort || 0),
+            ruleNeedsDeleteForce(rule, status?.sshPort || 0),
           ) || /force/i.test(msg))
         ) {
           setDialog({ kind: "delete", group });
@@ -276,10 +250,10 @@ export function FirewallPanel(props: {
           onNotifyRef.current(msg, "error");
         }
       } finally {
-        setBusyRule(null);
+        if (activeSessionRef.current === sessionID) setBusyRule(null);
       }
     },
-    [props.active?.id, status, lang],
+    [props.active?.id, status, lang, runExclusive],
   );
 
   // Every delete is two-step (arm, then execute). Rules covering the SSH port
@@ -294,7 +268,7 @@ export function FirewallPanel(props: {
       clearArm();
       if (
         group.rules.some((rule) =>
-          portCoversSsh(rule.port, status?.sshPort || 0),
+          ruleNeedsDeleteForce(rule, status?.sshPort || 0),
         )
       ) {
         setDialog({ kind: "delete", group });
@@ -307,7 +281,8 @@ export function FirewallPanel(props: {
 
   const submitRule = useCallback(
     async (force: boolean) => {
-      if (!props.active?.id || !status) return;
+      const sessionID = props.active?.id;
+      if (!sessionID || !status) return;
       const port = form.port.trim();
       if (!PORT_RE.test(port)) {
         onNotifyRef.current(t(lang, "fwInvalidPort"), "error");
@@ -323,14 +298,15 @@ export function FirewallPanel(props: {
       }
       setSubmitting(true);
       try {
-        const result = await AddFirewallRule(
-          props.active.id,
+        const result = await runExclusive(() => AddFirewallRule(
+          sessionID,
           form.action,
           port,
           form.protocol,
           form.source.trim(),
           force,
-        );
+        ));
+        if (activeSessionRef.current !== sessionID) return;
         if (result.status?.backend) setStatus(result.status);
         onNotifyRef.current(
           result.verified ? t(lang, "fwRuleAdded") : (lang === "zh-CN" ? `添加命令已执行，但回读未确认：${result.verification}` : `Add command completed but did not verify: ${result.verification}`),
@@ -338,6 +314,7 @@ export function FirewallPanel(props: {
         );
         setForm((prev) => ({ ...prev, port: "", source: "" }));
       } catch (err) {
+        if (activeSessionRef.current !== sessionID) return;
         const msg = String(err);
         if (!force && /force/i.test(msg)) {
           setDialog({ kind: "deny" });
@@ -345,13 +322,13 @@ export function FirewallPanel(props: {
           onNotifyRef.current(msg, "error");
         }
       } finally {
-        setSubmitting(false);
+        if (activeSessionRef.current === sessionID) setSubmitting(false);
       }
     },
-    [props.active?.id, status, form, lang],
+    [props.active?.id, status, form, lang, runExclusive],
   );
 
-  if (!props.active?.id) {
+  if (!sessionId) {
     return (
       <div className="firewall-panel panel-page">
         <div className="container-empty">
@@ -560,7 +537,10 @@ export function FirewallPanel(props: {
                     )}
                     onClick={() => onDeleteClick(group)}
                     title={isArmed ? t(lang, "confirm") : t(lang, "delete")}
-                    disabled={busy}
+                    // Every delete button, not just this row's: a second delete
+                    // queued behind the first would be applied to indices that
+                    // the first one has already shifted.
+                    disabled={busyRule !== null}
                   >
                     {busy ? (
                       <Loader2 size={11} className="animate-spin" />
@@ -591,7 +571,7 @@ export function FirewallPanel(props: {
         <ConfirmDialog
           locale={lang}
           title={t(lang, "fwLockoutTitle")}
-          body={t(lang, "fwDeleteLockoutBody", { port: sshPortText })}
+          body={deleteLockoutBody(dialog.group, status?.sshPort || 0, lang)}
           confirmText={t(lang, "fwProceed")}
           onConfirm={() => {
             const group = dialog.group;

@@ -17,6 +17,8 @@ type Manager struct {
 	emit      func(event string, data any)
 	rootMu    sync.Mutex
 	rootCache map[string]bool
+	portMu    sync.Mutex
+	portCache map[string]sshPorts
 }
 
 type firewallSSH interface {
@@ -29,6 +31,7 @@ func NewManager(sshMgr *sshmanager.Manager) *Manager {
 		ssh:       sshMgr,
 		emit:      func(event string, data any) {},
 		rootCache: make(map[string]bool),
+		portCache: make(map[string]sshPorts),
 	}
 }
 
@@ -44,7 +47,13 @@ func (m *Manager) detectBackend(sessionID string) (string, error) {
 	// Prefer the backend that is actually active/enabled when both packages are
 	// installed. Merely finding /usr/sbin/ufw is not enough: many distributions
 	// leave it installed while firewalld is the firewall that owns the rules.
-	cmd := `has_ufw=0; has_firewalld=0; command -v ufw >/dev/null 2>&1 && has_ufw=1; command -v firewall-cmd >/dev/null 2>&1 && has_firewalld=1; ` +
+	//
+	// The PATH is extended first because ufw lives in /usr/sbin and a
+	// non-interactive SSH command from a non-root user gets Debian's default
+	// PATH, which omits sbin directories. Without this the panel reports "no
+	// firewall" on a host where sudo -n (which uses secure_path) works fine.
+	cmd := `PATH="$PATH:/usr/sbin:/sbin"; export PATH; ` +
+		`has_ufw=0; has_firewalld=0; command -v ufw >/dev/null 2>&1 && has_ufw=1; command -v firewall-cmd >/dev/null 2>&1 && has_firewalld=1; ` +
 		`if [ "$has_firewalld" = 1 ] && { firewall-cmd --state >/dev/null 2>&1 || systemctl is-active --quiet firewalld; }; then echo firewalld; ` +
 		`elif [ "$has_ufw" = 1 ] && { systemctl is-active --quiet ufw 2>/dev/null || ufw status 2>/dev/null | grep -qi '^Status: active' || systemctl is-enabled --quiet ufw 2>/dev/null; }; then echo ufw; ` +
 		`elif [ "$has_firewalld" = 1 ] && systemctl is-enabled --quiet firewalld 2>/dev/null; then echo firewalld; ` +
@@ -69,8 +78,13 @@ func (m *Manager) GetFirewallStatus(sessionID string) (types.FirewallStatus, err
 		return status, err
 	}
 	status.Backend = backend
-	if port, err := m.ssh.SessionPort(sessionID); err == nil {
-		status.SSHPort = port
+	// Report the server-side port: it is the one the UI must compare rules
+	// against, and behind a NAT forward it is not the port the profile dialled.
+	// The dialled port is the fallback when the host would not tell us.
+	if ports := m.sshSessionPorts(sessionID); ports.Server > 0 {
+		status.SSHPort = ports.Server
+	} else if ports.Dial > 0 {
+		status.SSHPort = ports.Dial
 	}
 	switch backend {
 	case "ufw":
@@ -141,9 +155,11 @@ func (m *Manager) AddFirewallRule(sessionID, action, port, protocol, source stri
 	}
 	// Lockout guard: a deny covering this session's own SSH port needs an
 	// explicit force, whatever the source — the operator's address may match it.
-	if action == "deny" && !force {
-		if sshPort, err := m.ssh.SessionPort(sessionID); err == nil && start <= sshPort && sshPort <= end && protocol == "tcp" {
-			return fmt.Errorf("rule would block port %d used by this SSH session and may lock you out (use force to override)", sshPort)
+	if action == "deny" && !force && protocol == "tcp" {
+		for _, sshPort := range m.sshSessionPorts(sessionID).guardPorts() {
+			if start <= sshPort && sshPort <= end {
+				return fmt.Errorf("rule would block port %d used by this SSH session and may lock you out (use force to override)", sshPort)
+			}
 		}
 	}
 	backend, err := m.detectBackend(sessionID)
@@ -280,14 +296,31 @@ func (m *Manager) firewalldDeleteRule(sessionID, raw string, force bool) error {
 	return nil
 }
 
-// guardAllowDeletion blocks removing an ALLOW rule that keeps this session's
-// SSH port open, unless forced.
+// guardAllowDeletion blocks removing a rule that keeps this session's SSH port
+// open, unless forced.
 func (m *Manager) guardAllowDeletion(sessionID string, rule types.FirewallRule, force bool) error {
-	if force || rule.Action != "allow" {
+	if force {
 		return nil
 	}
-	if sshPort, err := m.ssh.SessionPort(sessionID); err == nil && ruleCoversPort(rule, sshPort) {
-		return fmt.Errorf("deleting this rule may block port %d used by this SSH session (use force to override)", sshPort)
+	switch strings.ToLower(rule.Action) {
+	case "allow", "limit":
+		// "limit" is an allow with rate limiting: dropping it closes the port
+		// just as surely as dropping a plain allow.
+	default:
+		return nil
+	}
+	for _, sshPort := range m.sshSessionPorts(sessionID).guardPorts() {
+		if ruleCoversPort(rule, sshPort) {
+			return fmt.Errorf("deleting this rule may block port %d used by this SSH session (use force to override)", sshPort)
+		}
+	}
+	if rule.Port == "" {
+		// A rule whose port could not be parsed may still be the one holding
+		// this session open: `ufw allow OpenSSH` (the default Ubuntu app
+		// profile) and `ufw allow 22/tcp on eth0` both parse with no port.
+		// Requiring an explicit force here is the point of the guard; the
+		// operator can still confirm.
+		return fmt.Errorf("this rule's port could not be determined, so deleting it may block this SSH session (use force to override)")
 	}
 	return nil
 }
@@ -309,14 +342,15 @@ func (m *Manager) SetFirewallEnabled(sessionID string, enable, force bool) error
 			}
 			return nil
 		}
-		sshPort, err := m.ssh.SessionPort(sessionID)
-		if err != nil {
-			return err
-		}
 		// Allow this session's SSH port BEFORE enabling: ufw defaults to
 		// deny-incoming, so the reverse order would cut this very connection.
-		if out, err := m.execRoot(sessionID, fmt.Sprintf("ufw allow %d/tcp", sshPort), 20*time.Second); err != nil {
-			return cmdError("failed to keep SSH port open", err, out)
+		// The port comes from the server's own view of the connection, not
+		// from the profile: behind a NAT forward those differ, and allowing
+		// the dialled port would leave the real one closed.
+		for _, sshPort := range m.sshSessionPorts(sessionID).keepOpenPorts() {
+			if out, err := m.execRoot(sessionID, fmt.Sprintf("ufw allow %d/tcp", sshPort), 20*time.Second); err != nil {
+				return cmdError("failed to keep SSH port open", err, out)
+			}
 		}
 		if out, err := m.execRoot(sessionID, "ufw --force enable", 30*time.Second); err != nil {
 			return cmdError("failed to enable ufw", err, out)
@@ -329,10 +363,6 @@ func (m *Manager) SetFirewallEnabled(sessionID string, enable, force bool) error
 			}
 			return nil
 		}
-		sshPort, err := m.ssh.SessionPort(sessionID)
-		if err != nil {
-			return err
-		}
 		// A stopped firewalld can apply its default zone immediately on start.
 		// Configure the SSH exception in the offline permanent store first; using
 		// firewall-cmd after systemctl start creates a lockout window in which this
@@ -340,8 +370,10 @@ func (m *Manager) SetFirewallEnabled(sessionID string, enable, force bool) error
 		if out, err := m.ssh.Exec(sessionID, "command -v firewall-offline-cmd >/dev/null 2>&1", 10*time.Second); err != nil {
 			return cmdError("cannot safely enable firewalld remotely because firewall-offline-cmd is unavailable", err, out)
 		}
-		if out, err := m.execRoot(sessionID, fmt.Sprintf("firewall-offline-cmd --add-port=%d/tcp", sshPort), 20*time.Second); err != nil {
-			return cmdError("failed to keep SSH port open before starting firewalld", err, out)
+		for _, sshPort := range m.sshSessionPorts(sessionID).keepOpenPorts() {
+			if out, err := m.execRoot(sessionID, fmt.Sprintf("firewall-offline-cmd --add-port=%d/tcp", sshPort), 20*time.Second); err != nil {
+				return cmdError("failed to keep SSH port open before starting firewalld", err, out)
+			}
 		}
 		if out, err := m.execRoot(sessionID, "systemctl start firewalld", 30*time.Second); err != nil {
 			return cmdError("failed to start firewalld", err, out)

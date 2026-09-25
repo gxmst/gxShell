@@ -238,6 +238,16 @@ func (a *App) DuplicateProfile(id string) (types.Profile, error) {
 	profile.Name = profile.Name + " Copy"
 	// Trust is an explicit local, time-bound consent and never follows a copy.
 	profile.CliTrustUntil = time.Time{}
+	// Neither does the CLI identity. An alias is the name a CLI caller uses to
+	// address a host, and validateProfileCliSettings rejects a second profile
+	// claiming the same one — so duplicating a CLI-enabled profile used to fail
+	// outright with "CLI alias is already used". Minting a fresh alias is not
+	// the answer either: it would hand automation a host name the user never
+	// chose. The copy starts without CLI access, the same way the import path
+	// resolves an alias collision, and re-enabling it in the profile editor is
+	// the explicit consent that granting CLI access is meant to be.
+	profile.CliEnabled = false
+	profile.CliAlias = ""
 	// GetProfile never exposes credentials. Keeping RememberPassword=true on a
 	// copy would therefore create a misleading profile that claims to have a
 	// saved secret but cannot connect without prompting. Copies deliberately
