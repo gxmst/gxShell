@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,6 +26,11 @@ const (
 	cliTokenFilename = "cli_token"
 	cliMinTimeout    = time.Second
 	cliMaxTimeout    = 30 * time.Minute
+	// cliRequestTimeout is how long the client waits for a response. It is
+	// deliberately longer than cliMaxTimeout so the daemon's own deadline is
+	// what reports a long-running command; this one only fires when the daemon
+	// is not answering at all.
+	cliRequestTimeout = cliMaxTimeout + time.Minute
 )
 
 // version is the CLI's reported version. It used to be its own literal and had
@@ -31,7 +39,7 @@ const (
 // identifier of the same name so the call sites below are unchanged.
 var version = appversion.Version
 
-var httpClient = &http.Client{Timeout: 31 * time.Minute}
+var httpClient = &http.Client{Timeout: cliRequestTimeout}
 
 type cliOptions struct {
 	json    bool
@@ -906,7 +914,7 @@ func requestJSON(method, path string, payload any, opts cliOptions) map[string]a
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		fatalError(opts, 1, "Cannot connect to gxShell. Please start the gxShell GUI application first.")
+		fatalError(opts, 1, describeTransportError(err))
 	}
 	defer resp.Body.Close()
 
@@ -918,6 +926,31 @@ func requestJSON(method, path string, payload any, opts cliOptions) map[string]a
 		fatalError(opts, 1, "unauthorized CLI request. Restart gxShell and rebuild or rerun this CLI from the same user account.")
 	}
 	return result
+}
+
+// describeTransportError separates "the daemon is not there" from "the request
+// went out and the answer never came back".
+//
+// Both surface as an error from httpClient.Do, but they mean opposite things to
+// the caller: the first is a reason to start the app, the second is a reason to
+// look for work that may already be running. Reporting both as "cannot connect"
+// made a request that had been delivered and was still executing look like a
+// daemon that was not running, and the obvious response — retrying — could run
+// the command a second time.
+func describeTransportError(err error) string {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		// A dial failure means nothing was ever sent, whether it was refused or
+		// timed out while connecting.
+		var opErr *net.OpError
+		if errors.As(urlErr.Err, &opErr) && opErr.Op == "dial" {
+			return "Cannot connect to gxShell. Please start the gxShell GUI application first."
+		}
+		if urlErr.Timeout() || errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Sprintf("gxShell did not answer within %s. The request was delivered and the operation may still be running — check with the matching list command before retrying.", cliRequestTimeout)
+		}
+	}
+	return "gxShell request failed: " + err.Error()
 }
 
 func parseLeadingFlags(args []string, opts cliOptions) ([]string, cliOptions, error) {

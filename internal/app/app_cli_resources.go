@@ -228,6 +228,21 @@ func checkCliTransferSensitivePath(remotePath string) (commandBlock, bool) {
 	return checkSensitivePathBlock("/" + cleaned)
 }
 
+// cliCopyBlockedPath applies the same policy to both ends of a server-to-server
+// copy. It calls checkCliTransferSensitivePath rather than checkSensitivePathBlock
+// because the copy endpoint used the latter, which only matches absolute
+// spellings: `copy prod:.ssh/id_ed25519 other:/tmp/k` resolved to the same file
+// as `/root/.ssh/id_ed25519` when the login directory is /root, but the literal
+// string never matched the policy, so the private key was copied out.
+func cliCopyBlockedPath(sourcePath, destinationPath string) (commandBlock, bool) {
+	for _, candidate := range []string{sourcePath, destinationPath} {
+		if block, blocked := checkCliTransferSensitivePath(candidate); blocked {
+			return block, true
+		}
+	}
+	return commandBlock{}, false
+}
+
 func normalizeCliTransferLocalPath(value string, source bool) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" || strings.ContainsRune(value, '\x00') {
@@ -303,14 +318,12 @@ func (a *App) handleCliCopy(w http.ResponseWriter, r *http.Request) {
 		writeCliError(w, http.StatusBadRequest, "validation", "source and destination server:path values are required")
 		return
 	}
-	for _, candidate := range []string{req.SourcePath, req.DestinationPath} {
-		if block, blocked := checkSensitivePathBlock(candidate); blocked {
-			writeCliJSON(w, http.StatusForbidden, map[string]any{
-				"error": "BLOCKED: " + block.Message(), "errorKind": "blocked", "blocked": true,
-				"blockedBy": block.Kind, "reason": block.Reason, "detail": block.Detail,
-			})
-			return
-		}
+	if block, blocked := cliCopyBlockedPath(req.SourcePath, req.DestinationPath); blocked {
+		writeCliJSON(w, http.StatusForbidden, map[string]any{
+			"error": "BLOCKED: " + block.Message(), "errorKind": "blocked", "blocked": true,
+			"blockedBy": block.Kind, "reason": block.Reason, "detail": block.Detail,
+		})
+		return
 	}
 
 	sourceProfile, err := a.findCliProfile(req.SourceServer)
@@ -326,7 +339,7 @@ func (a *App) handleCliCopy(w http.ResponseWriter, r *http.Request) {
 	sourceAlias := cliProfileName(sourceProfile)
 	destinationAlias := cliProfileName(destinationProfile)
 	approval := fmt.Sprintf("Copy remote file %s:%s to %s:%s (atomic destination write and SHA-256 verification)", sourceAlias, req.SourcePath, destinationAlias, req.DestinationPath)
-	decision := a.authorizeCliCopy(sourceProfile, destinationProfile, approval)
+	decision := a.authorizeCliCopy(r.Context(), sourceProfile, destinationProfile, approval)
 	if !decision.Allowed {
 		writeCliError(w, http.StatusForbidden, "blocked", "user declined remote file copy")
 		return
@@ -335,6 +348,19 @@ func (a *App) handleCliCopy(w http.ResponseWriter, r *http.Request) {
 		a.log.InfoFields("CLI copying remote file", logger.LogFields{
 			"source": sourceAlias, "destination": destinationAlias, "approval": decision.Source,
 		})
+	}
+
+	// Same window as the exec path: the prompt can outlive the client, and
+	// connecting two sessions takes longer still. A caller that has gone is not
+	// waiting for a result, and starting the transfer for it is what let a
+	// client that timed out and retried copy the file twice.
+	if err := r.Context().Err(); err != nil {
+		if a.log != nil {
+			a.log.InfoFields("CLI copy abandoned by the caller before it started", logger.LogFields{
+				"source": sourceAlias, "destination": destinationAlias,
+			})
+		}
+		return
 	}
 
 	sourceSession, _, err := a.cliSessionForProfile(sourceProfile.ID)

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"errors"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -202,3 +205,40 @@ func TestPathContainsDir(t *testing.T) {
 		t.Fatal("unexpected PATH match for missing directory")
 	}
 }
+
+func TestDescribeTransportErrorSeparatesDialFailureFromLostResponse(t *testing.T) {
+	// A refused connection: nothing was sent, so "start the app" is right.
+	dialRefused := &url.Error{Op: "Post", URL: daemonURL, Err: &net.OpError{Op: "dial", Err: errors.New("connect: connection refused")}}
+	if got := describeTransportError(dialRefused); !strings.Contains(got, "Cannot connect to gxShell") {
+		t.Fatalf("dial failure = %q, want the start-the-app message", got)
+	}
+
+	// A dial that timed out also sent nothing.
+	dialTimeout := &url.Error{Op: "Post", URL: daemonURL, Err: &net.OpError{Op: "dial", Err: &timeoutError{}}}
+	if got := describeTransportError(dialTimeout); !strings.Contains(got, "Cannot connect to gxShell") {
+		t.Fatalf("dial timeout = %q, want the start-the-app message", got)
+	}
+
+	// The request was delivered and the answer never arrived. Reporting this
+	// as "cannot connect" is what made a retry look safe.
+	lostResponse := &url.Error{Op: "Post", URL: daemonURL, Err: &timeoutError{}}
+	got := describeTransportError(lostResponse)
+	if strings.Contains(got, "Cannot connect") {
+		t.Fatalf("lost response = %q, want it distinguished from a missing daemon", got)
+	}
+	if !strings.Contains(got, "may still be running") {
+		t.Fatalf("lost response = %q, want the caller warned about in-flight work", got)
+	}
+
+	// Anything else keeps the underlying detail rather than guessing.
+	other := &url.Error{Op: "Post", URL: daemonURL, Err: errors.New("unexpected EOF")}
+	if got := describeTransportError(other); !strings.Contains(got, "unexpected EOF") {
+		t.Fatalf("other transport error = %q, want the underlying error", got)
+	}
+}
+
+type timeoutError struct{}
+
+func (*timeoutError) Error() string   { return "i/o timeout" }
+func (*timeoutError) Timeout() bool   { return true }
+func (*timeoutError) Temporary() bool { return true }

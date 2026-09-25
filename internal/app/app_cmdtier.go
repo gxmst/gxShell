@@ -1623,15 +1623,14 @@ func classifyWriteTarget(c *segmentCtx) {
 // An in-place edit of a working-tree file is the single most common AI action,
 // and is genuinely scoped and recoverable; the same edit against /etc is not.
 func classifySed(c *segmentCtx) {
-	inPlace := false
-	for _, arg := range c.args {
-		if arg.Text == "-i" || strings.HasPrefix(arg.Text, "-i") && !strings.HasPrefix(arg.Text, "--") {
-			inPlace = true
-		}
-		if strings.HasPrefix(arg.Text, "--in-place") {
-			inPlace = true
-		}
-	}
+	// flagSet, not a prefix test: GNU sed accepts bundled short options, so the
+	// in-place flag usually arrives as part of a group. `-Ei` is `-E -i`, and
+	// testing for the literal prefix "-i" missed it — which scored
+	// `sed -Ei 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config`
+	// as a read-only text transform, i.e. T0, and it ran with no approval at
+	// all. `-i.bak`, `-ni` and `-ri` were missed the same way.
+	flags := c.flagSet()
+	inPlace := flags["-i"] || flags["--in-place"]
 	if !inPlace {
 		c.add(tierObserve, riskObserve, "reads and transforms text", "", nil)
 		return
@@ -1978,21 +1977,43 @@ var packageRemoveSubcommands = map[string]bool{
 // classifyPackage treats installing as recoverable (a package can be removed)
 // and removing as bounded destruction (a removal can break a running service).
 func classifyPackage(c *segmentCtx) {
+	// pacman selects its operation with a bundled flag rather than a
+	// subcommand, so the check has to happen before the empty-subcommand early
+	// return. It used to sit after it, which made the branch unreachable for
+	// exactly the invocations it was written for: `pacman -Syu` has no
+	// subcommand, so a full system upgrade was scored as a read-only query.
+	//
+	// The old switch also tested flags["-Syu"] and friends, which flagSet can
+	// never produce — it expands a bundle into single-rune flags, so `-Syu` is
+	// -S, -y, -u.
+	if c.verb == "pacman" {
+		flags := c.flagSet()
+		switch {
+		// Remove first: `-Rns` also carries -n and -s, and the query flags
+		// below would otherwise claim it.
+		case flags["-R"], flags["--remove"]:
+			c.add(tierBounded, riskDestructive, "removes packages", c.joinedArgs(), nil)
+			return
+		case flags["-D"], flags["--database"]:
+			c.add(tierRecoverable, riskWrite, "changes package database metadata", c.joinedArgs(), nil)
+			return
+		case flags["-F"], flags["--files"]:
+			c.add(tierRecoverable, riskWrite, "refreshes the package file database", c.joinedArgs(), nil)
+			return
+		// -s is --search and -i is --info for pacman, so they must be read
+		// before -S claims `-Ss` and `-Si` as installs.
+		case flags["-s"], flags["--search"], flags["-i"], flags["--info"]:
+			c.add(tierObserve, riskObserve, "searches or reports package state", c.joinedArgs(), nil)
+			return
+		case flags["-S"], flags["--sync"], flags["-U"], flags["--upgrade"]:
+			c.add(tierRecoverable, riskWrite, "installs or upgrades packages", c.joinedArgs(), nil)
+			return
+		}
+	}
 	sub := c.subcommand()
 	if sub == "" {
 		c.add(tierObserve, riskObserve, "reports package state", "", nil)
 		return
-	}
-	if c.verb == "pacman" {
-		flags := c.flagSet()
-		switch {
-		case flags["-R"], flags["-Rs"], flags["-Rns"]:
-			c.add(tierBounded, riskDestructive, "removes packages", c.joinedArgs(), nil)
-			return
-		case flags["-S"], flags["-Sy"], flags["-Syu"], flags["-U"]:
-			c.add(tierRecoverable, riskWrite, "installs packages", c.joinedArgs(), nil)
-			return
-		}
 	}
 	switch {
 	case packageRemoveSubcommands[sub]:
@@ -2202,39 +2223,125 @@ func classifyTerraform(c *segmentCtx) {
 	}
 }
 
-var awsDestructiveOperations = []struct {
-	needle string
-	reason string
-}{
-	{"rb", "removes a bucket"},
-	{"delete-bucket", "removes a bucket"},
-	{"terminate-instances", "terminates instances"},
-	{"delete-db-instance", "deletes a database instance"},
-	{"delete-cluster", "deletes a cluster"},
-	{"delete-stack", "deletes a stack"},
-	{"delete-table", "deletes a table"},
-	{"delete-key-pair", "deletes a key pair"},
-	{"delete-volume", "deletes a volume"},
+// awsUnrecoverableOperations destroy a resource that cannot be recreated from
+// anything on this host. Matched against the operation token, exactly.
+var awsUnrecoverableOperations = map[string]bool{
+	"rb":                  true,
+	"delete-bucket":       true,
+	"terminate-instances": true,
+	"delete-db-instance":  true,
+	"delete-cluster":      true,
+	"delete-stack":        true,
+	"delete-table":        true,
+	"delete-key-pair":     true,
+	"delete-volume":       true,
 }
 
-func classifyAWS(c *segmentCtx) {
-	args := c.joinedArgs()
-	lower := strings.ToLower(args)
-	for _, operation := range awsDestructiveOperations {
-		if strings.Contains(lower, operation.needle) {
-			c.add(tierCritical, riskIrreversible, "cloud operation "+operation.reason, operation.needle, nil)
-			return
+// awsReadOnlyOperations change nothing. The list-*/describe-*/get-*/head-*
+// families are recognised by prefix; these are the ones that do not fit.
+var awsReadOnlyOperations = map[string]bool{
+	"ls": true, "presign": true, "wait": true, "help": true, "batch-get-item": true,
+}
+
+// awsValueFlags are the global aws options that consume the following
+// argument. Without knowing them, `aws --profile prod s3 cp ...` would read
+// "prod" as the service and "s3" as the operation.
+var awsValueFlags = map[string]bool{
+	"--endpoint-url": true, "--output": true, "--query": true,
+	"--profile": true, "--region": true, "--ca-bundle": true,
+	"--cli-read-timeout": true, "--cli-connect-timeout": true,
+	"--cli-binary-format": true,
+}
+
+// awsCommand returns the service and operation of an aws invocation, which is
+// shaped `aws [global options] <service> <operation> [parameters...]`.
+func (c *segmentCtx) awsCommand() (service, operation string) {
+	positional := make([]string, 0, 2)
+	skipNext := false
+	for _, arg := range c.args {
+		text := arg.Text
+		if skipNext {
+			skipNext = false
+			continue
+		}
+		if text == "--" {
+			break
+		}
+		if strings.HasPrefix(text, "--") {
+			name := text
+			if eq := strings.Index(name, "="); eq >= 0 {
+				name = name[:eq]
+			} else if awsValueFlags[name] {
+				skipNext = true
+			}
+			continue
+		}
+		if strings.HasPrefix(text, "-") && len(text) > 1 {
+			continue
+		}
+		positional = append(positional, strings.ToLower(text))
+		if len(positional) == 2 {
+			break
 		}
 	}
+	if len(positional) > 0 {
+		service = positional[0]
+	}
+	if len(positional) > 1 {
+		operation = positional[1]
+	}
+	return service, operation
+}
+
+// classifyAWS scores an aws invocation by its service and operation.
+//
+// It used to search the whole command line for substrings like "get", "list"
+// and "delete". Those appear inside bucket names, keys and paths, so
+// `aws s3 cp ./dist s3://target-bucket/` matched "get" (inside "target") and
+// was scored as reading cloud state — T0, no approval, for an upload.
+// Matching the operation token removes the class of error rather than the
+// instance.
+func classifyAWS(c *segmentCtx) {
+	args := c.joinedArgs()
+	service, operation := c.awsCommand()
+	if operation == "" {
+		c.add(tierBounded, riskUndecidable, "unrecognised aws invocation", args, nil)
+		return
+	}
+	target := service + " " + operation
+	if awsUnrecoverableOperations[operation] {
+		c.add(tierCritical, riskIrreversible, "removes cloud resources with no local copy", target, nil)
+		return
+	}
 	switch {
-	case strings.Contains(lower, "change-resource-record-sets"), strings.Contains(lower, "route53"):
-		c.add(tierCritical, riskExternal, "changes public DNS records", args, nil)
-	case strings.Contains(lower, " rm "), strings.Contains(lower, "delete"), strings.Contains(lower, "remove"):
-		c.add(tierBounded, riskExternal, "deletes cloud resources", args, nil)
-	case strings.Contains(lower, " ls "), strings.Contains(lower, "describe"), strings.Contains(lower, "list"), strings.Contains(lower, "get"):
-		c.add(tierObserve, riskObserve, "reads cloud state", args, nil)
+	case operation == "change-resource-record-sets":
+		c.add(tierCritical, riskExternal, "changes public DNS records", target, nil)
+	case awsReadOnlyOperations[operation] ||
+		strings.HasPrefix(operation, "list-") || strings.HasPrefix(operation, "describe-") ||
+		strings.HasPrefix(operation, "get-") || strings.HasPrefix(operation, "head-"):
+		c.add(tierObserve, riskObserve, "reads cloud state", target, nil)
+	case operation == "cp" || operation == "mv" || operation == "sync":
+		// A bucket copy is a network copy in one direction or the other, which
+		// the policy scores as T2 undecidable, the same as scp.
+		c.add(tierBounded, riskUndecidable, "copies objects to or from a bucket", target, nil)
+	case operation == "rm" || strings.HasPrefix(operation, "delete-") ||
+		strings.HasPrefix(operation, "remove-") || strings.HasPrefix(operation, "terminate-"):
+		c.add(tierBounded, riskExternal, "deletes cloud resources", target, nil)
+	case strings.HasPrefix(operation, "put-") || strings.HasPrefix(operation, "create-") ||
+		strings.HasPrefix(operation, "update-") || strings.HasPrefix(operation, "modify-") ||
+		strings.HasPrefix(operation, "attach-") || strings.HasPrefix(operation, "detach-") ||
+		strings.HasPrefix(operation, "associate-") || strings.HasPrefix(operation, "disassociate-") ||
+		strings.HasPrefix(operation, "start-") || strings.HasPrefix(operation, "stop-") ||
+		strings.HasPrefix(operation, "reboot-") || strings.HasPrefix(operation, "restore-") ||
+		strings.HasPrefix(operation, "enable-") || strings.HasPrefix(operation, "disable-") ||
+		strings.HasPrefix(operation, "register-") || strings.HasPrefix(operation, "authorize-") ||
+		strings.HasPrefix(operation, "revoke-") || strings.HasPrefix(operation, "import-") ||
+		strings.HasPrefix(operation, "run-") || strings.HasPrefix(operation, "invoke-") ||
+		strings.HasPrefix(operation, "send-") || strings.HasPrefix(operation, "reset-") ||
+		strings.HasPrefix(operation, "cancel-") || strings.HasPrefix(operation, "apply-"):
+		c.add(tierBounded, riskExternal, "changes cloud resources", target, nil)
 	default:
-		c.add(tierBounded, riskUndecidable, "changes cloud resources", args, nil)
+		c.add(tierBounded, riskUndecidable, "unrecognised cloud operation", target, nil)
 	}
 }
 

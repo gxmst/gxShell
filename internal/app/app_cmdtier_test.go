@@ -34,6 +34,13 @@ func TestClassifyCommandTiers(t *testing.T) {
 		{"cat /etc/hostname", tierObserve, riskObserve, "reading a system file is still a read"},
 		{"crontab -l", tierObserve, riskObserve, "listing scheduled jobs changes nothing"},
 		{"zpool status", tierObserve, riskObserve, "reporting pool state changes nothing"},
+		{"pacman -Q", tierObserve, riskObserve, "a local query changes nothing"},
+		{"pacman -Ss nginx", tierObserve, riskObserve, "searching must not be read as installing"},
+		{"pacman -Qi nginx", tierObserve, riskObserve, "package info is observation"},
+		{"aws s3 ls", tierObserve, riskObserve, "listing a bucket"},
+		{"aws s3 ls s3://assets/get-target/", tierObserve, riskObserve, "a key containing get/list is not an operation"},
+		{"aws ec2 describe-instances", tierObserve, riskObserve, "describing instances"},
+		{"aws --profile prod s3 ls", tierObserve, riskObserve, "global option values are not the service"},
 		{"systemctl status myapp", tierObserve, riskObserve, "service status is observation"},
 		{"docker ps", tierObserve, riskObserve, "container listing is observation"},
 		{"git status", tierObserve, riskObserve, "read-only git is observation"},
@@ -44,6 +51,16 @@ func TestClassifyCommandTiers(t *testing.T) {
 		{"mkdir -p /srv/app/releases", tierRecoverable, riskWrite, "creating a directory adds nothing destructive"},
 		{"touch /srv/app/ready", tierRecoverable, riskWrite, "creating a file"},
 		{"sed -i s/a/b/ src/main.go", tierRecoverable, riskWrite, "in-place edit inside the working tree"},
+		// Bundled short options must not hide the in-place flag: `-Ei` is
+		// `-E -i`, and a literal prefix test for "-i" missed it.
+		{"sed -Ei s/a/b/ src/main.go", tierRecoverable, riskWrite, "bundled options still contain -i"},
+		{"sed -i.bak s/a/b/ src/main.go", tierRecoverable, riskWrite, "an -i suffix is still in-place"},
+		{"sed -ni s/a/b/ src/main.go", tierRecoverable, riskWrite, "in-place flag after another option"},
+		// pacman chooses its operation with a flag, not a subcommand.
+		{"pacman -Syu --noconfirm", tierRecoverable, riskWrite, "a full upgrade has no subcommand to match on"},
+		{"pacman -Sy", tierRecoverable, riskWrite, "refreshing the package database"},
+		{"pacman -U pkg.tar.zst", tierRecoverable, riskWrite, "installing a local package"},
+		{"pacman -D --asdeps pkg", tierRecoverable, riskWrite, "changing package database metadata"},
 		{"git commit -m wip", tierRecoverable, riskWrite, "local history only"},
 		{"git checkout -b feature", tierRecoverable, riskWrite, "local branch switch"},
 		{"make build", tierRecoverable, riskWrite, "a build is recoverable by rebuilding"},
@@ -83,6 +100,15 @@ func TestClassifyCommandTiers(t *testing.T) {
 		{"curl -X DELETE https://example.test/resource", tierBounded, riskUndecidable, "network requests can mutate external state"},
 		{"scp ./artifact host:/srv/app", tierBounded, riskUndecidable, "network copies are not a local recoverable change"},
 		{"unzip release.zip -d /srv/app", tierBounded, riskUndecidable, "archive contents choose their output paths"},
+		// The old aws rule searched the whole command line, so a destination
+		// bucket named "target-bucket" matched "get" and an upload was scored
+		// as a read — T0, no approval.
+		{"aws s3 cp ./dist s3://target-bucket/", tierBounded, riskUndecidable, "an upload whose bucket name contains get"},
+		{"aws s3 cp s3://get-assets/db.sql ./", tierBounded, riskUndecidable, "a download from a bucket name containing get"},
+		{"aws s3 sync ./dist s3://target-bucket/", tierBounded, riskUndecidable, "a sync is a network copy"},
+		{"aws s3 rm s3://assets/old.tar", tierBounded, riskExternal, "deleting an object is T2, not T3"},
+		{"pacman -Rns nginx", tierBounded, riskDestructive, "removing packages and their dependencies"},
+		{"pacman -R nginx", tierBounded, riskDestructive, "removing a package"},
 
 		// ---- T2 by the undecidable floor ------------------------------------
 		{"echo cm0gLXJmIC8= | base64 -d | sh", tierBounded, riskUndecidable, "decode-and-run pipeline"},
@@ -133,6 +159,8 @@ func TestClassifyCommandTiers(t *testing.T) {
 		{"shutdown -h now", tierCritical, riskSelfLock, "powers the host down"},
 		{"init 0", tierCritical, riskSelfLock, "halt runlevel"},
 		{"sed -i s/x/y/ /etc/ssh/sshd_config", tierCritical, riskSelfLock, "edits the SSH daemon config"},
+		{"sed -Ei s/^#PermitRootLogin.*/PermitRootLogin yes/ /etc/ssh/sshd_config", tierCritical, riskSelfLock, "bundled -Ei must not hide an in-place config edit"},
+		{"sed -Ei s/80/8080/ /etc/nginx/nginx.conf", tierCritical, riskSelfLock, "an in-place config edit with no glob to trip the other rules"},
 		{"ip link set eth0 down", tierCritical, riskSelfLock, "takes the interface down"},
 		{"ip route del default", tierCritical, riskSelfLock, "removes the default route"},
 		{"chmod -R 777 /", tierCritical, riskSelfLock, "recursive permissions on the root"},
@@ -192,6 +220,51 @@ func formatFindings(assessment riskAssessment) string {
 		}
 	}
 	return out
+}
+
+// TestModifyingCommandsAreNeverObservation is the invariant behind the three
+// rules that were misreading their own arguments.
+//
+// T0 is the only tier that runs with no approval at all, so a command whose
+// purpose is to write must never land there. The assertion is deliberately
+// "at least T1" rather than an exact tier: the point is the direction, and it
+// should not need editing when the policy for the change itself is retuned.
+//
+// Each entry below was T0 before its fix:
+//
+//   - a bundled short option hid the in-place flag (`-Ei` is `-E -i`);
+//   - pacman selects its operation with a flag, so the flag branch sat behind
+//     an empty-subcommand early return that the flag-driven forms always hit;
+//   - the aws rule searched the whole command line for "get"/"list", which are
+//     also inside bucket names, so an upload to s3://target-bucket/ was read
+//     as a download.
+func TestModifyingCommandsAreNeverObservation(t *testing.T) {
+	commands := []string{
+		"sed -Ei s/a/b/ src/main.go",
+		"sed -Ei s/a/b/ /etc/nginx/nginx.conf",
+		"sed -ni s/a/b/ src/main.go",
+		"sed -i.bak s/a/b/ src/main.go",
+		"sed --in-place s/a/b/ src/main.go",
+		"pacman -Syu",
+		"pacman -S nginx",
+		"pacman -Rns nginx",
+		"pacman -U pkg.tar.zst",
+		"pacman -Sy",
+		"aws s3 cp ./dist s3://target-bucket/",
+		"aws s3 sync ./dist s3://target-bucket/",
+		"aws s3 mv s3://target-bucket/a ./",
+		"aws s3 rm s3://assets/old.tar",
+		"aws s3 rb s3://bucket",
+		"aws s3api put-object --bucket assets --key dist/app.tar",
+		"aws ec2 terminate-instances --instance-ids i-1",
+	}
+	for _, command := range commands {
+		got := classifyCommand(command)
+		if got.Tier == tierObserve {
+			t.Errorf("SECURITY: classifyCommand(%q) = T0, which runs with no approval\n  findings: %s",
+				command, formatFindings(got))
+		}
+	}
 }
 
 // TestUndecidableNeverBelowBounded is invariant 1. Every form of obfuscation

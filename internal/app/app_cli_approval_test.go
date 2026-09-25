@@ -428,7 +428,7 @@ func TestCliTimedTrustCopyRequiresBothProfiles(t *testing.T) {
 	if err := store.SaveProfiles([]types.Profile{source, destination}); err != nil {
 		t.Fatal(err)
 	}
-	decision := app.authorizeCliCopy(source, destination, "copy")
+	decision := app.authorizeCliCopy(context.Background(), source, destination, "copy")
 	if !decision.Allowed || decision.Source != cliApprovalTimedTrust {
 		t.Fatal("two trusted copy endpoints did not bypass approval")
 	}
@@ -436,9 +436,34 @@ func TestCliTimedTrustCopyRequiresBothProfiles(t *testing.T) {
 	if err := store.SaveProfiles([]types.Profile{source, destination}); err != nil {
 		t.Fatal(err)
 	}
-	decision = app.authorizeCliCopy(source, destination, "copy")
+	decision = app.authorizeCliCopy(context.Background(), source, destination, "copy")
 	if decision.Allowed || decision.Source != cliApprovalUser {
 		t.Fatal("copy with one expired endpoint did not require user approval")
+	}
+}
+
+// The copy prompt is a long wait, and it used to run on context.Background():
+// a client that timed out while the prompt was on screen still got its file
+// copied, and retrying with --detach copied it a second time.
+func TestAuthorizeCliCopyRefusesAnApprovalForACallerThatHasGone(t *testing.T) {
+	store, err := config.NewStoreAt(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := NewApp()
+	app.store = store
+	source := types.Profile{ID: "source", CliEnabled: true, CliAlias: "source"}
+	destination := types.Profile{ID: "destination", CliEnabled: true, CliAlias: "destination"}
+	if err := store.SaveProfiles([]types.Profile{source, destination}); err != nil {
+		t.Fatal(err)
+	}
+	app.cliConfirmBatchFn = func(string, []string) bool { return true }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	decision := app.authorizeCliCopy(ctx, source, destination, "copy")
+	if decision.Allowed {
+		t.Fatal("an approval was reported for a caller that had already gone")
 	}
 }
 

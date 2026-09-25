@@ -102,6 +102,28 @@ func TestCheckCliTransferSensitivePathCoversRelativeSpellings(t *testing.T) {
 	}
 }
 
+func TestCliCopyBlocksSensitivePathsInRelativeSpelling(t *testing.T) {
+	// The copy endpoint checked the literal strings only, so a relative
+	// spelling of a credential path was copied out.
+	cases := []struct{ source, destination string }{
+		{".ssh/id_ed25519", "/tmp/k"},
+		{"/tmp/k", ".ssh/id_ed25519"},
+		{"home/alice/.ssh/id_rsa", "/tmp/k"},
+		{"../etc/shadow", "/tmp/k"},
+		{"/tmp/k", ".aws/credentials"},
+	}
+	for _, tc := range cases {
+		block, blocked := cliCopyBlockedPath(tc.source, tc.destination)
+		if !blocked || block.Kind != "sensitive-path" {
+			t.Errorf("copy %q -> %q was not blocked: %#v, %v", tc.source, tc.destination, block, blocked)
+		}
+	}
+	// Ordinary paths on either end still copy.
+	if block, blocked := cliCopyBlockedPath("releases/app.tar.gz", "/srv/app/app.tar.gz"); blocked {
+		t.Fatalf("ordinary copy was blocked: %#v", block)
+	}
+}
+
 func TestInspectCliLocalFileAndRememberUpload(t *testing.T) {
 	content := "#!/bin/sh\necho 中文\n"
 	localPath := filepath.Join(t.TempDir(), "deploy.sh")

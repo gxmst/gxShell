@@ -280,6 +280,18 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	}
 	a.log.InfoFields("CLI executing command", fields)
 
+	// The approval may have sat on screen for minutes, and connecting can take
+	// seconds more. confirmCliApprovalCtx already refuses to report an approval
+	// for a caller that went away, but that check runs when the verdict is
+	// delivered; this closes the window between then and the first remote byte.
+	// A caller that has gone is not waiting for a result, and running the
+	// command anyway is what let a client that timed out and retried execute
+	// the same command twice.
+	if err := r.Context().Err(); err != nil {
+		a.log.InfoFields("CLI command abandoned by the caller before it started", fields)
+		return
+	}
+
 	sessionID, reusedConnection, err := a.cliSessionForProfile(profile.ID)
 	if err != nil {
 		writeCliJSON(w, http.StatusBadGateway, map[string]any{
@@ -937,14 +949,17 @@ func cliCriticalSummary(serverName, language string) string {
 }
 
 // authorizeCliCopy requires both endpoints to be inside their trust windows.
-func (a *App) authorizeCliCopy(source, destination types.Profile, description string) cliApprovalDecision {
+// ctx is the requesting client's: the copy prompt is a long wait, and a client
+// that has gone must not be reported as having approved a transfer nobody is
+// waiting for.
+func (a *App) authorizeCliCopy(ctx context.Context, source, destination types.Profile, description string) cliApprovalDecision {
 	now := time.Now()
 	if a.cliProfilesTrustedNow([]string{source.ID, destination.ID}, now) {
 		return cliApprovalDecision{Allowed: true, Source: cliApprovalTimedTrust}
 	}
 	serverName := cliProfileName(source) + " -> " + cliProfileName(destination)
 	return cliApprovalDecision{
-		Allowed: a.confirmCliExecution(serverName, description),
+		Allowed: a.confirmCliExecutionCtx(ctx, serverName, description),
 		Source:  cliApprovalUser,
 	}
 }
