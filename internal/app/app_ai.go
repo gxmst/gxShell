@@ -234,6 +234,32 @@ func (a *App) startAiChat(req types.AiChatRequest, continuing bool) error {
 	go func() {
 		defer cancel()
 		defer unregisterActiveAiChat(a, req.RequestID, entry)
+		// The provider's response is untrusted input parsed in this goroutine,
+		// and nothing below this point recovers. A panic here would take the
+		// whole process down — every SSH session with it — so it is contained
+		// and reported as an ordinary chat failure. The detail goes to the log,
+		// not to the renderer.
+		defer func() {
+			recovered := recover()
+			if recovered == nil {
+				return
+			}
+			a.log.ErrorFields("AI chat panicked", LogFields{
+				"chat":    req.ChatID,
+				"request": req.RequestID,
+				"panic":   fmt.Sprintf("%v", recovered),
+			})
+			emitCtx := a.ctx.Get()
+			if emitCtx == nil {
+				return
+			}
+			runtime.EventsEmit(emitCtx, "ai:error", aiChatEvent{
+				ChatID:    req.ChatID,
+				RequestID: req.RequestID,
+				Finish:    true,
+				Error:     "The AI request failed unexpectedly. See the log for details.",
+			})
+		}()
 
 		aiReq := toAiChatRequest(req)
 		err := a.ai.ChatWithContext(ctx, aiReq, func(resp ai.ChatResponse) {
@@ -370,7 +396,11 @@ func (a *App) AiExecuteTools(sessionID string, toolCallIDs []string) map[string]
 			"session":    sessionID,
 			"toolCallID": toolCallID,
 			"tool":       toolCall.ToolName,
-			"args":       truncate(toolCall.Arguments, 200),
+			// The arguments are model output, so a password or a token can sit
+			// inline in them (`mysql -pPASS`, `curl -H 'Authorization: Bearer …'`).
+			// Redact them the same way the command itself is redacted below,
+			// rather than writing the raw JSON to the log file.
+			"args": truncate(logger.RedactKnownSecrets(toolCall.Arguments, nil), 200),
 		})
 		plan, output, ok := a.prepareAiToolExecution(toolCall)
 		if !ok {

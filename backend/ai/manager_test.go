@@ -158,3 +158,110 @@ func containsSubstr(s, substr string) bool {
 	}
 	return false
 }
+
+// sseStream joins lines into the wire format parseSSE expects.
+func sseStream(lines ...string) string {
+	return strings.Join(lines, "\n") + "\n"
+}
+
+// The tool-call index is chosen by whatever answers the request, so it cannot
+// be trusted. A negative index used to subscript the slice below zero — a panic
+// in a goroutine with no recover, which took the process and every SSH session
+// with it — and a large one drove the growth loop until memory ran out.
+func TestParseSSERejectsOutOfRangeToolCallIndex(t *testing.T) {
+	for _, index := range []string{"-1", "-1000", "1e9", "1000000000", "128", "1024"} {
+		var seen []ChatResponse
+		stream := sseStream(
+			`data: {"choices":[{"delta":{"tool_calls":[{"index":`+index+`,"id":"call_1","type":"function","function":{"name":"execute_command","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`,
+			"",
+			"data: [DONE]",
+		)
+
+		if err := (&Manager{}).parseSSE(strings.NewReader(stream), func(resp ChatResponse) {
+			seen = append(seen, resp)
+		}); err != nil {
+			t.Fatalf("index %s: parseSSE returned %v", index, err)
+		}
+		for _, resp := range seen {
+			if len(resp.ToolCalls) > 0 {
+				t.Fatalf("index %s was accepted as a tool call: %#v", index, resp.ToolCalls)
+			}
+		}
+	}
+}
+
+// A well-formed stream still accumulates the argument fragments that arrive
+// across chunks, so the bounds check must not reject normal indices.
+func TestParseSSEAccumulatesToolCallArgumentsAcrossChunks(t *testing.T) {
+	var seen []ChatResponse
+	stream := sseStream(
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"execute_command","arguments":"{\"com"}}]}}]}`,
+		"",
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"mand\":\"uptime\"}"}}]},"finish_reason":"tool_calls"}]}`,
+		"",
+		"data: [DONE]",
+	)
+
+	if err := (&Manager{}).parseSSE(strings.NewReader(stream), func(resp ChatResponse) {
+		seen = append(seen, resp)
+	}); err != nil {
+		t.Fatalf("parseSSE returned %v", err)
+	}
+
+	var calls []ToolCall
+	for _, resp := range seen {
+		if resp.Finish && len(resp.ToolCalls) > 0 {
+			calls = resp.ToolCalls
+		}
+	}
+	if len(calls) != 1 {
+		t.Fatalf("got %d tool calls, want 1: %#v", len(calls), calls)
+	}
+	if calls[0].ID != "call_1" || calls[0].Function.Name != "execute_command" {
+		t.Fatalf("tool call = %#v", calls[0])
+	}
+	if calls[0].Function.Arguments != `{"command":"uptime"}` {
+		t.Fatalf("arguments = %q, want the two fragments joined", calls[0].Function.Arguments)
+	}
+}
+
+// Two tool calls in one stream keep their own slots.
+func TestParseSSEKeepsDistinctToolCallSlots(t *testing.T) {
+	var seen []ChatResponse
+	stream := sseStream(
+		`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","type":"function","function":{"name":"execute_command","arguments":"{\"command\":\"ls\"}"}},{"index":1,"id":"b","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"/etc/hosts\"}"}}]},"finish_reason":"tool_calls"}]}`,
+		"",
+		"data: [DONE]",
+	)
+
+	if err := (&Manager{}).parseSSE(strings.NewReader(stream), func(resp ChatResponse) {
+		seen = append(seen, resp)
+	}); err != nil {
+		t.Fatalf("parseSSE returned %v", err)
+	}
+
+	var calls []ToolCall
+	for _, resp := range seen {
+		if len(resp.ToolCalls) > 0 {
+			calls = resp.ToolCalls
+		}
+	}
+	if len(calls) != 2 || calls[0].ID != "a" || calls[1].ID != "b" {
+		t.Fatalf("tool calls = %#v", calls)
+	}
+}
+
+// A model list is a few kilobytes and the endpoint is user-configurable, so an
+// oversized or endless body must be refused rather than buffered in full.
+func TestReadLimited(t *testing.T) {
+	if data, err := readLimited(strings.NewReader("hello"), 16); err != nil || string(data) != "hello" {
+		t.Fatalf("readLimited = %q, %v", data, err)
+	}
+	// Exactly at the limit is allowed; one byte past it is not.
+	if _, err := readLimited(strings.NewReader(strings.Repeat("x", 16)), 16); err != nil {
+		t.Fatalf("a body exactly at the limit was rejected: %v", err)
+	}
+	if _, err := readLimited(strings.NewReader(strings.Repeat("x", 17)), 16); err == nil {
+		t.Fatal("an oversized body was accepted")
+	}
+}

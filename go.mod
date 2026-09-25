@@ -2,6 +2,10 @@ module gxShell
 
 go 1.26.8
 
+// The frontend's dependencies include a Go file that would otherwise be
+// compiled as part of this module by `go build ./...` and `go test ./...`.
+ignore ./frontend/node_modules
+
 require (
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/charmbracelet/x/ansi v0.10.1

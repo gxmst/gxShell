@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -115,6 +116,31 @@ func (m *Manager) ResetUsage() {
 	m.usage = TokenUsage{}
 }
 
+// maxModelsResponseBytes bounds a model-list response, and maxErrorBodyBytes
+// bounds how much of a failing response is quoted back in the error.
+//
+// The endpoint is user-configurable, so a large or endless body must not be
+// able to exhaust memory while the user is only fetching a list. A model list
+// is a few kilobytes; an error message is a few lines.
+const (
+	maxModelsResponseBytes = 8 << 20
+	maxErrorBodyBytes      = 4 << 10
+)
+
+// readLimited reads a body but refuses to grow past limit. It reads one byte
+// beyond the limit so an oversized response is reported as such rather than
+// silently truncated into a parse error.
+func readLimited(body io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("response exceeded %d bytes", limit)
+	}
+	return data, nil
+}
+
 func (m *Manager) ListModels(cfg Config) ([]string, error) {
 	var url string
 	var headers map[string]string
@@ -155,11 +181,11 @@ func (m *Manager) ListModels(cfg Config) ([]string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody, _ := readLimited(resp.Body, maxErrorBodyBytes)
 		return nil, fmt.Errorf("API error (%d): %s", resp.StatusCode, string(respBody))
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := readLimited(resp.Body, maxModelsResponseBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -472,6 +498,16 @@ func (m *Manager) parseOllamaStream(body io.Reader, onChunk func(ChatResponse)) 
 	return nil
 }
 
+// maxStreamToolCalls bounds how many tool calls one streamed response may
+// declare.
+//
+// The index arrives in the response body, so it is not trustworthy: the
+// provider — or anything that can answer in its place — chooses it. A negative
+// index would be used to subscript the slice below zero, and a large one would
+// drive the growth loop until the process runs out of memory. Neither is
+// recoverable from inside the stream, so the value is rejected instead.
+const maxStreamToolCalls = 128
+
 func (m *Manager) parseSSE(body io.Reader, onChunk func(ChatResponse)) error {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -541,6 +577,11 @@ func (m *Manager) parseSSE(body io.Reader, onChunk func(ChatResponse)) error {
 				}
 				idx := 0
 				if idxFloat, ok := tcMap["index"].(float64); ok {
+					// NaN and infinities convert unpredictably, and the value is
+					// only ever a small slot number in a well-formed stream.
+					if math.IsNaN(idxFloat) || math.IsInf(idxFloat, 0) || idxFloat < 0 || idxFloat >= maxStreamToolCalls {
+						continue
+					}
 					idx = int(idxFloat)
 				}
 				for len(toolCalls) <= idx {
