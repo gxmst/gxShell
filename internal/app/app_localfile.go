@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	maxTextFileSize         = 5 * 1024 * 1024
+	maxTextFileSize         = 20 * 1024 * 1024
 	maxMarkdownFileSize     = maxTextFileSize
 	maxMarkdownResourceSize = 8 * 1024 * 1024
 	maxPDFFileSize          = 50 * 1024 * 1024
@@ -145,7 +145,7 @@ func (a *App) WriteLocalFile(filePath string, content string) error {
 		return fmt.Errorf("file is not a supported text file")
 	}
 	if len(content) > maxTextFileSize {
-		return fmt.Errorf("content too large (max 5MB)")
+		return fmt.Errorf("content too large (max %d MiB)", maxTextFileSize/(1024*1024))
 	}
 	if err := validateTextDocument([]byte(content)); err != nil {
 		return err

@@ -9,6 +9,7 @@ import { drawerIcon } from "../../constants";
 import { stateClass } from "../../utils/format";
 import { t, navLabel } from "../../i18n";
 import { DocumentPanel } from "./DocumentPanel";
+import type { DocumentOutline } from "../../utils/documentPresentation";
 import { MonitorPanel } from "../MonitorPanel/MonitorPanel";
 import { NetworkPathCard } from "../NetworkPathCard/NetworkPathCard";
 import { MemoryCard } from "../MemoryCard/MemoryCard";
@@ -80,6 +81,7 @@ export function Sidebar(props: {
   markdownSiblings?: string[];
   markdownSiblingsBusy?: boolean;
   markdownSiblingsError?: string;
+  documentOutline?: DocumentOutline;
   onRefreshMarkdownSiblings?: () => void;
   recentMarkdown?: RecentMarkdownItem[];
   onOpenMarkdownFile?: (path: string) => void;
@@ -551,6 +553,7 @@ export function Sidebar(props: {
           {props.drawer === "documents" && <DocumentPanel
             active={props.active} siblings={props.markdownSiblings || []}
             busy={props.markdownSiblingsBusy} error={props.markdownSiblingsError}
+            outline={props.documentOutline}
             recent={props.recentMarkdown || []} collapsed={props.collapsed} language={lang}
             host={props.profiles.find((profile) => profile.id === props.active?.profileId)?.host}
             onOpen={props.onOpenMarkdownFile} onPick={props.onPickTextFile} onRefresh={props.onRefreshMarkdownSiblings}

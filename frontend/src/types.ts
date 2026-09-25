@@ -201,6 +201,33 @@ export type CliApprovalEvent = {
   spans?: CliRiskSpan[];
 };
 
+// One reviewable row in the approval panel. `text` is the raw command, path or
+// description and `spans` index into it as UTF-8 byte offsets, so the panel can
+// highlight the tokens that drove the risk tier. `detail` is the formatted
+// explanation the native dialog used to show.
+export type CliApprovalPanelItem = {
+  id: string;
+  kind: string;
+  text: string;
+  detail?: string;
+  riskTier?: string;
+  riskLabel?: string;
+  riskLines?: string[];
+  spans?: CliRiskSpan[];
+  note?: string;
+};
+
+// Emitted as "cli:approval-panel". The item list is deliberately unbounded: the
+// panel scrolls, so hiding commands would hide the ones worth judging.
+export type CliApprovalPanelRequest = {
+  id: string;
+  source: string;
+  server?: string;
+  summary?: string;
+  critical?: boolean;
+  items: CliApprovalPanelItem[];
+};
+
 export type SecretRequest = {
   profile: types.Profile;
   mode: "connect" | "reconnect";

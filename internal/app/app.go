@@ -113,6 +113,31 @@ type App struct {
 	// cliApprovalEventFn is the equivalent seam for the in-app risk card shown
 	// while the native dialog remains the authoritative approval boundary.
 	cliApprovalEventFn func(cliApprovalEvent)
+	// approvalPanel holds the in-app review panels awaiting the renderer's
+	// answer. See app_approval_panel.go.
+	approvalPanel *cliApprovalPanelRegistry
+	// frontendReady flips once the renderer has mounted and registered its
+	// listeners. The panel is only authoritative while it is set: before that,
+	// and after a renderer crash, approval falls back to the native dialog so a
+	// missing renderer can never become an approval bypass.
+	frontendReady atomic.Bool
+	// cliApprovalPanelFn and cliApprovalPanelClosedFn are test seams for the
+	// panel lifecycle, mirroring cliApprovalEventFn.
+	cliApprovalPanelFn       func(cliApprovalPanelRequest)
+	cliApprovalPanelClosedFn func(string)
+	// windowRaiseFn and windowClearFn are test seams for the window attention
+	// calls the panel makes. The real implementations go through Wails, which
+	// requires the lifecycle context and therefore cannot run under `go test`.
+	windowRaiseFn func()
+	windowClearFn func()
+	// approvalGate serialises panels so only one is on screen at a time, the
+	// way the native dialog was serialised by nativeDialogMu. It is a channel
+	// rather than a mutex because acquiring it must respect the caller's
+	// context. See acquireApprovalGate.
+	approvalGate chan struct{}
+	// approvalPanelTimeout overrides cliApprovalPanelTimeout in tests; zero
+	// means the const is used.
+	approvalPanelTimeout time.Duration
 	// cliSessionEventFn is the equivalent seam for announcing the SSH session
 	// selected by an external CLI request so the frontend can ensure it has a
 	// visible terminal tab before automation output is mirrored.
@@ -212,6 +237,8 @@ func NewApp() *App {
 		cliJobs:              map[string]*cliJob{},
 		cliTunnels:           map[string]cliTunnelRecord{},
 		automationEnvelopes:  map[string]terminalAutomationEnvelope{},
+		approvalPanel:        newCliApprovalPanelRegistry(),
+		approvalGate:         make(chan struct{}, 1),
 	}
 	// The logger is not created until startup, so the collision callback reads
 	// a.log lazily and stays silent until it exists.

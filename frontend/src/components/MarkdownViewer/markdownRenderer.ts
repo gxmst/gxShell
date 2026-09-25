@@ -15,6 +15,7 @@ import sql from 'highlight.js/lib/languages/sql';
 import typescript from 'highlight.js/lib/languages/typescript';
 import xml from 'highlight.js/lib/languages/xml';
 import yaml from 'highlight.js/lib/languages/yaml';
+import { sanitizeRenderedHtml } from '../../utils/sanitizeHtml';
 
 export type TocItem = { id: string; text: string; depth: number };
 export type RenderedMarkdown = { html: string; toc: TocItem[] };
@@ -176,7 +177,11 @@ export function buildMarkdown(markdown: string): RenderedMarkdown {
   };
 
   const rawHtml = marked.parse(markdown, { renderer, gfm: true, breaks: false }) as string;
-  const html = DOMPurify.sanitize(rawHtml, {
+  // The document shares a document with the rest of the app — the approval
+  // panel included — so the shared policy in utils/sanitizeHtml.ts strips the
+  // stylesheet and overlay vectors. This call only widens the allow-list with
+  // the attributes the viewer's own controls rely on.
+  const html = sanitizeRenderedHtml(rawHtml, {
     ADD_ATTR: ['target', 'rel', 'data-md-link', 'data-md-src', 'data-mermaid-source', 'data-md-heading', 'data-code-copy', 'aria-label'],
     ADD_TAGS: ['button'],
   });
@@ -184,11 +189,64 @@ export function buildMarkdown(markdown: string): RenderedMarkdown {
 }
 
 export function sanitizeMermaidSVG(svg: string) {
-  return DOMPurify.sanitize(svg, {
+  const clean = DOMPurify.sanitize(svg, {
     USE_PROFILES: { svg: true, svgFilters: true },
     // Mermaid measures and renders HTML labels inside SVG foreignObject.
     // Retain that small text vocabulary without enabling arbitrary HTML.
+    // `style=` has to stay: Mermaid writes it on its own nodes (a flowchart
+    // emits a couple of dozen), so forbidding it would flatten every diagram.
+    // Diagram *text* cannot reach it — labels are escaped, and htmlLabels is
+    // pinned by the `secure` list in mermaidRenderer.
     ADD_TAGS: ['foreignObject', 'div', 'span', 'p', 'br', 'b', 'i', 'strong', 'em', 'code', 's', 'sub', 'sup'],
     HTML_INTEGRATION_POINTS: { foreignobject: true },
   });
+  // Then drop the one thing a Mermaid stylesheet does not scope to its diagram.
+  return clean.replace(
+    /(<style[^>]*>)([\s\S]*?)(<\/style>)/gi,
+    (_match, open: string, css: string, close: string) => open + stripAnimationKeyframes(css) + close,
+  );
+}
+
+// Remove every @keyframes block from a stylesheet.
+//
+// Mermaid wraps each generated selector in `#<svg-id>`, so an ordinary rule
+// cannot reach outside its own diagram — but it emits keyframe *names*
+// verbatim, and an animation name is global to the document. A diagram could
+// therefore define `@keyframes` for a name the application animates and, being
+// defined later, win: an entrance animation could be turned into one that ends
+// at `opacity: 0`.
+//
+// Nothing here needs those keyframes. Mermaid emits them for animated edges,
+// which these documents do not use, and an `animation` whose name has no
+// `@keyframes` simply does not run. Removing them means no animation name can
+// come from a diagram at all, so no future styling choice in the app has to
+// stay clear of a name an attacker could guess.
+export function stripAnimationKeyframes(css: string): string {
+  const start = /@(?:-\w+-)?keyframes\b/;
+  let out = '';
+  let index = 0;
+  while (index < css.length) {
+    const match = start.exec(css.slice(index));
+    if (!match || match.index === undefined) {
+      out += css.slice(index);
+      break;
+    }
+    const at = index + match.index;
+    out += css.slice(index, at);
+    const open = css.indexOf('{', at);
+    if (open < 0) break;
+    // Keyframe bodies nest (`100% { ... }`), so the block ends at the brace
+    // that closes the at-rule, not at the first one.
+    let depth = 0;
+    let end = open;
+    for (; end < css.length; end += 1) {
+      if (css[end] === '{') depth += 1;
+      else if (css[end] === '}') {
+        depth -= 1;
+        if (depth === 0) { end += 1; break; }
+      }
+    }
+    index = end;
+  }
+  return out;
 }

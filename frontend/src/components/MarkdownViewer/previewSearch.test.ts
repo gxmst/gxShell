@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { findPreviewRanges } from './previewSearch';
+import { findPreviewRanges, findTextMatches, MAX_SEARCH_MATCHES } from './previewSearch';
 
 describe('rendered document search', () => {
   it('finds prose and SVG labels while excluding styles and diagram controls', () => {
@@ -16,5 +16,26 @@ describe('rendered document search', () => {
     expect(findPreviewRanges(root, 'x').map((range) => range.toString())).toEqual(['x']);
     expect(findPreviewRanges(root, 'a[0]').map((range) => range.toString())).toEqual(['A[0]', 'a[0]']);
     expect(findPreviewRanges(root, '中文😀').map((range) => range.toString())).toEqual(['中文😀']);
+  });
+
+  it('finds original source offsets for Unicode and literal regular-expression characters', () => {
+    const source = 'İx A[0] a[0] 中文😀 . * $ {value}';
+    for (const query of ['x', 'a[0]', '中文😀', '. * $', '{value}']) {
+      const { offsets, limited } = findTextMatches(source, query);
+      expect(limited).toBe(false);
+      const found = Array.from({ length: offsets.length / 2 }, (_, index) => source.slice(offsets[index * 2], offsets[index * 2 + 1]));
+      expect(found.length).toBeGreaterThan(0);
+      expect(found.every((match) => match.toLowerCase() === query.toLowerCase())).toBe(true);
+    }
+  });
+
+  it('searches offscreen text and bounds match storage for repetitive large files', () => {
+    const source = 'line\n'.repeat(400000) + 'end-of-document';
+    const tail = findTextMatches(source, 'end-of-document');
+    expect(tail.offsets[0]).toBe(source.indexOf('end-of-document'));
+    const many = findTextMatches(source, 'line');
+    expect(many.offsets.length).toBe(MAX_SEARCH_MATCHES * 2);
+    expect(many.limited).toBe(true);
+    expect(findTextMatches('a '.repeat(MAX_SEARCH_MATCHES), 'a').limited).toBe(false);
   });
 });

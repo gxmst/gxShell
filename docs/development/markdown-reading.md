@@ -24,19 +24,31 @@ Reading behavior:
 - A parse error retains copyable source, exposes the parser's line information
   and offers retry. Following paragraphs and diagrams remain readable. Temporary
   Mermaid measurement elements are removed on both success and failure.
-- The document toolbar exposes Find and a zoom reset with the current percentage.
+- The document toolbar shows the file type and Find. Typography groups zoom and
+  its reset, line spacing, reading-column width and code wrapping, with the current
+  zoom percentage visible on the toolbar. Layout changes retain the reading anchor.
   Find follows asynchronous diagram updates and excludes SVG CSS and controls.
   Search offsets are measured against original Unicode text.
-- In a reading pane narrower than 640 px, the outline starts closed and opens
-  over the document. It closes after selecting a heading or pressing Escape.
-  Toolbar controls wrap and the find bar occupies its own layout row.
+- The document sidebar shares its space between the folder listing and outline.
+  Each section folds independently, and the active heading stays in view. A
+  standalone viewer without a sidebar retains the internal outline; below 640 px
+  that outline opens over the document and closes after selection or Escape.
+  Toolbar controls wrap and Find occupies its own row in narrow panes.
+- The light theme uses one soft white canvas for the document and toolbar, with
+  neutral gray surrounding chrome and no terminal inset frame. Dark/custom themes
+  use their existing surface colors. Reading positions persist per file without
+  storing the document text.
+- Markdown above 1 Mi UTF-16 code units or 12,000 lines opens as virtualized source
+  with a simplified-layout notice. Search, copying and heading navigation remain
+  available, while rich rendering and diagrams stay within that budget.
 
 Verification:
 
-- On 2026-09-10, all 339 frontend tests in 55 files, Go tests and Go vet passed.
-  Lint has 0 errors and 52 pre-existing warnings. `wails build -skipbindings`
-  passed, including TypeScript, bindings, i18n, version and stylesheet checks.
-  Both Markdown and terminal-workbench browser smoke scripts passed.
+- On 2026-09-15, the frontend suite and final affected regressions, Go tests and
+  Go vet passed. Lint has 0 errors and 52 pre-existing warnings.
+  `wails build -skipbindings` passed, including TypeScript, bindings, i18n, version
+  and stylesheet checks. Markdown browser smoke passed, as did the document and
+  terminal-workbench smoke scripts against the production bundle.
 - `frontend/src/test/fixtures/mermaid-workflows.md` preserves the reported
   example. Unit tests cover sanitization, source retention, search, cancellation,
   theme races, cached rendering, copying and retry.
@@ -46,6 +58,9 @@ Verification:
   search, errors and additional label/diagram forms. Screenshots go to a unique
   system temporary directory. Run from `frontend` with Playwright on Node's
   module search path (as with `scripts/smoke-workbench.mjs`).
+- `frontend/scripts/smoke-documents.mjs --preview` checks the production document
+  bundle, sidebar outline and saved reading positions, shared surface colors,
+  large Markdown fallback, and typography controls in narrow and short windows.
 
 This is a frontend browser check; it does not exercise native Windows file
 dialogs. Ordinary builds use `frontend/dist` for the embedded web bundle and

@@ -150,3 +150,315 @@
     grid-column: 2;
   }
 }
+
+/* Interactive approval panel. It replaces the native MessageBox as the review
+   surface: the native dialog has no scrollbar, so a long batch grew past the
+   bottom of the screen and took its buttons with it. Everything here scrolls,
+   and the item list is never truncated — read-only commands are collapsed, not
+   dropped, so the visible count always matches the count that will run. */
+
+.cli-panel-backdrop {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: color-mix(in srgb, #05070a 58%, transparent);
+}
+
+.cli-panel {
+  display: flex;
+  width: min(780px, 100%);
+  max-height: 86vh;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+  border-radius: 10px;
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-md);
+  color: var(--text);
+  outline: none;
+}
+
+.cli-panel-head {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.cli-panel-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+
+.cli-panel-heading {
+  display: grid;
+  min-width: 0;
+}
+
+.cli-panel-heading strong {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.cli-panel-heading small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cli-panel-count {
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cli-panel-summary {
+  margin: 0;
+  padding: 10px 16px 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.cli-panel-critical-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 10px 16px 0;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--bad) 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bad) 12%, transparent);
+  color: var(--bad);
+  font-size: 11px;
+}
+
+.cli-panel-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+}
+
+.cli-panel-selectall {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.cli-panel-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 8px 8px;
+  border-top: 1px solid var(--border);
+}
+
+.cli-panel-group {
+  display: block;
+}
+
+.cli-panel-group-head {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--border) 45%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 11px;
+  text-align: left;
+}
+
+.cli-panel-group-tier {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.cli-panel-group-title {
+  font-weight: 650;
+}
+
+.cli-panel-group-meta {
+  margin-left: auto;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cli-panel-group-critical .cli-panel-group-head {
+  background: color-mix(in srgb, var(--bad) 16%, transparent);
+  color: var(--bad);
+}
+
+.cli-panel-group-changes .cli-panel-group-head {
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+}
+
+/* T1 does change state, so it is tinted too — just less loudly than T2. */
+.cli-panel-group-recoverable .cli-panel-group-head {
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  color: color-mix(in srgb, var(--warn) 70%, var(--text));
+}
+
+.cli-panel-group-unclassified .cli-panel-group-head {
+  background: color-mix(in srgb, var(--muted) 20%, transparent);
+  color: var(--text);
+}
+
+.cli-panel-group-readonly .cli-panel-group-head {
+  color: var(--muted);
+}
+
+.cli-panel-item {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 4px;
+  padding: 8px 8px 8px 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.cli-panel-item.is-off {
+  opacity: 0.5;
+}
+
+.cli-panel-item-check {
+  display: grid;
+  padding-top: 3px;
+  place-items: start center;
+}
+
+.cli-panel-item-body {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+/* The tier badge repeats what the group header says, but an item is the unit
+   the user actually approves — and a batch can mix tiers within one group's
+   severity band, so each row has to stand on its own. */
+.cli-panel-item-risk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.cli-panel-item-tier {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.cli-panel-item-text {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.cli-panel-item-lines {
+  display: grid;
+  gap: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.cli-panel-item-lines > div {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.cli-panel-item-lines svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.cli-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 70%, transparent);
+}
+
+.cli-panel-actions-gap {
+  flex: 1 1 auto;
+}
+
+.cli-panel-btn {
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.cli-panel-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.cli-panel-btn-primary {
+  border-color: color-mix(in srgb, var(--ok, var(--warn)) 55%, var(--border));
+  background: color-mix(in srgb, var(--ok, var(--warn)) 18%, transparent);
+  font-weight: 650;
+}
+
+.cli-panel-btn-danger {
+  border-color: color-mix(in srgb, var(--bad) 55%, var(--border));
+  color: var(--bad);
+}
+
+@media (max-width: 640px) {
+  .cli-panel-backdrop {
+    padding: 8px;
+  }
+
+  .cli-panel {
+    max-height: calc(100vh - 16px);
+  }
+
+  .cli-panel-actions {
+    flex-wrap: wrap;
+  }
+
+  .cli-panel-actions-gap {
+    display: none;
+  }
+}

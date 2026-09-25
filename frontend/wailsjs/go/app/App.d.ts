@@ -166,6 +166,8 @@ export function ReadLocalMarkdownResourceDataURL(arg1:string,arg2:string):Promis
 export function ReadLocalPDFBase64(arg1:string):Promise<string>;
 
 export function ReadLogFile(arg1:string):Promise<string>;
+export function RegisterApprovalPanel():Promise<void>;
+export function ResolveCliApproval(arg1:string,arg2:Array<string>):Promise<void>;
 
 export function ReadLogs(arg1:number):Promise<Array<types.LogEntry>>;
 

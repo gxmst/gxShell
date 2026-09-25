@@ -2,13 +2,16 @@ import { useEffect, useImperativeHandle, useLayoutEffect, useRef, type Ref } fro
 import { EditorState, Compartment, EditorSelection, type ChangeSpec } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, rectangularSelection, crosshairCursor, highlightSpecialChars } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo } from '@codemirror/commands';
-import { syntaxHighlighting, HighlightStyle, bracketMatching, indentUnit } from '@codemirror/language';
+import { syntaxHighlighting, HighlightStyle, bracketMatching, indentUnit, LanguageDescription } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { json } from '@codemirror/lang-json';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { tags } from '@lezer/highlight';
 import { toClipboardText } from '../../utils/clipboard';
 import { countWords } from '../../utils/wordCount';
+import { MAX_SYNTAX_CHARS, type DocumentHeading, type DocumentPresentation } from '../../utils/documentPresentation';
+import type { DocumentScrollPosition } from '../../utils/documentReadingState';
+import { previewDecorations } from './previewDecorations';
 import '../../styles/source-editor.css';
 
 export interface EditorStats {
@@ -25,6 +28,8 @@ export interface SourceEditorHandle {
   /** 0..1 scroll position, for handing scroll continuity across mode switches. */
   scrollRatio: () => number;
   setScrollRatio: (ratio: number) => void;
+  scrollPosition: () => DocumentScrollPosition | null;
+  setScrollPosition: (position: DocumentScrollPosition) => void;
   /** Select and scroll to a document range, used by the find bar. */
   revealRange: (from: number, to: number) => void;
   toggleWrap: (marker: string) => void;
@@ -53,7 +58,14 @@ interface SourceEditorProps {
   readOnly?: boolean;
   ariaLabel?: string;
   handleRef?: Ref<SourceEditorHandle>;
+  sourcePath?: string;
+  presentation?: DocumentPresentation;
+  headings?: DocumentHeading[];
+  lineHeight?: number;
+  columnWidth?: string;
 }
+
+const NO_HEADINGS: DocumentHeading[] = [];
 
 // Markdown syntax colors, bound to the app's theme variables so the editor
 // tracks the active theme instead of shipping its own palette.
@@ -69,10 +81,16 @@ const highlightStyle = HighlightStyle.define([
   { tag: tags.list, color: 'var(--accent)' },
   { tag: tags.contentSeparator, color: 'var(--muted)' },
   { tag: tags.processingInstruction, color: 'var(--muted)' },
-  { tag: tags.propertyName, color: 'var(--code-variable)' },
+  { tag: tags.propertyName, color: 'var(--code-title)' },
   { tag: tags.string, color: 'var(--code-string)' },
   { tag: [tags.number, tags.bool, tags.null], color: 'var(--code-number)' },
   { tag: [tags.separator, tags.brace], color: 'var(--muted)' },
+  { tag: tags.keyword, color: 'var(--code-keyword)' },
+  { tag: tags.comment, color: 'var(--code-comment)', fontStyle: 'italic' },
+  { tag: [tags.function(tags.variableName), tags.definition(tags.variableName)], color: 'var(--code-title)' },
+  { tag: [tags.typeName, tags.className], color: 'var(--code-title)' },
+  { tag: tags.operator, color: 'var(--code-operator, var(--accent))' },
+  { tag: [tags.tagName, tags.attributeName], color: 'var(--code-keyword)' },
 ]);
 
 function languageExtension(mode: SourceEditorMode) {
@@ -108,12 +126,12 @@ const editorTheme = EditorView.theme({
   '&': {
     height: '100%',
     fontSize: 'var(--src-font-size, 14px)',
-    backgroundColor: 'var(--bg)',
+    backgroundColor: 'var(--document-bg, var(--bg))',
     color: 'var(--text)',
   },
   '.cm-content': {
     fontFamily: 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
-    lineHeight: '1.6',
+    lineHeight: 'var(--src-line-height, 1.6)',
     padding: '18px 0 40vh',
     caretColor: 'var(--accent)',
   },
@@ -252,6 +270,17 @@ function insertLinkCommand(view: EditorView): boolean {
   return true;
 }
 
+function capturePosition(view: EditorView): DocumentScrollPosition {
+  const scroll = view.scrollDOM;
+  const bounds = scroll.getBoundingClientRect();
+  const top = Math.max(0, bounds.top - view.documentTop);
+  const block = view.lineBlockAtHeight(top);
+  const anchor = view.posAtCoords({ x: bounds.left + Math.min(80, bounds.width / 2), y: bounds.top + 1 }, false) ?? block.from;
+  const coords = view.coordsAtPos(anchor);
+  const max = scroll.scrollHeight - scroll.clientHeight;
+  return { kind: 'source', anchor, offset: coords ? coords.top - bounds.top : block.top - top, ratio: max > 0 ? Math.min(1, Math.max(0, scroll.scrollTop / max)) : 0, left: scroll.scrollLeft };
+}
+
 export function SourceEditor({
   value,
   onChange,
@@ -265,6 +294,11 @@ export function SourceEditor({
   readOnly = false,
   ariaLabel,
   handleRef,
+  sourcePath,
+  presentation = 'plain',
+  headings = NO_HEADINGS,
+  lineHeight = 1.6,
+  columnWidth = '100%',
 }: SourceEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -272,6 +306,10 @@ export function SourceEditor({
   const wrapCompartment = useRef(new Compartment());
   const langCompartment = useRef(new Compartment());
   const readOnlyCompartment = useRef(new Compartment());
+  const chromeCompartment = useRef(new Compartment());
+  const previewCompartment = useRef(new Compartment());
+  const restoreFrameRef = useRef(0);
+  const syntaxEnabled = value.length <= MAX_SYNTAX_CHARS;
 
   // Latest callbacks, read through refs so the editor is built once and never
   // torn down just because a parent re-rendered.
@@ -329,9 +367,9 @@ export function SourceEditor({
       state: EditorState.create({
         doc: value,
         extensions: [
-          lineNumbers(),
-          highlightActiveLine(),
-          highlightActiveLineGutter(),
+          chromeCompartment.current.of(readOnly
+            ? (presentation === 'prose' ? [] : lineNumbers())
+            : [lineNumbers(), highlightActiveLine(), highlightActiveLineGutter()]),
           highlightSpecialChars(),
           history(),
           drawSelection(),
@@ -345,9 +383,10 @@ export function SourceEditor({
           indentUnit.of('  '),
           EditorState.tabSize.of(2),
           syntaxHighlighting(highlightStyle),
-          langCompartment.current.of(languageExtension(mode)),
+          langCompartment.current.of(syntaxEnabled ? languageExtension(mode) : []),
           wrapCompartment.current.of(wrap ? EditorView.lineWrapping : []),
           readOnlyCompartment.current.of(accessExtensions(readOnly, ariaLabel)),
+          previewCompartment.current.of(readOnly ? previewDecorations(presentation, headings, sourcePath?.toLowerCase().endsWith('.tsv') ? '\t' : ',') : []),
           editorTheme,
           // Ordering matters: these bindings must win over defaultKeymap.
           keymap.of([
@@ -430,6 +469,7 @@ export function SourceEditor({
 
     return () => {
       window.clearTimeout(wordCountTimer);
+      cancelAnimationFrame(restoreFrameRef.current);
       view.destroy();
       viewRef.current = null;
     };
@@ -464,10 +504,35 @@ export function SourceEditor({
   }, [wrap]);
 
   useEffect(() => {
-    viewRef.current?.dispatch({
-      effects: langCompartment.current.reconfigure(languageExtension(mode)),
-    });
-  }, [mode]);
+    const view = viewRef.current;
+    if (!view) return;
+    let cancelled = false;
+    view.dispatch({ effects: langCompartment.current.reconfigure(syntaxEnabled ? languageExtension(mode) : []) });
+    if (mode === 'plain' && syntaxEnabled && sourcePath && ['code', 'config'].includes(presentation)) {
+      void import('@codemirror/language-data').then(async ({ languages }) => {
+        const filename = sourcePath.split(/[\\/]/).pop() || '';
+        const alias = /^(?:dockerfile|containerfile)(?:\.|$)/i.test(filename) ? 'Dockerfile'
+          : /^(?:\.env(?:\.|$)|\.bashrc$|\.zshrc$|\.profile$)/i.test(filename) ? 'Shell'
+            : /\.(?:ini|cfg|service)$|^\.editorconfig$/i.test(filename) ? 'Properties files'
+              : /^gnumakefile$|^justfile$/i.test(filename) ? 'Makefile' : '';
+        const language = alias ? LanguageDescription.matchLanguageName(languages, alias)
+          : LanguageDescription.matchFilename(languages, filename);
+        if (!language || cancelled) return;
+        const extension = await language.load();
+        if (!cancelled && viewRef.current === view) view.dispatch({ effects: langCompartment.current.reconfigure(extension) });
+      }).catch(() => { /* Source remains usable if a language chunk cannot load. */ });
+    }
+    return () => { cancelled = true; };
+  }, [mode, presentation, sourcePath, syntaxEnabled]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: [
+      chromeCompartment.current.reconfigure(readOnly
+        ? (presentation === 'prose' ? [] : lineNumbers())
+        : [lineNumbers(), highlightActiveLine(), highlightActiveLineGutter()]),
+      previewCompartment.current.reconfigure(readOnly ? previewDecorations(presentation, headings, sourcePath?.toLowerCase().endsWith('.tsv') ? '\t' : ',') : []),
+    ] });
+  }, [readOnly, presentation, headings, sourcePath]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -495,6 +560,35 @@ export function SourceEditor({
       if (!el) return;
       const max = el.scrollHeight - el.clientHeight;
       el.scrollTop = max > 0 ? ratio * max : 0;
+    },
+    scrollPosition: () => viewRef.current ? capturePosition(viewRef.current) : null,
+    setScrollPosition: (position) => {
+      const view = viewRef.current;
+      if (!view) return;
+      if (position.kind !== 'source') {
+        view.scrollDOM.scrollTop = Math.max(0, view.scrollDOM.scrollHeight - view.scrollDOM.clientHeight) * position.ratio;
+        return;
+      }
+      const anchor = Math.min(view.state.doc.length, Math.max(0, position.anchor));
+      view.dispatch({ effects: EditorView.scrollIntoView(anchor, { y: 'start', yMargin: Math.max(0, position.offset) }) });
+      cancelAnimationFrame(restoreFrameRef.current);
+      restoreFrameRef.current = requestAnimationFrame(() => {
+        if (viewRef.current !== view) return;
+        view.requestMeasure({
+          key: restoreFrameRef,
+          read: () => {
+            const coords = view.coordsAtPos(anchor);
+            return coords ? coords.top - view.scrollDOM.getBoundingClientRect().top - position.offset : 0;
+          },
+          write: (delta) => {
+            view.scrollDOM.scrollTop += delta;
+            view.scrollDOM.scrollLeft = position.left;
+            restoreFrameRef.current = requestAnimationFrame(() => {
+              if (viewRef.current === view) onScrollRef.current?.();
+            });
+          },
+        });
+      });
     },
     revealRange: (from, to) => {
       const view = viewRef.current;
@@ -529,8 +623,9 @@ export function SourceEditor({
   return (
     <div
       ref={hostRef}
-      className="source-editor"
-      style={{ '--src-font-size': `${fontSize}px` } as React.CSSProperties}
+      className={'source-editor' + (readOnly ? ' source-editor-readonly' : '')}
+      data-presentation={readOnly ? presentation : 'code'}
+      style={{ '--src-font-size': fontSize + 'px', '--src-line-height': lineHeight, '--reading-column': columnWidth } as React.CSSProperties}
     />
   );
 }

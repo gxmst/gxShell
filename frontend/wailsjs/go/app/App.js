@@ -338,6 +338,14 @@ export function ReadLogFile(arg1) {
   return window['go']['app']['App']['ReadLogFile'](arg1);
 }
 
+export function RegisterApprovalPanel() {
+  return window['go']['app']['App']['RegisterApprovalPanel']();
+}
+
+export function ResolveCliApproval(arg1, arg2) {
+  return window['go']['app']['App']['ResolveCliApproval'](arg1, arg2);
+}
+
 export function ReadLogs(arg1) {
   return window['go']['app']['App']['ReadLogs'](arg1);
 }

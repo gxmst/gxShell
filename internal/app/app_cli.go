@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -219,7 +220,7 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	if len(matchedUploads) > 0 {
 		display += formatCliUploadedFileContext(matchedUploads)
 	}
-	decision := a.authorizeCliProfileRiskExecution(profile, display, guardText, assessment)
+	decision := a.authorizeCliProfileRiskExecution(r.Context(), profile, display, guardText, assessment)
 	approvalSource := decision.Source
 	if !decision.Allowed {
 		if decision.Err != nil {
@@ -521,8 +522,12 @@ type cliConnectResult struct {
 
 type cliApprovalRequest struct {
 	serverName string
-	command    string
-	result     chan bool
+	item       cliApprovalItem
+	// ctx is the requesting client's context. It lets a pending approval be
+	// abandoned when the caller disconnects, instead of leaving a prompt on
+	// screen for a request nobody is waiting for.
+	ctx    context.Context
+	result chan bool
 }
 
 type cliApprovalBatch struct {
@@ -692,13 +697,34 @@ func (a *App) emitCliSessionAvailable(info types.SessionInfo) {
 	}
 }
 
+// confirmCliExecution is the context-free entry point used by the copy path and
+// by tests. See confirmCliApprovalCtx.
 func (a *App) confirmCliExecution(serverName, command string) bool {
+	return a.confirmCliExecutionCtx(context.Background(), serverName, command)
+}
+
+// confirmCliExecutionCtx queues a command with no structured risk context. It is
+// used by the copy path, which has no per-command tier.
+func (a *App) confirmCliExecutionCtx(ctx context.Context, serverName, command string) bool {
+	return a.confirmCliApprovalCtx(ctx, serverName, cliApprovalItem{Kind: "command", Text: command})
+}
+
+// confirmCliApprovalCtx queues one reviewable item, coalescing concurrent
+// requests for the same server into a single approval within a short window so
+// a burst of commands does not spam the user with one prompt each. ctx is the
+// requesting client's context: when it is cancelled the caller stops waiting
+// and its item is dropped from the batch.
+func (a *App) confirmCliApprovalCtx(ctx context.Context, serverName string, item cliApprovalItem) bool {
 	if a.ctx.Get() == nil {
 		return false
 	}
+	if item.Kind == "" {
+		item.Kind = "command"
+	}
 	req := &cliApprovalRequest{
 		serverName: serverName,
-		command:    command,
+		item:       item,
+		ctx:        ctx,
 		result:     make(chan bool, 1),
 	}
 	key := strings.ToLower(serverName)
@@ -721,17 +747,33 @@ func (a *App) confirmCliExecution(serverName, command string) bool {
 	batch.requests = append(batch.requests, req)
 	a.cliApprovalMu.Unlock()
 
-	return <-req.result
+	var ctxDone <-chan struct{}
+	if ctx != nil {
+		ctxDone = ctx.Done()
+	}
+	select {
+	case allowed := <-req.result:
+		// The caller may have gone away while the prompt was open. Its answer is
+		// moot then and must not be reported back as an approval.
+		if ctx != nil && ctx.Err() != nil {
+			return false
+		}
+		return allowed
+	case <-ctxDone:
+		// Leave the buffered result channel alone: flushCliApprovalBatch still
+		// owns it and will absorb its own send without blocking.
+		return false
+	}
 }
 
 // authorizeCliProfileExecution is the convenience entry point used by tests and
 // non-script callers. The request handler classifies guardText separately so a
 // script can display its transport command while still scoring its full body.
 func (a *App) authorizeCliProfileExecution(profile types.Profile, command string) cliApprovalDecision {
-	return a.authorizeCliProfileRiskExecution(profile, command, command, classifyCommand(command))
+	return a.authorizeCliProfileRiskExecution(context.Background(), profile, command, command, classifyCommand(command))
 }
 
-func (a *App) authorizeCliProfileRiskExecution(profile types.Profile, display, riskText string, assessment riskAssessment) cliApprovalDecision {
+func (a *App) authorizeCliProfileRiskExecution(ctx context.Context, profile types.Profile, display, riskText string, assessment riskAssessment) cliApprovalDecision {
 	trusted := a.cliProfilesTrustedNow([]string{profile.ID}, time.Now())
 	strength := assessment.requiredApproval(trusted)
 	if strength == approvalNone {
@@ -747,16 +789,30 @@ func (a *App) authorizeCliProfileRiskExecution(profile types.Profile, display, r
 	language := a.cliApprovalLanguage()
 	riskLines := assessment.riskLinesForLanguage(language)
 	display = formatRiskApprovalForLanguage(display, assessment, language, riskLines)
+	// The panel groups by tier and highlights the spans, both of which are
+	// indexed against the raw command rather than the formatted explanation.
+	// Detail carries the formatted text for the native fallback and for the
+	// panel's expandable explanation, so no context is lost either way.
+	item := cliApprovalItem{
+		Kind:      "command",
+		Text:      truncate(riskText, cliApprovalItemTextLimit),
+		RiskTier:  assessment.Tier.String(),
+		RiskLabel: assessment.Tier.labelForLanguage(language),
+		RiskLines: riskLines,
+		Spans:     assessment.Spans,
+		Note:      strength.String(),
+		Detail:    truncate(display, cliApprovalItemDetailLimit),
+	}
 	var confirmationErr error
 	allowed := a.withCliApprovalEvent(cliProfileName(profile), riskText, assessment, strength, language, riskLines, func() bool {
 		if assessment.Tier == tierCritical {
 			// Critical requests never join a batch: otherwise one dangerous command
 			// can hide among ordinary T1/T2 requests behind a single Allow all click.
 			var confirmed bool
-			confirmed, confirmationErr = a.confirmCliCriticalExecution(cliProfileName(profile), display, assessment, strength)
+			confirmed, confirmationErr = a.confirmCliCriticalExecution(ctx, cliProfileName(profile), item, assessment, strength)
 			return confirmed
 		}
-		return a.confirmCliExecution(cliProfileName(profile), display)
+		return a.confirmCliApprovalCtx(ctx, cliProfileName(profile), item)
 	})
 	return cliApprovalDecision{
 		Allowed:  allowed,
@@ -814,20 +870,38 @@ func (a *App) cliApprovalLanguage() string {
 	return settings.Language
 }
 
-func (a *App) confirmCliCriticalExecution(serverName, command string, assessment riskAssessment, strength approvalStrength) (bool, error) {
+func (a *App) confirmCliCriticalExecution(ctx context.Context, serverName string, item cliApprovalItem, assessment riskAssessment, strength approvalStrength) (bool, error) {
 	if a.cliConfirmRiskFn != nil {
-		return a.cliConfirmRiskFn(serverName, command, assessment, strength)
+		// Legacy seam: tests drive the native path without a renderer. It keeps
+		// the original (command, assessment, strength) shape so those tests stay
+		// meaningful.
+		return a.cliConfirmRiskFn(serverName, item.Detail, assessment, strength)
 	}
-	return a.confirmCliCriticalExecutionNative(serverName, command, assessment, strength)
+	return a.confirmCliCriticalExecutionNative(ctx, serverName, item)
 }
 
-func (a *App) confirmCliCriticalExecutionNative(serverName, command string, _ riskAssessment, _ approvalStrength) (bool, error) {
+func (a *App) confirmCliCriticalExecutionNative(callerCtx context.Context, serverName string, item cliApprovalItem) (bool, error) {
+	language := a.cliApprovalLanguage()
+	item.ID = "cmd-0"
+	items := []cliApprovalItem{item}
+	panelCtx, cancelPanel := liveRequestsContext([]context.Context{callerCtx})
+	defer cancelPanel()
+	if result, ok := a.requestCliApprovalPanel(panelCtx, cliApprovalPanelRequest{
+		Source:   "cli",
+		Server:   serverName,
+		Critical: true,
+		Summary:  cliCriticalSummary(serverName, language),
+		Items:    items,
+	}); ok {
+		return result.mask(items)[0], nil
+	}
+
 	ctx := a.ctx.Get()
 	if ctx == nil {
 		return false, fmt.Errorf("application context is unavailable")
 	}
 	title := "CLI critical command"
-	message := fmt.Sprintf("An external CLI request wants to run a critical command on %s:\n\n%s\n\nAllow this?", serverName, truncate(command, 2000))
+	message := fmt.Sprintf("An external CLI request wants to run a critical command on %s:\n\n%s\n\nAllow this?", serverName, truncate(item.Detail, 2000))
 	a.nativeDialogMu.Lock()
 	defer a.nativeDialogMu.Unlock()
 	res, err := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
@@ -844,6 +918,22 @@ func (a *App) confirmCliCriticalExecutionNative(serverName, command string, _ ri
 	// Wails 2.x uses a native Yes/No MessageBox on Windows and ignores custom
 	// button labels there. Other platforms return "Allow".
 	return res == "Allow" || res == "Yes", nil
+}
+
+// cliBatchSummary is the one-line framing above the item list. It states the
+// count because the panel itself never truncates the list.
+func cliBatchSummary(serverName string, count int, language string) string {
+	if isChineseLanguage(language) {
+		return fmt.Sprintf("外部 CLI 请求在 %s 上执行 %d 条命令", serverName, count)
+	}
+	return fmt.Sprintf("An external CLI request wants to run %d command(s) on %s", count, serverName)
+}
+
+func cliCriticalSummary(serverName, language string) string {
+	if isChineseLanguage(language) {
+		return fmt.Sprintf("外部 CLI 请求在 %s 上执行一条关键命令", serverName)
+	}
+	return fmt.Sprintf("An external CLI request wants to run a critical command on %s", serverName)
 }
 
 // authorizeCliCopy requires both endpoints to be inside their trust windows.
@@ -901,36 +991,102 @@ func (a *App) flushCliApprovalBatch(key string) {
 	requests := append([]*cliApprovalRequest(nil), batch.requests...)
 	a.cliApprovalMu.Unlock()
 
-	commands := make([]string, 0, len(requests))
+	// Drop callers that already went away. Prompting for them would ask the user
+	// to review commands nobody is waiting for, and the command must not run.
+	live := requests[:0]
 	for _, req := range requests {
-		commands = append(commands, req.command)
+		if req.ctx != nil && req.ctx.Err() != nil {
+			req.result <- false
+			close(req.result)
+			continue
+		}
+		live = append(live, req)
 	}
-	confirmBatch := a.cliConfirmBatchFn
-	if confirmBatch == nil {
-		confirmBatch = a.confirmCliExecutionBatchNative
+	requests = live
+	if len(requests) == 0 {
+		return
 	}
-	allowed := confirmBatch(batch.serverName, commands)
-	for _, req := range requests {
-		req.result <- allowed
+
+	items := make([]cliApprovalItem, 0, len(requests))
+	callers := make([]context.Context, 0, len(requests))
+	for i, req := range requests {
+		item := req.item
+		item.ID = fmt.Sprintf("cmd-%d", i)
+		items = append(items, item)
+		callers = append(callers, req.ctx)
+	}
+	approved := a.confirmCliBatch(batch.serverName, items, callers)
+	for i, req := range requests {
+		req.result <- approved[i]
 		close(req.result)
 	}
 }
 
-// confirmCliExecutionBatchNative shows the real native approval dialog for a
-// batch of commands. It is the default confirmCliBatchFn; tests override that
-// seam to exercise the batching logic without a renderer.
-func (a *App) confirmCliExecutionBatchNative(serverName string, commands []string) bool {
+// confirmCliBatch resolves a batch of items, one verdict per item so the review
+// panel can accept a subset. callers carries the requesting clients' contexts
+// so the panel can be dismissed once none of them is waiting any more.
+// cliConfirmBatchFn, when set, is the legacy all-or-nothing test seam and
+// answers for every item at once.
+func (a *App) confirmCliBatch(serverName string, items []cliApprovalItem, callers []context.Context) []bool {
+	if a.cliConfirmBatchFn != nil {
+		texts := make([]string, 0, len(items))
+		for _, item := range items {
+			// nativeText, not Text: the seam stands in for the native dialog,
+			// which has always been shown the formatted explanation.
+			texts = append(texts, item.nativeText())
+		}
+		return repeatBool(a.cliConfirmBatchFn(serverName, texts), len(items))
+	}
+	return a.confirmCliExecutionBatchNative(serverName, items, callers)
+}
+
+func repeatBool(value bool, count int) []bool {
+	out := make([]bool, count)
+	for i := range out {
+		out[i] = value
+	}
+	return out
+}
+
+// confirmCliExecutionBatchNative reviews a batch of items. It prefers the
+// in-app panel and falls back to the native dialog when the panel is
+// unavailable, so a renderer that is missing or wedged degrades to the old
+// prompt rather than silently denying.
+func (a *App) confirmCliExecutionBatchNative(serverName string, items []cliApprovalItem, callers []context.Context) []bool {
+	if len(items) == 0 {
+		return nil
+	}
+	panelCtx, cancelPanel := liveRequestsContext(callers)
+	defer cancelPanel()
+	if result, ok := a.requestCliApprovalPanel(panelCtx, cliApprovalPanelRequest{
+		Source:  "cli",
+		Server:  serverName,
+		Summary: cliBatchSummary(serverName, len(items), a.cliApprovalLanguage()),
+		Items:   items,
+	}); ok {
+		return result.mask(items)
+	}
+	return repeatBool(a.confirmCliExecutionBatchDialog(serverName, items), len(items))
+}
+
+// confirmCliExecutionBatchDialog is the native fallback for a batch. It is
+// reached only when the in-app panel cannot serve the request.
+func (a *App) confirmCliExecutionBatchDialog(serverName string, items []cliApprovalItem) bool {
 	ctx := a.ctx.Get()
-	if ctx == nil || len(commands) == 0 {
+	if ctx == nil || len(items) == 0 {
 		return false
+	}
+	texts := make([]string, 0, len(items))
+	for _, item := range items {
+		texts = append(texts, item.nativeText())
 	}
 	title := "CLI wants to run commands"
 	buttons := []string{"Allow all", "Deny"}
-	message := fmt.Sprintf("An external CLI request wants to run %d command(s) on %s:\n\n%s\n\nAllow all of these?", len(commands), serverName, formatApprovalList(commands))
-	if len(commands) == 1 {
+	message := fmt.Sprintf("An external CLI request wants to run %d command(s) on %s:\n\n%s\n\nAllow all of these?", len(items), serverName, formatApprovalList(texts))
+	if len(items) == 1 {
 		title = "CLI wants to run a command"
 		buttons = []string{"Allow", "Deny"}
-		message = fmt.Sprintf("An external CLI request wants to run this command on %s:\n\n%s\n\nAllow this?", serverName, truncate(commands[0], 2000))
+		message = fmt.Sprintf("An external CLI request wants to run this command on %s:\n\n%s\n\nAllow this?", serverName, truncate(texts[0], 2000))
 	}
 	a.nativeDialogMu.Lock()
 	defer a.nativeDialogMu.Unlock()

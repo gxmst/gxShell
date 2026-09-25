@@ -38,3 +38,7 @@ frontend/vite.config.ts.timestamp-*.mjs
 /.staging/
 /.tmp/
 /.agents/
+# Assistant workspace: local notes, review reports and per-project memory. Not
+# a cache — keep the directory, but it is machine-local and must not be
+# committed, or every session's scratch notes end up in the history.
+/.workbuddy-ai/

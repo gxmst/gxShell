@@ -392,12 +392,21 @@ func (a *App) AiExecuteTools(sessionID string, toolCallIDs []string) map[string]
 	for i := range plans {
 		plans[i].Target = targetLabel
 	}
-	if !a.confirmAiToolExecutionBatch(plans) {
-		for _, plan := range plans {
-			results[plan.ToolCallID] = "BLOCKED: user declined execution"
+	// The panel can accept a subset, so each plan is checked individually
+	// instead of collapsing the whole batch to one verdict.
+	approved := a.confirmAiToolExecutionBatch(plans)
+	allowed := make([]aiToolExecutionPlan, 0, len(plans))
+	for i, plan := range plans {
+		if i < len(approved) && approved[i] {
+			allowed = append(allowed, plan)
+			continue
 		}
+		results[plan.ToolCallID] = "BLOCKED: user declined execution"
+	}
+	if len(allowed) == 0 {
 		return results
 	}
+	plans = allowed
 
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -586,19 +595,71 @@ func isAllowedAiTool(toolName string) bool {
 	return toolName == "execute_command" || toolName == "read_file"
 }
 
-// confirmAiToolExecution shows a native OS confirmation dialog before an AI
-// tool runs against the SSH session. This is the trust boundary: a compromised
-// renderer can invoke AiExecuteTool, but it cannot forge the user's click on
-// this native dialog, so the model can never run a command without a real human
-// approving the exact action.
+// confirmAiToolExecution shows a confirmation before an AI tool runs against
+// the SSH session. It is renderer-callable, so the confirmation is what stands
+// between the model and the user's servers; see confirmAiToolExecutionBatch for
+// why routing it through the in-app panel does not weaken that.
 func (a *App) confirmAiToolExecution(toolName, detail string) bool {
-	return a.confirmAiToolExecutionBatch([]aiToolExecutionPlan{{
+	approved := a.confirmAiToolExecutionBatch([]aiToolExecutionPlan{{
 		ToolName: toolName,
 		Detail:   detail,
 	}})
+	return len(approved) == 1 && approved[0]
 }
 
-func (a *App) confirmAiToolExecutionBatch(plans []aiToolExecutionPlan) bool {
+// confirmAiToolExecutionBatch reviews AI tool plans, one verdict per plan so
+// the panel can accept a subset.
+//
+// The panel replaced the native dialog here. That is not a trust-boundary
+// change: SendCommandToTerminal and SendCommandToAll (app_terminal.go) already
+// let the renderer write arbitrary commands to any live session with no
+// confirmation at all, so a compromised renderer never needed to forge a
+// dialog click to run something.
+func (a *App) confirmAiToolExecutionBatch(plans []aiToolExecutionPlan) []bool {
+	if len(plans) == 0 {
+		return nil
+	}
+	items := make([]cliApprovalItem, 0, len(plans))
+	for i, plan := range plans {
+		kind := "command"
+		if plan.ToolName == "read_file" {
+			kind = "read_file"
+		}
+		items = append(items, cliApprovalItem{
+			ID:   fmt.Sprintf("plan-%d", i),
+			Kind: kind,
+			Text: truncate(plan.Detail, cliApprovalItemTextLimit),
+		})
+	}
+	if result, ok := a.requestCliApprovalPanel(context.Background(), cliApprovalPanelRequest{
+		Source:  "ai",
+		Server:  plans[0].Target,
+		Summary: aiToolSummary(plans, a.cliApprovalLanguage()),
+		Items:   items,
+	}); ok {
+		return result.mask(items)
+	}
+	return repeatBool(a.confirmAiToolExecutionBatchDialog(plans), len(plans))
+}
+
+func aiToolSummary(plans []aiToolExecutionPlan, language string) string {
+	target := strings.TrimSpace(plans[0].Target)
+	if target == "" {
+		if isChineseLanguage(language) {
+			target = "远程服务器"
+		} else {
+			target = "the remote server"
+		}
+	}
+	if isChineseLanguage(language) {
+		return fmt.Sprintf("AI 助手请求在 %s 上执行 %d 个操作", target, len(plans))
+	}
+	return fmt.Sprintf("The AI assistant requested %d action(s) on %s", len(plans), target)
+}
+
+// confirmAiToolExecutionBatchDialog is the native fallback for AI tool plans.
+// It is reached only when the in-app panel cannot serve the request.
+func (a *App) confirmAiToolExecutionBatchDialog(plans []aiToolExecutionPlan) bool {
 	ctx := a.ctx.Get()
 	if ctx == nil {
 		return false

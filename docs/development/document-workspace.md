@@ -4,6 +4,10 @@ The document navigator is a sibling of Connections, Files (SFTP), and Tools in
 the activity rail. It lists supported documents in the active file's directory,
 with a path, source indicator, filter, refresh and reveal-current actions.
 Recent documents are folded while reading so the current folder gets the space.
+When the document has headings, the same sidebar contains its outline. The file
+list and outline fold independently; revealing the current file opens its list,
+and the active outline entry follows the reading position. Rendered Markdown and
+natural-language text share this navigation without a second outline pane.
 
 `useContextualSidebar` follows all active-tab changes, including startup restore
 and keyboard navigation. Document focus selects Documents; returning to a
@@ -47,6 +51,8 @@ anchor, with only the result list scrolling.
 The document allowlists include common deployment filenames and source text.
 Local/remote reads, file dialogs and Markdown links share the same rules;
 existing file authorization, size, encoding and relative-path checks remain.
+The common UTF-8 text read/write limit is 20 MiB (20,971,520 bytes), including
+remote text. The backend rejects oversized content before replacing a file.
 HTML documents display escaped source. JSONC validation permits comments and
 trailing commas, while formatting changes whitespace only and keeps numeric
 tokens intact. NDJSON is treated as JSON Lines. PDF remains read-only.
@@ -59,12 +65,40 @@ validation updates the transport used for the eventual save. Formatting results 
 if the draft changed, and document teardown cancels pending jobs before they can
 write or update another document. There is no synchronous large-file fallback.
 
-Plain-text previews above 256 Ki UTF-16 code units use CodeMirror's viewport
-rendering in read-only mode. A single 100,000-line `<pre>` stalled Chromium's
-compositor in a minimal browser reproduction, before any JSON processing began.
-The source preview renders only visible lines while retaining the full document
-for search, selection and copying. Editing must be entered explicitly, and find
-navigation keeps focus in the search field. Small text previews remain unchanged.
+Browsing selects a presentation automatically; there is no reading/source mode
+switch. Clearly natural-language TXT uses a centered reading column, a 17 px
+default sans-serif font and emphasized headings. Uncertain TXT retains source
+formatting. Logs show line numbers and severity colors; code and configuration
+use lazily loaded syntax grammars; JSON-family documents retain validation and
+formatting. CSV/TSV emphasize headers and separators in the original text; they
+are not parsed into spreadsheet cells. HTML remains inert source.
+
+All source and prose previews use read-only CodeMirror viewport rendering. A
+single 100,000-line `<pre>` stalled Chromium's compositor in a minimal browser
+reproduction, before any JSON processing began. Only visible lines are mounted,
+while search, selection and copying retain access to the full document. Editing
+must be entered explicitly. Syntax parsing stops above 1 Mi UTF-16 code units.
+Markdown above that same size or 12,000 lines uses virtualized source with a
+visible simplified-layout notice. Its heading navigation remains available;
+source outlines are capped at 2,000 entries and disclose that limit.
+
+Literal search stores up to 100,000 matches in packed offsets, with a `+` count
+when capped. Large source queries wait 120 ms after typing before scanning, and
+rare matches remain searchable through the end of the file. Find navigation
+keeps focus in the search field and preserves original Unicode offsets.
+
+The toolbar identifies the file type and groups zoom, line spacing, column width
+and wrapping under Typography. The light theme uses neutral gray chrome and one
+soft white canvas shared by the toolbar, text and surrounding document stage.
+Document panes do not inherit terminal inset padding. Dark and custom themes
+derive the document canvas from their existing theme variables.
+
+Text and Markdown reading positions survive tab switches, reopening, typography
+changes and resizing. Source anchors use character offsets; rendered Markdown
+uses top-level blocks, with a proportional fallback. Local storage keeps at most
+80 positions keyed by local path or remote profile/path, plus appearance settings.
+It stores no document content. Restoring a lazily mounted source view also handles
+React StrictMode recreating that view.
 
 Startup restores the saved server selection in an effect after the restored
 tabs have committed. It no longer races a zero-delay timer against React's
@@ -93,13 +127,24 @@ during formatting/saving, binary rejection and directory/link replacement.
 Symlink tests skip on Windows without the required privilege; the Linux desktop
 CI job runs the document safety tests with the race detector to cover them.
 
-Validation on 2026-09-12 passed the full frontend suite (381 tests in 58 files),
-the affected follow-up tests, `go test ./...`, `go vet ./...`, and both browser
-smoke scripts. The workbench smoke also passed against the production bundle
-with `node scripts/smoke-workbench.mjs --preview`, including actual worker assets,
-large read-only previews, copying offscreen lines and search across mode changes.
-ESLint reported no errors and 52 existing warnings. The browser
-checks use a mocked backend; they do not assert live SSH or native WebView FPS.
+`scripts/smoke-documents.mjs` adds automatic presentations, consistent surfaces,
+folded-list reveal, active-outline visibility, paragraph continuity across
+typography changes and resizing, and reopening text/Markdown at its saved
+position. It exercises an actual 20 MiB source document in the browser, including
+searching its tail and copying all offscreen content, as well as large Markdown
+fallback and light/dark layouts down to 540 px wide and 300 px high. Backend
+tests cover exact-limit UTF-8 reads/saves and rejection without overwriting.
+
+Validation on 2026-09-15 passed the full frontend suite (393 tests), followed by
+the final affected regression set (17 tests, including long single paragraphs),
+`go test ./...`, `go vet ./...`, and the Markdown browser smoke. Both
+`node scripts/smoke-documents.mjs --preview` and
+`node scripts/smoke-workbench.mjs --preview` passed against the production bundle,
+including the actual worker and lazy language assets. Run browser scripts from
+`frontend` with Playwright on Node's module search path; screenshots use unique
+system temporary directories. ESLint reported no errors and 52 existing warnings.
+The browser checks use isolated mocked Wails APIs; they do not assert live SSH,
+native file dialogs or native WebView FPS.
 The local environment has no C compiler for Go's race detector; CI retains that
 check.
 

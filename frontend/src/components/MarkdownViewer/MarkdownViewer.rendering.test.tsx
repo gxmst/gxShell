@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MarkdownViewer from './MarkdownViewer';
+import { memoryStorage } from '../../test/memoryStorage';
 
 const appMocks = vi.hoisted(() => ({
   readLocalFile: vi.fn(),
@@ -38,19 +39,31 @@ describe('MarkdownViewer deferred rendering', () => {
     const source = '<script>window.untrusted = true</script><h1>HTML source</h1>';
     appMocks.readLocalFile.mockResolvedValue(source);
     const { container } = render(<MarkdownViewer active filePath='/docs/index.html' onClose={vi.fn()} />);
-    await waitFor(() => expect(container.querySelector('.text-document')).toHaveTextContent(source));
+    await waitFor(() => expect(container.querySelector('.cm-content')).toHaveTextContent(source), { timeout: 5000 });
     expect(container.querySelector('script')).toBeNull();
-    expect(container.querySelector('.text-document h1')).toBeNull();
+    expect(container.querySelector('.cm-content h1')).toBeNull();
     expect(rendererMocks.buildMarkdown).not.toHaveBeenCalled();
   });
   afterEach(() => vi.unstubAllGlobals());
   beforeEach(() => {
+    vi.stubGlobal('localStorage', memoryStorage());
+    Range.prototype.getClientRects = vi.fn(() => []) as unknown as typeof Range.prototype.getClientRects;
+    Range.prototype.getBoundingClientRect = vi.fn(() => new DOMRect()) as unknown as typeof Range.prototype.getBoundingClientRect;
     appMocks.readLocalFile.mockReset();
     rendererMocks.buildMarkdown.mockReset();
     rendererMocks.buildMarkdown.mockImplementation((text: string) => ({
       html: `<p>${text}</p>`,
       toc: [],
     }));
+  });
+
+  it('opens large Markdown with a bounded source viewport and usable headings', async () => {
+    appMocks.readLocalFile.mockResolvedValue('# Start\n' + 'A paragraph of text.\n'.repeat(70000) + '\n## End');
+    const { container } = render(<MarkdownViewer active filePath="/large.md" onClose={vi.fn()} />);
+    await waitFor(() => expect(container.querySelector('.cm-content')).toHaveAttribute('aria-readonly', 'true'));
+    expect(container.querySelectorAll('.cm-line').length).toBeLessThan(250);
+    expect(screen.getByTitle('End')).toBeInTheDocument();
+    expect(rendererMocks.buildMarkdown).not.toHaveBeenCalled();
   });
 
   it('does not parse a hidden Markdown tab until it becomes active', async () => {

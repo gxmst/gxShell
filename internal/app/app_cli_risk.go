@@ -69,6 +69,11 @@ func (a *App) emitCliApproval(event cliApprovalEvent) {
 }
 
 func (a *App) withCliApprovalEvent(alias, command string, assessment riskAssessment, strength approvalStrength, language string, riskLines []string, confirm func() bool) bool {
+	if a.approvalPanelAvailable() {
+		// The panel supersedes the informational card: it carries the same risk
+		// context and is interactive, so emitting both would double the prompt.
+		return confirm()
+	}
 	id := types.NewID("approval")
 	visible := truncate(command, cliApprovalEventCommandLimit)
 	spans := make([]riskSpan, 0, len(assessment.Spans))

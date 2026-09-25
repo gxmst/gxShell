@@ -573,6 +573,11 @@
   padding: 10px 12px;
 }
 
+.terminal-host.document-host-pane,
+.terminal-host.document-host-pane > .markdown-viewer {
+  padding: 0;
+}
+
 .terminal-hidden {
   visibility: hidden;
   position: absolute;

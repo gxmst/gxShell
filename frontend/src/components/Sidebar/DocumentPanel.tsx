@@ -1,10 +1,11 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, FileText, FolderOpen, LocateFixed, Plus, RefreshCw, Search, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, FileText, FolderOpen, ListTree, LocateFixed, Plus, RefreshCw, Search, X } from "lucide-react";
 import clsx from "clsx";
 import type { RecentMarkdownItem, Tab } from "../../types";
 import { t } from "../../i18n";
 import { isWindowsPlatform } from "../../utils/clipboard";
 import { documentDirectory, extensionOf } from "../../utils/textFiles";
+import type { DocumentOutline } from "../../utils/documentPresentation";
 
 const fileName = (path: string) => path.split(/[\\/]/).pop() || path;
 const PAGE_SIZE = 200;
@@ -17,9 +18,10 @@ function pathKey(path: string, remote: boolean) {
   return isWindowsPlatform() ? value.toLowerCase() : value;
 }
 
-export function DocumentPanel({ active, siblings, busy, error, recent, collapsed, language, host, onOpen, onPick, onRefresh, onOpenRecent, onRemoveRecent }: {
+export function DocumentPanel({ active, siblings, busy, error, recent, collapsed, language, host, outline, onOpen, onPick, onRefresh, onOpenRecent, onRemoveRecent }: {
   active?: Tab; siblings: string[]; busy?: boolean; error?: string;
   recent: RecentMarkdownItem[]; collapsed: boolean; language: string; host?: string;
+  outline?: DocumentOutline;
   onOpen?: (path: string) => void; onPick?: () => void; onRefresh?: () => void;
   onOpenRecent?: (item: RecentMarkdownItem) => void; onRemoveRecent?: (id: string) => void;
 }) {
@@ -30,8 +32,12 @@ export function DocumentPanel({ active, siblings, busy, error, recent, collapsed
   const [filter, setFilter] = useState({ folder: folderKey, query: "" });
   const query = filter.folder === folderKey ? filter.query : "";
   const [recentOpen, setRecentOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(true);
+  const [outlineOpen, setOutlineOpen] = useState(true);
+  const hasOutline = !!outline?.items.length;
   const [reveal, setReveal] = useState(0);
   const activeRow = useRef<HTMLButtonElement>(null);
+  const activeOutlineRow = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const [pagination, setPagination] = useState({ key: "", page: 0 });
   const locale = language === "zh-CN" ? "zh-CN" : "en";
@@ -52,19 +58,28 @@ export function DocumentPanel({ active, siblings, busy, error, recent, collapsed
 
   const revealCurrent = () => {
     const index = allFiles.findIndex((file) => pathKey(file, remote) === pathKey(path, remote));
+    setFilesOpen(true);
     setFilter({ folder: folderKey, query: "" });
     setPagination({ key: JSON.stringify([folderKey, "", path]), page: Math.floor(Math.max(0, index) / PAGE_SIZE) });
     setReveal((value) => value + 1);
   };
 
   useLayoutEffect(() => {
-    if (collapsed) return;
+    if (collapsed || (!filesOpen && hasOutline)) return;
     const frame = requestAnimationFrame(() => {
       if (listRef.current) listRef.current.scrollTop = 0;
       activeRow.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
     });
     return () => cancelAnimationFrame(frame);
-  }, [path, collapsed, siblings, query, reveal, page]);
+  }, [path, collapsed, siblings, query, reveal, page, filesOpen, hasOutline]);
+
+  useLayoutEffect(() => {
+    if (collapsed || !outlineOpen) return;
+    const frame = requestAnimationFrame(() => {
+      activeOutlineRow.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [path, outline?.activeId, collapsed, outlineOpen, filesOpen]);
 
   return <div className="document-panel">
     <div className="panel-head document-panel-head">
@@ -81,9 +96,12 @@ export function DocumentPanel({ active, siblings, busy, error, recent, collapsed
         <span className="document-source" title={remote ? host : undefined}>{t(language, remote ? "remote" : "local")}</span>
       </div>
       {remote && host && <div className="document-host" title={host}>{host}</div>}
-      <label className="document-filter"><Search size={13} /><input value={query} onChange={(event) => setFilter({ folder: folderKey, query: event.target.value })} aria-label={t(language, "filterDocumentFiles")} placeholder={t(language, "filterDocumentFiles")} />{query && <button type="button" onClick={() => setFilter({ folder: folderKey, query: "" })} aria-label={t(language, "clearDocumentFilter")}><X size={12} /></button>}</label>
-      <section className="document-files text-file-section-current" aria-label={t(language, "siblingDocuments")} aria-busy={!!busy}>
-        <div className="document-section-title"><span>{t(language, "siblingDocuments")}</span><span>{files.length}{query ? ` / ${siblings.length}` : ""}</span></div>
+      {(filesOpen || !hasOutline) && <label className="document-filter"><Search size={13} /><input value={query} onChange={(event) => setFilter({ folder: folderKey, query: event.target.value })} aria-label={t(language, "filterDocumentFiles")} placeholder={t(language, "filterDocumentFiles")} />{query && <button type="button" onClick={() => setFilter({ folder: folderKey, query: "" })} aria-label={t(language, "clearDocumentFilter")}><X size={12} /></button>}</label>}
+      <section className={clsx("document-files text-file-section-current", hasOutline && "document-files-with-outline", hasOutline && !filesOpen && "document-files-folded")} aria-label={t(language, "siblingDocuments")} aria-busy={!!busy}>
+        <button className="document-section-title document-section-toggle" disabled={!hasOutline} aria-expanded={filesOpen || !hasOutline} onClick={() => setFilesOpen((open) => !open)}>
+          {hasOutline && <ChevronRight size={12} className={filesOpen ? "document-chevron-open" : undefined} />}<span>{t(language, "siblingDocuments")}</span><span>{files.length}{query ? ` / ${siblings.length}` : ""}</span>
+        </button>
+        {(filesOpen || !hasOutline) && <>
         <div className="text-file-list text-file-list-scroll" ref={listRef}>
           {visibleFiles.map((file) => {
             const current = pathKey(file, remote) === pathKey(path, remote);
@@ -99,8 +117,26 @@ export function DocumentPanel({ active, siblings, busy, error, recent, collapsed
           <button className="icon-btn" disabled={page === 0} aria-label={t(language, "documentPreviousPage")} title={t(language, "documentPreviousPage")} onClick={() => setPagination({ key: pageKey, page: page - 1 })}><ChevronLeft size={14} /></button>
           <button className="icon-btn" disabled={page === pageCount - 1} aria-label={t(language, "documentNextPage")} title={t(language, "documentNextPage")} onClick={() => setPagination({ key: pageKey, page: page + 1 })}><ChevronRight size={14} /></button>
         </div>}
+        </>}
       </section>
     </> : <div className="document-empty document-start"><FolderOpen size={28} /><strong>{t(language, "documentNavigatorTitle")}</strong><span>{t(language, "documentNavigatorHint")}</span></div>}
+    {hasOutline && <section className={clsx("document-panel-outline", !outlineOpen && "document-panel-outline-folded")} aria-label={t(language, "outline")}>
+      <button className="document-section-title document-section-toggle" aria-expanded={outlineOpen} onClick={() => setOutlineOpen((open) => !open)}>
+        <ChevronRight size={12} className={outlineOpen ? "document-chevron-open" : undefined} /><ListTree size={13} /><span>{t(language, "outline")}</span><span>{outline.items.length}{outline.truncated ? "+" : ""}</span>
+      </button>
+      {outlineOpen && <nav className="document-panel-outline-list" aria-label={t(language, "outline")}>
+        {outline.items.map((item) => <button
+          key={item.id}
+          ref={item.id === outline.activeId ? activeOutlineRow : undefined}
+          className={clsx("document-panel-heading", item.id === outline.activeId && "active")}
+          style={{ paddingLeft: 8 + (item.depth - 1) * 10 }}
+          title={item.text}
+          aria-current={item.id === outline.activeId ? "location" : undefined}
+          onClick={() => outline.navigate(item.id)}
+        >{item.text}</button>)}
+        {outline.truncated && <span className="document-outline-limit">{t(language, "documentOutlineLimit", { count: String(outline.items.length) })}</span>}
+      </nav>}
+    </section>}
     <section className={clsx("document-recents", (recentOpen || !path) && "document-recents-open")}>
       <button className="document-section-title document-recents-toggle" aria-expanded={recentOpen || !path} onClick={() => setRecentOpen((value) => !value)} disabled={!path}>
         <ChevronRight size={12} /><span>{t(language, "recentTextFiles")}</span><span>{recent.length}</span>

@@ -1,6 +1,6 @@
 import clsx from 'clsx';
-import { useState, useEffect, useRef, useCallback, useLayoutEffect, lazy, Suspense } from 'react';
-import { Braces, Columns2, ListTree, Pencil, RefreshCw, Save, Search, WrapText, X, ChevronUp, ChevronDown } from 'lucide-react';
+import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo, lazy, Suspense } from 'react';
+import { Braces, Columns2, ListTree, Pencil, RefreshCw, Save, Search, Type, X, ChevronUp, ChevronDown } from 'lucide-react';
 import {
   ReadLocalFile,
   ReadLocalMarkdownResourceDataURL,
@@ -12,9 +12,11 @@ import {
   WriteRemoteTextFile,
 } from '../../../wailsjs/go/app/App';
 import type { MarkdownOpenTarget, MarkdownSource } from '../../types';
-import { isWindowsPlatform, toClipboardText, writeClipboardText } from '../../utils/clipboard';
+import { isWindowsPlatform, writeClipboardText } from '../../utils/clipboard';
 import { applyEol, detectEol, eolLabel, toLf, type Eol } from '../../utils/eol';
-import { documentEditorMode, isMarkdownPath, isPdfPath } from '../../utils/textFiles';
+import { documentEditorMode, extensionOf, isMarkdownPath, isPdfPath } from '../../utils/textFiles';
+import { documentPresentation, needsLightweightMarkdown, textDocumentHeadings, MAX_DOCUMENT_HEADINGS, type DocumentHeading, type DocumentOutline } from '../../utils/documentPresentation';
+import { readDocumentAppearance, writeDocumentAppearance, type DocumentAppearance } from '../../utils/documentReadingState';
 import type { JsonValidationResult } from '../../utils/jsonDocuments';
 import { MAX_SYNC_JSON_CHARS } from '../../utils/jsonDocumentTasks';
 import type { EditorStats, SourceEditorHandle } from './SourceEditor';
@@ -22,11 +24,12 @@ import type { RenderedMarkdown } from './markdownRenderer';
 import { t } from '../../i18n';
 import { hasActiveOverlay } from '../../utils/overlayManager';
 import { MermaidDiagrams } from './MermaidDiagrams';
-import { findPreviewRanges } from './previewSearch';
+import { findPreviewRanges, findTextMatches, MAX_SEARCH_MATCHES } from './previewSearch';
+import { useReadingPosition } from './useReadingPosition';
+import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime';
 import '../../styles/markdown-viewer.css';
 
-// CodeMirror only loads when a document is actually edited, keeping it out of
-// the startup bundle for the read-only viewing path.
+// Text browsing and editing share a viewport renderer, loaded on demand.
 const SourceEditor = lazy(() => import('./SourceEditor'));
 
 interface MarkdownViewerProps {
@@ -41,6 +44,9 @@ interface MarkdownViewerProps {
   onNotify?: (text: string, tone?: 'info' | 'error' | 'success') => void;
   onOpenMarkdownFile?: (target: MarkdownOpenTarget) => void;
   onDirtyChange?: (dirty: boolean, save: () => Promise<boolean>) => void;
+  documentId?: string;
+  readingIdentity?: string;
+  onOutlineChange?: (documentId: string, outline: DocumentOutline | null) => void;
 }
 
 const EMPTY_RENDERED_MARKDOWN: RenderedMarkdown = { html: '', toc: [] };
@@ -49,7 +55,7 @@ const MAX_ZOOM = 2.2;
 const MIN_TOC_WIDTH = 150;
 const MAX_TOC_WIDTH = 320;
 const DEFAULT_TOC_WIDTH = 210;
-const MAX_INLINE_TEXT_CHARS = 256 * 1024;
+const EMPTY_HEADINGS: DocumentHeading[] = [];
 const HL_ALL = 'md-search';
 const HL_ACTIVE = 'md-search-active';
 let markdownRendererModulePromise: Promise<typeof import('./markdownRenderer')> | null = null;
@@ -117,6 +123,9 @@ export default function MarkdownViewer({
   onNotify,
   onOpenMarkdownFile,
   onDirtyChange,
+  documentId,
+  readingIdentity,
+  onOutlineChange,
 }: MarkdownViewerProps) {
   const isVisible = visible ?? active;
   const [content, setContent] = useState('');
@@ -129,7 +138,11 @@ export default function MarkdownViewer({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formatting, setFormatting] = useState(false);
-  const [zoom, setZoom] = useState(1);
+  const [initialAppearance] = useState(readDocumentAppearance);
+  const [zoom, setZoom] = useState(initialAppearance.zoom);
+  const [leading, setLeading] = useState(initialAppearance.leading);
+  const [column, setColumn] = useState<DocumentAppearance['width']>(initialAppearance.width);
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [tocOpen, setTocOpen] = useState(true);
   const [compactReading, setCompactReading] = useState(false);
   const [compactTocOpen, setCompactTocOpen] = useState(false);
@@ -162,6 +175,7 @@ export default function MarkdownViewer({
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [matchCount, setMatchCount] = useState(0);
+  const [matchesLimited, setMatchesLimited] = useState(false);
   const [matchRevision, setMatchRevision] = useState(0);
   const [current, setCurrent] = useState(0);
   const [jsonValidation, setJsonValidation] = useState<JsonValidationResult | null>(null);
@@ -175,10 +189,23 @@ export default function MarkdownViewer({
   const contentRootRef = useRef<HTMLElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const zoomInputRef = useRef<HTMLInputElement>(null);
+  const appearanceRef = useRef<HTMLDivElement>(null);
+  const appearanceButtonRef = useRef<HTMLButtonElement>(null);
+  const previewContentRef = useRef<string | null>(null);
+  const outlineCallbackRef = useRef(onOutlineChange);
+  outlineCallbackRef.current = onOutlineChange;
   const rangesRef = useRef<Range[]>([]);
-  const editMatchesRef = useRef<{ start: number; end: number }[]>([]);
+  const editMatchesRef = useRef(new Uint32Array());
   const pendingScrollRatioRef = useRef<number | null>(null);
   const pendingEditorRevealRef = useRef<{ start: number; end: number } | null>(null);
+  // The query the last scan was run for. A scan re-runs whenever the document
+  // changes, but only a changed query may move the user to the first match.
+  const lastSearchQueryRef = useRef<string | null>(null);
+  // The "query + match index" the reveal effect last moved to. Rescans replace
+  // the Range objects and so must re-apply the active highlight, but they must
+  // not re-reveal: while editing, that would drag the caret to the first match
+  // on every keystroke and the next character would land there.
+  const revealTargetRef = useRef<string | null>(null);
   const activeRef = useRef(active);
   activeRef.current = active;
   const committedZoomRef = useRef(zoom);
@@ -195,18 +222,62 @@ export default function MarkdownViewer({
   const deferJsonValidation = !!jsonMode && draft.length > MAX_SYNC_JSON_CHARS;
   const markdownMode = isMarkdownPath(displayPath || '');
   const pdfMode = isPdfPath(displayPath || '');
-  // A single huge <pre> can stall Chromium's compositor even though parsing
-  // happens in a worker. CodeMirror keeps only the visible lines in the DOM.
-  const virtualTextPreview = !markdownMode && !pdfMode && content.length > MAX_INLINE_TEXT_CHARS;
+  const presentation = useMemo(() => documentPresentation(displayPath || '', content), [displayPath, content]);
+  const lightweightMarkdown = useMemo(() => markdownMode && needsLightweightMarkdown(content), [markdownMode, content]);
+  const lightweightDraft = useMemo(() => markdownMode && needsLightweightMarkdown(draft), [markdownMode, draft]);
+  const richMarkdown = markdownMode && !lightweightMarkdown;
+  // All text previews use the same virtualized renderer.
+  const virtualTextPreview = !pdfMode && !richMarkdown;
   const sourceView = editing || virtualTextPreview;
   const [previewDoc, setPreviewDoc] = useState<RenderedMarkdown>(EMPTY_RENDERED_MARKDOWN);
   const [draftDoc, setDraftDoc] = useState<RenderedMarkdown>(EMPTY_RENDERED_MARKDOWN);
   const visibleDoc = editing && splitPreview ? draftDoc : previewDoc;
-  const canShowToc = markdownMode && (!editing || splitPreview) && visibleDoc.toc.length > 0;
+  const textHeadings = useMemo(() => presentation === 'prose' || lightweightMarkdown
+    ? textDocumentHeadings(content, lightweightMarkdown) : EMPTY_HEADINGS, [presentation, lightweightMarkdown, content]);
+  const outlineItems = !editing && virtualTextPreview ? textHeadings : visibleDoc.toc;
+  const canShowToc = !loading && !pdfMode && (!editing || (splitPreview && !lightweightDraft)) && outlineItems.length > 0;
+  const outlineInSidebar = !!onOutlineChange;
   const outlineOpen = compactReading ? compactTocOpen : tocOpen;
-  const viewerMainStyle = canShowToc && outlineOpen
+  const viewerMainStyle = canShowToc && outlineOpen && !outlineInSidebar
     ? ({ '--md-outline-width': `${tocWidth}px` } as React.CSSProperties)
     : undefined;
+  const readingColumn = column === 'full' ? '100%' : column === 'wide' ? '64rem' : presentation === 'prose' ? '42em' : '50rem';
+  const { remember, restore, beforeLayoutChange } = useReadingPosition({
+    identity: readingIdentity || JSON.stringify([source, source === 'remote' ? sessionId : '', displayPath]),
+    ready: !loading && !error && (!richMarkdown || previewContentRef.current === content),
+    visible: !!isVisible, editing, sourceView, revision: previewDoc,
+    layout: JSON.stringify([zoom, leading, column, wrapCode]),
+    editor: editorRef, scroller: previewRef, root: contentRootRef, viewer: viewerRef,
+  });
+  const typeLabel = presentation === 'prose' ? t(lang, 'documentTypeText')
+    : presentation === 'plain' ? t(lang, 'documentTypePlain')
+      : presentation === 'log' ? t(lang, 'documentTypeLog')
+        : markdownMode ? 'Markdown' : pdfMode ? 'PDF'
+          : extensionOf(displayPath || '').slice(1).toUpperCase() || fileName;
+
+  useEffect(() => { writeDocumentAppearance({ zoom, leading, width: column }); }, [zoom, leading, column]);
+
+  useEffect(() => {
+    if (!appearanceOpen) return;
+    if (!active) { setAppearanceOpen(false); return; }
+    zoomInputRef.current?.focus();
+    const dismiss = (event: PointerEvent) => {
+      if (event.target instanceof Node && !appearanceRef.current?.contains(event.target)) setAppearanceOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.isComposing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setAppearanceOpen(false);
+      appearanceButtonRef.current?.focus();
+    };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', escape, true);
+    return () => {
+      document.removeEventListener('pointerdown', dismiss);
+      document.removeEventListener('keydown', escape, true);
+    };
+  }, [appearanceOpen, active]);
 
   useLayoutEffect(() => {
     documentTargetRef.current = { key: documentKey, source, path: displayPath || '', sessionId: sessionId || '' };
@@ -241,21 +312,24 @@ export default function MarkdownViewer({
   const closeOutline = () => compactReading ? setCompactTocOpen(false) : setTocOpen(false);
 
   useEffect(() => {
-    if (!markdownMode || !isVisible) return;
+    if (!richMarkdown || !isVisible || loading) return;
     let cancelled = false;
     void getMarkdownRenderer()
       .then((renderer) => renderer.buildMarkdown(content))
       .then((rendered) => {
-        if (!cancelled) setPreviewDoc(rendered);
+        if (!cancelled) {
+          previewContentRef.current = content;
+          setPreviewDoc(rendered);
+        }
       })
       .catch((err) => {
         if (!cancelled) setError(String(err));
       });
     return () => { cancelled = true; };
-  }, [content, isVisible, markdownMode]);
+  }, [content, isVisible, richMarkdown, loading]);
 
   useEffect(() => {
-    if (!markdownMode || !editing || !splitPreview || !isVisible) return;
+    if (!markdownMode || lightweightDraft || !editing || !splitPreview || !isVisible) return;
     let cancelled = false;
     void getMarkdownRenderer()
       .then((renderer) => renderer.buildMarkdown(previewDraft))
@@ -266,7 +340,7 @@ export default function MarkdownViewer({
         if (!cancelled) setError(String(err));
       });
     return () => { cancelled = true; };
-  }, [editing, isVisible, markdownMode, previewDraft, splitPreview]);
+  }, [editing, isVisible, markdownMode, lightweightDraft, previewDraft, splitPreview]);
 
   useEffect(() => {
     if (!editing || !jsonMode || deferJsonValidation) {
@@ -347,6 +421,7 @@ export default function MarkdownViewer({
     if (sameDocument && (editingRef.current || saveInFlightRef.current)) {
       setLoading(false);
     } else {
+      setActiveHeading('');
       setEditing(false);
       setSplitPreview(false);
       void loadFile();
@@ -404,6 +479,7 @@ export default function MarkdownViewer({
   const attachEditor = useCallback((handle: SourceEditorHandle | null) => {
     editorRef.current = handle;
     if (!handle) return;
+    if (pendingScrollRatioRef.current == null) restore(true);
     const ratio = pendingScrollRatioRef.current;
     if (ratio != null) {
       pendingScrollRatioRef.current = null;
@@ -416,9 +492,10 @@ export default function MarkdownViewer({
       handle.revealRange(reveal.start, reveal.end);
       pendingEditorRevealRef.current = null;
     }
-  }, []);
+  }, [restore]);
 
   const startEdit = () => {
+    remember();
     captureScrollRatio();
     draftRef.current = content;
     setDraft(content);
@@ -573,10 +650,15 @@ export default function MarkdownViewer({
     setSearchOpen(false);
     setQuery('');
     setMatchCount(0);
+    setMatchesLimited(false);
     setCurrent(0);
     rangesRef.current = [];
-    editMatchesRef.current = [];
+    editMatchesRef.current = new Uint32Array();
     pendingEditorRevealRef.current = null;
+    // Reopening the find bar has to reveal the first match again, even when the
+    // query text is unchanged.
+    lastSearchQueryRef.current = null;
+    revealTargetRef.current = null;
     clearHighlights();
   }, []);
 
@@ -591,10 +673,18 @@ export default function MarkdownViewer({
   }, []);
 
   useEffect(() => {
-    if (!searchOpen || !active) return;
+    if (!searchOpen || !active) {
+      lastSearchQueryRef.current = null;
+      return;
+    }
     const q = query;
+    // A rescan runs on every edit because the matches moved; only a new query
+    // is allowed to jump the user to the first match.
+    const queryChanged = lastSearchQueryRef.current !== q;
+    lastSearchQueryRef.current = q;
     rangesRef.current = [];
-    editMatchesRef.current = [];
+    editMatchesRef.current = new Uint32Array();
+    setMatchesLimited(false);
     clearHighlights();
 
     if (!q) {
@@ -605,21 +695,22 @@ export default function MarkdownViewer({
     }
 
     if (sourceView) {
-      const hay = (editing ? draft : content).toLowerCase();
-      const needle = q.toLowerCase();
-      const found: { start: number; end: number }[] = [];
-      let from = 0;
-      for (;;) {
-        const idx = hay.indexOf(needle, from);
-        if (idx === -1) break;
-        found.push({ start: idx, end: idx + needle.length });
-        from = idx + needle.length;
-      }
-      editMatchesRef.current = found;
-      setMatchCount(found.length);
-      setCurrent(found.length ? 0 : -1);
-      if (!found.length) pendingEditorRevealRef.current = null;
-      return;
+      const text = editing ? draft : content;
+      const find = () => {
+        const found = findTextMatches(text, q);
+        editMatchesRef.current = found.offsets;
+        const count = found.offsets.length / 2;
+        setMatchCount(count);
+        setMatchesLimited(found.limited);
+        setCurrent((previous) => (count ? (queryChanged ? 0 : clamp(previous, 0, count - 1)) : -1));
+        setMatchRevision((revision) => revision + 1);
+        if (!found.offsets.length) pendingEditorRevealRef.current = null;
+      };
+      if (text.length <= MAX_SYNC_JSON_CHARS) { find(); return; }
+      setMatchCount(0);
+      // Do not rescan a large document for every intermediate keystroke.
+      const timer = window.setTimeout(find, 120);
+      return () => window.clearTimeout(timer);
     }
 
     const root = contentRootRef.current;
@@ -630,17 +721,16 @@ export default function MarkdownViewer({
       return;
     }
     let frame = 0;
-    let first = true;
     const rebuild = () => {
       frame = 0;
-      const ranges = findPreviewRanges(root, q);
+      const found = findPreviewRanges(root, q, MAX_SEARCH_MATCHES + 1);
+      const ranges = found.slice(0, MAX_SEARCH_MATCHES);
+      setMatchesLimited(found.length > MAX_SEARCH_MATCHES);
       rangesRef.current = ranges;
       reg.set(HL_ALL, new (window as any).Highlight(...ranges));
       reg.delete(HL_ACTIVE);
       setMatchCount(ranges.length);
-      const reset = first;
-      first = false;
-      setCurrent((previous) => ranges.length ? (reset ? 0 : clamp(previous, 0, ranges.length - 1)) : -1);
+      setCurrent((previous) => (ranges.length ? (queryChanged ? 0 : clamp(previous, 0, ranges.length - 1)) : -1));
       setMatchRevision((previous) => previous + 1);
     };
     rebuild();
@@ -660,15 +750,29 @@ export default function MarkdownViewer({
   useEffect(() => {
     if (!searchOpen || !active || current < 0) return;
 
+    // matchRevision is a dependency because a rescan replaces the Range objects,
+    // so the active highlight has to be re-applied to the new ones. It must not
+    // move anything, though: while editing, a rescan happens on every keystroke
+    // and re-revealing each time would drag the caret to the first match.
+    const target = `${query}\u0000${current}`;
+    const moved = revealTargetRef.current !== target;
+    revealTargetRef.current = target;
+
     if (sourceView) {
-      const m = editMatchesRef.current[current];
-      if (!m) {
+      const offsets = editMatchesRef.current;
+      if (current * 2 >= offsets.length) {
         pendingEditorRevealRef.current = null;
         return;
       }
+      // A rescan must not touch the pending-reveal slot either: attachEditor
+      // consumes it whenever the editor re-attaches, so refilling it here would
+      // reveal on every keystroke by the back door.
+      if (!moved) return;
+      const m = { start: offsets[current * 2], end: offsets[current * 2 + 1] };
+      // Leave the slot set for a lazily mounted editor to consume.
+      pendingEditorRevealRef.current = m;
       // CodeMirror owns scrolling and selection, so hand it the range and let
       // it center the match rather than computing a scrollTop from line height.
-      pendingEditorRevealRef.current = m;
       if (editorRef.current) {
         editorRef.current.revealRange(m.start, m.end);
         pendingEditorRevealRef.current = null;
@@ -683,8 +787,9 @@ export default function MarkdownViewer({
     const range = ranges[current];
     if (!reg || !range) return;
     reg.set(HL_ACTIVE, new (window as any).Highlight(range));
-    const target = range.startContainer.parentElement;
-    target?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    if (!moved) return;
+    const container = range.startContainer.parentElement;
+    container?.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [current, matchCount, matchRevision, query, searchOpen, editing, sourceView, active, draft]);
 
   const goNext = useCallback(() => {
@@ -747,29 +852,6 @@ export default function MarkdownViewer({
     }
   };
 
-  // Copying a plain-text document: take over the clipboard write instead of
-  // leaving it to Chromium's serializer.
-  //
-  // Chromium attaches an HTML flavor to every DOM-selection copy. Rich-text
-  // receivers prefer that flavor, and several of them (chat composers, some web
-  // editors) collapse the whitespace inside the copied <pre> — which is how a
-  // copied log arrives as one run-together line. For a .txt/.log/.conf the user
-  // never wants the HTML flavor, so write text/plain alone and make the paste
-  // deterministic everywhere, using CRLF only for Win32 receivers.
-  //
-  // The rendered Markdown view deliberately does NOT use this: pasting a
-  // formatted document into Word or a mail client is a feature there, and
-  // Chromium's own text/plain flavor is already CRLF-correct on Windows.
-  const onCopyPlainText = useCallback((e: React.ClipboardEvent) => {
-    const selected = window.getSelection()?.toString() ?? '';
-    if (!selected) return;
-    e.clipboardData.setData('text/plain', toClipboardText(selected));
-    e.preventDefault();
-  }, []);
-
-  // The editor's own copy is handled inside SourceEditor by CodeMirror's
-  // clipboardOutputFilter, which applies the same CRLF conversion.
-
   const syncSplitPreviewScroll = useCallback(() => {
     if (!splitPreview) return;
     const targetEl = splitPreviewRef.current;
@@ -796,41 +878,100 @@ export default function MarkdownViewer({
       return;
     }
 
-    const anchor = e.target.closest('a[href^="#"]') as HTMLAnchorElement | null;
-    if (anchor && !anchor.dataset.mdLink) {
+    const anchor = e.target.closest('a[href]') as HTMLAnchorElement | null;
+
+    // In-page fragment. Anchors that carry data-md-link use href="#" as a
+    // placeholder and are handled below, so they are excluded here.
+    if (anchor && !anchor.dataset.mdLink && (anchor.getAttribute('href') || '').startsWith('#')) {
+      e.preventDefault();
       const fragment = anchor.getAttribute('href')?.slice(1) || '';
       let id = fragment;
       try { id = decodeURIComponent(fragment); } catch { /* Handwritten anchors may contain a literal %. */ }
       const el = contentRootRef.current?.querySelector<HTMLElement>(`#${cssEscape(id)}`);
-      if (el) {
-        e.preventDefault();
-        el.scrollIntoView({ block: 'start', behavior: 'smooth' });
-      }
+      el?.scrollIntoView({ block: 'start', behavior: 'smooth' });
       return;
     }
 
     const markdownLink = e.target.closest('a[data-md-link]') as HTMLAnchorElement | null;
     const href = markdownLink?.dataset.mdLink;
-    if (!href) return;
-    e.preventDefault();
-    try {
-      if (source === 'remote') {
-        const resolved = await ResolveRemoteMarkdownLink(remotePath || '', href);
-        if (sessionId) onOpenMarkdownFile?.({ source: 'remote', sessionId, path: resolved });
-      } else {
-        const resolved = await ResolveLocalMarkdownLink(filePath || '', href);
-        onOpenMarkdownFile?.({ source: 'local', path: resolved });
+    if (markdownLink && href) {
+      e.preventDefault();
+      try {
+        if (source === 'remote') {
+          const resolved = await ResolveRemoteMarkdownLink(remotePath || '', href);
+          if (sessionId) onOpenMarkdownFile?.({ source: 'remote', sessionId, path: resolved });
+        } else {
+          const resolved = await ResolveLocalMarkdownLink(filePath || '', href);
+          onOpenMarkdownFile?.({ source: 'local', path: resolved });
+        }
+      } catch (err: any) {
+        onNotify?.(err.toString(), 'error');
       }
-    } catch (err: any) {
-      onNotify?.(err.toString(), 'error');
+      return;
     }
+
+    if (!anchor) return;
+    const rawHref = anchor.getAttribute('href') || '';
+
+    // http(s)/mailto: hand the URL to the system browser. Left alone, the
+    // WebView would navigate to it itself.
+    if (/^(https?:|mailto:)/i.test(rawHref)) {
+      e.preventDefault();
+      BrowserOpenURL(rawHref);
+      return;
+    }
+
+    // Anything else is a link the viewer has no handler for: a relative
+    // reference to a file it cannot open (LICENSE, config.example.yaml), or a
+    // scheme it does not route. The window is frameless, so allowing the
+    // default navigation would replace the app with that resource — no way
+    // back, and every unsaved draft lost.
+    e.preventDefault();
+    onNotify?.(t(lang, 'documentLinkUnsupported'), 'info');
   }, [filePath, isVisible, lang, markdownMode, onNotify, onOpenMarkdownFile, remotePath, sessionId, source]);
 
-  const jumpToHeading = (id: string) => {
-    const el = contentRootRef.current?.querySelector<HTMLElement>(`#${cssEscape(id)}`);
-    el?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  const jumpToHeading = useCallback((id: string) => {
+    const heading = textHeadings.find((item) => item.id === id);
+    if (!editing && virtualTextPreview && heading?.from != null) {
+      editorRef.current?.revealRange(heading.from, heading.from);
+      setActiveHeading(id);
+    } else {
+      const el = contentRootRef.current?.querySelector<HTMLElement>(`#${cssEscape(id)}`);
+      el?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
     if (compactReading) setCompactTocOpen(false);
-  };
+  }, [compactReading, editing, textHeadings, virtualTextPreview]);
+
+  const onSourceScroll = useCallback(() => {
+    remember();
+    syncSplitPreviewScroll();
+    if (editing || !textHeadings.length) return;
+    const position = editorRef.current?.scrollPosition();
+    if (!position) return;
+    let low = 0;
+    let high = textHeadings.length - 1;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (textHeadings[mid].from! <= position.anchor) low = mid;
+      else high = mid - 1;
+    }
+    setActiveHeading(textHeadings[low].id);
+  }, [remember, syncSplitPreviewScroll, editing, textHeadings]);
+
+  useEffect(() => {
+    if (!active) return;
+    outlineCallbackRef.current?.(documentId || documentKey, canShowToc ? {
+      items: outlineItems,
+      activeId: activeHeading || outlineItems[0]?.id || '',
+      navigate: jumpToHeading,
+      truncated: virtualTextPreview && textHeadings.length >= MAX_DOCUMENT_HEADINGS,
+    } : null);
+  }, [active, documentId, documentKey, canShowToc, outlineItems, activeHeading, jumpToHeading, textHeadings.length, virtualTextPreview]);
+
+  useEffect(() => {
+    if (!active) return;
+    return () => outlineCallbackRef.current?.(documentId || documentKey, null);
+  }, [active, documentId, documentKey]);
 
   const previewZoom = useCallback((next: number) => {
     const viewer = viewerRef.current;
@@ -841,9 +982,10 @@ export default function MarkdownViewer({
   }, []);
 
   const onZoomPointerDown = useCallback((e: React.PointerEvent<HTMLInputElement>) => {
+    beforeLayoutChange();
     zoomGestureRef.current = true;
     e.currentTarget.setPointerCapture(e.pointerId);
-  }, []);
+  }, [beforeLayoutChange]);
 
   const commitZoomGesture = useCallback((input: HTMLInputElement) => {
     zoomGestureRef.current = false;
@@ -852,10 +994,11 @@ export default function MarkdownViewer({
       const viewer = viewerRef.current;
       viewer?.classList.remove('markdown-viewer-zooming');
       viewer?.style.removeProperty('--md-live-scale');
+      restore();
       return;
     }
     setZoom(next);
-  }, []);
+  }, [restore]);
 
   const cancelZoomGesture = useCallback((input: HTMLInputElement) => {
     zoomGestureRef.current = false;
@@ -863,7 +1006,8 @@ export default function MarkdownViewer({
     const viewer = viewerRef.current;
     viewer?.classList.remove('markdown-viewer-zooming');
     viewer?.style.removeProperty('--md-live-scale');
-  }, []);
+    restore();
+  }, [restore]);
 
   const onTocResizeStart = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -940,6 +1084,7 @@ export default function MarkdownViewer({
     const scroller = editing && splitPreview ? splitPreviewRef.current : previewRef.current;
     const root = contentRootRef.current;
     if (!isVisible || !scroller || !root || !canShowToc) {
+      if (!editing && virtualTextPreview && textHeadings.length) return;
       setActiveHeading('');
       return;
     }
@@ -947,7 +1092,7 @@ export default function MarkdownViewer({
     let headings: Array<{ id: string; top: number }> = [];
     const measureHeadings = () => {
       headings = Array.from(root.querySelectorAll<HTMLElement>('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]'))
-        .map((heading) => ({ id: heading.id, top: heading.offsetTop }));
+        .map((heading) => ({ id: heading.id, top: heading.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop }));
     };
     const updateActiveHeading = () => {
       frame = 0;
@@ -981,7 +1126,7 @@ export default function MarkdownViewer({
       scroller.removeEventListener('scroll', scheduleUpdate);
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [canShowToc, editing, isVisible, splitPreview, visibleDoc.html, zoom]);
+  }, [canShowToc, editing, isVisible, splitPreview, visibleDoc.html, zoom, virtualTextPreview, textHeadings.length]);
 
   if (loading) return <div className="markdown-viewer-loading">{t(lang, "loading")}</div>;
   if (error) return <div className="markdown-viewer-error">{documentErrorMessage(error, lang)}</div>;
@@ -992,46 +1137,86 @@ export default function MarkdownViewer({
       ref={viewerRef}
       data-active={active ? 'true' : 'false'}
       data-visible={isVisible ? 'true' : 'false'}
+      data-document-path={displayPath}
+      data-presentation={presentation}
     >
-      {/* A real toolbar in normal flow, not an overlay. It previously floated
-          over the top-right of the document with a three-tier idle fade: that
-          covered text, stayed clickable while nearly invisible, and sat in the
-          same corner the user reaches for. Owning a row of its own costs ~34px
-          and removes all three problems. */}
+      {/* Keep file type and reading actions in their own row. */}
       <div className="markdown-viewer-toolbar">
         <span className="markdown-viewer-toolbar-name" title={displayPath || ''}>
-          {fileName}
+          {typeLabel}
         </span>
         <span className="markdown-viewer-toolbar-spacer" />
-        {!pdfMode && <input
-          ref={zoomInputRef}
-          type="range"
-          className="markdown-viewer-zoom"
-          min={MIN_ZOOM}
-          max={MAX_ZOOM}
-          step={0.05}
-          defaultValue={zoom}
-          aria-label={t(lang, 'documentZoom')}
-          title={t(lang, 'documentZoomPercent', { percent: String(Math.round(zoom * 100)) })}
-          onPointerDown={onZoomPointerDown}
-          onInput={(e) => {
-            const next = Number(e.currentTarget.value);
-            e.currentTarget.title = t(lang, 'documentZoomPercent', { percent: String(Math.round(next * 100)) });
-            previewZoom(next);
-          }}
-          onChange={(e) => {
-            if (!zoomGestureRef.current) setZoom(Number(e.currentTarget.value));
-          }}
-          onPointerUp={(e) => commitZoomGesture(e.currentTarget)}
-          onPointerCancel={(e) => cancelZoomGesture(e.currentTarget)}
-        />}
-        {!pdfMode && <button
-          type="button"
-          className="markdown-viewer-zoom-reset"
-          onClick={() => setZoom(1)}
-          title={t(lang, 'documentZoomResetTitle')}
-          aria-label={t(lang, 'documentZoomReset')}
-        >{Math.round(zoom * 100)}%</button>}
+        {!pdfMode && <div className="markdown-viewer-appearance" ref={appearanceRef}>
+          <button
+            ref={appearanceButtonRef}
+            type="button"
+            className={clsx('markdown-viewer-appearance-button', appearanceOpen && 'active')}
+            onClick={() => setAppearanceOpen((open) => !open)}
+            aria-label={t(lang, 'documentAppearance')}
+            title={t(lang, 'documentAppearance')}
+            aria-expanded={appearanceOpen}
+            aria-haspopup="dialog"
+          ><Type size={15} /><span>{Math.round(zoom * 100)}%</span></button>
+          {appearanceOpen && <div className="markdown-appearance-popover" role="dialog" aria-label={t(lang, 'documentAppearance')}>
+            <div className="markdown-appearance-label">
+              <span>{t(lang, 'documentZoom')}</span>
+              <button
+                type="button"
+                className="markdown-viewer-zoom-reset"
+                onClick={() => { beforeLayoutChange(); setZoom(1); }}
+                title={t(lang, 'documentZoomResetTitle')}
+                aria-label={t(lang, 'documentZoomReset')}
+              >{Math.round(zoom * 100)}%</button>
+            </div>
+            <input
+              ref={zoomInputRef}
+              type="range"
+              className="markdown-viewer-zoom"
+              min={MIN_ZOOM}
+              max={MAX_ZOOM}
+              step={0.05}
+              defaultValue={zoom}
+              aria-label={t(lang, 'documentZoom')}
+              title={t(lang, 'documentZoomPercent', { percent: String(Math.round(zoom * 100)) })}
+              onPointerDown={onZoomPointerDown}
+              onInput={(e) => {
+                const next = Number(e.currentTarget.value);
+                e.currentTarget.title = t(lang, 'documentZoomPercent', { percent: String(Math.round(next * 100)) });
+                if (zoomGestureRef.current) previewZoom(next);
+              }}
+              onChange={(e) => {
+                if (!zoomGestureRef.current) {
+                  beforeLayoutChange();
+                  setZoom(Number(e.currentTarget.value));
+                }
+              }}
+              onPointerUp={(e) => commitZoomGesture(e.currentTarget)}
+              onPointerCancel={(e) => cancelZoomGesture(e.currentTarget)}
+            />
+            {!editing && (presentation === 'prose' || richMarkdown) && <>
+              <label className="markdown-appearance-label">
+                <span>{t(lang, 'documentLineHeight')}</span>
+                <select aria-label={t(lang, 'documentLineHeight')} value={leading} onChange={(event) => { beforeLayoutChange(); setLeading(Number(event.target.value)); }}>
+                  <option value={1.5}>{t(lang, 'documentLeadingCompact')}</option>
+                  <option value={1.85}>{t(lang, 'documentLeadingNormal')}</option>
+                  <option value={2.1}>{t(lang, 'documentLeadingRelaxed')}</option>
+                </select>
+              </label>
+              <label className="markdown-appearance-label">
+                <span>{t(lang, 'documentLineWidth')}</span>
+                <select aria-label={t(lang, 'documentLineWidth')} value={column} onChange={(event) => { beforeLayoutChange(); setColumn(event.target.value as DocumentAppearance['width']); }}>
+                  <option value="comfortable">{t(lang, 'documentWidthComfortable')}</option>
+                  <option value="wide">{t(lang, 'documentWidthWide')}</option>
+                  <option value="full">{t(lang, 'documentWidthFull')}</option>
+                </select>
+              </label>
+            </>}
+            {(editing || presentation !== 'prose') && <label className="markdown-appearance-label">
+              <span>{t(lang, markdownMode ? 'wrapCode' : 'wrapText')}</span>
+              <input type="checkbox" checked={wrapCode} onChange={() => { beforeLayoutChange(); setWrapCode((value) => !value); }} />
+            </label>}
+          </div>}
+        </div>}
         {!pdfMode && <button
           type="button"
           onClick={openSearch}
@@ -1039,7 +1224,7 @@ export default function MarkdownViewer({
           title={`${t(lang, 'find')} (Ctrl+F)`}
           aria-label={t(lang, 'find')}
         ><Search size={15} /></button>}
-        {!pdfMode && <button
+        {!pdfMode && !outlineInSidebar && canShowToc && <button
           onClick={toggleOutline}
           className={clsx('markdown-viewer-tbtn', outlineOpen && canShowToc && 'active')}
           disabled={!canShowToc}
@@ -1048,14 +1233,7 @@ export default function MarkdownViewer({
         >
           <ListTree size={15} />
         </button>}
-        {!pdfMode && <button
-          onClick={() => setWrapCode((v) => !v)}
-          className={clsx('markdown-viewer-tbtn', wrapCode && 'active')}
-          title={markdownMode ? t(lang, "wrapCode") : t(lang, "wrapText")}
-        >
-          <WrapText size={15} />
-        </button>}
-        {markdownMode && editing && (
+        {markdownMode && !lightweightDraft && editing && (
           <button
             onClick={() => setSplitPreview((v) => !v)}
             className={clsx('markdown-viewer-tbtn', splitPreview && 'active')}
@@ -1071,7 +1249,7 @@ export default function MarkdownViewer({
         )}
         {pdfMode ? (
           <>
-            <button onClick={loadFile} className="markdown-viewer-tbtn" title={t(lang, 'refresh')}>
+            <button onClick={() => { beforeLayoutChange(); void loadFile(); }} className="markdown-viewer-tbtn" title={t(lang, 'refresh')}>
               <RefreshCw size={15} />
             </button>
             <button onClick={onClose} className="markdown-viewer-tbtn" title={t(lang, 'close')}>
@@ -1092,7 +1270,7 @@ export default function MarkdownViewer({
             <button onClick={startEdit} className="markdown-viewer-tbtn" title={t(lang, 'documentEdit')}>
               <Pencil size={15} />
             </button>
-            <button onClick={loadFile} className="markdown-viewer-tbtn" title={t(lang, 'refresh')}>
+            <button onClick={() => { beforeLayoutChange(); void loadFile(); }} className="markdown-viewer-tbtn" title={t(lang, 'refresh')}>
               <RefreshCw size={15} />
             </button>
             <button onClick={onClose} className="markdown-viewer-tbtn" title={t(lang, 'close')}>
@@ -1114,7 +1292,7 @@ export default function MarkdownViewer({
             onKeyDown={onSearchKeyDown}
           />
           <span className="markdown-search-count">
-            {matchCount ? `${current + 1}/${matchCount}` : (query ? '0/0' : '')}
+            {matchCount ? (current + 1) + '/' + matchCount + (matchesLimited ? '+' : '') : (query ? '0/0' : '')}
           </span>
           <button className="markdown-viewer-tbtn" onClick={goPrev} disabled={!matchCount} title={t(lang, 'documentPreviousMatch')}>
             <ChevronUp size={15} />
@@ -1128,8 +1306,8 @@ export default function MarkdownViewer({
         </div>
       )}
 
-      <div ref={viewerMainRef} className={clsx('markdown-viewer-main', canShowToc && outlineOpen && 'with-toc')} style={viewerMainStyle}>
-        {canShowToc && outlineOpen && (
+      <div ref={viewerMainRef} className={clsx('markdown-viewer-main', canShowToc && outlineOpen && !outlineInSidebar && 'with-toc')} style={viewerMainStyle}>
+        {canShowToc && outlineOpen && !outlineInSidebar && (
           <aside className="markdown-viewer-outline">
             <div className="markdown-outline-header">
               <span>{t(lang, "outline")}</span>
@@ -1138,7 +1316,7 @@ export default function MarkdownViewer({
               </button>
             </div>
             <div className="markdown-outline-list">
-              {visibleDoc.toc.map((item) => (
+              {outlineItems.map((item) => (
                 <button
                   key={item.id}
                   className={clsx('markdown-outline-item', activeHeading === item.id && 'active')}
@@ -1165,7 +1343,7 @@ export default function MarkdownViewer({
             {pdfURL && <iframe className="pdf-viewer-frame" src={pdfURL} title={displayPath || 'PDF document'} />}
           </div>
         ) : sourceView ? (
-          <div className={clsx('markdown-viewer-edit-shell', !editing && 'text-document-virtual', editing && splitPreview && 'markdown-viewer-edit-split')}>
+          <div className={clsx('markdown-viewer-edit-shell', !editing && 'text-document-virtual', editing && splitPreview && !lightweightDraft && 'markdown-viewer-edit-split')}>
             <Suspense fallback={<div className="markdown-viewer-loading">{t(lang, 'loading')}</div>}>
               <SourceEditor
                 key={editing ? 'edit' : 'preview'}
@@ -1180,15 +1358,20 @@ export default function MarkdownViewer({
                 }}
                 onSave={save}
                 onStats={editing ? setEditorStats : undefined}
-                onScroll={editing ? syncSplitPreviewScroll : undefined}
+                onScroll={onSourceScroll}
                 // The base font size is scaled by the same zoom slider the
                 // preview uses, so both modes track one control.
-                fontSize={Math.round((editing ? 14 : 13) * zoom)}
-                wrap={wrapCode}
-                mode={editing ? editorMode : 'plain'}
+                fontSize={Math.round((editing ? 14 : presentation === 'prose' ? 17 : 14) * zoom)}
+                wrap={!editing && presentation === 'prose' ? true : wrapCode}
+                mode={editorMode}
+                sourcePath={displayPath}
+                presentation={presentation}
+                headings={textHeadings}
+                lineHeight={!editing && presentation === 'prose' ? leading : 1.65}
+                columnWidth={readingColumn}
               />
             </Suspense>
-            {markdownMode && splitPreview && (
+            {markdownMode && splitPreview && !lightweightDraft && (
               <div className="markdown-viewer-content markdown-viewer-split-content" ref={splitPreviewRef}>
                 <div
                   ref={contentRootRef as React.RefObject<HTMLDivElement>}
@@ -1201,32 +1384,20 @@ export default function MarkdownViewer({
             )}
           </div>
         ) : (
-          <div className="markdown-viewer-content" ref={previewRef}>
-            {markdownMode ? (
+          <div className="markdown-viewer-content" ref={previewRef} onScroll={remember}>
               <div
                 ref={contentRootRef as React.RefObject<HTMLDivElement>}
                 tabIndex={0}
                 className={clsx('ai-markdown', 'md-document', wrapCode && 'md-wrap-code')}
-                style={{ zoom: zoom }}
+                style={{ zoom, lineHeight: leading, maxWidth: readingColumn }}
                 onClick={onContentClick}
                 dangerouslySetInnerHTML={{ __html: previewDoc.html }}
               />
-            ) : (
-              <pre
-                ref={contentRootRef as React.RefObject<HTMLPreElement>}
-                tabIndex={0}
-                className={clsx('text-document', wrapCode && 'text-document-wrap')}
-                style={{ zoom: zoom }}
-                onCopy={onCopyPlainText}
-              >
-                {content}
-              </pre>
-            )}
           </div>
         )}
       </div>
 
-      {markdownMode && <MermaidDiagrams
+      {richMarkdown && <MermaidDiagrams
         rootRef={contentRootRef}
         html={visibleDoc.html}
         visible={!!isVisible && (!editing || splitPreview)}
@@ -1234,6 +1405,13 @@ export default function MarkdownViewer({
         locale={lang}
         onNotify={onNotify}
       />}
+
+      {!editing && !pdfMode && <div className="document-reading-status">
+        <span className="document-reading-path" title={displayPath}>{displayPath}</span>
+        {lightweightMarkdown && <span role="status">{t(lang, 'documentLightweightPreview')}</span>}
+        <span>{t(lang, 'documentCharacterCount', { count: content.length.toLocaleString(lang) })}</span>
+        <span>UTF-8</span>
+      </div>}
 
       {editing && (
         <div className="source-editor-status">

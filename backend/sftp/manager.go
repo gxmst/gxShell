@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -1612,20 +1613,40 @@ func transferPartPath(localPath, jobID string) string {
 	return localPath + artifactMarker + jobID + partSuffix
 }
 
+// Folder downloads pass an os.Root here so promotion, rollback and cleanup
+// retain the same directory boundary as the temporary-file write.
+type localReplacementFS interface {
+	Lstat(string) (os.FileInfo, error)
+	Link(string, string) error
+	Rename(string, string) error
+	Remove(string) error
+}
+
+type localOSFiles struct{}
+
+func (localOSFiles) Lstat(name string) (os.FileInfo, error) { return os.Lstat(name) }
+func (localOSFiles) Link(oldname, newname string) error     { return os.Link(oldname, newname) }
+func (localOSFiles) Rename(oldname, newname string) error   { return os.Rename(oldname, newname) }
+func (localOSFiles) Remove(name string) error               { return os.Remove(name) }
+
 func promoteLocalNoReplace(sourcePath, targetPath string) error {
-	if err := os.Link(sourcePath, targetPath); err != nil {
+	return promoteLocalNoReplaceWithFS(localOSFiles{}, sourcePath, targetPath)
+}
+
+func promoteLocalNoReplaceWithFS(fs localReplacementFS, sourcePath, targetPath string) error {
+	if err := fs.Link(sourcePath, targetPath); err != nil {
 		return err
 	}
-	_ = os.Remove(sourcePath)
+	_ = fs.Remove(sourcePath)
 	return nil
 }
 
-func checkLocalNoReplaceSupport(sourcePath, targetPath string) error {
+func checkLocalNoReplaceSupport(fs localReplacementFS, sourcePath, targetPath string) error {
 	probePath := targetPath + artifactMarker + randomSuffix() + ".link-check"
-	if err := os.Link(sourcePath, probePath); err != nil {
+	if err := fs.Link(sourcePath, probePath); err != nil {
 		return err
 	}
-	if err := os.Remove(probePath); err != nil {
+	if err := fs.Remove(probePath); err != nil {
 		return fmt.Errorf("remove link check %s: %w", probePath, err)
 	}
 	return nil
@@ -1636,11 +1657,15 @@ func checkLocalNoReplaceSupport(sourcePath, targetPath string) error {
 // only if the destination is still absent. This preserves both sides if another
 // process creates a new destination during promotion.
 func replaceLocalTemp(tmpPath, localPath string, overwrite bool) error {
-	info, statErr := os.Lstat(localPath)
+	return replaceLocalTempWithFS(localOSFiles{}, tmpPath, localPath, overwrite)
+}
+
+func replaceLocalTempWithFS(fs localReplacementFS, tmpPath, localPath string, overwrite bool) error {
+	info, statErr := fs.Lstat(localPath)
 	if os.IsNotExist(statErr) {
-		if err := promoteLocalNoReplace(tmpPath, localPath); err != nil {
+		if err := promoteLocalNoReplaceWithFS(fs, tmpPath, localPath); err != nil {
 			if !overwrite {
-				if raced, raceErr := os.Lstat(localPath); raceErr == nil && raced.Mode().IsRegular() {
+				if raced, raceErr := fs.Lstat(localPath); raceErr == nil && raced.Mode().IsRegular() {
 					return &OverwriteRequiredError{Path: localPath}
 				}
 			}
@@ -1659,7 +1684,7 @@ func replaceLocalTemp(tmpPath, localPath string, overwrite bool) error {
 	}
 	// Confirm the filesystem supports the atomic promotion primitive before
 	// moving the user's original file out of the way.
-	if err := checkLocalNoReplaceSupport(tmpPath, localPath); err != nil {
+	if err := checkLocalNoReplaceSupport(fs, tmpPath, localPath); err != nil {
 		return fmt.Errorf("download filesystem does not support safe replacement: %w", err)
 	}
 
@@ -1667,24 +1692,24 @@ func replaceLocalTemp(tmpPath, localPath string, overwrite bool) error {
 	// lets promotion use the same atomic no-replace operation as the
 	// non-conflict case.
 	backupPath := localPath + artifactMarker + randomSuffix() + backupSuffix
-	if err := os.Rename(localPath, backupPath); err != nil {
+	if err := fs.Rename(localPath, backupPath); err != nil {
 		return fmt.Errorf("prepare existing download target: %w", err)
 	}
-	backupInfo, backupStatErr := os.Lstat(backupPath)
+	backupInfo, backupStatErr := fs.Lstat(backupPath)
 	if backupStatErr != nil || !backupInfo.Mode().IsRegular() {
-		restoreErr := os.Rename(backupPath, localPath)
+		restoreErr := fs.Rename(backupPath, localPath)
 		if backupStatErr != nil {
 			return fmt.Errorf("verify existing download target: %v; restore original: %v", backupStatErr, restoreErr)
 		}
 		return fmt.Errorf("download destination changed to a non-regular file; restore original: %v", restoreErr)
 	}
-	if err := promoteLocalNoReplace(tmpPath, localPath); err != nil {
-		if restoreErr := promoteLocalNoReplace(backupPath, localPath); restoreErr != nil {
+	if err := promoteLocalNoReplaceWithFS(fs, tmpPath, localPath); err != nil {
+		if restoreErr := promoteLocalNoReplaceWithFS(fs, backupPath, localPath); restoreErr != nil {
 			return fmt.Errorf("promote completed download: %v; restore original from %s: %w", err, backupPath, restoreErr)
 		}
 		return fmt.Errorf("promote completed download: %w", err)
 	}
-	_ = os.Remove(backupPath)
+	_ = fs.Remove(backupPath)
 	return nil
 }
 
@@ -1751,23 +1776,27 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) (err er
 	defer release()
 
 	cleanRemote := path.Clean(remotePath)
-	if err := os.MkdirAll(localDir, 0755); err != nil {
-		return err
-	}
-	// Resolve the local root once so we can confine every extracted entry to it.
-	localRoot, err := filepath.Abs(localDir)
+	localRootPath, err := filepath.Abs(localDir)
 	if err != nil {
 		return fmt.Errorf("invalid local directory: %w", err)
 	}
-	localRoot = filepath.Clean(localRoot)
-	rootPrefix := localRoot + string(os.PathSeparator)
+	if err := os.MkdirAll(localRootPath, 0755); err != nil {
+		return err
+	}
+	// Keep the directory handle for the entire download. Every extracted path,
+	// including staging, promotion and cleanup, must resolve beneath this root.
+	localRoot, err := os.OpenRoot(localRootPath)
+	if err != nil {
+		return err
+	}
+	defer localRoot.Close()
 
 	var files []struct {
 		remotePath string
 		localPath  string
 		isDir      bool
-		size       int64
 	}
+	localNames := map[string]string{}
 	walker := client.Walk(remotePath)
 	for walker.Step() {
 		if err = job.waitIfPaused(); err != nil {
@@ -1789,24 +1818,37 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) (err er
 		if relErr != nil {
 			return fmt.Errorf("invalid path: %w", relErr)
 		}
-		localPath := filepath.Join(localRoot, filepath.FromSlash(rel))
-		// Containment check (zip-slip guard): the resolved path must stay within
-		// localRoot. localRoot itself (rel == ".") is allowed.
-		if localPath != localRoot && !strings.HasPrefix(localPath, rootPrefix) {
-			return fmt.Errorf("refusing to write outside destination: %s", rel)
+		localPath, pathErr := filepath.Localize(rel)
+		if pathErr != nil {
+			return fmt.Errorf("invalid download path %q: %w", rel, pathErr)
 		}
+		key := localPath
+		if runtime.GOOS == "windows" {
+			// Windows strips trailing dots/spaces when opening ordinary paths.
+			// Reject these aliases rather than silently overwriting another name.
+			if rel != "." {
+				for _, part := range strings.Split(rel, "/") {
+					if strings.HasSuffix(part, ".") || strings.HasSuffix(part, " ") {
+						return fmt.Errorf("download path %q ends in a dot or space on Windows", rel)
+					}
+				}
+			}
+			key = strings.ToUpper(key)
+		}
+		if previous, exists := localNames[key]; exists {
+			return fmt.Errorf("download paths %q and %q map to the same local name", previous, rp)
+		}
+		localNames[key] = rp
 		isDir := stat.IsDir()
+		if rel == "." && !isDir {
+			return fmt.Errorf("remote path is not a directory: %s", remotePath)
+		}
 		files = append(files, struct {
 			remotePath string
 			localPath  string
 			isDir      bool
-			size       int64
 		}{remotePath: rp, localPath: localPath, isDir: isDir})
-		if isDir {
-			if err := os.MkdirAll(localPath, 0755); err != nil {
-				return err
-			}
-		} else {
+		if !isDir {
 			totalSize += stat.Size()
 		}
 	}
@@ -1815,6 +1857,18 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) (err er
 	}
 	if err = checkTransferContext(job.ctx); err != nil {
 		return err
+	}
+	// Validate the whole remote tree before creating entries or overwriting any
+	// files, including directory-name collisions such as Dir/a and dir/b.
+	for _, f := range files {
+		if err = job.waitIfPaused(); err != nil {
+			return err
+		}
+		if f.isDir {
+			if err := localRoot.MkdirAll(f.localPath, 0755); err != nil {
+				return err
+			}
+		}
 	}
 
 	// The per-file callbacks below already add their own base, so this sink
@@ -1829,7 +1883,7 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) (err er
 		}
 		baseDone := done
 		var fileDone int64
-		fileDone, err = m.downloadFileOnly(client, job, f.remotePath, f.localPath, func(n int64) {
+		fileDone, err = m.downloadFileOnly(client, job, localRoot, f.remotePath, f.localPath, func(n int64) {
 			progress(baseDone + n)
 		})
 		done = baseDone + fileDone
@@ -1840,7 +1894,7 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) (err er
 	return nil
 }
 
-func (m *Manager) downloadFileOnly(client *sftp.Client, job *transferJob, remotePath, localPath string, progress func(int64)) (written int64, err error) {
+func (m *Manager) downloadFileOnly(client *sftp.Client, job *transferJob, root *os.Root, remotePath, localPath string, progress func(int64)) (written int64, err error) {
 	src, err := client.Open(remotePath)
 	if err != nil {
 		return 0, err
@@ -1858,10 +1912,12 @@ func (m *Manager) downloadFileOnly(client *sftp.Client, job *transferJob, remote
 	// tree being fetched twice from colliding. Claiming it still matters, so a
 	// single-file transfer sweeping the same directory leaves it alone.
 	partPath := transferPartPath(localPath, job.id)
-	if err = m.claimPart(job, partPath); err != nil {
+	// Absolute paths are bookkeeping for concurrent cleanup only. Filesystem
+	// operations below always use relative names and the retained root handle.
+	if err = m.claimPart(job, filepath.Join(root.Name(), partPath)); err != nil {
 		return 0, err
 	}
-	dst, err := os.OpenFile(partPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
+	dst, err := root.OpenFile(partPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		return 0, err
 	}
@@ -1871,7 +1927,7 @@ func (m *Manager) downloadFileOnly(client *sftp.Client, job *transferJob, remote
 			_ = dst.Close()
 		}
 		if err != nil {
-			_ = os.Remove(partPath)
+			_ = root.Remove(partPath)
 		}
 	}()
 	clearInterrupt := job.setInterrupt(func() {
@@ -1897,7 +1953,7 @@ func (m *Manager) downloadFileOnly(client *sftp.Client, job *transferJob, remote
 	if err = checkTransferContext(job.ctx); err != nil {
 		return written, err
 	}
-	if err = replaceLocalTemp(partPath, localPath, true); err != nil {
+	if err = replaceLocalTempWithFS(root, partPath, localPath, true); err != nil {
 		return written, err
 	}
 	return written, nil

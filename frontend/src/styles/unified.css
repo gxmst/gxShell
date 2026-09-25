@@ -870,9 +870,7 @@
 }
 
 .app-shell .markdown-viewer {
-  background:
-    radial-gradient(700px 300px at 50% -160px, color-mix(in srgb, var(--accent) 6%, transparent), transparent 72%),
-    var(--terminal);
+  background: var(--document-bg, var(--terminal));
 }
 
 /* The toolbar is in normal flow now, so it is deliberately absent here — it
@@ -880,10 +878,15 @@
    raised-panel treatment these floating surfaces get. */
 .app-shell .markdown-search-bar,
 .app-shell .markdown-viewer-outline {
-  border-color: color-mix(in srgb, var(--border-strong) 84%, transparent);
-  background: color-mix(in srgb, var(--panel-raised) 90%, black);
-  box-shadow: var(--shadow-lg), inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
-  backdrop-filter: blur(16px) saturate(1.1);
+  border-color: var(--border);
+  background: var(--document-bg, var(--panel));
+  box-shadow: none;
+}
+
+.app-shell[data-document-active="true"] .left-rail {
+  background: var(--panel);
+  border-right-color: var(--border);
+  box-shadow: none;
 }
 
 .app-shell .md-document {

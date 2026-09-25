@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DocumentTestWorker } from '../../test/documentWorker';
+import { memoryStorage } from '../../test/memoryStorage';
 import MarkdownViewer from './MarkdownViewer';
 
 const appMocks = vi.hoisted(() => ({
@@ -412,6 +413,7 @@ describe('MarkdownViewer PDF browsing', () => {
 
 describe('MarkdownViewer performance-sensitive interactions', () => {
   beforeEach(() => {
+    vi.stubGlobal('localStorage', memoryStorage());
     appMocks.readLocalFile.mockReset();
     appMocks.readLocalResource.mockReset();
     appMocks.readLocalResource.mockResolvedValue('data:image/png;base64,cG5n');
@@ -428,6 +430,7 @@ describe('MarkdownViewer performance-sensitive interactions', () => {
     );
     await waitFor(() => expect(screen.getAllByText('Heading')).toHaveLength(2));
 
+    fireEvent.click(screen.getByRole('button', { name: 'Typography' }));
     const input = screen.getByLabelText('Document zoom') as HTMLInputElement;
     const viewer = container.querySelector<HTMLElement>('.markdown-viewer')!;
     const document = container.querySelector<HTMLElement>('.md-document')!;
@@ -453,6 +456,7 @@ describe('MarkdownViewer performance-sensitive interactions', () => {
     fireEvent.click(screen.getByTitle('Edit'));
     await screen.findByLabelText('Source editor');
 
+    fireEvent.click(screen.getByRole('button', { name: 'Typography' }));
     const input = screen.getByLabelText('Document zoom') as HTMLInputElement;
     const viewer = container.querySelector<HTMLElement>('.markdown-viewer')!;
     expect(container.querySelector('.source-editor .cm-editor')).not.toBeNull();

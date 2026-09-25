@@ -1,9 +1,9 @@
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { types } from "../wailsjs/go/models";
-import { AnswerKeyboardInteractive, ApplyBackup, CloseWindow, CreateCommand, DeleteCommand, ExportProfiles, GetStartupFile, ImportOpenSSHConfig, ImportProfiles, IsRecording, ListCommands, OpenDataDir, ReadLogFile, RevokeCliTrust, SelectPrivateKey, SendCommandToTerminal, SetWindowBackgroundColour, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/app/App";
+import { AnswerKeyboardInteractive, ApplyBackup, CloseWindow, CreateCommand, DeleteCommand, ExportProfiles, GetStartupFile, ImportOpenSSHConfig, ImportProfiles, IsRecording, ListCommands, OpenDataDir, ReadLogFile, RegisterApprovalPanel, ResolveCliApproval, RevokeCliTrust, SelectPrivateKey, SendCommandToTerminal, SetWindowBackgroundColour, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/app/App";
 import { emptyProfile } from "./constants";
-import type { AutomationActivityEvent, AutomationActivityRecord, AutomationIndicator, CliApprovalEvent, Drawer, SplitDirection, SplitPane, Tab } from "./types";
+import type { AutomationActivityEvent, AutomationActivityRecord, AutomationIndicator, CliApprovalEvent, CliApprovalPanelRequest, Drawer, SplitDirection, SplitPane, Tab } from "./types";
 import { normalizeAppTheme, parseRgbColor } from "./utils/format";
 import { useToasts } from "./hooks/useToasts";
 import { useProfiles } from "./hooks/useProfiles";
@@ -15,6 +15,7 @@ import { useMarkdownTabs } from "./hooks/useMarkdownTabs";
 import { useContextualSidebar } from "./hooks/useContextualSidebar";
 import { usePersistedState } from "./hooks/usePersistedState";
 import { useUpdateCheck } from "./hooks/useUpdateCheck";
+import { useRenderedLinkGuard } from "./hooks/useRenderedLinkGuard";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { AppTopBar } from "./components/AppTopBar/AppTopBar";
 import { TabBar } from "./components/TabBar/TabBar";
@@ -43,10 +44,12 @@ import { WorkspacesModal } from "./components/modals/WorkspacesModal";
 import { BackupModal } from "./components/modals/BackupModal";
 import { PanelsTopLeft } from "lucide-react";
 import { isSupportedDocumentPath } from "./utils/textFiles";
+import type { DocumentOutline } from "./utils/documentPresentation";
 import { shellQuote } from "./utils/shellQuote";
 import { t } from "./i18n";
 import { formatAutomationTerminalEvent } from "./utils/automation";
 import { CliApprovalQueue } from "./components/CliApprovalQueue/CliApprovalQueue";
+import { CliApprovalPanel } from "./components/CliApprovalPanel/CliApprovalPanel";
 import { PasteConfirmDialog } from "./components/modals/PasteConfirmDialog";
 import { sameTerminalPasteTargets, terminalPasteTargets } from "./utils/terminalPaste";
 import { TextInputDialog } from "./components/modals/TextInputDialog";
@@ -156,10 +159,19 @@ function App() {
   const [automationActivity, setAutomationActivity] = useState<Record<string, AutomationIndicator>>({});
   const [activityHistory, setActivityHistory] = useState<AutomationActivityRecord[]>([]);
   const [cliApprovals, setCliApprovals] = useState<CliApprovalEvent[]>([]);
+  // The interactive approval panel. The backend serialises panels, so exactly
+  // one is ever pending — this is a single slot, not a queue.
+  const [cliApprovalPanel, setCliApprovalPanel] = useState<CliApprovalPanelRequest | null>(null);
+  const cliApprovalPanelRef = useRef<CliApprovalPanelRequest | null>(null);
+  cliApprovalPanelRef.current = cliApprovalPanel;
   const automationRunningRef = useRef<Record<string, Map<string, AutomationIndicator["source"]>>>({});
   const automationClearTimers = useRef<Record<string, number>>({});
   const dirtyDocumentsRef = useRef<Record<string, { save: () => Promise<boolean> }>>({});
   const [dirtyTabIds, setDirtyTabIds] = useState<string[]>([]);
+  const [documentOutline, setDocumentOutline] = useState<{ tabId: string; outline: DocumentOutline } | null>(null);
+  const handleDocumentOutlineChange = useCallback((tabId: string, outline: DocumentOutline | null) => {
+    setDocumentOutline((current) => outline ? { tabId, outline } : current?.tabId === tabId ? null : current);
+  }, []);
   const [unsavedPrompt, setUnsavedPrompt] = useState<{ tab: Tab; resolve: (close: boolean) => void } | null>(null);
   const [disconnectPrompt, setDisconnectPrompt] = useState<{ tab: Tab; resolve: (close: boolean) => void } | null>(null);
 
@@ -666,6 +678,38 @@ function App() {
       });
     });
     return () => offApproval();
+  }, []);
+
+  // The interactive approval panel. RegisterApprovalPanel tells the backend the
+  // listener below is attached: until it is, approvals fall back to the native
+  // dialog, so an event emitted during startup can never leave a request
+  // waiting on a panel nobody rendered.
+  useEffect(() => {
+    void RegisterApprovalPanel();
+    const offPanel = EventsOn("cli:approval-panel", (payload: CliApprovalPanelRequest) => {
+      if (!payload?.id || !payload.items?.length) return;
+      setCliApprovalPanel(payload);
+    });
+    const offPanelClosed = EventsOn("cli:approval-panel:closed", (payload: { id?: string }) => {
+      setCliApprovalPanel((current) => (current && current.id === payload?.id ? null : current));
+    });
+    return () => { offPanel(); offPanelClosed(); };
+  }, []);
+
+  // Rendered HTML — the Markdown preview, the AI assistant's replies, tool
+  // output — can carry links, and the window is frameless, so following one
+  // would replace the app with no way back. The document viewer routes its own
+  // (it resolves relative paths against the file it is showing); this is the net
+  // for everything else, including surfaces that have no handler of their own.
+  const handleBlockedRenderedLink = useCallback(() => {
+    notify(t(langRef.current, "linkBlocked"), "info");
+  }, [notify]);
+  useRenderedLinkGuard(handleBlockedRenderedLink);
+
+  const handleCliApprovalResolve = useCallback((approvedIds: string[]) => {
+    const current = cliApprovalPanelRef.current;
+    setCliApprovalPanel(null);
+    if (current) void ResolveCliApproval(current.id, approvedIds);
   }, []);
 
   useEffect(() => () => {
@@ -1430,6 +1474,7 @@ function App() {
       className="app-shell"
       onContextMenu={() => setCtxMenu(null)}
       data-theme={themeName}
+      data-document-active={sessions.active?.type === 'markdown' ? 'true' : 'false'}
       data-collapsed={sidebarCollapsed ? "true" : "false"}
       data-zen={zenMode ? "true" : "false"}
       data-maximized={windowMaximized ? "true" : "false"}
@@ -1517,6 +1562,7 @@ function App() {
           markdownSiblings={markdownSiblings}
           markdownSiblingsBusy={markdownSiblingsBusy}
           markdownSiblingsError={markdownSiblingsError}
+          documentOutline={documentOutline?.tabId === sessions.activeTab ? documentOutline.outline : undefined}
           onRefreshMarkdownSiblings={refreshMarkdownSiblings}
           recentMarkdown={recentMarkdown}
           onOpenMarkdownFile={handleOpenMarkdownSibling}
@@ -1615,9 +1661,20 @@ function App() {
           broadcastCount={connectedSshCount}
           onToggleBroadcast={handleToggleBroadcast}
           onMarkdownDirtyChange={handleMarkdownDirtyChange}
+          onDocumentOutlineChange={handleDocumentOutlineChange}
         />
       </main>
       <CliApprovalQueue approvals={cliApprovals} locale={profileState.settings?.language || "en"} />
+      {cliApprovalPanel && (
+        <CliApprovalPanel
+          // Keyed by request id so a replacement request mounts with a fresh
+          // selection instead of inheriting the previous request's checkboxes.
+          key={cliApprovalPanel.id}
+          request={cliApprovalPanel}
+          locale={profileState.settings?.language || "en"}
+          onResolve={handleCliApprovalResolve}
+        />
+      )}
       {floatingTabIds.map((id) => {
         const tab = sessions.tabs.find((t) => t.id === id);
         if (!tab) return null;

@@ -6,6 +6,7 @@ import { TerminalStatusBar } from "./TerminalStatusBar";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
 import { clampSplitRatio, splitPaneIds } from "../../utils/splitPane";
+import type { DocumentOutline } from "../../utils/documentPresentation";
 
 // Lazy-loaded: MarkdownViewer pulls in marked, DOMPurify, highlight.js and
 // mermaid, which together dominate the bundle. Splitting them out keeps them
@@ -38,6 +39,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
   broadcastCount?: number;
   onToggleBroadcast?: () => void;
   onMarkdownDirtyChange?: (id: string, dirty: boolean, save: () => Promise<boolean>) => void;
+  onDocumentOutlineChange?: (id: string, outline: DocumentOutline | null) => void;
   getDimensions?: (id: string) => { cols: number; rows: number } | null;
   getCurrentDirectory?: (id: string) => { path: string; host?: string } | null;
   onOpenCurrentDirectory?: (id: string, path: string) => void;
@@ -190,7 +192,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
             <div
               key={tab.id}
               data-tab-id={tab.id}
-              className={hostClass}
+              className={clsx(hostClass, tab.type === 'markdown' && 'document-host-pane')}
               style={hostStyle}
               ref={(el) => { props.terminalHosts.current[tab.id] = el; }}
               onFocusCapture={isSplitTab && !isActive ? () => props.onActive(tab.id) : undefined}
@@ -199,6 +201,9 @@ export const TerminalArea = memo(function TerminalArea(props: {
               {tab.type === 'markdown' && (tab.filePath || tab.remotePath) && (
                 <Suspense fallback={<div className="empty compact">{t(lang, "loading")}</div>}>
                   <MarkdownViewer
+                    documentId={tab.id}
+                    readingIdentity={JSON.stringify([tab.remotePath ? 'remote' : 'local', tab.remotePath ? tab.profileId || tab.remoteSessionId : '', tab.remotePath || tab.filePath])}
+                    onOutlineChange={props.onDocumentOutlineChange}
                     source={tab.markdownSource || (tab.remotePath ? 'remote' : 'local')}
                     filePath={tab.filePath}
                     remotePath={tab.remotePath}

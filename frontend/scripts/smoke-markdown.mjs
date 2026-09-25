@@ -64,7 +64,7 @@ try {
   await page.waitForFunction(() => window.mdSmokeReady, null, { timeout: 30000 });
   const open = async (path) => {
     await page.evaluate((path) => window.mdSmokeEmit('file:open-external', path), path);
-    await page.locator('.markdown-viewer[data-active="true"] .markdown-viewer-toolbar-name', { hasText: path.split('/').pop() }).waitFor();
+    await page.waitForFunction((path) => document.querySelector('.markdown-viewer[data-active="true"]')?.getAttribute('data-document-path') === path, path);
   };
   const active = () => page.locator('.markdown-viewer[data-active="true"]');
   const drawing = () => active().locator('.md-diagram-svg > svg').first();
@@ -141,11 +141,12 @@ try {
     assert(await active().locator('.markdown-viewer-toolbar').evaluate((bar) => bar.scrollWidth <= bar.clientWidth + 1), `Document toolbar overflows at ${width}px`);
     await page.screenshot({ path: join(out, `workflows-${theme}-${width}.png`), animations: 'disabled' });
     if (width === 540) {
-      assert.equal(await active().locator('.markdown-viewer-outline').count(), 0, 'Narrow reading area starts covered by the outline');
-      await active().getByTitle('大纲', { exact: true }).click();
-      await active().locator('.markdown-viewer-outline').waitFor();
-      await page.keyboard.press('Escape');
-      await active().locator('.markdown-viewer-outline').waitFor({ state: 'hidden' });
+      assert.equal(await active().locator('.markdown-viewer-outline').count(), 0, 'Narrow reading area has a duplicate outline');
+      const outlineToggle = page.locator('.document-panel-outline .document-section-toggle');
+      await outlineToggle.click();
+      await page.locator('.document-panel-outline-list').waitFor({ state: 'hidden' });
+      await outlineToggle.click();
+      await page.locator('.document-panel-outline-list').waitFor();
     }
     await assertNavigationVisible(`${theme} ${width}px expanded sidebar`);
     await setSidebarCollapsed(true);
@@ -182,11 +183,13 @@ try {
   await active().getByPlaceholder('查找').fill('检索');
   await active().locator('.markdown-search-count', { hasText: '1/2' }).waitFor();
   await active().getByPlaceholder('查找').press('Escape');
+  await active().getByRole('button', { name: '排版', exact: true }).click();
   const zoom = active().getByLabel('文档缩放', { exact: true });
   await zoom.fill('1.5');
   await active().getByRole('button', { name: '重置文档缩放' }).click();
   assert.equal(await zoom.inputValue(), '1');
   assert.equal(await active().locator('.md-document').evaluate((node) => node.style.zoom), '1');
+  await page.keyboard.press('Escape');
   const cachedId = await drawing().getAttribute('id');
   await open('/other.md');
   await active().getByText('普通文档内容。', { exact: true }).waitFor();
@@ -232,7 +235,7 @@ try {
   await assertCurrentFileVisible();
   await assertNavigationVisible('Navigating between connections and documents');
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ status: 'passed', screenshots: out, checks: ['11 Chinese flowchart labels', 'light and dark themes', '1440/900/540px reading', 'navigation remains reachable when opening/switching documents with a collapsed sidebar', 'long-folder current-file reveal after expansion', 'restored sidebar and navigation between sections', 'compact outline and Escape', 'independent diagram zoom', 'copy source', 'expanded dialog and scroll restoration', 'document search and zoom reset', 'cached diagrams across tab switches', 'wide diagram scrolling and fit', 'parse-error source and retry', 'sequence/state/class diagrams and multiline labels', 'render container cleanup'] }));
+  console.log(JSON.stringify({ status: 'passed', screenshots: out, checks: ['11 Chinese flowchart labels', 'light and dark themes', '1440/900/540px reading', 'navigation remains reachable when opening/switching documents with a collapsed sidebar', 'long-folder current-file reveal after expansion', 'restored sidebar and navigation between sections', 'sidebar outline navigation and folding', 'independent diagram zoom', 'copy source', 'expanded dialog and scroll restoration', 'document search and zoom reset', 'cached diagrams across tab switches', 'wide diagram scrolling and fit', 'parse-error source and retry', 'sequence/state/class diagrams and multiline labels', 'render container cleanup'] }));
 } catch (error) {
   if (page) await page.screenshot({ path: join(out, 'failure.png'), animations: 'disabled' }).catch(() => undefined);
   console.error(JSON.stringify({ status: 'failed', screenshots: out }));

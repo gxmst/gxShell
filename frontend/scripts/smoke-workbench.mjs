@@ -234,7 +234,7 @@ try {
   await page.getByRole('tab', { name: 'notes.md', exact: true }).click();
   await page.evaluate(() => window.smokeEmit('file:open-external', '/settings.jsonc'));
   const jsonc = page.locator('.markdown-viewer[data-active="true"]');
-  await jsonc.locator('.text-document').waitFor();
+  await jsonc.locator('.cm-content[aria-readonly="true"]').waitFor();
   await jsonc.getByTitle('编辑', { exact: true }).click();
   await jsonc.locator('.cm-editor').waitFor();
   await jsonc.getByTitle('格式化 JSON', { exact: true }).click();

@@ -96,4 +96,30 @@ describe('SourceEditor statistics', () => {
     act(() => handle.current?.insertText('edited'));
     expect(onChange).toHaveBeenCalledTimes(1);
   });
+
+  it('renders prose without gutters while preserving source text and selection across typography changes', () => {
+    const value = '第一章 开始\n\n原文包含  两个空格，排版不会改变它们。\n';
+    const handle = createRef<SourceEditorHandle>();
+    const props = { value, handleRef: handle, readOnly: true, presentation: 'prose' as const, fontSize: 17, wrap: true, mode: 'plain' as const, onChange: vi.fn(), onSave: vi.fn(), headings: [{ id: 'first', text: '第一章 开始', depth: 1, from: 0 }] };
+    const { container, rerender } = render(<SourceEditor {...props} />);
+    const view = EditorView.findFromDOM(container.querySelector('.cm-content')!)!;
+    expect(container.querySelector('.cm-gutters')).toBeNull();
+    expect(container.querySelector('.document-prose-heading')).toHaveTextContent('第一章 开始');
+    act(() => handle.current?.selectAll());
+    rerender(<SourceEditor {...props} fontSize={20} lineHeight={2.1} columnWidth="60rem" />);
+    expect(view.state.doc.toString()).toBe(value);
+    expect(view.state.selection.main.to).toBe(value.length);
+    expect(props.onChange).not.toHaveBeenCalled();
+  });
+
+  it('emphasizes log severity and table separators without changing the document', () => {
+    const props = { readOnly: true, fontSize: 14, wrap: false, mode: 'plain' as const, onChange: vi.fn(), onSave: vi.fn() };
+    const { container, rerender } = render(<SourceEditor {...props} value="2026-09-15 ERROR connection failed" presentation="log" />);
+    expect(container.querySelector('.document-log-error')).toHaveTextContent('ERROR');
+    rerender(<SourceEditor {...props} value={'name\tcount\nalpha\t2'} presentation="table" sourcePath="/report.TSV" />);
+    const view = EditorView.findFromDOM(container.querySelector('.cm-content')!)!;
+    expect(view.state.doc.toString()).toBe('name\tcount\nalpha\t2');
+    expect(container.querySelectorAll('.document-table-separator')).toHaveLength(2);
+    expect(props.onChange).not.toHaveBeenCalled();
+  });
 });

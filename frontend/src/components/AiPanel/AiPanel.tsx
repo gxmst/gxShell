@@ -1,13 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Check, Copy, History, Link2, ListChecks, MessageSquarePlus, Play, RefreshCw, Send, Server, Settings2, Square, Stethoscope, X } from "lucide-react";
 import { marked } from "marked";
-import DOMPurify from "dompurify";
 import { types } from "../../../wailsjs/go/models";
 import { AiChat, AiContinueChat, AiExecuteTools, CancelAiChat, GetAiConfig, GetAiUsage, ListAiModels, ResetAiUsage, SaveAiConfig } from "../../../wailsjs/go/app/App";
 import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import { t } from "../../i18n";
 import type { Tab, Toast } from "../../types";
 import { writeClipboardText } from "../../utils/clipboard";
+import { sanitizeRenderedHtml } from "../../utils/sanitizeHtml";
 import { Label } from "../modals/ModalShell";
 
 type ToolCallData = {
@@ -68,8 +68,16 @@ let sessionCounter = 0;
 
 marked.setOptions({ breaks: true, gfm: true });
 
-const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
-  const html = useMemo(() => DOMPurify.sanitize(marked.parse(content) as string), [content]);
+// Exported so the sanitizing can be tested on its own: rendering the whole
+// panel would need every Wails binding stubbed out.
+export const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
+  // A reply is not trusted input: the assistant reads command output and file
+  // contents, so anything it read can steer what it writes back. Rendering that
+  // with DOMPurify's defaults left the same vectors open as the document
+  // preview once had — a stylesheet or an overlay could hide the approval panel
+  // while the user was reading, and a link could navigate the window away. Both
+  // are closed by the shared policy.
+  const html = useMemo(() => sanitizeRenderedHtml(marked.parse(content) as string), [content]);
   return <div className="ai-markdown" dangerouslySetInnerHTML={{ __html: html }} />;
 });
 

@@ -334,9 +334,22 @@
 .document-panel .text-file-row { min-height: 32px; padding: 7px; font-size: 11.5px; border: 1px solid transparent; border-radius: 5px; background: transparent; }
 .document-panel .text-file-row:hover { background: var(--accent-soft); }
 .document-panel .text-file-row > span { font-weight: 500; }
-.document-panel .text-file-row.active { color: var(--text); border-color: color-mix(in srgb, var(--accent) 32%, transparent); background: var(--accent-soft); box-shadow: none; }
+.document-panel .text-file-row.active { color: var(--text); border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: none; }
 .document-panel .text-file-row.active > svg { color: var(--accent); }
 .document-kind { flex: 0 0 auto; max-width: 48px; overflow: hidden; color: var(--muted); font-size: 8px; letter-spacing: .025em; }
+.document-section-toggle { width: 100%; text-align: left; }
+.document-section-toggle:disabled { cursor: default; }
+.document-section-toggle > span:first-of-type { flex: 1; }
+.document-chevron-open { transform: rotate(90deg); }
+.document-files.document-files-with-outline { flex: 1 1 40%; }
+.document-files.document-files-folded { flex: 0 0 auto; }
+.document-panel-outline { display: flex; flex: 1 1 50%; flex-direction: column; min-height: 0; padding-top: 10px; border-top: 1px solid color-mix(in srgb, var(--border) 65%, transparent); margin-top: 8px; }
+.document-panel-outline-folded { flex: 0 0 auto; }
+.document-panel-outline-list { min-height: 0; overflow-y: auto; padding-bottom: 10px; }
+.document-panel-heading { display: block; width: 100%; padding: 7px 8px; color: var(--muted); text-align: left; font-size: 11.5px; line-height: 1.5; border-left: 2px solid transparent; border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.document-panel-heading:hover { color: var(--text); background: var(--bg-hover); }
+.document-panel-heading.active { color: var(--accent); border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.document-outline-limit { display: block; padding: 8px; font-size: 10px; line-height: 1.5; color: var(--muted); }
 .document-pagination { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; padding-top: 6px; border-top: 1px solid var(--border); }
 .document-pagination > span { flex: 1; min-width: 0; color: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
 .document-empty { padding: 18px 10px; font-size: 11px; line-height: 1.65; color: var(--muted); }

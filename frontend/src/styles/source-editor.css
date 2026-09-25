@@ -6,7 +6,7 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: var(--bg);
+  background: var(--document-bg, var(--bg));
 }
 
 .source-editor .cm-editor {
@@ -15,6 +15,63 @@
 
 .source-editor .cm-editor.cm-focused {
   outline: none;
+}
+
+.source-editor-readonly .cm-content {
+  padding-top: 26px;
+}
+
+.source-editor-readonly .cm-line {
+  padding-inline: 16px;
+}
+
+.source-editor-readonly .cm-gutters {
+  padding-left: 8px;
+}
+
+.source-editor-readonly[data-presentation="prose"] .cm-content {
+  width: 100%;
+  max-width: var(--reading-column);
+  flex: 1 1 auto;
+  margin-inline: auto;
+  padding: 32px 24px 35vh;
+  font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  letter-spacing: 0.015em;
+}
+
+.source-editor-readonly[data-presentation="prose"] .cm-line {
+  padding-inline: 0;
+}
+
+.source-editor-readonly .document-prose-heading {
+  padding-top: 0.75em;
+  padding-bottom: 0.45em;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.source-editor-readonly .document-log-error {
+  color: var(--bad);
+  font-weight: 650;
+}
+
+.source-editor-readonly .document-log-warning {
+  color: var(--warn);
+  font-weight: 650;
+}
+
+.source-editor-readonly .document-log-info {
+  color: var(--accent);
+}
+
+.source-editor-readonly .document-table-header {
+  font-weight: 650;
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.source-editor-readonly .document-table-separator {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 /* Match the app's thin, reveal-on-hover scrollbar treatment. */

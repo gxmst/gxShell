@@ -1,4 +1,4 @@
-const CJK_RE = /[㐀-䶿一-鿿぀-ヿ가-힯]/g;
+const WHITESPACE_RE = /\s/;
 
 /**
  * Word count for the editor status bar.
@@ -8,7 +8,18 @@ const CJK_RE = /[㐀-䶿一-鿿぀-ヿ가-힯]/g;
  * syllable counts as a word, and the remaining runs are counted normally.
  */
 export function countWords(text: string): number {
-  const cjk = (text.match(CJK_RE) || []).length;
-  const rest = text.replace(CJK_RE, ' ').trim();
-  return cjk + (rest ? rest.split(/\s+/).length : 0);
+  // A 20 MiB Chinese document can contain millions of characters. Count in
+  // one pass instead of allocating a match array, a replacement and a split.
+  let words = 0;
+  let inWord = false;
+  for (let index = 0; index < text.length; index++) {
+    const code = text.charCodeAt(index);
+    const cjk = (code >= 0x3400 && code <= 0x4dbf) || (code >= 0x4e00 && code <= 0x9fff)
+      || (code >= 0x3040 && code <= 0x30ff) || (code >= 0xac00 && code <= 0xd7af);
+    if (cjk) { words++; inWord = false; continue; }
+    const space = code === 32 || (code >= 9 && code <= 13) || (code > 127 && WHITESPACE_RE.test(text[index]));
+    if (space) inWord = false;
+    else if (!inWord) { words++; inWord = true; }
+  }
+  return words;
 }

@@ -72,7 +72,7 @@ func (a *App) WriteRemoteTextFile(sessionID, remotePath, content string) error {
 		return fmt.Errorf("remote file is not a supported text file")
 	}
 	if len(content) > maxTextFileSize {
-		return fmt.Errorf("content too large (max 5MB)")
+		return fmt.Errorf("content too large (max %d MiB)", maxTextFileSize/(1024*1024))
 	}
 	if err := validateTextDocument([]byte(content)); err != nil {
 		return err

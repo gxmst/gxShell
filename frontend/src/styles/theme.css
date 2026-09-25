@@ -305,20 +305,20 @@
   --code-title: #f9a8d4;
 }
 
-/* Light — cool slate / blue product UI. */
+/* Light — neutral surfaces, with blue reserved for actions and selection. */
 .app-shell[data-theme="Light"] {
-  --bg: #e8edf4;
-  --panel: #f0f3f8;
-  --panel-soft: #e9eef5;
+  --bg: #f5f6f8;
+  --panel: #f5f6f8;
+  --panel-soft: #eef0f3;
   --panel-raised: #ffffff;
   --bg-secondary: var(--panel-soft);
-  --terminal: #f4f7fb;
-  --terminal-top: #eef1f7;
-  --border: rgba(76, 94, 118, .18);
-  --border-strong: rgba(76, 94, 118, .28);
-  --text: #192038;
-  --muted: #5a6b82;
-  --muted-2: #7d8ea3;
+  --terminal: #fcfcfd;
+  --terminal-top: #f5f6f8;
+  --border: rgba(42, 50, 65, .13);
+  --border-strong: rgba(42, 50, 65, .24);
+  --text: #252a34;
+  --muted: #667080;
+  --muted-2: #818a98;
   --accent: #2563eb;
   --accent-soft: rgba(37, 99, 235, .08);
   --ok: #15803d;
@@ -328,11 +328,11 @@
   --accent-contrast: #ffffff;
   --scrollbar-thumb: color-mix(in srgb, var(--muted) 36%, transparent);
   --scrollbar-thumb-strong: color-mix(in srgb, var(--accent) 48%, transparent);
-  --code-bg: #eef2f8;
-  --code-border: rgba(76, 94, 118, .22);
+  --code-bg: #f2f4f6;
+  --code-border: rgba(42, 50, 65, .16);
   --code-keyword: #7c3aed;
   --code-string: #0f7d3d;
   --code-number: #b45309;
   --code-title: #b0378a;
-  --code-comment: #6b7a90;
+  --code-comment: #667080;
 }
