@@ -345,7 +345,17 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
           <div className="transfer-panel-header">
             <span className="text-xs font-semibold" style={{ color: "var(--accent)" }}>{t(lang, "local")}</span>
             <div className="transfer-path-row">
-              <input className="transfer-input" value={localPath} onChange={(e) => setLocalPath(e.target.value)} onKeyDown={(e) => e.key === "Enter" && loadLocalDir(localPath)} />
+              <input
+                className="transfer-input"
+                value={localPath}
+                onChange={(e) => setLocalPath(e.target.value)}
+                onKeyDown={(e) => {
+                  // Enter commits an IME candidate while composing, so a Chinese
+                  // directory name would be navigated to half-typed.
+                  if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                  if (e.key === "Enter") loadLocalDir(localPath);
+                }}
+              />
               <button className="transfer-icon-btn" onClick={() => loadLocalDir(localPath)}><RefreshCw size={12} /></button>
             </div>
           </div>
@@ -383,7 +393,11 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
                 className="transfer-input"
                 value={remotePath}
                 onChange={(e) => setRemoteView((current) => ({ ...current, sessionId: activeSessionId, path: e.target.value }))}
-                onKeyDown={(e) => e.key === "Enter" && loadRemoteDir(remotePath)}
+                onKeyDown={(e) => {
+                  // See the local path field.
+                  if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                  if (e.key === "Enter") loadRemoteDir(remotePath);
+                }}
               />
               <button className="transfer-icon-btn" onClick={() => loadRemoteDir(remotePath)}><RefreshCw size={12} /></button>
             </div>

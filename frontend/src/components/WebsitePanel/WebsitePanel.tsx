@@ -26,6 +26,7 @@ import {
 } from "../../../wailsjs/go/app/App";
 import { t } from "../../i18n";
 import type { Tab, Toast } from "../../types";
+import { isRemoteSession } from "../../utils/sessionIdentity";
 
 const ARM_TIMEOUT_MS = 3000;
 
@@ -53,8 +54,13 @@ export function WebsitePanel(props: {
   const armedTimerRef = useRef<number | null>(null);
   activeSessionRef.current = props.active?.id || "";
 
+  // A site config is read from and written to one host. A local terminal or a
+  // Markdown document has a tab id too, and acting on one only produced a
+  // "session not found" error.
+  const sessionId = isRemoteSession(props.active) ? props.active.id : "";
+
   const refresh = useCallback(async () => {
-    const sessionID = props.active?.id;
+    const sessionID = sessionId;
     if (!sessionID) return;
     const seq = ++refreshSeqRef.current;
     setLoading(true);
@@ -69,7 +75,7 @@ export function WebsitePanel(props: {
     } finally {
       if (seq === refreshSeqRef.current && activeSessionRef.current === sessionID) setLoading(false);
     }
-  }, [props.active?.id, props.onNotify]);
+  }, [sessionId, props.onNotify]);
 
   useEffect(() => {
     refresh();
@@ -98,52 +104,64 @@ export function WebsitePanel(props: {
   };
 
   const openEdit = async (site: types.WebsiteInfo) => {
-    if (!props.active?.id) return;
+    const sessionID = sessionId;
+    if (!sessionID) return;
     const key = `${site.backend}:${site.mode}:${site.name}`;
     setBusy(key);
     try {
-      const text = await GetWebsiteConfig(props.active.id, site.backend, site.mode, site.name);
+      const text = await GetWebsiteConfig(sessionID, site.backend, site.mode, site.name);
+      // The read is a round trip: the panel can be pointed at another host
+      // before it returns, and this config belongs to the host it came from.
+      if (activeSessionRef.current !== sessionID) return;
       setEditor({ backend: site.backend, mode: site.mode, name: site.name, isNew: false });
       setConfig(text || "");
     } catch (err) {
+      if (activeSessionRef.current !== sessionID) return;
       props.onNotify(String(err), "error");
     } finally {
-      setBusy(null);
+      if (activeSessionRef.current === sessionID) setBusy(null);
     }
   };
 
   const save = async () => {
-    if (!props.active?.id || !editor) return;
+    const sessionID = sessionId;
+    if (!sessionID || !editor) return;
     setBusy("editor");
     try {
-      await SaveWebsiteConfig(props.active.id, editor.backend, editor.mode, editor.name, config);
+      await SaveWebsiteConfig(sessionID, editor.backend, editor.mode, editor.name, config);
+      if (activeSessionRef.current !== sessionID) return;
       props.onNotify(t(lang, "siteSaved"), "success");
       setEditor(null);
       await refresh();
     } catch (err) {
+      if (activeSessionRef.current !== sessionID) return;
       props.onNotify(String(err), "error");
     } finally {
-      setBusy(null);
+      if (activeSessionRef.current === sessionID) setBusy(null);
     }
   };
 
   const toggle = async (site: types.WebsiteInfo) => {
-    if (!props.active?.id) return;
+    const sessionID = sessionId;
+    if (!sessionID) return;
     const key = `${site.backend}:${site.mode}:${site.name}`;
     setBusy(key);
     try {
-      await SetWebsiteEnabled(props.active.id, site.backend, site.mode, site.name, !site.enabled);
+      await SetWebsiteEnabled(sessionID, site.backend, site.mode, site.name, !site.enabled);
+      if (activeSessionRef.current !== sessionID) return;
       props.onNotify(t(lang, site.enabled ? "siteDisabled" : "siteEnabled"), "success");
       await refresh();
     } catch (err) {
+      if (activeSessionRef.current !== sessionID) return;
       props.onNotify(String(err), "error");
     } finally {
-      setBusy(null);
+      if (activeSessionRef.current === sessionID) setBusy(null);
     }
   };
 
   const remove = async (site: types.WebsiteInfo) => {
-    if (!props.active?.id) return;
+    const sessionID = sessionId;
+    if (!sessionID) return;
     const key = `${site.backend}:${site.mode}:${site.name}`;
     if (armed !== key) {
       setArmed(key);
@@ -154,32 +172,37 @@ export function WebsitePanel(props: {
     setArmed(null);
     setBusy(key);
     try {
-      await DeleteWebsite(props.active.id, site.backend, site.mode, site.name);
+      await DeleteWebsite(sessionID, site.backend, site.mode, site.name);
+      if (activeSessionRef.current !== sessionID) return;
       props.onNotify(t(lang, "siteDeleted"), "success");
       await refresh();
     } catch (err) {
+      if (activeSessionRef.current !== sessionID) return;
       props.onNotify(String(err), "error");
     } finally {
-      setBusy(null);
+      if (activeSessionRef.current === sessionID) setBusy(null);
     }
   };
 
   const testConfig = async () => {
-    if (!props.active?.id) return;
+    const sessionID = sessionId;
+    if (!sessionID) return;
     const backend = editor?.backend || status?.sites?.[0]?.backend || status?.backends?.[0]?.split(":")[0];
     if (!backend) return;
     setBusy("test");
     try {
-      const output = await TestWebsiteConfig(props.active.id, backend);
+      const output = await TestWebsiteConfig(sessionID, backend);
+      if (activeSessionRef.current !== sessionID) return;
       props.onNotify((output || t(lang, "siteTestOk")).trim().slice(0, 220), "success");
     } catch (err) {
+      if (activeSessionRef.current !== sessionID) return;
       props.onNotify(String(err), "error");
     } finally {
-      setBusy(null);
+      if (activeSessionRef.current === sessionID) setBusy(null);
     }
   };
 
-  if (!props.active?.id) {
+  if (!sessionId) {
     return <div className="panel-page"><div className="panel-empty"><Globe2 size={24} /><span>{t(lang, "noActiveSession")}</span></div></div>;
   }
 

@@ -565,6 +565,9 @@ export function SftpPanel(props: {
               onChange={(e) => setDraftPath(e.target.value)}
               onFocus={() => setPathFocus(true)}
               onKeyDown={(e) => {
+                // Enter commits an IME candidate while composing, so navigating
+                // here would go to the half-typed path.
+                if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
                 if (e.key === "Enter") {
                   e.preventDefault();
                   goTo(draftPath.trim() || ".");

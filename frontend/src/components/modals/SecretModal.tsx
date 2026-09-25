@@ -27,11 +27,19 @@ export function SecretModal({ request, language, onSubmit, onClose }: { request:
       <DialogHeader icon={<KeyRound size={15} />} title={isPassword ? t(language, "enterPassword") : t(language, "enterPassphrase")} description={`${request.profile.username}@${request.profile.host}`} />
       {isPassword ? (
         <Label text={t(language, "password")}>
-          <input autoFocus className="input" disabled={submitting} type={show ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+          <input autoFocus className="input" disabled={submitting} type={show ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => {
+            // A passphrase can contain non-ASCII characters; Enter commits an
+            // IME candidate while composing and must not submit here.
+            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+            if (e.key === "Enter") submit();
+          }} />
         </Label>
       ) : (
         <Label text={t(language, "passphrase")}>
-          <input autoFocus className="input" disabled={submitting} type={show ? "text" : "password"} value={passphrase} onChange={(e) => setPassphrase(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+          <input autoFocus className="input" disabled={submitting} type={show ? "text" : "password"} value={passphrase} onChange={(e) => setPassphrase(e.target.value)} onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+            if (e.key === "Enter") submit();
+          }} />
         </Label>
       )}
       <label className="check mt-3"><input type="checkbox" disabled={submitting} checked={show} onChange={(e) => setShow(e.target.checked)} /> {t(language, "showSecret")}</label>

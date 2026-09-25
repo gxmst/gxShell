@@ -15,7 +15,7 @@ function tabContext(tab: Tab, profile?: types.Profile) {
 // The tab strip. It is mounted inside AppTopBar, so it owns no window chrome
 // and no sidebar affordance: the activity rail is always visible and carries
 // the only panel toggle.
-export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconnect, onTearOff, onReorder, onSplitToggle, onNewConnection, onNewLocal, onNewTerminal, onOpenMarkdown, onRename, onTogglePin, rightAccessory, broadcastInput, broadcastAvailable, onToggleBroadcast, recording, onToggleRecording, automationActivity, dirtyTabIds, language }: { tabs: Tab[]; activeTab: string; profiles: types.Profile[]; onActive: (id: string) => void; onClose: (id: string) => void; onReconnect: (tab: Tab) => void; onTearOff?: (tab: Tab) => void; onReorder?: (draggedId: string, targetId: string) => void; onSplitToggle?: (tabId: string, direction: SplitDirection) => void; onNewConnection?: () => void; onNewLocal?: () => void; onNewTerminal?: (tab: Tab) => void; onOpenMarkdown?: () => void; onRename?: (tab: Tab) => void; onTogglePin?: (tab: Tab) => void; rightAccessory?: ReactNode; broadcastInput?: boolean; broadcastAvailable?: boolean; onToggleBroadcast?: () => void; recording?: boolean; onToggleRecording?: (id: string) => void; automationActivity?: Record<string, AutomationIndicator>; dirtyTabIds?: string[]; language?: string }) {
+export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconnect, onTearOff, onReorder, onSplitToggle, onNewConnection, onNewLocal, onNewTerminal, onOpenMarkdown, onRename, onTogglePin, rightAccessory, broadcastInput, broadcastAvailable, onToggleBroadcast, recording, onToggleRecording, automationActivity, dirtyTabIds, language }: { tabs: Tab[]; activeTab: string; profiles: types.Profile[]; onActive: (id: string, options?: { keepFocus?: boolean }) => void; onClose: (id: string) => void; onReconnect: (tab: Tab) => void; onTearOff?: (tab: Tab) => void; onReorder?: (draggedId: string, targetId: string) => void; onSplitToggle?: (tabId: string, direction: SplitDirection) => void; onNewConnection?: () => void; onNewLocal?: () => void; onNewTerminal?: (tab: Tab) => void; onOpenMarkdown?: () => void; onRename?: (tab: Tab) => void; onTogglePin?: (tab: Tab) => void; rightAccessory?: ReactNode; broadcastInput?: boolean; broadcastAvailable?: boolean; onToggleBroadcast?: () => void; recording?: boolean; onToggleRecording?: (id: string) => void; automationActivity?: Record<string, AutomationIndicator>; dirtyTabIds?: string[]; language?: string }) {
   const active = tabs.find((tab) => tab.id === activeTab);
   const lang = language || "en";
   const dragRef = useRef<{ tabId: string; startX: number; startY: number; active: boolean } | null>(null);
@@ -146,13 +146,15 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
   const activateTabByIndex = useCallback((index: number) => {
     const tab = tabs[index];
     if (!tab) return;
-    onActive(tab.id);
-    window.requestAnimationFrame(() => {
-      const host = tabsScrollRef.current;
-      const target = Array.from(host?.querySelectorAll<HTMLButtonElement>(".tab-main") || [])
-        .find((element) => element.closest<HTMLElement>(".tab")?.dataset.tabId === tab.id);
-      target?.focus();
-    });
+    // The strip keeps the focus it is navigating with, so the caller must not
+    // move it into the terminal. The focus move is synchronous: the button for
+    // every tab is already rendered, and deferring it to an animation frame is
+    // what let the terminal's own focus timer win the race.
+    onActive(tab.id, { keepFocus: true });
+    const host = tabsScrollRef.current;
+    const target = Array.from(host?.querySelectorAll<HTMLButtonElement>(".tab-main") || [])
+      .find((element) => element.closest<HTMLElement>(".tab")?.dataset.tabId === tab.id);
+    target?.focus();
   }, [onActive, tabs]);
 
   const onTabKeyDown = useCallback((event: React.KeyboardEvent, index: number) => {

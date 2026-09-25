@@ -161,7 +161,17 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
         <div className="sftp-dual-header">
           <span className="text-[10px] font-semibold text-accent">{t(lang, "local")}</span>
           <div className="sftp-dual-path-row">
-            <input className="sftp-dual-input" value={localPath} onChange={(e) => setLocalPath(e.target.value)} onKeyDown={(e) => e.key === "Enter" && loadLocalDir(localPath)} />
+            <input
+              className="sftp-dual-input"
+              value={localPath}
+              onChange={(e) => setLocalPath(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter commits an IME candidate while composing, so a Chinese
+                // directory name would be navigated to half-typed.
+                if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                if (e.key === "Enter") loadLocalDir(localPath);
+              }}
+            />
             <button className="sftp-dual-icon-btn" onClick={() => loadLocalDir(localPath)}><RefreshCw size={11} /></button>
           </div>
         </div>
@@ -224,7 +234,12 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
               className="sftp-dual-input"
               value={remotePath}
               onChange={(e) => setRemoteView((current) => ({ ...current, sessionId: activeSessionId, path: e.target.value }))}
-              onKeyDown={(e) => e.key === "Enter" && loadRemoteDir(remotePath)}
+              onKeyDown={(e) => {
+                // See the local path field: Enter may be committing an IME
+                // candidate rather than confirming the path.
+                if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                if (e.key === "Enter") loadRemoteDir(remotePath);
+              }}
             />
             <button className="sftp-dual-icon-btn" onClick={() => loadRemoteDir(remotePath)}><RefreshCw size={11} /></button>
           </div>

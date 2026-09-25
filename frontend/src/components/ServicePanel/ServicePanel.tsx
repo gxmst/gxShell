@@ -103,6 +103,10 @@ export function ServicePanel(props: {
   const [forceReq, setForceReq] = useState<{
     unit: string;
     action: ServiceActionName;
+    // The session the action was issued against. The dialog stays open while
+    // the user reads it, and the panel can be switched underneath: confirming
+    // must not then run the action against the new host.
+    sessionId: string;
   } | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval>>();
   const armedTimerRef = useRef<number | null>(null);
@@ -198,13 +202,21 @@ export function ServicePanel(props: {
     };
   }, [refresh]);
 
+  // Follow the tail only while the reader is already at the bottom. Scrolling
+  // unconditionally on every chunk made it impossible to read back through a
+  // busy unit's output: the view snapped to the end on each flush.
+  const stickToBottomRef = useRef(true);
+
+  const onLogScroll = useCallback(() => {
+    const el = logBodyRef.current;
+    if (!el) return;
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  }, []);
+
   useEffect(() => {
-    if (logBodyRef.current) {
-      logBodyRef.current.scrollTo({
-        top: logBodyRef.current.scrollHeight,
-        behavior: "smooth",
-      });
-    }
+    const el = logBodyRef.current;
+    if (!el || !stickToBottomRef.current) return;
+    el.scrollTop = el.scrollHeight;
   }, [logs]);
 
   useEffect(() => {
@@ -239,6 +251,8 @@ export function ServicePanel(props: {
     setArmed(null);
     setForceReq(null);
     setListError(null);
+    // The per-row spinner belongs to the session that was on screen.
+    setActionLoading(null);
   }, [props.active?.id]);
 
   useEffect(() => {
@@ -279,6 +293,8 @@ export function ServicePanel(props: {
       const seq = ++logRequestSeqRef.current;
       setLogUnit(unit);
       setLogs("");
+      // A freshly opened log starts at its end.
+      stickToBottomRef.current = true;
       window.requestAnimationFrame(() => {
         logPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
         logPanelRef.current?.focus({ preventScroll: true });
@@ -314,6 +330,8 @@ export function ServicePanel(props: {
       const seq = ++logRequestSeqRef.current;
       logStreamIdRef.current = streamID;
       setLogs("");
+      // Following the stream means following the tail.
+      stickToBottomRef.current = true;
       setFollowing(true);
       try {
         await StreamServiceLogs(sessionID, unit, streamID, 200);
@@ -358,11 +376,15 @@ export function ServicePanel(props: {
   }, []);
 
   const doAction = useCallback(
-    async (unit: string, action: ServiceActionName, force: boolean) => {
-      if (!props.active?.id) return;
+    async (unit: string, action: ServiceActionName, force: boolean, sessionID: string) => {
+      if (!sessionID) return;
       setActionLoading(unit);
       try {
-        const result = await ServiceAction(props.active.id, unit, action, force);
+        const result = await ServiceAction(sessionID, unit, action, force);
+        // A service action can take seconds, and the panel can be pointed at
+        // another host meanwhile. The reply describes the host it was sent to,
+        // so it must not repaint this list or claim success for it.
+        if (activeSessionRef.current !== sessionID) return;
         if (result.loadState || result.activeState || result.unitFileState) {
           setServices((previous) => previous.map((service) => service.name === unit
             ? new types.ServiceInfo({
@@ -393,23 +415,27 @@ export function ServicePanel(props: {
           );
         }
       } catch (err) {
+        if (activeSessionRef.current !== sessionID) return;
         const msg = String(err);
         // The backend refuses stop/disable on SSH/network-critical units unless
         // force=true; surface the lockout warning and let the user retry forced.
-        if (
-          !force &&
-          action !== "start" &&
-          (isCriticalUnit(unit) || /force/i.test(msg))
-        ) {
-          setForceReq({ unit, action });
+        //
+        // Only those two actions: a restart or enable can never lock anyone out,
+        // and reporting an ordinary failure (a broken unit file, an unmet
+        // dependency) as a lockout warning hid the real error behind a dialog
+        // about cutting off SSH access.
+        const lockoutRisk =
+          (action === "stop" || action === "disable") && isCriticalUnit(unit);
+        if (!force && (lockoutRisk || /force/i.test(msg))) {
+          setForceReq({ unit, action, sessionId: sessionID });
         } else {
           onNotifyRef.current(msg, "error");
         }
       } finally {
-        setActionLoading(null);
+        if (activeSessionRef.current === sessionID) setActionLoading(null);
       }
     },
-    [props.active?.id, lang],
+    [lang],
   );
 
   // stop / restart / disable are two-step: first click arms the button
@@ -424,7 +450,7 @@ export function ServicePanel(props: {
         return;
       }
       clearArm();
-      doAction(unit, action, false);
+      doAction(unit, action, false, activeSessionRef.current);
     },
     [armed, arm, clearArm, doAction],
   );
@@ -521,7 +547,7 @@ export function ServicePanel(props: {
     );
   };
 
-  if (!props.active?.id) {
+  if (!sessionId) {
     return (
       <div className="service-panel panel-page">
         <div className="container-empty">
@@ -632,7 +658,7 @@ export function ServicePanel(props: {
               </button>
             </div>
           </div>
-          <div className="container-log-body" ref={logBodyRef}>
+          <div className="container-log-body" ref={logBodyRef} onScroll={onLogScroll}>
             <pre className="container-log-text">
               {logs}
             </pre>
@@ -741,7 +767,7 @@ export function ServicePanel(props: {
           onConfirm={() => {
             const req = forceReq;
             setForceReq(null);
-            doAction(req.unit, req.action, true);
+            doAction(req.unit, req.action, true, req.sessionId);
           }}
           onClose={() => setForceReq(null)}
         />

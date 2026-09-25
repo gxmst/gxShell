@@ -43,7 +43,12 @@ export function CommandVarsDialog({
               value={values[name] || ""}
               placeholder={name}
               onChange={(e) => setValues((prev) => ({ ...prev, [name]: e.target.value }))}
-              onKeyDown={(e) => { if (e.key === "Enter" && allFilled) submit(); }}
+              onKeyDown={(e) => {
+                // Enter commits an IME candidate while composing, so it must not
+                // submit the dialog with the half-typed text.
+                if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                if (e.key === "Enter" && allFilled) submit();
+              }}
             />
           </Label>
         ))}

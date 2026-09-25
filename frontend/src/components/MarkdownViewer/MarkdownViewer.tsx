@@ -26,6 +26,7 @@ import { hasActiveOverlay } from '../../utils/overlayManager';
 import { MermaidDiagrams } from './MermaidDiagrams';
 import { findPreviewRanges, findTextMatches, MAX_SEARCH_MATCHES } from './previewSearch';
 import { useReadingPosition } from './useReadingPosition';
+import { ConfirmDialog } from '../modals/ConfirmDialog';
 import { findHeadingElement, headingSlugOf } from '../../utils/markdownHeadings';
 import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime';
 import '../../styles/markdown-viewer.css';
@@ -133,6 +134,7 @@ export default function MarkdownViewer({
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formatting, setFormatting] = useState(false);
   const [initialAppearance] = useState(readDocumentAppearance);
@@ -420,6 +422,8 @@ export default function MarkdownViewer({
     } else {
       setActiveHeading('');
       setEditing(false);
+      // A discard prompt belongs to the document it was opened for.
+      setConfirmDiscard(false);
       setSplitPreview(false);
       void loadFile();
     }
@@ -499,9 +503,8 @@ export default function MarkdownViewer({
     setEditing(true);
   };
 
-  const cancelEdit = () => {
-    if (saveInFlightRef.current) return;
-    if (dirty && !window.confirm(t(lang, 'discardChanges'))) return;
+  const discardEdit = () => {
+    setConfirmDiscard(false);
     formatControllerRef.current?.abort();
     captureScrollRatio();
     draftRef.current = content;
@@ -510,6 +513,18 @@ export default function MarkdownViewer({
     setEol(loadedEol);
     setEditing(false);
     setSplitPreview(false);
+  };
+
+  const cancelEdit = () => {
+    if (saveInFlightRef.current) return;
+    // A native window.confirm would be the only one left in the application,
+    // and it renders as a browser prompt ("wails.localhost says") rather than
+    // as part of the app.
+    if (dirty) {
+      setConfirmDiscard(true);
+      return;
+    }
+    discardEdit();
   };
 
   const jsonErrorMessage = (validation: JsonValidationResult) => {
@@ -1458,6 +1473,17 @@ export default function MarkdownViewer({
             {eolLabel(eol)}
           </button>
         </div>
+      )}
+
+      {confirmDiscard && (
+        <ConfirmDialog
+          locale={lang}
+          title={t(lang, 'discardChangesTitle')}
+          body={t(lang, 'discardChanges')}
+          confirmText={t(lang, 'confirm')}
+          onConfirm={discardEdit}
+          onClose={() => setConfirmDiscard(false)}
+        />
       )}
     </div>
   );

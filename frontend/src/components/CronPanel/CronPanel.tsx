@@ -23,6 +23,7 @@ import {
 } from "../../../wailsjs/go/app/App";
 import { t } from "../../i18n";
 import type { Tab, Toast } from "../../types";
+import { isRemoteSession } from "../../utils/sessionIdentity";
 
 const ARM_TIMEOUT_MS = 3000;
 
@@ -47,8 +48,12 @@ export function CronPanel(props: {
   const armedTimerRef = useRef<number | null>(null);
   activeSessionRef.current = props.active?.id || "";
 
+  // A crontab belongs to one host. A local terminal or a Markdown document has
+  // a tab id too, and acting on one only produced a "session not found" error.
+  const sessionId = isRemoteSession(props.active) ? props.active.id : "";
+
   const refresh = useCallback(async () => {
-    const sessionID = props.active?.id;
+    const sessionID = sessionId;
     if (!sessionID) return;
     const seq = ++refreshSeqRef.current;
     setLoading(true);
@@ -63,7 +68,7 @@ export function CronPanel(props: {
     } finally {
       if (seq === refreshSeqRef.current && activeSessionRef.current === sessionID) setLoading(false);
     }
-  }, [props.active?.id, props.onNotify]);
+  }, [sessionId, props.onNotify]);
 
   useEffect(() => {
     refresh();
@@ -89,49 +94,59 @@ export function CronPanel(props: {
   };
 
   const save = async () => {
-    if (!props.active?.id) return;
+    const sessionID = sessionId;
+    if (!sessionID) return;
     setBusy(editing || "new");
     try {
-      await SaveCronJob(props.active.id, editing || "", form.schedule, form.command, form.enabled);
+      await SaveCronJob(sessionID, editing || "", form.schedule, form.command, form.enabled);
+      if (activeSessionRef.current !== sessionID) return;
       props.onNotify(t(lang, "cronSaved"), "success");
       setEditing(null);
       await refresh();
     } catch (err) {
+      if (activeSessionRef.current !== sessionID) return;
       props.onNotify(String(err), "error");
     } finally {
-      setBusy(null);
+      if (activeSessionRef.current === sessionID) setBusy(null);
     }
   };
 
   const toggle = async (job: types.CronJob) => {
-    if (!props.active?.id) return;
+    const sessionID = sessionId;
+    if (!sessionID) return;
     setBusy(job.id);
     try {
-      await SetCronJobEnabled(props.active.id, job.id, !job.enabled);
+      await SetCronJobEnabled(sessionID, job.id, !job.enabled);
+      if (activeSessionRef.current !== sessionID) return;
       await refresh();
     } catch (err) {
+      if (activeSessionRef.current !== sessionID) return;
       props.onNotify(String(err), "error");
     } finally {
-      setBusy(null);
+      if (activeSessionRef.current === sessionID) setBusy(null);
     }
   };
 
   const run = async (job: types.CronJob) => {
-    if (!props.active?.id) return;
+    const sessionID = sessionId;
+    if (!sessionID) return;
     setBusy(job.id);
     try {
-      const output = await RunCronJob(props.active.id, job.id);
+      const output = await RunCronJob(sessionID, job.id);
+      if (activeSessionRef.current !== sessionID) return;
       const summary = (output || "").trim().slice(0, 180);
       props.onNotify(summary ? `${t(lang, "cronRunOk")}: ${summary}` : t(lang, "cronRunOk"), "success");
     } catch (err) {
+      if (activeSessionRef.current !== sessionID) return;
       props.onNotify(String(err), "error");
     } finally {
-      setBusy(null);
+      if (activeSessionRef.current === sessionID) setBusy(null);
     }
   };
 
   const remove = async (job: types.CronJob) => {
-    if (!props.active?.id) return;
+    const sessionID = sessionId;
+    if (!sessionID) return;
     if (armed !== job.id) {
       setArmed(job.id);
       if (armedTimerRef.current !== null) window.clearTimeout(armedTimerRef.current);
@@ -141,17 +156,19 @@ export function CronPanel(props: {
     setArmed(null);
     setBusy(job.id);
     try {
-      await DeleteCronJob(props.active.id, job.id);
+      await DeleteCronJob(sessionID, job.id);
+      if (activeSessionRef.current !== sessionID) return;
       props.onNotify(t(lang, "cronDeleted"), "success");
       await refresh();
     } catch (err) {
+      if (activeSessionRef.current !== sessionID) return;
       props.onNotify(String(err), "error");
     } finally {
-      setBusy(null);
+      if (activeSessionRef.current === sessionID) setBusy(null);
     }
   };
 
-  if (!props.active?.id) {
+  if (!sessionId) {
     return <div className="panel-page"><div className="panel-empty"><CalendarClock size={24} /><span>{t(lang, "noActiveSession")}</span></div></div>;
   }
 

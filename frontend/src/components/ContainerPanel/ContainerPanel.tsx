@@ -4,7 +4,7 @@ import { Box, Eye, Loader2, Play, RefreshCw, RotateCcw, Square, StopCircle, Tras
 import { types } from "../../../wailsjs/go/models";
 import { ListContainers, StreamContainerLogs, StopContainerLogs, RestartContainer, StopContainer, StartContainer, RemoveContainer } from "../../../wailsjs/go/app/App";
 import { EventsOn } from "../../../wailsjs/runtime/runtime";
-import { t } from "../../i18n";
+import { t, type LangKey } from "../../i18n";
 import type { Tab, Toast } from "../../types";
 import { isRemoteSession } from "../../utils/sessionIdentity";
 
@@ -47,10 +47,20 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   const [armedRemove, setArmedRemove] = useState("");
   const armedRemoveTimerRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval>>();
-  const logEndRef = useRef<HTMLDivElement>(null);
+  const logBodyRef = useRef<HTMLDivElement>(null);
   const logStreamIdRef = useRef<string | null>(null);
   const pendingLogRef = useRef("");
   const pendingLogTimerRef = useRef<number | null>(null);
+  // Follow the tail only while the reader is already at the bottom. Scrolling
+  // on every chunk made the pane impossible to read back through.
+  const stickToBottomRef = useRef(true);
+  // Every call below captures the session it was issued against and drops its
+  // result if the panel has moved on. Without that, a reply from host A landed
+  // in host B's list — and a `docker rm -f` confirmed on A reported success
+  // while B was on screen.
+  const activeSessionRef = useRef(props.active?.id || "");
+  const refreshSeqRef = useRef(0);
+  activeSessionRef.current = props.active?.id || "";
 
   const flushPendingLogs = useCallback(() => {
     if (pendingLogTimerRef.current !== null) {
@@ -80,16 +90,20 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   const sessionId = isRemoteSession(props.active) ? props.active.id : "";
 
   const refresh = useCallback(async (notifyOnError = true) => {
-    if (!sessionId) return;
+    const sessionID = sessionId;
+    if (!sessionID) return;
+    const seq = ++refreshSeqRef.current;
     setLoading(true);
     try {
-      const list = await ListContainers(sessionId, showAll);
+      const list = await ListContainers(sessionID, showAll);
+      if (seq !== refreshSeqRef.current || activeSessionRef.current !== sessionID) return;
       setContainers(list || []);
     } catch (err) {
+      if (seq !== refreshSeqRef.current || activeSessionRef.current !== sessionID) return;
       if (notifyOnError) props.onNotify(String(err), "error");
       setContainers([]);
     } finally {
-      setLoading(false);
+      if (seq === refreshSeqRef.current && activeSessionRef.current === sessionID) setLoading(false);
     }
   }, [sessionId, showAll, props.onNotify]);
 
@@ -106,10 +120,16 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [sessionId, refresh]);
 
+  const onLogScroll = useCallback(() => {
+    const el = logBodyRef.current;
+    if (!el) return;
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  }, []);
+
   useEffect(() => {
-    if (logEndRef.current) {
-      logEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
+    const el = logBodyRef.current;
+    if (!el || !stickToBottomRef.current) return;
+    el.scrollTop = el.scrollHeight;
   }, [logs]);
 
   const onNotifyRef = useRef(props.onNotify);
@@ -143,23 +163,38 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
     setLogContainer(null);
     setLogs("");
     setLogStreaming(false);
+    // The per-row spinners and the armed-remove highlight belong to the session
+    // that was on screen, not to the one replacing it.
+    setActionLoading(null);
+    setArmedRemove("");
+    if (armedRemoveTimerRef.current !== null) {
+      window.clearTimeout(armedRemoveTimerRef.current);
+      armedRemoveTimerRef.current = null;
+    }
   }, [props.active?.id]);
 
   const viewLogs = useCallback(async (c: types.ContainerInfo) => {
-    if (!props.active?.id) return;
+    const sessionID = props.active?.id;
+    if (!sessionID) return;
     const previousStream = logStreamIdRef.current;
     if (previousStream) {
       await StopContainerLogs(previousStream).catch(() => {});
     }
+    // The stop above is a round trip, so re-check before opening the stream:
+    // otherwise the panel would follow a container on the host it just left.
+    if (activeSessionRef.current !== sessionID) return;
     flushPendingLogs();
     const streamID = nextLogStreamId();
     setLogContainer(c);
     logStreamIdRef.current = streamID;
     setLogs("");
     setLogStreaming(true);
+    // A freshly opened log starts at its end.
+    stickToBottomRef.current = true;
     try {
-      await StreamContainerLogs(props.active.id, c.id, streamID, 200);
+      await StreamContainerLogs(sessionID, c.id, streamID, 200);
     } catch (err) {
+      if (activeSessionRef.current !== sessionID) return;
       if (logStreamIdRef.current === streamID) {
         logStreamIdRef.current = null;
         setLogStreaming(false);
@@ -180,6 +215,19 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
     setLogStreaming(false);
   }, [flushPendingLogs]);
 
+  // Stopping the stream is not the same as closing the pane: the output stays
+  // on screen to be read, copied, or scrolled through. Closing used to be the
+  // only way to stop, and it threw the log away.
+  const stopStreaming = useCallback(() => {
+    const streamID = logStreamIdRef.current;
+    if (streamID) {
+      StopContainerLogs(streamID).catch(() => {});
+    }
+    logStreamIdRef.current = null;
+    flushPendingLogs();
+    setLogStreaming(false);
+  }, [flushPendingLogs]);
+
   useEffect(() => {
     return () => {
       if (logStreamIdRef.current) {
@@ -190,49 +238,42 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
     };
   }, []);
 
-  const restart = useCallback(async (c: types.ContainerInfo) => {
-    if (!props.active?.id) return;
-    setActionLoading(c.id);
-    try {
-      await RestartContainer(props.active.id, c.id);
-      props.onNotify(`${c.names?.[0] || c.id}: restarted`, "success");
-      await refresh();
-    } catch (err) {
-      props.onNotify(String(err), "error");
-    } finally {
-      setActionLoading(null);
-    }
-  }, [props.active?.id, refresh, props.onNotify]);
+  // One place for the four mutations: each is issued against the session that
+  // was on screen when it was clicked, and neither the toast nor the refreshed
+  // list is applied if the panel has moved to another host meanwhile.
+  const runContainerAction = useCallback(
+    async (c: types.ContainerInfo, verb: LangKey, run: (sessionID: string) => Promise<unknown>) => {
+      const sessionID = props.active?.id;
+      if (!sessionID) return;
+      setActionLoading(c.id);
+      try {
+        await run(sessionID);
+        if (activeSessionRef.current !== sessionID) return;
+        props.onNotify(`${c.names?.[0] || c.id}: ${t(lang, verb)}`, "success");
+        await refresh();
+      } catch (err) {
+        if (activeSessionRef.current !== sessionID) return;
+        props.onNotify(String(err), "error");
+      } finally {
+        if (activeSessionRef.current === sessionID) setActionLoading(null);
+      }
+    },
+    [props.active?.id, refresh, props.onNotify, lang],
+  );
 
-  const stop = useCallback(async (c: types.ContainerInfo) => {
-    if (!props.active?.id) return;
-    setActionLoading(c.id);
-    try {
-      await StopContainer(props.active.id, c.id);
-      props.onNotify(`${c.names?.[0] || c.id}: stopped`, "success");
-      await refresh();
-    } catch (err) {
-      props.onNotify(String(err), "error");
-    } finally {
-      setActionLoading(null);
-    }
-  }, [props.active?.id, refresh, props.onNotify]);
+  const restart = useCallback((c: types.ContainerInfo) => (
+    runContainerAction(c, "containerRestarted", (sessionID) => RestartContainer(sessionID, c.id))
+  ), [runContainerAction]);
 
-  const start = useCallback(async (c: types.ContainerInfo) => {
-    if (!props.active?.id) return;
-    setActionLoading(c.id);
-    try {
-      await StartContainer(props.active.id, c.id);
-      props.onNotify(`${c.names?.[0] || c.id}: started`, "success");
-      await refresh();
-    } catch (err) {
-      props.onNotify(String(err), "error");
-    } finally {
-      setActionLoading(null);
-    }
-  }, [props.active?.id, refresh, props.onNotify]);
+  const stop = useCallback((c: types.ContainerInfo) => (
+    runContainerAction(c, "containerStopped", (sessionID) => StopContainer(sessionID, c.id))
+  ), [runContainerAction]);
 
-  const remove = useCallback(async (c: types.ContainerInfo) => {
+  const start = useCallback((c: types.ContainerInfo) => (
+    runContainerAction(c, "containerStarted", (sessionID) => StartContainer(sessionID, c.id))
+  ), [runContainerAction]);
+
+  const remove = useCallback((c: types.ContainerInfo) => {
     // `docker rm -f` cannot be undone, and the button sits directly next to
     // "start", so removal takes two clicks within three seconds — the same
     // arming the service panel uses for stop/restart/disable.
@@ -250,18 +291,8 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
       armedRemoveTimerRef.current = null;
     }
     setArmedRemove("");
-    if (!props.active?.id) return;
-    setActionLoading(c.id);
-    try {
-      await RemoveContainer(props.active.id, c.id, true);
-      props.onNotify(`${c.names?.[0] || c.id}: removed`, "success");
-      await refresh();
-    } catch (err) {
-      props.onNotify(String(err), "error");
-    } finally {
-      setActionLoading(null);
-    }
-  }, [armedRemove, props.active?.id, refresh, props.onNotify]);
+    void runContainerAction(c, "containerRemoved", (sessionID) => RemoveContainer(sessionID, c.id, true));
+  }, [armedRemove, runContainerAction]);
 
   const stateColor = (state: string) => {
     switch (state) {
@@ -283,7 +314,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
     }
   };
 
-  if (!props.active?.id) {
+  if (!sessionId) {
     return (
       <div className="container-panel panel-page">
         <div className="container-empty">
@@ -318,12 +349,12 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
               {logStreaming && <span className="container-log-live">LIVE</span>}
             </div>
             <div className="flex items-center gap-1">
-              {logStreaming && <button className="mini-btn text-red-400" onClick={closeLogs} title="Stop streaming"><StopCircle size={10} /></button>}
-              <button className="mini-btn" onClick={closeLogs}>✕</button>
+              {logStreaming && <button className="mini-btn text-red-400" onClick={stopStreaming} title={t(lang, "svcStopFollow")}><StopCircle size={10} /></button>}
+              <button className="mini-btn" onClick={closeLogs} title={t(lang, "close")}>✕</button>
             </div>
           </div>
-          <div className="container-log-body">
-            <pre className="container-log-text">{logs}<div ref={logEndRef} /></pre>
+          <div className="container-log-body" ref={logBodyRef} onScroll={onLogScroll}>
+            <pre className="container-log-text">{logs}</pre>
           </div>
         </div>
       )}
@@ -356,16 +387,16 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
               <button className="container-action-btn" onClick={() => viewLogs(c)} title={t(lang, "viewLogs")}><Eye size={11} /></button>
               {c.state === "running" ? (
                 <>
-                  <button className="container-action-btn" onClick={() => restart(c)} title={t(lang, "restart")} disabled={actionLoading === c.id}>
+                  <button className="container-action-btn" onClick={() => void restart(c)} title={t(lang, "restart")} disabled={actionLoading === c.id}>
                     {actionLoading === c.id ? <Loader2 size={11} className="animate-spin" /> : <RotateCcw size={11} />}
                   </button>
-                  <button className="container-action-btn text-red-400" onClick={() => stop(c)} title={t(lang, "stop")} disabled={actionLoading === c.id}>
+                  <button className="container-action-btn text-red-400" onClick={() => void stop(c)} title={t(lang, "stop")} disabled={actionLoading === c.id}>
                     <Square size={11} />
                   </button>
                 </>
               ) : (
                 <>
-                  <button className="container-action-btn text-green-400" onClick={() => start(c)} title={t(lang, "start")} disabled={actionLoading === c.id}>
+                  <button className="container-action-btn text-green-400" onClick={() => void start(c)} title={t(lang, "start")} disabled={actionLoading === c.id}>
                     {actionLoading === c.id ? <Loader2 size={11} className="animate-spin" /> : <Play size={11} />}
                   </button>
                   <button

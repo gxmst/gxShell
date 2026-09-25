@@ -45,7 +45,12 @@ export function KeyboardInteractiveDialog({ request, language, onSubmit, onCance
               className="input"
               value={answers[idx]}
               onChange={(e) => setAnswer(idx, e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && idx === request.prompts.length - 1) submit(); }}
+              onKeyDown={(e) => {
+                // Enter commits an IME candidate while composing, so it must not
+                // submit the last prompt with the half-typed answer.
+                if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                if (e.key === "Enter" && idx === request.prompts.length - 1) submit();
+              }}
             />
           </div>
         ))}

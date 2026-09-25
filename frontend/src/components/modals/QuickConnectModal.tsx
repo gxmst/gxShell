@@ -97,11 +97,18 @@ export function QuickConnectModal(props: {
         description={t(lang, "quickConnectHint")}
       />
       <div className="profile-modal-grid quick-connect-grid">
-        <Label text={t(lang, "host")}><input autoFocus className="input compact-input" value={host} onChange={(event) => setHost(event.target.value)} placeholder="192.168.1.10" onKeyDown={(event) => { if (event.key === "Enter") submit(); }} /></Label>
+        <Label text={t(lang, "host")}><input autoFocus className="input compact-input" value={host} onChange={(event) => setHost(event.target.value)} placeholder="192.168.1.10" onKeyDown={(event) => {
+          // Enter commits an IME candidate while composing.
+          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+          if (event.key === "Enter") submit();
+        }} /></Label>
         <Label text={t(lang, "port")}><input className="input compact-input" type="number" value={port} onChange={(event) => setPort(Number(event.target.value) || 22)} /></Label>
         <Label text={t(lang, "username")}><input className="input compact-input" value={username} onChange={(event) => setUsername(event.target.value)} /></Label>
         <Label text={t(lang, "auth")}><select className="input compact-input" value={authType} onChange={(event) => setAuthType(event.target.value)}><option value="password">{t(lang, "password")}</option><option value="privateKey">{t(lang, "privateKey")}</option><option value="agent">{t(lang, "authAgent")}</option></select></Label>
-        {authType === "password" && <Label text={t(lang, "password")}><input className="input compact-input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") submit(); }} /></Label>}
+        {authType === "password" && <Label text={t(lang, "password")}><input className="input compact-input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+          if (event.key === "Enter") submit();
+        }} /></Label>}
         {authType === "privateKey" && <>
           <Label text={t(lang, "privateKey")}><div className="flex gap-1"><input className="input compact-input" value={privateKeyPath} onChange={(event) => setPrivateKeyPath(event.target.value)} /><button className="icon-btn compact-icon" onClick={async () => { const selected = await props.onPickKey(); if (selected) setPrivateKeyPath(selected); }} title={t(lang, "privateKey")}><MoreHorizontal size={13} /></button></div></Label>
           <Label text={t(lang, "passphrase")}><input className="input compact-input" type="password" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} /></Label>

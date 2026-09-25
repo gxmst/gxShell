@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { ArrowRightLeft, Circle, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { AddTunnelRule, ListTunnelStatus, RemoveTunnelRule, RestartTunnels } from "../../../wailsjs/go/app/App";
 import type { Tab, Toast } from "../../types";
 import { t, type LangKey } from "../../i18n";
+import { isRemoteSession } from "../../utils/sessionIdentity";
 
 const ARM_TIMEOUT_MS = 3000;
 
@@ -23,57 +24,80 @@ export function TunnelPanel({ active, locale, onNotify }: { active?: Tab; locale
   const [form, setForm] = useState({ type: "local", local: "127.0.0.1:8080", remote: "127.0.0.1:80", bindHost: "" });
   const [armedRemove, setArmedRemove] = useState("");
   const armedRemoveTimerRef = useRef<number | null>(null);
+  // Forwarding rules live on one host, and every call below writes the reply
+  // into this panel's state. The panel can be pointed at another host while a
+  // call is in flight, so each one re-checks before touching that state.
+  const activeSessionRef = useRef(active?.id || "");
+  const refreshSeqRef = useRef(0);
+  activeSessionRef.current = active?.id || "";
+
+  const sessionId = isRemoteSession(active) ? active.id : "";
 
   useEffect(() => () => {
     if (armedRemoveTimerRef.current !== null) window.clearTimeout(armedRemoveTimerRef.current);
   }, []);
 
-  const refresh = async () => {
-    if (!active) return;
+  const refresh = useCallback(async () => {
+    const sessionID = sessionId;
+    if (!sessionID) return;
+    const seq = ++refreshSeqRef.current;
     setLoading(true);
     try {
-      const list = await ListTunnelStatus(active.id);
+      const list = await ListTunnelStatus(sessionID);
+      if (seq !== refreshSeqRef.current || activeSessionRef.current !== sessionID) return;
       setTunnels(list || []);
     } catch (err) {
+      if (seq !== refreshSeqRef.current || activeSessionRef.current !== sessionID) return;
       onNotify(String(err), "error");
+    } finally {
+      if (seq === refreshSeqRef.current && activeSessionRef.current === sessionID) setLoading(false);
     }
-    setLoading(false);
-  };
+  }, [sessionId, onNotify]);
 
   useEffect(() => {
-    if (active) refresh();
-  }, [active]);
+    setTunnels([]);
+    setAdding(false);
+    setArmedRemove("");
+    void refresh();
+  }, [refresh]);
 
   const restart = async () => {
-    if (!active) return;
+    const sessionID = sessionId;
+    if (!sessionID) return;
     try {
-      const list = await RestartTunnels(active.id);
+      const list = await RestartTunnels(sessionID);
+      if (activeSessionRef.current !== sessionID) return;
       setTunnels(list || []);
       onNotify(t(lang, "tunnelsRestarted"), "success");
     } catch (err) {
+      if (activeSessionRef.current !== sessionID) return;
       onNotify(String(err), "error");
     }
   };
 
   const addTunnel = async (type: string, local: string, remote: string, bindHost?: string) => {
-    if (!active) return;
+    const sessionID = sessionId;
+    if (!sessionID) return;
     try {
       const rule = types.TunnelRule.createFrom({ id: crypto.randomUUID(), type, local, remote, bindHost: bindHost || "" });
-      const status = await AddTunnelRule(active.id, rule);
+      const status = await AddTunnelRule(sessionID, rule);
+      if (activeSessionRef.current !== sessionID) return;
       if (status.error) {
         onNotify(status.error, "error");
       } else {
         onNotify(t(lang, "tunnelAdded"), "success");
       }
-      refresh();
+      void refresh();
       setAdding(false);
     } catch (err) {
+      if (activeSessionRef.current !== sessionID) return;
       onNotify(String(err), "error");
     }
   };
 
   const removeTunnel = async (ruleID: string) => {
-    if (!active) return;
+    const sessionID = sessionId;
+    if (!sessionID) return;
     // Deleting a rule drops a forward that may be in active use, and the button
     // sits beside the status dot, so it arms first and deletes on the second
     // click within three seconds.
@@ -92,14 +116,16 @@ export function TunnelPanel({ active, locale, onNotify }: { active?: Tab; locale
     }
     setArmedRemove("");
     try {
-      await RemoveTunnelRule(active.id, ruleID);
-      refresh();
+      await RemoveTunnelRule(sessionID, ruleID);
+      if (activeSessionRef.current !== sessionID) return;
+      void refresh();
     } catch (err) {
+      if (activeSessionRef.current !== sessionID) return;
       onNotify(String(err), "error");
     }
   };
 
-  if (!active) return <div className="empty compact">{t(lang, "openTerminal")}</div>;
+  if (!sessionId) return <div className="empty compact">{t(lang, "openTerminal")}</div>;
 
   const typeLabel = (tp: string) => {
     switch (tp) {

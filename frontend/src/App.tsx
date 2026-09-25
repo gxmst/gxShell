@@ -776,7 +776,7 @@ function App() {
   // Keyboard tab navigation walks the tab strip, so it has to see the same order
   // and the same membership the strip shows: torn-off terminals live in their own
   // windows and are not in it.
-  const activateTab = useCallback((id: string, focus = true) => {
+  const activateTab = useCallback((id: string, options: { keepFocus?: boolean } = {}) => {
     const target = tabsRef.current.find((tab) => tab.id === id);
     if (!target) return;
     setSplitPane((current) => {
@@ -788,7 +788,13 @@ function App() {
     });
     sessions.setActiveTab(id);
     sessions.setTabs((items) => items.map((tab) => tab.id === id && tab.unread ? { ...tab, unread: false } : tab));
-    if (focus && target.type !== "markdown") window.setTimeout(() => focusTerminal(id), 10);
+    // `keepFocus` marks an activation driven by the tab strip's own keyboard
+    // navigation. That handler keeps the focus on the tab it just moved to, and
+    // this focus move is a 10ms timer while the strip's is an animation frame:
+    // on a display fast enough for the frame to fire first, the terminal took
+    // the focus straight back and the next arrow key went to the shell instead
+    // of the next tab.
+    if (!options.keepFocus && target.type !== "markdown") window.setTimeout(() => focusTerminal(id), 10);
   }, [focusTerminal, sessions.setActiveTab, sessions.setTabs]);
 
   const activateTabByOffset = useCallback((offset: number) => {

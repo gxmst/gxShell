@@ -584,7 +584,14 @@ export function Sidebar(props: {
                   </button>
                 ))}
               </div>
-              <div className="tool-panel-body" key={props.drawer}>
+              {/* Keyed by the session as well as the drawer. These panels issue
+                  commands against a specific session and then write the reply
+                  back into their own state, so a reply that arrives after the
+                  user switched hosts must not land in the new host's list —
+                  and a "force this through" dialog opened for host A must not
+                  still be on screen (and confirmable) while host B is showing.
+                  Remounting per session removes that whole class of leak. */}
+              <div className="tool-panel-body" key={`${props.drawer}:${props.active?.id || ""}`}>
                 {props.drawer === "commands" && <CommandPanel commands={props.commands} tabs={props.tabs} active={props.active} locale={lang} onRun={props.onRunCommand} onRunInSession={props.onRunCommandInSession} onRunAll={props.onRunCommandAll} onEdit={props.onEditCommand} onDelete={props.onDeleteCommand} onNew={props.onNewCommand} />}
                 {props.drawer === "tunnels" && <TunnelPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
                 {props.drawer === "logs" && <LogsPanel locale={lang} onOpenLog={props.onOpenLog} activities={props.activityHistory || []} />}

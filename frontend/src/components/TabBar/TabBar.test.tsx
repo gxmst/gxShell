@@ -82,8 +82,12 @@ describe("TabBar overflow", () => {
       />,
     );
 
+    // Arrow navigation keeps the focus on the strip: the caller is told not to
+    // move it into the terminal, so the next arrow key reaches the next tab
+    // instead of the shell.
     fireEvent.keyDown(screen.getByRole("tab", { name: "Server 1" }), { key: "ArrowRight" });
-    expect(onActive).toHaveBeenLastCalledWith("tab-2");
+    expect(onActive).toHaveBeenLastCalledWith("tab-2", { keepFocus: true });
+    expect(screen.getByRole("tab", { name: "Server 2" })).toHaveFocus();
 
     const allTabs = screen.getByRole("button", { name: "All tabs" });
     fireEvent.click(allTabs);

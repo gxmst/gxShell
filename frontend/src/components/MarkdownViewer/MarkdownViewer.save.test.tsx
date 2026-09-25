@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DocumentTestWorker } from '../../test/documentWorker';
 import { memoryStorage } from '../../test/memoryStorage';
@@ -362,6 +362,33 @@ describe('MarkdownViewer saving', () => {
     expect(container.querySelector('.markdown-search-count')).toHaveTextContent('1/2');
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(container.querySelector('.markdown-search-count')).toHaveTextContent('2/2');
+  });
+
+  it('asks before discarding a draft instead of using the one native prompt left', async () => {
+    const nativeConfirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', nativeConfirm);
+
+    render(<MarkdownViewer active filePath={'C:\\notes.txt'} onClose={vi.fn()} />);
+    await screen.findByText('original');
+    fireEvent.click(screen.getByTitle('Edit'));
+    fireEvent.change(await screen.findByLabelText('Source editor'), { target: { value: 'edited\n' } });
+
+    fireEvent.click(screen.getByTitle('Cancel'));
+    const dialog = await screen.findByRole('dialog', { name: 'Discard changes' });
+    // Nothing is discarded until the question is answered, and the question is
+    // part of the application rather than a "wails.localhost says" prompt.
+    expect(screen.getByLabelText('Source editor')).toHaveValue('edited\n');
+    expect(nativeConfirm).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('dialog', { name: 'Discard changes' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Source editor')).toHaveValue('edited\n');
+
+    fireEvent.click(screen.getByTitle('Cancel'));
+    const reopened = await screen.findByRole('dialog', { name: 'Discard changes' });
+    fireEvent.click(within(reopened).getByRole('button', { name: 'Confirm' }));
+    await waitFor(() => expect(screen.queryByLabelText('Source editor')).not.toBeInTheDocument());
+    expect(screen.getByText('original')).toBeInTheDocument();
   });
 });
 

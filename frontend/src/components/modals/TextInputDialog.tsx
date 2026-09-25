@@ -9,7 +9,18 @@ export function TextInputDialog({ title, label, initialValue = "", confirmText, 
     <ModalShell onClose={onClose} compact ariaLabel={title}>
       <DialogHeader icon={<PencilLine size={15} />} title={title} />
       <Label text={label}>
-        <input autoFocus className="input" value={value} onChange={(e) => setValue(e.target.value)} onKeyDown={(e) => e.key === "Enter" && value.trim() && onSubmit(value.trim())} />
+        <input
+          autoFocus
+          className="input"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            // Enter picks the IME candidate while a composition is open, so
+            // submitting here would send the half-typed pinyin.
+            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+            if (e.key === "Enter" && value.trim()) onSubmit(value.trim());
+          }}
+        />
       </Label>
       <div className="dialog-footer">
         <button className="btn-secondary" onClick={onClose}>{t(locale, "cancel")}</button>
