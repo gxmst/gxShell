@@ -27,8 +27,20 @@ import {
 import { t } from "../../i18n";
 import type { Tab, Toast } from "../../types";
 import { isRemoteSession } from "../../utils/sessionIdentity";
+import { useDiscardGuard, useProfileDraft } from "../../hooks/useProfileDraft";
+import { UnsavedChangesDialog } from "../modals/UnsavedChangesDialog";
 
 const ARM_TIMEOUT_MS = 3000;
+
+type SiteDraft = {
+  backend: string;
+  mode: string;
+  name: string;
+  isNew: boolean;
+  config: string;
+  /** Config as loaded or saved, so an untouched draft does not read as dirty. */
+  baseline: string;
+};
 
 function defaultConfig(backend: string) {
   if (backend === "apache") {
@@ -47,8 +59,6 @@ export function WebsitePanel(props: {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
-  const [editor, setEditor] = useState<{ backend: string; mode: string; name: string; isNew: boolean } | null>(null);
-  const [config, setConfig] = useState("");
   const activeSessionRef = useRef(props.active?.id || "");
   const refreshSeqRef = useRef(0);
   const armedTimerRef = useRef<number | null>(null);
@@ -58,6 +68,16 @@ export function WebsitePanel(props: {
   // Markdown document has a tab id too, and acting on one only produced a
   // "session not found" error.
   const sessionId = isRemoteSession(props.active) ? props.active.id : "";
+
+  // The draft belongs to the host, so a second terminal on the same server - or
+  // an auto-reconnect that hands the session a new id - no longer discards it.
+  const [draft, setDraft] = useProfileDraft<SiteDraft | null>(
+    "websites",
+    props.active?.profileId || "",
+    null,
+  );
+  const dirty = draft !== null && draft.config !== draft.baseline;
+  const { pending, guard, dismiss } = useDiscardGuard(dirty);
 
   const refresh = useCallback(async () => {
     const sessionID = sessionId;
@@ -86,24 +106,37 @@ export function WebsitePanel(props: {
 
   useEffect(() => {
     setStatus(null);
-    setEditor(null);
     setArmed(null);
   }, [props.active?.id]);
 
-  const openNew = () => {
+  const openNew = () => guard(() => {
     const spec = status?.backends?.[0] || "nginx:sites";
     const [backend, mode] = spec.split(":");
-    setEditor({ backend, mode, name: backend === "apache" ? "example.conf" : "example.com", isNew: true });
-    setConfig(defaultConfig(backend));
-  };
+    const config = defaultConfig(backend);
+    setDraft({
+      backend,
+      mode,
+      name: backend === "apache" ? "example.conf" : "example.com",
+      isNew: true,
+      config,
+      baseline: config,
+    });
+  });
 
   const changeNewBackend = (spec: string) => {
     const [backend, mode] = spec.split(":");
-    setEditor({ backend, mode, name: backend === "apache" || mode === "confd" ? "example.conf" : "example.com", isNew: true });
-    setConfig(defaultConfig(backend));
+    const config = defaultConfig(backend);
+    setDraft((prev) => prev && {
+      ...prev,
+      backend,
+      mode,
+      name: backend === "apache" || mode === "confd" ? "example.conf" : "example.com",
+      config,
+      baseline: config,
+    });
   };
 
-  const openEdit = async (site: types.WebsiteInfo) => {
+  const loadSite = async (site: types.WebsiteInfo) => {
     const sessionID = sessionId;
     if (!sessionID) return;
     const key = `${site.backend}:${site.mode}:${site.name}`;
@@ -113,8 +146,14 @@ export function WebsitePanel(props: {
       // The read is a round trip: the panel can be pointed at another host
       // before it returns, and this config belongs to the host it came from.
       if (activeSessionRef.current !== sessionID) return;
-      setEditor({ backend: site.backend, mode: site.mode, name: site.name, isNew: false });
-      setConfig(text || "");
+      setDraft({
+        backend: site.backend,
+        mode: site.mode,
+        name: site.name,
+        isNew: false,
+        config: text || "",
+        baseline: text || "",
+      });
     } catch (err) {
       if (activeSessionRef.current !== sessionID) return;
       props.onNotify(String(err), "error");
@@ -123,23 +162,44 @@ export function WebsitePanel(props: {
     }
   };
 
-  const save = async () => {
+  const openEdit = (site: types.WebsiteInfo) => guard(() => { void loadSite(site); });
+
+  // notifyOnError is false when the discard prompt is asking: it shows the
+  // failure inline, and a toast on top of that would say it twice.
+  const persist = async (notifyOnError: boolean): Promise<boolean> => {
     const sessionID = sessionId;
-    if (!sessionID || !editor) return;
+    if (!sessionID || !draft) return false;
     setBusy("editor");
     try {
-      await SaveWebsiteConfig(sessionID, editor.backend, editor.mode, editor.name, config);
-      if (activeSessionRef.current !== sessionID) return;
-      props.onNotify(t(lang, "siteSaved"), "success");
-      setEditor(null);
-      await refresh();
+      await SaveWebsiteConfig(sessionID, draft.backend, draft.mode, draft.name, draft.config);
+      return activeSessionRef.current === sessionID;
     } catch (err) {
-      if (activeSessionRef.current !== sessionID) return;
-      props.onNotify(String(err), "error");
+      if (activeSessionRef.current !== sessionID) return false;
+      if (notifyOnError) props.onNotify(String(err), "error");
+      return false;
     } finally {
       if (activeSessionRef.current === sessionID) setBusy(null);
     }
   };
+
+  const save = async (): Promise<boolean> => {
+    const ok = await persist(true);
+    if (!ok) return false;
+    props.onNotify(t(lang, "siteSaved"), "success");
+    setDraft(null);
+    await refresh();
+    return true;
+  };
+
+  const saveFromPrompt = async (): Promise<boolean> => {
+    const ok = await persist(false);
+    if (!ok) return false;
+    setDraft(null);
+    await refresh();
+    return true;
+  };
+
+  const closeEditor = () => guard(() => setDraft(null));
 
   const toggle = async (site: types.WebsiteInfo) => {
     const sessionID = sessionId;
@@ -187,7 +247,7 @@ export function WebsitePanel(props: {
   const testConfig = async () => {
     const sessionID = sessionId;
     if (!sessionID) return;
-    const backend = editor?.backend || status?.sites?.[0]?.backend || status?.backends?.[0]?.split(":")[0];
+    const backend = draft?.backend || status?.sites?.[0]?.backend || status?.backends?.[0]?.split(":")[0];
     if (!backend) return;
     setBusy("test");
     try {
@@ -227,15 +287,15 @@ export function WebsitePanel(props: {
         </div>
       </div>
 
-      {editor && (
+      {draft && (
         <div className="admin-editor site-editor">
-          <div className="admin-editor-title"><span>{editor.isNew ? t(lang, "siteAdd") : t(lang, "siteEdit")}</span><button className="mini-btn" onClick={() => setEditor(null)}><X size={10} /></button></div>
+          <div className="admin-editor-title"><span>{draft.isNew ? t(lang, "siteAdd") : t(lang, "siteEdit")}</span><button className="mini-btn" onClick={closeEditor} title={t(lang, "close")}><X size={10} /></button></div>
           <div className="site-editor-grid">
-            <label className="field-label"><span className="field-label-text">{t(lang, "siteBackend")}</span><select className="input text-[10px]" value={`${editor.backend}:${editor.mode}`} disabled={!editor.isNew} onChange={(e) => changeNewBackend(e.target.value)}>{backends.map((spec) => <option key={spec} value={spec}>{spec.replace(":", " · ")}</option>)}</select></label>
-            <label className="field-label"><span className="field-label-text">{t(lang, "name")}</span><input className="input font-mono text-[10px]" value={editor.name} disabled={!editor.isNew} onChange={(e) => setEditor({ ...editor, name: e.target.value })} /></label>
+            <label className="field-label"><span className="field-label-text">{t(lang, "siteBackend")}</span><select className="input text-[10px]" value={`${draft.backend}:${draft.mode}`} disabled={!draft.isNew} onChange={(e) => changeNewBackend(e.target.value)}>{backends.map((spec) => <option key={spec} value={spec}>{spec.replace(":", " · ")}</option>)}</select></label>
+            <label className="field-label"><span className="field-label-text">{t(lang, "name")}</span><input className="input font-mono text-[10px]" value={draft.name} disabled={!draft.isNew} onChange={(e) => { const name = e.target.value; setDraft((prev) => prev && { ...prev, name }); }} /></label>
           </div>
-          <label className="field-label"><span className="field-label-text">{t(lang, "siteConfig")}</span><textarea className="input site-config-input font-mono text-[10px]" spellCheck={false} value={config} onChange={(e) => setConfig(e.target.value)} /></label>
-          <div className="admin-editor-footer"><button className="btn-secondary text-[10px]" onClick={testConfig}><CheckCircle2 size={11} /> {t(lang, "siteTestCurrent")}</button><button className="btn-primary text-[10px]" onClick={save} disabled={busy === "editor"}><Save size={11} /> {t(lang, "save")}</button></div>
+          <label className="field-label"><span className="field-label-text">{t(lang, "siteConfig")}</span><textarea className="input site-config-input font-mono text-[10px]" spellCheck={false} value={draft.config} onChange={(e) => { const config = e.target.value; setDraft((prev) => prev && { ...prev, config }); }} /></label>
+          <div className="admin-editor-footer"><button className="btn-secondary text-[10px]" onClick={testConfig}><CheckCircle2 size={11} /> {t(lang, "siteTestCurrent")}</button><button className="btn-primary text-[10px]" onClick={() => { void save(); }} disabled={busy === "editor"}><Save size={11} /> {t(lang, "save")}</button></div>
         </div>
       )}
 
@@ -270,6 +330,21 @@ export function WebsitePanel(props: {
           );
         })}
       </div>
+
+      {pending && (
+        <UnsavedChangesDialog
+          locale={lang}
+          title={draft?.name || t(lang, "siteEdit")}
+          body={t(lang, "unsavedSiteDraft")}
+          onCancel={dismiss}
+          onDiscard={() => { const next = pending; dismiss(); next(); }}
+          onSave={async () => {
+            const ok = await saveFromPrompt();
+            if (ok) { const next = pending; dismiss(); next(); }
+            return ok;
+          }}
+        />
+      )}
     </div>
   );
 }

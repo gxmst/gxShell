@@ -24,8 +24,21 @@ import {
 import { t } from "../../i18n";
 import type { Tab, Toast } from "../../types";
 import { isRemoteSession } from "../../utils/sessionIdentity";
+import { useDiscardGuard, useProfileDraft } from "../../hooks/useProfileDraft";
+import { UnsavedChangesDialog } from "../modals/UnsavedChangesDialog";
 
 const ARM_TIMEOUT_MS = 3000;
+const NEW_SCHEDULE = "0 3 * * *";
+
+type CronDraft = {
+  /** Job id being edited, or "" for a new job. */
+  editing: string;
+  schedule: string;
+  command: string;
+  enabled: boolean;
+  /** Form as loaded, so an untouched draft does not read as dirty. */
+  baseline: { schedule: string; command: string; enabled: boolean };
+};
 
 export function CronPanel(props: {
   active?: Tab;
@@ -37,12 +50,6 @@ export function CronPanel(props: {
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
-  const [form, setForm] = useState({
-    schedule: "0 3 * * *",
-    command: "",
-    enabled: true,
-  });
   const activeSessionRef = useRef(props.active?.id || "");
   const refreshSeqRef = useRef(0);
   const armedTimerRef = useRef<number | null>(null);
@@ -51,6 +58,20 @@ export function CronPanel(props: {
   // A crontab belongs to one host. A local terminal or a Markdown document has
   // a tab id too, and acting on one only produced a "session not found" error.
   const sessionId = isRemoteSession(props.active) ? props.active.id : "";
+
+  // The draft belongs to the host, so a second terminal on the same server - or
+  // an auto-reconnect that hands the session a new id - no longer discards it.
+  const [draft, setDraft] = useProfileDraft<CronDraft | null>(
+    "cron",
+    props.active?.profileId || "",
+    null,
+  );
+  const dirty = draft !== null && (
+    draft.schedule !== draft.baseline.schedule
+    || draft.command !== draft.baseline.command
+    || draft.enabled !== draft.baseline.enabled
+  );
+  const { pending, guard, dismiss } = useDiscardGuard(dirty);
 
   const refresh = useCallback(async () => {
     const sessionID = sessionId;
@@ -79,36 +100,54 @@ export function CronPanel(props: {
 
   useEffect(() => {
     setJobs([]);
-    setEditing(null);
     setArmed(null);
   }, [props.active?.id]);
 
-  const openNew = () => {
-    setEditing("");
-    setForm({ schedule: "0 3 * * *", command: "", enabled: true });
-  };
+  const openNew = () => guard(() => {
+    const baseline = { schedule: NEW_SCHEDULE, command: "", enabled: true };
+    setDraft({ editing: "", ...baseline, baseline });
+  });
 
-  const openEdit = (job: types.CronJob) => {
-    setEditing(job.id);
-    setForm({ schedule: job.schedule, command: job.command, enabled: job.enabled });
-  };
+  const openEdit = (job: types.CronJob) => guard(() => {
+    const baseline = { schedule: job.schedule, command: job.command, enabled: job.enabled };
+    setDraft({ editing: job.id, ...baseline, baseline });
+  });
 
-  const save = async () => {
+  const closeEditor = () => guard(() => setDraft(null));
+
+  // notifyOnError is false when the discard prompt is asking: it shows the
+  // failure inline, and a toast on top of that would say it twice.
+  const persist = async (notifyOnError: boolean): Promise<boolean> => {
     const sessionID = sessionId;
-    if (!sessionID) return;
-    setBusy(editing || "new");
+    if (!sessionID || !draft) return false;
+    setBusy(draft.editing || "new");
     try {
-      await SaveCronJob(sessionID, editing || "", form.schedule, form.command, form.enabled);
-      if (activeSessionRef.current !== sessionID) return;
-      props.onNotify(t(lang, "cronSaved"), "success");
-      setEditing(null);
-      await refresh();
+      await SaveCronJob(sessionID, draft.editing, draft.schedule, draft.command, draft.enabled);
+      return activeSessionRef.current === sessionID;
     } catch (err) {
-      if (activeSessionRef.current !== sessionID) return;
-      props.onNotify(String(err), "error");
+      if (activeSessionRef.current !== sessionID) return false;
+      if (notifyOnError) props.onNotify(String(err), "error");
+      return false;
     } finally {
       if (activeSessionRef.current === sessionID) setBusy(null);
     }
+  };
+
+  const save = async (): Promise<boolean> => {
+    const ok = await persist(true);
+    if (!ok) return false;
+    props.onNotify(t(lang, "cronSaved"), "success");
+    setDraft(null);
+    await refresh();
+    return true;
+  };
+
+  const saveFromPrompt = async (): Promise<boolean> => {
+    const ok = await persist(false);
+    if (!ok) return false;
+    setDraft(null);
+    await refresh();
+    return true;
   };
 
   const toggle = async (job: types.CronJob) => {
@@ -185,14 +224,14 @@ export function CronPanel(props: {
         </div>
       </div>
 
-      {editing !== null && (
+      {draft && (
         <div className="admin-editor cron-editor">
-          <div className="admin-editor-title"><span>{editing ? t(lang, "cronEdit") : t(lang, "cronAdd")}</span><button className="mini-btn" onClick={() => setEditing(null)}><X size={10} /></button></div>
-          <label className="field-label"><span className="field-label-text">{t(lang, "cronSchedule")}</span><input className="input font-mono text-[10px]" value={form.schedule} onChange={(e) => setForm({ ...form, schedule: e.target.value })} placeholder="0 3 * * *" /></label>
-          <label className="field-label"><span className="field-label-text">{t(lang, "command")}</span><textarea className="input admin-command-input font-mono text-[10px]" value={form.command} onChange={(e) => setForm({ ...form, command: e.target.value })} placeholder="/usr/local/bin/backup.sh" /></label>
+          <div className="admin-editor-title"><span>{draft.editing ? t(lang, "cronEdit") : t(lang, "cronAdd")}</span><button className="mini-btn" onClick={closeEditor} title={t(lang, "close")}><X size={10} /></button></div>
+          <label className="field-label"><span className="field-label-text">{t(lang, "cronSchedule")}</span><input className="input font-mono text-[10px]" value={draft.schedule} onChange={(e) => { const schedule = e.target.value; setDraft((prev) => prev && { ...prev, schedule }); }} placeholder="0 3 * * *" /></label>
+          <label className="field-label"><span className="field-label-text">{t(lang, "command")}</span><textarea className="input admin-command-input font-mono text-[10px]" value={draft.command} onChange={(e) => { const command = e.target.value; setDraft((prev) => prev && { ...prev, command }); }} placeholder="/usr/local/bin/backup.sh" /></label>
           <div className="admin-editor-footer">
-            <label className="admin-switch"><input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} /> {t(lang, "cronEnabled")}</label>
-            <button className="btn-primary text-[10px]" onClick={save} disabled={busy !== null}><Save size={11} /> {t(lang, "save")}</button>
+            <label className="admin-switch"><input type="checkbox" checked={draft.enabled} onChange={(e) => { const enabled = e.target.checked; setDraft((prev) => prev && { ...prev, enabled }); }} /> {t(lang, "cronEnabled")}</label>
+            <button className="btn-primary text-[10px]" onClick={() => { void save(); }} disabled={busy !== null}><Save size={11} /> {t(lang, "save")}</button>
           </div>
         </div>
       )}
@@ -218,6 +257,21 @@ export function CronPanel(props: {
           );
         })}
       </div>
+
+      {pending && (
+        <UnsavedChangesDialog
+          locale={lang}
+          title={draft?.command || t(lang, "cronJobs")}
+          body={t(lang, "unsavedCronDraft")}
+          onCancel={dismiss}
+          onDiscard={() => { const next = pending; dismiss(); next(); }}
+          onSave={async () => {
+            const ok = await saveFromPrompt();
+            if (ok) { const next = pending; dismiss(); next(); }
+            return ok;
+          }}
+        />
+      )}
     </div>
   );
 }
