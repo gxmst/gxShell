@@ -65,7 +65,7 @@ export function DownloadFile(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function DownloadFileWithPolicy(arg1:string,arg2:string,arg3:string,arg4:boolean):Promise<void>;
 
-export function DownloadFolder(arg1:string,arg2:string,arg3:string):Promise<void>;
+export function DownloadFolder(arg1:string,arg2:string,arg3:string):Promise<types.FolderDownloadResult>;
 
 export function DuplicateProfile(arg1:string):Promise<types.Profile>;
 

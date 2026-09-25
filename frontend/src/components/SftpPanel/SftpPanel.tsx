@@ -13,6 +13,7 @@ import {
   FolderOpen,
   FolderPlus,
   Home,
+  Link2,
   MoreHorizontal,
   RefreshCw,
   Search,
@@ -38,6 +39,7 @@ import type { AppContextMenu } from "../../hooks/useTerminal";
 import { writeClipboardText } from "../../utils/clipboard";
 import { formatFileSize } from "../../utils/format";
 import { joinRemotePath, parentRemotePath, pathSegments } from "../../utils/shellQuote";
+import { formatSkippedEntries, remoteEntryTitle, skipReasonLabelKey } from "../../utils/sftpEntries";
 import { isSupportedDocumentPath } from "../../utils/textFiles";
 import { useTransfers } from "../../hooks/useTransfers";
 import { ConfirmDialog } from "../modals/ConfirmDialog";
@@ -139,8 +141,12 @@ const FileRow = memo(function FileRow(props: {
           ) : (
             <File size={14} className="text-muted" />
           )}
+          {/* The folder or file shape says what opening the row does; this
+              marker says the row is a link, so a directory link is not read as
+              an ordinary directory. */}
+          {file.isLink && <Link2 size={10} className="sftp-file-link" />}
         </span>
-        <span className="sftp-file-name" title={file.path}>{file.name}</span>
+        <span className="sftp-file-name" title={remoteEntryTitle(file)}>{file.name}</span>
       </span>
       <span className="sftp-file-size">{file.isDir ? "—" : formatFileSize(file.size)}</span>
       <span className="sftp-file-modified">{formatModified(file.modTime, props.formatter)}</span>
@@ -411,8 +417,21 @@ export function SftpPanel(props: {
       const target = await SelectDownloadPath(file.name + ".d");
       if (!target) return;
       if (transferContextRef.current.sessionId !== context.sessionId || transferContextRef.current.remoteDir !== context.remoteDir) return;
-      await DownloadFolder(context.sessionId, file.path, target);
-      onNotify(t(lang, "folderDownloadFinished"), "success");
+      const result = await DownloadFolder(context.sessionId, file.path, target);
+      // "Finished" is not "complete": links are not followed and the server may
+      // refuse entries. Saying only "finished" is what made a backup of
+      // /etc/nginx look good while sites-enabled was missing from it.
+      if (result.skipped.length > 0) {
+        onNotify(
+          t(lang, "folderDownloadIncomplete", {
+            count: String(result.skipped.length),
+            names: formatSkippedEntries(result.skipped, (reason) => t(lang, skipReasonLabelKey(reason))),
+          }),
+          "warning",
+        );
+      } else {
+        onNotify(t(lang, "folderDownloadFinished"), "success");
+      }
       setPanel("manager");
     } catch (err) {
       onNotify(String(err), "error");

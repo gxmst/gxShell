@@ -8,7 +8,11 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
+
+	"gxShell/backend/types"
 
 	"github.com/pkg/sftp"
 )
@@ -70,7 +74,7 @@ func TestDownloadFolderRejectsDirectorySwapAfterWalking(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Remove(link) })
-	if err := m.DownloadFolder("test", "/source", destination); err == nil {
+	if _, err := m.DownloadFolder("test", "/source", destination); err == nil {
 		t.Error("download succeeded after its destination directory was replaced by an escaping link")
 	}
 	select {
@@ -104,7 +108,7 @@ func TestDownloadFolderRejectsEscapingDirectoryLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	makeDownloadDirectoryLink(t, filepath.Join(destination, "link"), outside)
-	if err := m.DownloadFolder("test", "/source", destination); err == nil {
+	if _, err := m.DownloadFolder("test", "/source", destination); err == nil {
 		t.Error("download through an escaping directory link succeeded")
 	}
 	got, err := os.ReadFile(victim)
@@ -144,7 +148,7 @@ func TestDownloadFolderRejectsWindowsNameCollisionsBeforeWriting(t *testing.T) {
 			if err := os.WriteFile(first, []byte("original"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			if err := m.DownloadFolder("test", "/source", destination); err == nil {
+			if _, err := m.DownloadFolder("test", "/source", destination); err == nil {
 				t.Error("download with colliding names reported success")
 			}
 			got, err := os.ReadFile(first)
@@ -170,7 +174,7 @@ func TestDownloadFolderCopiesNestedFilesAndReplacesRegularTargets(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(destination, "existing.txt"), []byte("original"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.DownloadFolder("test", "/source", destination); err != nil {
+	if _, err := m.DownloadFolder("test", "/source", destination); err != nil {
 		t.Fatal(err)
 	}
 	for name, want := range map[string]string{"existing.txt": "updated", "nested/new.txt": "new nested file"} {
@@ -197,7 +201,7 @@ func TestDownloadFolderPreservesDistinctNamesOnLinux(t *testing.T) {
 		putTransferTestFile(t, client, "/source/"+name, []byte(name))
 	}
 	destination := t.TempDir()
-	if err := m.DownloadFolder("test", "/source", destination); err != nil {
+	if _, err := m.DownloadFolder("test", "/source", destination); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range names {
@@ -205,5 +209,171 @@ func TestDownloadFolderPreservesDistinctNamesOnLinux(t *testing.T) {
 		if err != nil || string(got) != name {
 			t.Fatalf("distinct file %q was not preserved: %q, %v", name, got, err)
 		}
+	}
+}
+
+// folderDownloadListHook fails the listing of one remote directory, which is
+// what a server does for a directory the login user cannot read. It stays
+// disarmed while the test builds the tree, because MkdirAll stats the paths it
+// creates.
+type folderDownloadListHook struct {
+	base   sftp.FileLister
+	failOn string
+	armed  *atomic.Bool
+}
+
+func (l folderDownloadListHook) Filelist(request *sftp.Request) (sftp.ListerAt, error) {
+	if l.armed != nil && l.armed.Load() && request.Filepath == l.failOn {
+		return nil, os.ErrPermission
+	}
+	return l.base.Filelist(request)
+}
+
+// A backup of /etc/nginx that silently omits sites-enabled is not a backup.
+// Links are not followed, so they have to be reported instead.
+func TestDownloadFolderReportsSkippedSymlinks(t *testing.T) {
+	m, client := newTransferTestManager(t, sftp.InMemHandler())
+	if err := client.MkdirAll("/source/sites-available"); err != nil {
+		t.Fatal(err)
+	}
+	putTransferTestFile(t, client, "/source/nginx.conf", []byte("server {}"))
+	putTransferTestFile(t, client, "/source/sites-available/default", []byte("site"))
+	if err := client.Symlink("sites-available", "/source/sites-enabled"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Symlink("nginx.conf", "/source/nginx.conf.bak"); err != nil {
+		t.Fatal(err)
+	}
+
+	destination := t.TempDir()
+	result, err := m.DownloadFolder("test", "/source", destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reasons := make(map[string]string, len(result.Skipped))
+	for _, skip := range result.Skipped {
+		reasons[skip.Path] = skip.Reason
+	}
+	for _, want := range []string{"/source/sites-enabled", "/source/nginx.conf.bak"} {
+		if reasons[want] != types.FolderDownloadSkipSymlink {
+			t.Errorf("link %s was not reported as skipped: %+v", want, result.Skipped)
+		}
+	}
+	if result.Files != 2 {
+		t.Errorf("downloaded %d files, want 2", result.Files)
+	}
+	// Skipping has to mean skipping: a link must not turn into an empty
+	// directory or a copy of its target on the local side.
+	for _, name := range []string{"sites-enabled", "nginx.conf.bak"} {
+		if _, err := os.Lstat(filepath.Join(destination, name)); !os.IsNotExist(err) {
+			t.Errorf("skipped link %s was materialised locally (err=%v)", name, err)
+		}
+	}
+	if got, err := os.ReadFile(filepath.Join(destination, "sites-available", "default")); err != nil || string(got) != "site" {
+		t.Fatalf("the link's target was not downloaded: %q, %v", got, err)
+	}
+}
+
+// One unreadable directory used to fail the whole download, and the error did
+// not even say which one it was.
+func TestDownloadFolderKeepsGoingPastAnUnreadableDirectory(t *testing.T) {
+	armed := &atomic.Bool{}
+	handlers := sftp.InMemHandler()
+	handlers.FileList = folderDownloadListHook{base: handlers.FileList, failOn: "/source/secret", armed: armed}
+	m, client := newTransferTestManager(t, handlers)
+	if err := client.MkdirAll("/source"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Mkdir("/source/secret"); err != nil {
+		t.Fatal(err)
+	}
+	putTransferTestFile(t, client, "/source/secret/hidden.txt", []byte("hidden"))
+	putTransferTestFile(t, client, "/source/public.txt", []byte("public"))
+	armed.Store(true)
+
+	destination := t.TempDir()
+	result, err := m.DownloadFolder("test", "/source", destination)
+	if err != nil {
+		t.Fatalf("one unreadable directory failed the whole download: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(destination, "public.txt")); err != nil || string(got) != "public" {
+		t.Fatalf("readable file was not downloaded: %q, %v", got, err)
+	}
+	if len(result.Skipped) != 1 || result.Skipped[0].Path != "/source/secret" {
+		t.Fatalf("skipped entries = %+v, want the unreadable directory", result.Skipped)
+	}
+	if result.Skipped[0].Reason != types.FolderDownloadSkipUnreadable {
+		t.Errorf("skip reason = %q, want %q", result.Skipped[0].Reason, types.FolderDownloadSkipUnreadable)
+	}
+	if result.Skipped[0].Detail == "" {
+		t.Error("skip entry carries no server message")
+	}
+	// The directory itself is still there, so the local tree shows where the
+	// hole is instead of hiding it.
+	if info, err := os.Stat(filepath.Join(destination, "secret")); err != nil || !info.IsDir() {
+		t.Fatalf("unreadable directory was not created locally: %v", err)
+	}
+}
+
+// A local failure is not the server refusing one entry: every remaining file
+// would fail the same way, so the download stops and names the file.
+func TestDownloadFolderNamesTheFileItCouldNotWrite(t *testing.T) {
+	m, client := newTransferTestManager(t, sftp.InMemHandler())
+	if err := client.MkdirAll("/source"); err != nil {
+		t.Fatal(err)
+	}
+	putTransferTestFile(t, client, "/source/blocked.txt", []byte("data"))
+
+	destination := t.TempDir()
+	// A local directory where the file belongs.
+	if err := os.Mkdir(filepath.Join(destination, "blocked.txt"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := m.DownloadFolder("test", "/source", destination)
+	if err == nil {
+		t.Fatal("download reported success while a local destination blocked it")
+	}
+	if !strings.Contains(err.Error(), "/source/blocked.txt") {
+		t.Fatalf("error does not name the remote path that failed: %v", err)
+	}
+}
+
+// A directory link is how a tree is usually published, so the folder the user
+// picks may well be one.
+func TestDownloadFolderFollowsADirectoryLinkAtTheRoot(t *testing.T) {
+	m, client := newTransferTestManager(t, sftp.InMemHandler())
+	if err := client.MkdirAll("/releases/2026-09-26"); err != nil {
+		t.Fatal(err)
+	}
+	putTransferTestFile(t, client, "/releases/2026-09-26/app.conf", []byte("current"))
+	if err := client.Symlink("releases/2026-09-26", "/current"); err != nil {
+		t.Fatal(err)
+	}
+
+	destination := t.TempDir()
+	result, err := m.DownloadFolder("test", "/current", destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Files != 1 {
+		t.Errorf("downloaded %d files through the root link, want 1", result.Files)
+	}
+	if got, err := os.ReadFile(filepath.Join(destination, "app.conf")); err != nil || string(got) != "current" {
+		t.Fatalf("app.conf = %q, %v", got, err)
+	}
+}
+
+// A link chain longer than the resolver will follow is a loop or a mistake, and
+// walking it would spin forever.
+func TestDownloadFolderRejectsALoopAtTheRoot(t *testing.T) {
+	m, client := newTransferTestManager(t, sftp.InMemHandler())
+	if err := client.MkdirAll("/source"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Symlink("/source/loop", "/source/loop"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.DownloadFolder("test", "/source/loop", t.TempDir()); err == nil {
+		t.Fatal("a self-referential root link was accepted as a directory")
 	}
 }

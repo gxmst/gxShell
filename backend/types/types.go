@@ -211,13 +211,55 @@ type SessionInfo struct {
 }
 
 type RemoteFile struct {
-	Name        string    `json:"name"`
-	Path        string    `json:"path"`
-	Size        int64     `json:"size"`
-	IsDir       bool      `json:"isDir"`
+	Name string `json:"name"`
+	Path string `json:"path"`
+	// Size is the link target's size for a symbolic link, because that is the
+	// number the user is comparing. Mode still describes the link itself.
+	Size  int64 `json:"size"`
+	IsDir bool  `json:"isDir"`
+	// IsLink marks a symbolic link. IsDir is true when the link resolves to a
+	// directory, which is how a published tree usually looks (/bin, /lib,
+	// /var/www/current): readdir reports those as links, so without resolving
+	// the target the browser shows a directory as a file and offers a download
+	// that cannot succeed.
+	IsLink bool `json:"isLink"`
+	// LinkTarget is what the link points at, verbatim, including a relative
+	// target. Empty when the server would not resolve it.
+	LinkTarget  string    `json:"linkTarget,omitempty"`
 	Mode        string    `json:"mode"`
 	ModTime     time.Time `json:"modTime"`
 	Permissions string    `json:"permissions"`
+}
+
+// Reasons a recursive folder download leaves a remote entry behind. They are
+// stable tokens for the frontend to translate, never display text.
+const (
+	// FolderDownloadSkipSymlink marks a symbolic link. Links are not followed
+	// during a folder download: one inside the tree may point anywhere,
+	// including outside the directory the user asked for.
+	FolderDownloadSkipSymlink = "symlink"
+	// FolderDownloadSkipUnreadable marks an entry the server refused to serve.
+	FolderDownloadSkipUnreadable = "unreadable"
+)
+
+// FolderDownloadSkip names one remote entry a folder download did not copy.
+type FolderDownloadSkip struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+	// Detail carries the server's message for an unreadable entry, or the link
+	// target when the walker could resolve one.
+	Detail string `json:"detail,omitempty"`
+}
+
+// FolderDownloadResult reports what a recursive folder download actually
+// copied. A folder download deliberately leaves some entries behind, so the
+// absence of an error must not be read as "the local tree mirrors the remote
+// one": without Skipped, a backup of /etc/nginx looked complete while
+// sites-enabled — the directory it exists to serve — was missing.
+type FolderDownloadResult struct {
+	Files       int                  `json:"files"`
+	Directories int                  `json:"directories"`
+	Skipped     []FolderDownloadSkip `json:"skipped"`
 }
 
 type Metrics struct {

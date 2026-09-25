@@ -435,6 +435,16 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 2px;
+}
+
+/* The row keeps the folder or file shape and adds this marker rather than
+   replacing it: the shape says what opening the row does, the marker says the
+   entry is a link. readdir reports /var/www/current as a link, so without it
+   the row is indistinguishable from an ordinary directory. */
+.sftp-file-link {
+  flex: none;
+  color: var(--muted);
 }
 
 .sftp-file-name {

@@ -508,6 +508,59 @@ export namespace types {
 	}
 
 
+	export class FolderDownloadSkip {
+	    path: string;
+	    reason: string;
+	    detail?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new FolderDownloadSkip(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.reason = source["reason"];
+	        this.detail = source["detail"];
+	    }
+	}
+
+	export class FolderDownloadResult {
+	    files: number;
+	    directories: number;
+	    skipped: FolderDownloadSkip[];
+	
+	    static createFrom(source: any = {}) {
+	        return new FolderDownloadResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.files = source["files"];
+	        this.directories = source["directories"];
+	        this.skipped = this.convertValues(source["skipped"], FolderDownloadSkip);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+
 	export class LocalFile {
 	    name: string;
 	    path: string;
@@ -938,6 +991,19 @@ export namespace types {
 	    path: string;
 	    size: number;
 	    isDir: boolean;
+	    /**
+	     * IsLink marks a symbolic link. isDir is true when the link resolves to a
+	     * directory, which is how a published tree usually looks (/bin, /lib,
+	     * /var/www/current): readdir reports those as links, so without resolving
+	     * the target the browser shows a directory as a file and offers a download
+	     * that cannot succeed.
+	     */
+	    isLink: boolean;
+	    /**
+	     * LinkTarget is what the link points at, verbatim, including a relative
+	     * target. Empty when the server would not resolve it.
+	     */
+	    linkTarget?: string;
 	    mode: string;
 	    // Go type: time
 	    modTime: any;
@@ -953,6 +1019,8 @@ export namespace types {
 	        this.path = source["path"];
 	        this.size = source["size"];
 	        this.isDir = source["isDir"];
+	        this.isLink = source["isLink"];
+	        this.linkTarget = source["linkTarget"];
 	        this.mode = source["mode"];
 	        this.modTime = this.convertValues(source["modTime"], null);
 	        this.permissions = source["permissions"];

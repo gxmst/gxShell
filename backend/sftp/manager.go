@@ -900,6 +900,7 @@ func (m *Manager) ListRemoteDir(sessionID string, remotePath string) ([]types.Re
 		return nil, err
 	}
 	files := make([]types.RemoteFile, 0, len(entries))
+	links := make([]int, 0)
 	for _, entry := range entries {
 		// gxShell's own in-progress and abandoned transfer files are plumbing, not
 		// the user's data. A part file now outlives a failed transfer so it can be
@@ -908,7 +909,7 @@ func (m *Manager) ListRemoteDir(sessionID string, remotePath string) ([]types.Re
 		if IsTransferArtifact(entry.Name()) {
 			continue
 		}
-		files = append(files, types.RemoteFile{
+		file := types.RemoteFile{
 			Name:        entry.Name(),
 			Path:        path.Join(remotePath, entry.Name()),
 			Size:        entry.Size(),
@@ -916,8 +917,14 @@ func (m *Manager) ListRemoteDir(sessionID string, remotePath string) ([]types.Re
 			Mode:        entry.Mode().String(),
 			ModTime:     entry.ModTime(),
 			Permissions: entry.Mode().Perm().String(),
-		})
+		}
+		if entry.Mode()&os.ModeSymlink != 0 {
+			file.IsLink = true
+			links = append(links, len(files))
+		}
+		files = append(files, file)
 	}
+	resolveRemoteLinks(client, files, links)
 	sort.SliceStable(files, func(i, j int) bool {
 		if files[i].IsDir != files[j].IsDir {
 			return files[i].IsDir
@@ -925,6 +932,59 @@ func (m *Manager) ListRemoteDir(sessionID string, remotePath string) ([]types.Re
 		return files[i].Name < files[j].Name
 	})
 	return files, nil
+}
+
+// linkResolutionWorkers bounds how many link targets ListRemoteDir resolves at
+// once. A bin directory holds hundreds of links and each needs two round trips,
+// so resolving them serially would keep the listing blank for seconds.
+const linkResolutionWorkers = 8
+
+// resolveRemoteLinks fills in the link fields of a directory listing.
+//
+// readdir reports a link as a link, so a directory link — which is how a
+// published tree usually looks (/bin, /lib, /var/www/current) — arrives looking
+// like a file. The browser then offers a download, the server answers
+// SSH_FX_FAILURE, and the attempt leaves a zero-byte part file behind.
+// Resolving the target says "this is a directory, open it" and gives the row
+// something to show.
+//
+// Both calls are best-effort. A link whose target cannot be read is still a
+// link: the row stays honest, it just cannot say where it points.
+func resolveRemoteLinks(client *sftp.Client, files []types.RemoteFile, links []int) {
+	if len(links) == 0 {
+		return
+	}
+	workers := linkResolutionWorkers
+	if len(links) < workers {
+		workers = len(links)
+	}
+	pending := make(chan int)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for index := range pending {
+				file := &files[index]
+				if target, err := client.ReadLink(file.Path); err == nil {
+					file.LinkTarget = target
+				}
+				info, err := client.Stat(file.Path)
+				if err != nil {
+					continue
+				}
+				file.IsDir = info.IsDir()
+				if info.Mode().IsRegular() {
+					file.Size = info.Size()
+				}
+			}
+		}()
+	}
+	for _, index := range links {
+		pending <- index
+	}
+	close(pending)
+	wg.Wait()
 }
 
 // RemoteFileExists checks whether a remote path is an existing regular file.
@@ -1139,6 +1199,13 @@ func (m *Manager) uploadFileWithPolicy(sessionID, localPath, remotePath string, 
 	if err = job.waitIfPaused(); err != nil {
 		return err
 	}
+	// An upload installs a new inode, so replacing a file resets its mode and
+	// owner: a deploy script's 0755 came back 0644, a 0600 config came back
+	// world-readable, and a www-data-owned .env came back owned by the login
+	// user, which is how a site starts returning 500 after a successful upload.
+	// Capture the destination before the rename and carry it onto the completed
+	// part file. A destination that does not exist yields nothing to carry.
+	applyRemoteOwnership(client, tmpPath, captureRemoteOwnership(client, remotePath))
 	if err = replaceRemoteTemp(client, tmpPath, remotePath, overwrite); err != nil {
 		return err
 	}
@@ -1489,29 +1556,42 @@ func (m *Manager) WriteRemoteFile(sessionID string, remotePath string, data []by
 	}
 	defer release()
 
-	var mode os.FileMode
-	if stat, statErr := client.Stat(remotePath); statErr == nil {
-		if stat.IsDir() {
-			return fmt.Errorf("remote path is a directory, not a file")
-		}
-		mode = stat.Mode().Perm()
+	if info, statErr := client.Stat(remotePath); statErr == nil && info.IsDir() {
+		return fmt.Errorf("remote path is a directory, not a file")
 	}
+
+	// A save through a symlink has to update the file the link points at. The
+	// temp-file-plus-rename below replaces whatever name it is given, so
+	// writing through /etc/nginx/sites-enabled/default used to turn that link
+	// into a regular file and leave sites-available/default untouched — the
+	// same for stow- and chezmoi-managed dotfiles and for /etc/resolv.conf.
+	target, err := resolveRemoteLinkTarget(client, remotePath)
+	if err != nil {
+		return fmt.Errorf("resolve remote save target: %w", err)
+	}
+	// The rename replaces the inode, and with it the mode and owner: a 0600
+	// config came back 0644 and a www-data-owned .env came back owned by the
+	// login user.
+	owner := captureRemoteOwnership(client, target)
 
 	// This is the remote editor's save path: write a sibling temp file and
 	// rename it over the target. An in-place O_TRUNC write would destroy the
 	// original if the connection drops mid-write.
-	tmpPath := remotePath + ".gxshell-" + randomSuffix() + ".tmp"
-	if err := writeRemoteFileAt(client, tmpPath, data, mode); err != nil {
+	tmpPath := target + ".gxshell-" + randomSuffix() + ".tmp"
+	if err := writeRemoteFileAt(client, tmpPath, data); err != nil {
 		_ = client.Remove(tmpPath)
 		m.invalidateOnConnErr(sessionID, err)
 		return fmt.Errorf("write remote temporary file; original preserved: %w", err)
 	}
-	if err := client.PosixRename(tmpPath, remotePath); err != nil {
+	// Ownership first: chown clears the setuid and setgid bits, so the mode has
+	// to be applied after it or those bits are lost again.
+	applyRemoteOwnership(client, tmpPath, owner)
+	if err := client.PosixRename(tmpPath, target); err != nil {
 		// posix-rename@openssh.com may be unsupported. Plain SFTP Rename is a
 		// safe fallback only when the server can complete it without deleting an
 		// existing target. If it refuses to overwrite, preserve the original file
-		// and report the save failure instead of removing remotePath first.
-		if err2 := client.Rename(tmpPath, remotePath); err2 != nil {
+		// and report the save failure instead of removing target first.
+		if err2 := client.Rename(tmpPath, target); err2 != nil {
 			_ = client.Remove(tmpPath)
 			m.invalidateOnConnErr(sessionID, err2)
 			return fmt.Errorf("replace remote file: posix rename failed (%v); fallback rename failed without deleting original: %w", err, err2)
@@ -1520,7 +1600,103 @@ func (m *Manager) WriteRemoteFile(sessionID string, remotePath string, data []by
 	return nil
 }
 
-func writeRemoteFileAt(client *sftp.Client, remotePath string, data []byte, mode os.FileMode) error {
+// maxRemoteLinkDepth bounds symlink resolution. The SFTP protocol does not
+// report a loop, so an unbounded walk would spin forever.
+const maxRemoteLinkDepth = 8
+
+// remoteFileOps is the slice of the SFTP client the save path's link and
+// ownership rules use. Narrowing it keeps those rules testable without a
+// server; *sftp.Client implements it.
+type remoteFileOps interface {
+	Lstat(string) (os.FileInfo, error)
+	ReadLink(string) (string, error)
+	Chown(string, int, int) error
+	Chmod(string, os.FileMode) error
+}
+
+// resolveRemoteLinkTarget follows a symlink chain to the entry a caller must
+// actually touch, and returns remotePath unchanged when it is not a link.
+// Relative link targets are resolved against the link's own directory, which is
+// what the server would do when opening the path.
+//
+// Two callers need this for the same reason. A save has to replace the file a
+// link points at rather than the link, and a folder download has to walk a link
+// that stands for a directory (/bin, /lib, /var/www/current) instead of
+// reporting that the remote path is not a directory.
+func resolveRemoteLinkTarget(client remoteFileOps, remotePath string) (string, error) {
+	resolved := remotePath
+	for depth := 0; depth < maxRemoteLinkDepth; depth++ {
+		info, err := client.Lstat(resolved)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// Saving a file that does not exist yet: nothing to follow.
+				return resolved, nil
+			}
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return resolved, nil
+		}
+		linkTarget, err := client.ReadLink(resolved)
+		if err != nil {
+			return "", err
+		}
+		if !path.IsAbs(linkTarget) {
+			linkTarget = path.Join(path.Dir(resolved), linkTarget)
+		}
+		resolved = path.Clean(linkTarget)
+	}
+	return "", fmt.Errorf("remote path is a symlink chain deeper than %d: %s", maxRemoteLinkDepth, remotePath)
+}
+
+// remoteOwnership is what a replaced file should look like afterwards.
+type remoteOwnership struct {
+	mode os.FileMode
+	uid  int
+	gid  int
+	// known is false when the destination could not be inspected, in which case
+	// nothing is applied: inventing a mode would be worse than leaving the
+	// server's default.
+	known bool
+}
+
+// captureRemoteOwnership records the destination's current mode and owner so a
+// replacement keeps them.
+func captureRemoteOwnership(client remoteFileOps, remotePath string) remoteOwnership {
+	info, err := client.Lstat(remotePath)
+	if err != nil {
+		return remoteOwnership{}
+	}
+	owner := remoteOwnership{
+		// The permission bits plus the setuid/setgid/sticky flags, which a
+		// deployment script may well be relying on.
+		mode:  info.Mode() & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky),
+		known: true,
+	}
+	if stat, ok := info.Sys().(*sftp.FileStat); ok && stat != nil {
+		owner.uid, owner.gid = int(stat.UID), int(stat.GID)
+	}
+	return owner
+}
+
+// applyRemoteOwnership copies a captured mode and owner onto a freshly written
+// file. Both calls are best-effort: chown needs root on most servers, and a
+// refused chown must not fail a transfer that otherwise succeeded.
+func applyRemoteOwnership(client remoteFileOps, remotePath string, owner remoteOwnership) {
+	if !owner.known {
+		return
+	}
+	// chown first: it clears the setuid and setgid bits, so applying the mode
+	// before it would lose them again.
+	if owner.uid != 0 || owner.gid != 0 {
+		_ = client.Chown(remotePath, owner.uid, owner.gid)
+	}
+	if owner.mode != 0 {
+		_ = client.Chmod(remotePath, owner.mode)
+	}
+}
+
+func writeRemoteFileAt(client *sftp.Client, remotePath string, data []byte) error {
 	dst, err := client.OpenFile(remotePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
 	if err != nil {
 		return err
@@ -1532,9 +1708,6 @@ func writeRemoteFileAt(client *sftp.Client, remotePath string, data []byte, mode
 	}
 	if closeErr != nil {
 		return closeErr
-	}
-	if mode != 0 {
-		_ = client.Chmod(remotePath, mode)
 	}
 	return nil
 }
@@ -1634,28 +1807,54 @@ func promoteLocalNoReplace(sourcePath, targetPath string) error {
 }
 
 func promoteLocalNoReplaceWithFS(fs localReplacementFS, sourcePath, targetPath string) error {
-	if err := fs.Link(sourcePath, targetPath); err != nil {
-		return err
-	}
-	_ = fs.Remove(sourcePath)
-	return nil
+	return installLocalFile(fs, sourcePath, targetPath, true)
 }
 
-func checkLocalNoReplaceSupport(fs localReplacementFS, sourcePath, targetPath string) error {
-	probePath := targetPath + artifactMarker + randomSuffix() + ".link-check"
-	if err := fs.Link(sourcePath, probePath); err != nil {
-		return err
+// installLocalFile moves a completed temp file onto targetPath.
+//
+// noReplace asks for the atomic no-replace guarantee, which a hard link
+// provides: the link fails if the destination appeared meanwhile, so completed
+// bytes are never installed over a file another process just created.
+//
+// Filesystems without hard links — exFAT, FAT32, and some network mounts —
+// cannot offer that. Insisting on it made every download to such a disk fail
+// after the whole file had been transferred, and the retry then transferred it
+// all again and failed the same way. Those get an Lstat re-check followed by a
+// rename: the window between the two calls is microseconds, and the
+// alternative is refusing to download onto the filesystem at all.
+//
+// A filesystem whose link support is broken for some other reason (read-only
+// directory, exhausted space) fails both steps, and the link error is reported
+// because it is the reason the fast path was skipped.
+func installLocalFile(fs localReplacementFS, sourcePath, targetPath string, noReplace bool) error {
+	if !noReplace {
+		// Nothing to protect: the caller approved replacing the destination and
+		// the move-aside has just made it absent, so a plain rename is both
+		// atomic and available everywhere.
+		return fs.Rename(sourcePath, targetPath)
 	}
-	if err := fs.Remove(probePath); err != nil {
-		return fmt.Errorf("remove link check %s: %w", probePath, err)
+	linkErr := fs.Link(sourcePath, targetPath)
+	if linkErr == nil {
+		_ = fs.Remove(sourcePath)
+		return nil
+	}
+	if _, statErr := fs.Lstat(targetPath); statErr == nil {
+		// The destination is there, so the no-replace guarantee is exactly what
+		// failed. Never fall back to a rename in that case.
+		return linkErr
+	} else if !os.IsNotExist(statErr) {
+		return linkErr
+	}
+	if renameErr := fs.Rename(sourcePath, targetPath); renameErr != nil {
+		return fmt.Errorf("%v; rename fallback failed: %w", linkErr, renameErr)
 	}
 	return nil
 }
 
 // replaceLocalTemp promotes a completed .part file. Existing regular files are
-// moved aside first, then a hard link atomically installs the completed bytes
-// only if the destination is still absent. This preserves both sides if another
-// process creates a new destination during promotion.
+// moved aside first, then the completed bytes are installed only if the
+// destination is still absent. This preserves both sides if another process
+// creates a new destination during promotion.
 func replaceLocalTemp(tmpPath, localPath string, overwrite bool) error {
 	return replaceLocalTempWithFS(localOSFiles{}, tmpPath, localPath, overwrite)
 }
@@ -1663,7 +1862,7 @@ func replaceLocalTemp(tmpPath, localPath string, overwrite bool) error {
 func replaceLocalTempWithFS(fs localReplacementFS, tmpPath, localPath string, overwrite bool) error {
 	info, statErr := fs.Lstat(localPath)
 	if os.IsNotExist(statErr) {
-		if err := promoteLocalNoReplaceWithFS(fs, tmpPath, localPath); err != nil {
+		if err := installLocalFile(fs, tmpPath, localPath, !overwrite); err != nil {
 			if !overwrite {
 				if raced, raceErr := fs.Lstat(localPath); raceErr == nil && raced.Mode().IsRegular() {
 					return &OverwriteRequiredError{Path: localPath}
@@ -1682,15 +1881,14 @@ func replaceLocalTempWithFS(fs localReplacementFS, tmpPath, localPath string, ov
 	if !overwrite {
 		return &OverwriteRequiredError{Path: localPath}
 	}
-	// Confirm the filesystem supports the atomic promotion primitive before
-	// moving the user's original file out of the way.
-	if err := checkLocalNoReplaceSupport(fs, tmpPath, localPath); err != nil {
-		return fmt.Errorf("download filesystem does not support safe replacement: %w", err)
-	}
 
 	// Moving the old regular file aside gives every platform a rollback path and
-	// lets promotion use the same atomic no-replace operation as the
-	// non-conflict case.
+	// makes the install target absent, which is what lets the install use the
+	// same primitive as the non-conflict case. This used to be preceded by a
+	// hard-link probe that rejected link-less filesystems before the user's
+	// file was touched; the install now falls back to a rename, so the probe
+	// would only have rejected filesystems that work, and the rollback below is
+	// the guarantee instead.
 	backupPath := localPath + artifactMarker + randomSuffix() + backupSuffix
 	if err := fs.Rename(localPath, backupPath); err != nil {
 		return fmt.Errorf("prepare existing download target: %w", err)
@@ -1703,7 +1901,7 @@ func replaceLocalTempWithFS(fs localReplacementFS, tmpPath, localPath string, ov
 		}
 		return fmt.Errorf("download destination changed to a non-regular file; restore original: %v", restoreErr)
 	}
-	if err := promoteLocalNoReplaceWithFS(fs, tmpPath, localPath); err != nil {
+	if err := installLocalFile(fs, tmpPath, localPath, false); err != nil {
 		if restoreErr := promoteLocalNoReplaceWithFS(fs, backupPath, localPath); restoreErr != nil {
 			return fmt.Errorf("promote completed download: %v; restore original from %s: %w", err, backupPath, restoreErr)
 		}
@@ -1756,7 +1954,14 @@ func (m *Manager) CreateRemoteDir(sessionID, remotePath string) error {
 	return err
 }
 
-func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) (err error) {
+// DownloadFolder copies a remote directory tree into localDir.
+//
+// It returns what it copied as well as whether it failed, because a folder
+// download deliberately leaves entries behind: links are never followed, and
+// the server may refuse individual entries. Reporting only an error made a
+// backup of /etc/nginx look complete while sites-enabled — the directory it
+// exists to serve — was missing.
+func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) (result types.FolderDownloadResult, err error) {
 	remotePath = cleanRemotePath(remotePath)
 	job := m.beginTransfer(sessionID, remotePath, "download")
 	m.setTransferPaths(job, remotePath, localDir, true)
@@ -1771,56 +1976,93 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) (err er
 
 	client, release, err := m.acquire(sessionID)
 	if err != nil {
-		return err
+		return types.FolderDownloadResult{}, err
 	}
 	defer release()
 
 	cleanRemote := path.Clean(remotePath)
 	localRootPath, err := filepath.Abs(localDir)
 	if err != nil {
-		return fmt.Errorf("invalid local directory: %w", err)
+		return types.FolderDownloadResult{}, fmt.Errorf("invalid local directory: %w", err)
 	}
 	if err := os.MkdirAll(localRootPath, 0755); err != nil {
-		return err
+		return types.FolderDownloadResult{}, err
 	}
 	// Keep the directory handle for the entire download. Every extracted path,
 	// including staging, promotion and cleanup, must resolve beneath this root.
 	localRoot, err := os.OpenRoot(localRootPath)
 	if err != nil {
-		return err
+		return types.FolderDownloadResult{}, err
 	}
 	defer localRoot.Close()
 
-	var files []struct {
-		remotePath string
-		localPath  string
-		isDir      bool
+	// The folder a user picks is often a link: /bin, /lib, /var/www/current.
+	// Walk its target so they get the entries they asked for. Links met inside
+	// the tree are still not followed — that is what keeps the walk from
+	// wandering outside the directory that was requested.
+	walkRoot, err := resolveRemoteLinkTarget(client, cleanRemote)
+	if err != nil {
+		return types.FolderDownloadResult{}, fmt.Errorf("resolve remote directory %s: %w", cleanRemote, err)
 	}
+	rootInfo, err := client.Stat(walkRoot)
+	if err != nil {
+		m.invalidateOnConnErr(sessionID, err)
+		return types.FolderDownloadResult{}, fmt.Errorf("inspect remote directory %s: %w", walkRoot, err)
+	}
+	if !rootInfo.IsDir() {
+		return types.FolderDownloadResult{}, fmt.Errorf("remote path is not a directory: %s", remotePath)
+	}
+
+	var files []folderDownloadEntry
+	skipped := make([]types.FolderDownloadSkip, 0)
 	localNames := map[string]string{}
-	walker := client.Walk(remotePath)
+	// Every error the walker can report arrives on a Step that returned true and
+	// is handled below, so the loop remembers the last one it handled. Reading
+	// Err() again after the loop would otherwise report the final directory's
+	// failure a second time, long after it had been recorded as a skip.
+	var handledWalkErr error
+	walker := client.Walk(walkRoot)
 	for walker.Step() {
 		if err = job.waitIfPaused(); err != nil {
-			return err
-		}
-		if err := walker.Err(); err != nil {
-			return err
-		}
-		stat := walker.Stat()
-		// Skip symlinks: a malicious server could use them to escape localDir or
-		// to make the walk follow links outside the requested tree.
-		if stat.Mode()&os.ModeSymlink != 0 {
-			continue
+			return types.FolderDownloadResult{}, err
 		}
 		rp := walker.Path()
+		stat := walker.Stat()
+		if walkErr := walker.Err(); walkErr != nil {
+			// A directory the server refuses to list stops that subtree only.
+			// Aborting here turned one unreadable directory into a failed backup
+			// of everything else, and the error did not say which one it was.
+			if stat == nil || !stat.IsDir() {
+				return types.FolderDownloadResult{}, fmt.Errorf("inspect remote path %s: %w", rp, walkErr)
+			}
+			handledWalkErr = walkErr
+			skipped = append(skipped, types.FolderDownloadSkip{
+				Path:   rp,
+				Reason: types.FolderDownloadSkipUnreadable,
+				Detail: walkErr.Error(),
+			})
+			continue
+		}
+		// Skip symlinks: a malicious server could use them to escape localDir or
+		// to make the walk follow links outside the requested tree. The skip is
+		// recorded rather than silent, so an incomplete tree cannot be mistaken
+		// for a complete one.
+		if stat.Mode()&os.ModeSymlink != 0 {
+			skipped = append(skipped, types.FolderDownloadSkip{
+				Path:   rp,
+				Reason: types.FolderDownloadSkipSymlink,
+			})
+			continue
+		}
 		// Remote paths are forward-slash; compute the relative segment with the
 		// remote-path package, then convert to OS separators for local use.
-		rel, relErr := relRemote(cleanRemote, rp)
+		rel, relErr := relRemote(walkRoot, rp)
 		if relErr != nil {
-			return fmt.Errorf("invalid path: %w", relErr)
+			return types.FolderDownloadResult{}, fmt.Errorf("invalid path: %w", relErr)
 		}
 		localPath, pathErr := filepath.Localize(rel)
 		if pathErr != nil {
-			return fmt.Errorf("invalid download path %q: %w", rel, pathErr)
+			return types.FolderDownloadResult{}, fmt.Errorf("invalid download path %q: %w", rel, pathErr)
 		}
 		key := localPath
 		if runtime.GOOS == "windows" {
@@ -1829,44 +2071,42 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) (err er
 			if rel != "." {
 				for _, part := range strings.Split(rel, "/") {
 					if strings.HasSuffix(part, ".") || strings.HasSuffix(part, " ") {
-						return fmt.Errorf("download path %q ends in a dot or space on Windows", rel)
+						return types.FolderDownloadResult{}, fmt.Errorf("download path %q ends in a dot or space on Windows", rel)
 					}
 				}
 			}
 			key = strings.ToUpper(key)
 		}
 		if previous, exists := localNames[key]; exists {
-			return fmt.Errorf("download paths %q and %q map to the same local name", previous, rp)
+			return types.FolderDownloadResult{}, fmt.Errorf("download paths %q and %q map to the same local name", previous, rp)
 		}
 		localNames[key] = rp
 		isDir := stat.IsDir()
 		if rel == "." && !isDir {
-			return fmt.Errorf("remote path is not a directory: %s", remotePath)
+			return types.FolderDownloadResult{}, fmt.Errorf("remote path is not a directory: %s", remotePath)
 		}
-		files = append(files, struct {
-			remotePath string
-			localPath  string
-			isDir      bool
-		}{remotePath: rp, localPath: localPath, isDir: isDir})
-		if !isDir {
+		files = append(files, folderDownloadEntry{remotePath: rp, localPath: localPath, isDir: isDir})
+		if isDir {
+			result.Directories++
+		} else {
 			totalSize += stat.Size()
 		}
 	}
-	if walkErr := walker.Err(); walkErr != nil {
-		return walkErr
+	if walkErr := walker.Err(); walkErr != nil && walkErr != handledWalkErr {
+		return types.FolderDownloadResult{}, walkErr
 	}
 	if err = checkTransferContext(job.ctx); err != nil {
-		return err
+		return types.FolderDownloadResult{}, err
 	}
 	// Validate the whole remote tree before creating entries or overwriting any
 	// files, including directory-name collisions such as Dir/a and dir/b.
 	for _, f := range files {
 		if err = job.waitIfPaused(); err != nil {
-			return err
+			return types.FolderDownloadResult{}, err
 		}
 		if f.isDir {
 			if err := localRoot.MkdirAll(f.localPath, 0755); err != nil {
-				return err
+				return types.FolderDownloadResult{}, err
 			}
 		}
 	}
@@ -1879,7 +2119,7 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) (err er
 			continue
 		}
 		if err = job.waitIfPaused(); err != nil {
-			return err
+			return types.FolderDownloadResult{}, err
 		}
 		baseDone := done
 		var fileDone int64
@@ -1888,10 +2128,59 @@ func (m *Manager) DownloadFolder(sessionID, remotePath, localDir string) (err er
 		})
 		done = baseDone + fileDone
 		if err != nil {
-			return err
+			// The server refusing one entry says nothing about the rest of the
+			// tree, so keep going and report it. Anything else — a cancelled
+			// job, a dead transport, a local write failure — would repeat for
+			// every remaining file, so it still aborts with the path that
+			// caused it.
+			if !isPerEntryDownloadFailure(err) {
+				return types.FolderDownloadResult{}, fmt.Errorf("download %s: %w", f.remotePath, err)
+			}
+			skipped = append(skipped, types.FolderDownloadSkip{
+				Path:   f.remotePath,
+				Reason: types.FolderDownloadSkipUnreadable,
+				Detail: err.Error(),
+			})
+			continue
 		}
+		result.Files++
 	}
-	return nil
+	result.Skipped = skipped
+	return result, nil
+}
+
+// folderDownloadEntry is one validated member of a remote tree.
+type folderDownloadEntry struct {
+	remotePath string
+	localPath  string
+	isDir      bool
+}
+
+// isPerEntryDownloadFailure reports whether a folder download should carry on
+// past a failed entry.
+//
+// Only the server answering over a healthy link qualifies: permission denied,
+// no such file, and the like. A cancelled job, a dead transport, or a local
+// write failure would repeat for every remaining entry, so those still abort
+// and the caller sees the real cause instead of a list of consequences.
+func isPerEntryDownloadFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var status *sftp.StatusError
+	if errors.As(err, &status) {
+		switch status.FxCode() {
+		case sftp.ErrSSHFxNoConnection, sftp.ErrSSHFxConnectionLost:
+			// The server is reporting the link itself rather than this entry,
+			// so every remaining entry would fail the same way.
+			return false
+		}
+		return true
+	}
+	return os.IsNotExist(err) || os.IsPermission(err)
 }
 
 func (m *Manager) downloadFileOnly(client *sftp.Client, job *transferJob, root *os.Root, remotePath, localPath string, progress func(int64)) (written int64, err error) {

@@ -159,8 +159,10 @@ func (a *App) ReadRemoteMarkdownResourceDataURL(sessionID, markdownPath, href st
 	return markdownDataURL(target, data), nil
 }
 
-// DownloadFolder downloads a remote directory recursively via SFTP.
-func (a *App) DownloadFolder(sessionID, remotePath, localDir string) error {
+// DownloadFolder downloads a remote directory recursively via SFTP. The result
+// reports the entries the download deliberately left behind, so a partial tree
+// is never presented as a complete one.
+func (a *App) DownloadFolder(sessionID, remotePath, localDir string) (types.FolderDownloadResult, error) {
 	return a.sftp.DownloadFolder(sessionID, remotePath, localDir)
 }
 

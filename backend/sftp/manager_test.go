@@ -6,10 +6,13 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/pkg/sftp"
 )
 
 type remoteReadHandleTestFile struct {
@@ -533,6 +536,96 @@ func TestReplaceLocalTempRejectsDirectoryTarget(t *testing.T) {
 	}
 }
 
+// noLinkFS is a filesystem without hard links — exFAT, FAT32 and some network
+// mounts. It wraps the real one and fails Link the way such a filesystem does.
+type noLinkFS struct{ localOSFiles }
+
+func (noLinkFS) Link(oldname, newname string) error {
+	return &os.LinkError{Op: "link", Old: oldname, New: newname, Err: errors.New("operation not supported")}
+}
+
+func TestReplaceLocalTempInstallsOnFilesystemWithoutHardLinks(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "download.txt")
+	part := transferPartPath(target, "job-nolink-new")
+	if err := os.WriteFile(part, []byte("complete"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Before the fix the link-based promotion failed here, so every download to
+	// this kind of disk failed after transferring the whole file.
+	if err := replaceLocalTempWithFS(noLinkFS{}, part, target, false); err != nil {
+		t.Fatalf("download to a link-less filesystem failed: %v", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "complete" {
+		t.Fatalf("target = %q, want complete", got)
+	}
+}
+
+func TestReplaceLocalTempReplacesExistingTargetWithoutHardLinks(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "download.txt")
+	part := transferPartPath(target, "job-nolink-overwrite")
+	if err := os.WriteFile(target, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(part, []byte("complete"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := replaceLocalTempWithFS(noLinkFS{}, part, target, true); err != nil {
+		t.Fatalf("overwrite on a link-less filesystem failed: %v", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "complete" {
+		t.Fatalf("target = %q, want complete", got)
+	}
+	// No stray backup or probe files are left behind.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "download.txt" {
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		t.Fatalf("leftover files after promotion: %v", names)
+	}
+}
+
+func TestInstallLocalFileStillRefusesToReplaceWithoutHardLinks(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "download.txt")
+	part := transferPartPath(target, "job-nolink-race")
+	if err := os.WriteFile(target, []byte("created by another process"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(part, []byte("completed download"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// The rename fallback exists only for a filesystem that cannot hard-link,
+	// never as a way to overwrite a destination that is actually there.
+	if err := installLocalFile(noLinkFS{}, part, target, true); err == nil {
+		t.Fatal("no-replace install replaced an existing target on a link-less filesystem")
+	}
+	gotTarget, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotTarget) != "created by another process" {
+		t.Fatalf("target = %q, want the raced file preserved", gotTarget)
+	}
+	if _, err := os.Stat(part); err != nil {
+		t.Fatalf("part file was lost: %v", err)
+	}
+}
+
 func TestProgressWriterStopsBeforeWritingWhenCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -552,5 +645,169 @@ func TestVerifiedUploadRejectsInvalidHashBeforeStartingTransfer(t *testing.T) {
 		if err := m.UploadFileWithPolicyVerified("session", "local", "/tmp/remote", false, hash); err == nil {
 			t.Fatalf("hash %q was accepted", hash)
 		}
+	}
+}
+
+// fakeRemoteFileOps models the remote side of the save path's link and
+// ownership rules: a link table plus a record of the metadata calls.
+type fakeRemoteFileOps struct {
+	links map[string]string
+	files map[string]os.FileMode
+	uids  map[string][2]int
+	chown []string
+	chmod []string
+}
+
+func newFakeRemoteFileOps() *fakeRemoteFileOps {
+	return &fakeRemoteFileOps{
+		links: map[string]string{},
+		files: map[string]os.FileMode{},
+		uids:  map[string][2]int{},
+	}
+}
+
+func (f *fakeRemoteFileOps) addFile(name string, mode os.FileMode) { f.files[name] = mode }
+
+func (f *fakeRemoteFileOps) Lstat(name string) (os.FileInfo, error) {
+	if _, ok := f.links[name]; ok {
+		return fakeFileInfo{name: path.Base(name), mode: os.ModeSymlink | 0777}, nil
+	}
+	if mode, ok := f.files[name]; ok {
+		return fakeFileInfo{name: path.Base(name), mode: mode}, nil
+	}
+	return nil, os.ErrNotExist
+}
+
+func (f *fakeRemoteFileOps) ReadLink(name string) (string, error) {
+	if target, ok := f.links[name]; ok {
+		return target, nil
+	}
+	return "", os.ErrNotExist
+}
+
+func (f *fakeRemoteFileOps) Chown(name string, uid, gid int) error {
+	f.chown = append(f.chown, name)
+	f.uids[name] = [2]int{uid, gid}
+	return nil
+}
+
+func (f *fakeRemoteFileOps) Chmod(name string, mode os.FileMode) error {
+	f.chmod = append(f.chmod, name)
+	f.files[name] = mode
+	return nil
+}
+
+type fakeFileInfo struct {
+	name string
+	mode os.FileMode
+}
+
+func (i fakeFileInfo) Name() string       { return i.name }
+func (i fakeFileInfo) Size() int64        { return 0 }
+func (i fakeFileInfo) Mode() os.FileMode  { return i.mode }
+func (i fakeFileInfo) ModTime() time.Time { return time.Time{} }
+func (i fakeFileInfo) IsDir() bool        { return i.mode.IsDir() }
+func (i fakeFileInfo) Sys() any           { return nil }
+
+func TestResolveRemoteWriteTargetFollowsLinks(t *testing.T) {
+	ops := newFakeRemoteFileOps()
+	ops.addFile("/srv/real.conf", 0644)
+	ops.links["/srv/enabled.conf"] = "real.conf"
+	ops.links["/etc/site.conf"] = "/srv/enabled.conf"
+
+	// A plain file resolves to itself.
+	got, err := resolveRemoteLinkTarget(ops, "/srv/real.conf")
+	if err != nil || got != "/srv/real.conf" {
+		t.Fatalf("plain file resolved to %q, %v", got, err)
+	}
+	// A relative link target is resolved against the link's own directory, and
+	// a chain is followed to the end.
+	got, err = resolveRemoteLinkTarget(ops, "/etc/site.conf")
+	if err != nil || got != "/srv/real.conf" {
+		t.Fatalf("link chain resolved to %q, %v", got, err)
+	}
+	// A path that does not exist yet is its own target: this is a new file.
+	got, err = resolveRemoteLinkTarget(ops, "/srv/new.conf")
+	if err != nil || got != "/srv/new.conf" {
+		t.Fatalf("new file resolved to %q, %v", got, err)
+	}
+}
+
+func TestResolveRemoteWriteTargetRejectsALoop(t *testing.T) {
+	ops := newFakeRemoteFileOps()
+	ops.links["/a.conf"] = "/b.conf"
+	ops.links["/b.conf"] = "/a.conf"
+	// The SFTP protocol has no "too many links" answer, so the resolver must
+	// stop on its own rather than walk forever.
+	if _, err := resolveRemoteLinkTarget(ops, "/a.conf"); err == nil {
+		t.Fatal("a symlink loop was followed without bound")
+	}
+}
+
+func TestApplyRemoteOwnershipRestoresModeAndOwner(t *testing.T) {
+	ops := newFakeRemoteFileOps()
+	ops.addFile("/srv/app.sh", 0o755)
+	owner := captureRemoteOwnership(ops, "/srv/app.sh")
+	if !owner.known || owner.mode != 0o755 {
+		t.Fatalf("captured owner = %#v", owner)
+	}
+	applyRemoteOwnership(ops, "/srv/app.sh.tmp", owner)
+	if len(ops.chmod) != 1 || ops.chmod[0] != "/srv/app.sh.tmp" {
+		t.Fatalf("chmod calls = %#v", ops.chmod)
+	}
+	if got := ops.files["/srv/app.sh.tmp"]; got != 0o755 {
+		t.Fatalf("restored mode = %v, want 0755", got)
+	}
+}
+
+func TestApplyRemoteOwnershipDoesNothingWithoutADestination(t *testing.T) {
+	ops := newFakeRemoteFileOps()
+	owner := captureRemoteOwnership(ops, "/srv/missing")
+	if owner.known {
+		t.Fatal("a missing destination produced a captured owner")
+	}
+	applyRemoteOwnership(ops, "/srv/missing.tmp", owner)
+	if len(ops.chmod) != 0 || len(ops.chown) != 0 {
+		t.Fatalf("metadata was applied without a destination to copy: %#v %#v", ops.chown, ops.chmod)
+	}
+}
+
+func TestWriteRemoteFileFollowsASymlinkInsteadOfReplacingIt(t *testing.T) {
+	m, client := newTransferTestManager(t, sftp.InMemHandler())
+	putTransferTestFile(t, client, "/real.conf", []byte("original"))
+	if err := client.Symlink("/real.conf", "/enabled.conf"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.WriteRemoteFile("test", "/enabled.conf", []byte("updated")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readTransferTestFile(t, client, "/real.conf"); string(got) != "updated" {
+		t.Fatalf("link target = %q, want updated", got)
+	}
+	info, err := client.Lstat("/enabled.conf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the save replaced the symlink with a regular file")
+	}
+}
+
+func TestWriteRemoteFileFollowsARelativeSymlinkTarget(t *testing.T) {
+	m, client := newTransferTestManager(t, sftp.InMemHandler())
+	if err := client.Mkdir("/srv"); err != nil {
+		t.Fatal(err)
+	}
+	putTransferTestFile(t, client, "/srv/real.conf", []byte("original"))
+	if err := client.Symlink("real.conf", "/srv/enabled.conf"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.WriteRemoteFile("test", "/srv/enabled.conf", []byte("updated")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readTransferTestFile(t, client, "/srv/real.conf"); string(got) != "updated" {
+		t.Fatalf("relative link target = %q, want updated", got)
 	}
 }
