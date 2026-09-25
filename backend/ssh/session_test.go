@@ -63,6 +63,35 @@ func TestLimitedBufferPartialWrite(t *testing.T) {
 	}
 }
 
+func TestLimitedBufferLenReportsCapturedBytes(t *testing.T) {
+	buf := newLimitedBuffer(5)
+	if _, err := buf.Write([]byte("hello world")); err != nil {
+		t.Fatalf("Write error: %v", err)
+	}
+	if got := buf.Len(); got != 5 {
+		t.Errorf("Len = %d, want 5 (the capped length)", got)
+	}
+	if got := buf.String(); got != "hello" {
+		t.Errorf("String = %q, want %q", got, "hello")
+	}
+}
+
+func TestHasSessionReportsRegistration(t *testing.T) {
+	m := &Manager{sessions: map[string]*Session{"session-1": {}}}
+	if !m.HasSession("session-1") {
+		t.Fatal("HasSession reported a registered session as gone")
+	}
+	if m.HasSession("session-2") {
+		t.Fatal("HasSession reported an unknown session as present")
+	}
+	// Disconnect deletes the session before firing onClosed, so a consumer that
+	// missed the callback still learns the session is gone.
+	m.remove("session-1")
+	if m.HasSession("session-1") {
+		t.Fatal("HasSession reported a removed session as present")
+	}
+}
+
 func TestAppendLine(t *testing.T) {
 	if got := appendLine("", "stderr"); got != "stderr" {
 		t.Errorf("appendLine empty base = %q, want stderr", got)

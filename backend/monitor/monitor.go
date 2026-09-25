@@ -14,8 +14,20 @@ type Executor interface {
 	Exec(sessionID string, command string, timeout time.Duration) (string, error)
 }
 
+// SessionLiveness is an optional capability of an Executor: reporting whether a
+// session still exists. A poller uses it to retire itself when its session went
+// away without the disconnect callback reaching Stop — a connection that drops
+// between Connect and Start leaves onClosed's Stop running before the poller is
+// registered, i.e. as a no-op. Without this the poller survives, Exec fails on
+// every tick, and the UI receives an "offline" frame per interval forever.
+// Executors that cannot answer simply do not implement it.
+type SessionLiveness interface {
+	HasSession(sessionID string) bool
+}
+
 type Manager struct {
 	exec    Executor
+	alive   SessionLiveness
 	emit    func(event string, data any)
 	mu      sync.RWMutex
 	running map[string]*poller
@@ -44,7 +56,7 @@ type netSample struct {
 }
 
 func NewManager(exec Executor, emit func(event string, data any)) *Manager {
-	return &Manager{
+	m := &Manager{
 		exec:    exec,
 		emit:    emit,
 		running: map[string]*poller{},
@@ -52,6 +64,10 @@ func NewManager(exec Executor, emit func(event string, data any)) *Manager {
 		lastCPU: map[string]cpuSample{},
 		lastNet: map[string]netSample{},
 	}
+	if liveness, ok := exec.(SessionLiveness); ok {
+		m.alive = liveness
+	}
+	return m
 }
 
 func (m *Manager) Start(sessionID string, intervalSec int) {
@@ -98,8 +114,28 @@ func (m *Manager) Stop(sessionID string) {
 		close(run.stop)
 		delete(m.running, sessionID)
 	}
-	// Session IDs are unique per connection, so per-session samples are dead
-	// weight once the poller stops; without this the maps grow forever.
+	m.dropLocked(sessionID)
+}
+
+// retire stops a poller only if it is still the registered one. Stop alone
+// would close whichever poller is current, so a replacement installed between
+// the caller's identity check and the call would be torn down by its own
+// predecessor. A poller that has already been replaced has nothing to retire.
+func (m *Manager) retire(sessionID string, run *poller) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.running[sessionID] != run {
+		return
+	}
+	close(run.stop)
+	delete(m.running, sessionID)
+	m.dropLocked(sessionID)
+}
+
+// dropLocked clears the per-session sample history. Session IDs are unique per
+// connection, so these entries are dead weight once the poller stops; without
+// this the maps grow forever.
+func (m *Manager) dropLocked(sessionID string) {
 	delete(m.latest, sessionID)
 	delete(m.lastCPU, sessionID)
 	delete(m.lastNet, sessionID)
@@ -159,6 +195,14 @@ func (m *Manager) collectAndEmit(sessionID string, run *poller) {
 	current := m.running[sessionID]
 	m.mu.RUnlock()
 	if current != run {
+		return
+	}
+	// The session can be gone before the first tick: a connection that drops
+	// between Connect and Start has already run onClosed's Stop, which found no
+	// poller to stop. Retire quietly instead of polling a session that no longer
+	// exists and reporting it offline on every interval.
+	if m.alive != nil && !m.alive.HasSession(sessionID) {
+		m.retire(sessionID, run)
 		return
 	}
 	start := time.Now()

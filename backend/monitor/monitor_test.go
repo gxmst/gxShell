@@ -27,6 +27,108 @@ func waitForMonitorCall(t *testing.T, calls <-chan string) string {
 	}
 }
 
+func waitForMonitorRetire(t *testing.T, m *Manager, sessionID string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		m.mu.RLock()
+		_, running := m.running[sessionID]
+		m.mu.RUnlock()
+		if !running {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	t.Fatal("poller for a removed session was not retired")
+}
+
+// livenessExecutor answers HasSession from a fixed flag, which is what the
+// monitor sees when a connection drops between Connect and Start: the session
+// is already gone by the time the poller exists. alive is set before Start and
+// never mutated afterwards, so concurrent reads need no synchronisation.
+type livenessExecutor struct {
+	calls chan string
+	alive bool
+}
+
+func (e *livenessExecutor) Exec(sessionID string, _ string, _ time.Duration) (string, error) {
+	e.calls <- sessionID
+	return "", nil
+}
+
+func (e *livenessExecutor) HasSession(string) bool { return e.alive }
+
+func TestPollerRetiresWhenItsSessionIsGone(t *testing.T) {
+	executor := &livenessExecutor{calls: make(chan string, 4), alive: false}
+	events := make(chan types.Metrics, 4)
+	m := NewManager(executor, func(_ string, data any) {
+		if metrics, ok := data.(types.Metrics); ok {
+			events <- metrics
+		}
+	})
+	defer m.StopAll()
+
+	m.Start("session-1", 3600)
+	waitForMonitorRetire(t, m, "session-1")
+
+	select {
+	case <-executor.calls:
+		t.Fatal("retired poller still ran the monitoring script")
+	default:
+	}
+	select {
+	case metrics := <-events:
+		t.Fatalf("retired poller emitted a frame for a removed session: %#v", metrics)
+	default:
+	}
+}
+
+func TestPollerKeepsRunningWhileTheSessionExists(t *testing.T) {
+	executor := &livenessExecutor{calls: make(chan string, 4), alive: true}
+	m := NewManager(executor, nil)
+	defer m.StopAll()
+
+	m.Start("session-1", 3600)
+	if got := waitForMonitorCall(t, executor.calls); got != "session-1" {
+		t.Fatalf("collection session = %q", got)
+	}
+	m.mu.RLock()
+	_, running := m.running["session-1"]
+	m.mu.RUnlock()
+	if !running {
+		t.Fatal("poller for a live session was retired")
+	}
+}
+
+func TestRetireLeavesAReplacementPollerAlone(t *testing.T) {
+	executor := &livenessExecutor{calls: make(chan string, 8), alive: true}
+	m := NewManager(executor, nil)
+	defer m.StopAll()
+
+	m.Start("session-1", 3600)
+	waitForMonitorCall(t, executor.calls)
+	m.mu.RLock()
+	stale := m.running["session-1"]
+	m.mu.RUnlock()
+
+	m.Start("session-1", 120)
+	waitForMonitorCall(t, executor.calls)
+	m.mu.RLock()
+	current := m.running["session-1"]
+	m.mu.RUnlock()
+	if current == stale {
+		t.Fatal("changed interval did not replace the poller")
+	}
+
+	m.retire("session-1", stale)
+	m.mu.RLock()
+	survivor := m.running["session-1"]
+	m.mu.RUnlock()
+	if survivor != current {
+		t.Fatal("retiring a stale poller removed its replacement")
+	}
+}
+
 func TestStartReplacesPollerWhenIntervalChanges(t *testing.T) {
 	executor := &recordingExecutor{calls: make(chan string, 4)}
 	m := NewManager(executor, nil)

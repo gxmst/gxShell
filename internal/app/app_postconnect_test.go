@@ -71,6 +71,36 @@ func TestPostConnectScriptQuotesStartDirectory(t *testing.T) {
 	}
 }
 
+// Quoting a whole path also quotes its leading ~, which asks the shell for a
+// literal directory named "~": `cd '~/projects'` never reached the home
+// directory. The tilde is left outside the quotes so the shell expands it,
+// while the rest of the path stays quoted.
+func TestPostConnectScriptExpandsHomeRelativeStartDirectory(t *testing.T) {
+	cases := []struct{ dir, want string }{
+		{"~", "cd ~"},
+		{"~/", "cd ~/"},
+		{"~/projects", "cd ~/'projects'"},
+		{"~/my projects", "cd ~/'my projects'"},
+		{"~root", "cd ~root"},
+		{"~root/logs", "cd ~root/'logs'"},
+		{`~/it's here`, `cd ~/'it'\''s here'`},
+		// A value that merely starts with ~ is not a home reference, so it is
+		// quoted whole rather than left as a word the shell would expand.
+		{"~; rm -rf /", "cd '~; rm -rf /'"},
+		{"~/x; rm -rf /", "cd ~/'x; rm -rf /'"},
+		{"~user name", "cd '~user name'"},
+	}
+	for _, c := range cases {
+		lines := postConnectScript(types.Profile{StartDirectory: c.dir})
+		if len(lines) != 1 {
+			t.Fatalf("StartDirectory %q produced %#v", c.dir, lines)
+		}
+		if lines[0] != c.want {
+			t.Errorf("StartDirectory %q -> %q, want %q", c.dir, lines[0], c.want)
+		}
+	}
+}
+
 func TestPostConnectScriptQuotesEnvironmentValues(t *testing.T) {
 	lines := postConnectScript(types.Profile{Environment: []string{
 		"TOKEN_STYLE=a b; echo hi",

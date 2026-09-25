@@ -214,7 +214,10 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 	// important than reusing an identity after a stale event escaped the bridge.
 	m.emit("terminal:connecting", info)
 
-	config, closeAuth, err := m.clientConfig(profile, id, timeoutSec)
+	// Each connection gets its own pause controller: the target and the jump
+	// host have separate handshakes and separate prompts.
+	targetPause := &handshakePause{}
+	config, closeAuth, err := m.clientConfig(profile, id, timeoutSec, targetPause)
 	defer closeAuth()
 	if err != nil {
 		m.failConnect(id, err, nil, nil, nil)
@@ -225,7 +228,8 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 	var jumpClient *ssh.Client
 
 	if jumpProfile.ID != "" {
-		jumpConfig, closeJumpAuth, err := m.clientConfig(jumpProfile, id, timeoutSec)
+		jumpPause := &handshakePause{}
+		jumpConfig, closeJumpAuth, err := m.clientConfig(jumpProfile, id, timeoutSec, jumpPause)
 		defer closeJumpAuth()
 		if err != nil {
 			m.failConnect(id, fmt.Errorf("jump host config error: %w", err), nil, nil, nil)
@@ -246,6 +250,7 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 		// explicit deadline as well; a peer that accepts TCP and then stays silent
 		// must not leave Connect blocked forever.
 		_ = jumpConn.SetDeadline(time.Now().Add(time.Duration(timeoutSec) * time.Second))
+		jumpPause.attach(jumpConn, time.Duration(timeoutSec)*time.Second)
 		jumpClientConn, chans, reqs, err := ssh.NewClientConn(jumpConn, jumpAddr, jumpConfig)
 		if err != nil {
 			_ = jumpConn.Close()
@@ -274,22 +279,33 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 			m.failConnect(id, fmt.Errorf("jump host cannot reach target %s: %w", targetAddr, err), nil, jumpClient, nil)
 			return info, err
 		}
-		if !session.trackPendingConn(targetConn) {
+		// The connection a jump host returns is channel-backed and cannot hold a
+		// deadline of its own, so it is wrapped: without that, the target
+		// handshake had no timeout at all and a silent peer kept Connect blocked
+		// forever.
+		guarded := withDeadline(targetConn)
+		if !session.trackPendingConn(guarded) {
 			dialCancel()
-			_ = targetConn.Close()
+			_ = guarded.Close()
 			_ = jumpClient.Close()
 			return info, errors.New("connection cancelled")
 		}
-		_ = targetConn.SetDeadline(time.Now().Add(time.Duration(timeoutSec) * time.Second))
-		targetClientConn, chans, reqs, err := ssh.NewClientConn(targetConn, targetAddr, config)
+		targetTimeout := time.Duration(timeoutSec) * time.Second
+		_ = guarded.SetDeadline(time.Now().Add(targetTimeout))
+		targetPause.attach(guarded, targetTimeout)
+		targetClientConn, chans, reqs, err := ssh.NewClientConn(guarded, targetAddr, config)
 		dialCancel()
 		if err != nil {
-			_ = targetConn.Close()
+			timedOut := guarded.timedOut()
+			_ = guarded.Close()
+			if timedOut {
+				err = fmt.Errorf("target SSH handshake via jump timed out after %ds", timeoutSec)
+			}
 			m.failConnect(id, fmt.Errorf("target SSH handshake via jump failed: %w", err), nil, jumpClient, nil)
 			return info, err
 		}
-		session.clearPendingConn(targetConn)
-		_ = targetConn.SetDeadline(time.Time{})
+		session.clearPendingConn(guarded)
+		_ = guarded.SetDeadline(time.Time{})
 		client = ssh.NewClient(targetClientConn, chans, reqs)
 	} else {
 		addr := sshAddress(profile.Host, profile.Port)
@@ -302,7 +318,9 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 			_ = conn.Close()
 			return info, errors.New("connection cancelled")
 		}
-		_ = conn.SetDeadline(time.Now().Add(time.Duration(timeoutSec) * time.Second))
+		targetTimeout := time.Duration(timeoutSec) * time.Second
+		_ = conn.SetDeadline(time.Now().Add(targetTimeout))
+		targetPause.attach(conn, targetTimeout)
 		clientConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
 		if err != nil {
 			m.failConnect(id, err, nil, nil, conn)
@@ -714,6 +732,19 @@ func (m *Manager) List() []types.SessionInfo {
 	return items
 }
 
+// HasSession reports whether a session id is still registered. Disconnect
+// removes the session from the map before firing onClosed, so this is the
+// authoritative "is it gone" test for consumers that started work for a session
+// and may have missed the disconnect callback. The monitor poller uses it to
+// retire itself when a connection drops between Connect and Start — onClosed's
+// Stop then runs before the poller exists and is a no-op, and without this the
+// poller would keep emitting an offline frame every interval forever.
+func (m *Manager) HasSession(id string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.sessions[id] != nil
+}
+
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
 	ids := make([]string, 0, len(m.sessions))
@@ -750,6 +781,15 @@ func (m *Manager) Client(id string) (*ssh.Client, error) {
 	return session.client, nil
 }
 
+// maxExecOutput caps what Exec captures in memory. Exec is the lightweight
+// command runner used by the docker/service/firewall/website probes, so its
+// output is normally a few kilobytes; the cap exists because a remote command
+// can stream without bound (`yes`, `cat /dev/zero`) and the buffer is held in
+// RAM. ExecuteCommandResultStream takes its limit from the caller (1 MiB for
+// the CLI, 128 KiB for AI tools); this is the same idea with a ceiling that no
+// probe output legitimately reaches.
+const maxExecOutput = 4 << 20
+
 func (m *Manager) Exec(id string, command string, timeout time.Duration) (string, error) {
 	client, err := m.Client(id)
 	if err != nil {
@@ -760,10 +800,12 @@ func (m *Manager) Exec(id string, command string, timeout time.Duration) (string
 		return "", err
 	}
 	defer s.Close()
-	var out syncBuffer
-	var stderr syncBuffer
-	s.Stdout = &out
-	s.Stderr = &stderr
+	// limitedBuffer, not a plain buffer: on the timeout path the caller reads
+	// the partial output while Run's copy goroutines may still be writing.
+	out := newLimitedBuffer(maxExecOutput)
+	stderr := newLimitedBuffer(maxExecOutput)
+	s.Stdout = out
+	s.Stderr = stderr
 
 	done := make(chan error, 1)
 	go func() {
@@ -779,13 +821,10 @@ func (m *Manager) Exec(id string, command string, timeout time.Duration) (string
 		}
 		return out.String(), nil
 	case <-time.After(timeout):
+		// Closing the session unblocks s.Run. done is buffered, so the goroutine
+		// above never blocks on the send even though nobody reads it now; no
+		// drain goroutine is needed.
 		_ = s.Close()
-		go func() {
-			select {
-			case <-done:
-			case <-time.After(5 * time.Second):
-			}
-		}()
 		return out.String(), errors.New("remote command timeout")
 	}
 }
@@ -1066,12 +1105,132 @@ func (m *Manager) setError(id string, err error) {
 	}
 }
 
+// deadlineConn applies a deadline to a connection that cannot apply one itself.
+//
+// The connection a jump host hands back is channel-backed and answers
+// SetDeadline with "deadline not supported". That error used to be discarded,
+// which left the target handshake behind a jump host with no timeout at all: a
+// peer that accepted the channel and then stayed silent kept Connect blocked
+// forever. Closing the socket is a deadline every implementation honours.
+type deadlineConn struct {
+	net.Conn
+	mu      sync.Mutex
+	timer   *time.Timer
+	expired bool
+}
+
+func withDeadline(conn net.Conn) *deadlineConn {
+	return &deadlineConn{Conn: conn}
+}
+
+func (c *deadlineConn) SetDeadline(t time.Time) error {
+	// Keep the underlying result so a connection that does support deadlines
+	// still reports its own behaviour to the SSH library.
+	err := c.Conn.SetDeadline(t)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.timer != nil {
+		c.timer.Stop()
+		c.timer = nil
+	}
+	if t.IsZero() {
+		return err
+	}
+	if delay := time.Until(t); delay > 0 {
+		c.timer = time.AfterFunc(delay, func() {
+			c.mu.Lock()
+			c.expired = true
+			c.mu.Unlock()
+			_ = c.Conn.Close()
+		})
+	} else {
+		c.expired = true
+		_ = c.Conn.Close()
+	}
+	return err
+}
+
+// timedOut reports whether the deadline closed the connection, so the caller
+// can say "timed out" instead of surfacing "use of closed network connection".
+func (c *deadlineConn) timedOut() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.expired
+}
+
+// handshakePause keeps the connect timeout from charging the user for thinking
+// time.
+//
+// The timeout bounds a handshake that has stopped making progress on the
+// network. But the host key callback and the keyboard-interactive callback run
+// inside the handshake and block on the user — reading a fingerprint prompt,
+// typing a one-time code. That is not network progress, and charging it to the
+// timeout makes a slow user look exactly like an unreachable host: the deadline
+// expires mid-prompt and the handshake fails for no reason.
+//
+// The callbacks are built before the socket exists, so the socket is attached
+// afterwards and both callbacks go through this shared controller.
+type handshakePause struct {
+	mu      sync.Mutex
+	conn    net.Conn
+	timeout time.Duration
+}
+
+func (p *handshakePause) attach(conn net.Conn, timeout time.Duration) {
+	if p == nil || conn == nil {
+		return
+	}
+	p.mu.Lock()
+	p.conn, p.timeout = conn, timeout
+	p.mu.Unlock()
+}
+
+// prompt clears the connection deadline while the user is being asked
+// something. The returned function re-arms it from that moment, so the network
+// gets a fresh budget rather than the remains of the original one.
+func (p *handshakePause) prompt() func() {
+	if p == nil {
+		return func() {}
+	}
+	p.mu.Lock()
+	conn := p.conn
+	p.mu.Unlock()
+	if conn != nil {
+		_ = conn.SetDeadline(time.Time{})
+	}
+	return func() {
+		p.mu.Lock()
+		conn, timeout := p.conn, p.timeout
+		p.mu.Unlock()
+		if conn != nil && timeout > 0 {
+			_ = conn.SetDeadline(time.Now().Add(timeout))
+		}
+	}
+}
+
+// askUserYesNo runs a confirmation without letting the handshake timeout run
+// out under it.
+func askUserYesNo(pause *handshakePause, ask func() bool) bool {
+	resume := pause.prompt()
+	defer resume()
+	return ask()
+}
+
+// askUserAnswers is the same for a keyboard-interactive round.
+func askUserAnswers(pause *handshakePause, ask func() ([]string, error)) ([]string, error) {
+	resume := pause.prompt()
+	defer resume()
+	return ask()
+}
+
 // clientConfig assembles the auth methods and host-key policy for a profile.
 // The returned cleanup func must be called once the handshake is over (either
 // way); it closes the SSH agent connection, which has to stay open while the
 // handshake signs with agent-held keys. sessionID routes keyboard-interactive
-// prompts to the right UI surface.
-func (m *Manager) clientConfig(profile types.Profile, sessionID string, timeoutSec int) (*ssh.ClientConfig, func(), error) {
+// prompts to the right UI surface; pause suspends the connect timeout while
+// such a prompt is on screen.
+func (m *Manager) clientConfig(profile types.Profile, sessionID string, timeoutSec int, pause *handshakePause) (*ssh.ClientConfig, func(), error) {
 	cleanup := func() {}
 	var auth []ssh.AuthMethod
 	switch profile.AuthType {
@@ -1115,11 +1274,11 @@ func (m *Manager) clientConfig(profile types.Profile, sessionID string, timeoutS
 	// keyboard-interactive is offered for every auth type: hardened servers
 	// often disable plain password auth in favour of PAM keyboard-interactive,
 	// and 2FA/OTP servers require it on top of key auth.
-	auth = append(auth, ssh.KeyboardInteractive(m.kiChallenge(sessionID, profile.Password)))
+	auth = append(auth, ssh.KeyboardInteractive(m.kiChallenge(sessionID, profile.Password, pause)))
 	return &ssh.ClientConfig{
 		User:            profile.Username,
 		Auth:            auth,
-		HostKeyCallback: m.hostKeyCallback(profile),
+		HostKeyCallback: m.hostKeyCallback(profile, pause),
 		Timeout:         time.Duration(timeoutSec) * time.Second,
 		ClientVersion:   "SSH-2.0-gxShell",
 	}, cleanup, nil
@@ -1130,7 +1289,7 @@ func (m *Manager) clientConfig(profile types.Profile, sessionID string, timeoutS
 // (PAM password-over-KI, so the user is not re-prompted for a secret the app
 // already holds); everything else — OTP codes, multi-prompt 2FA — goes to the
 // user through the registered prompt bridge.
-func (m *Manager) kiChallenge(sessionID string, password string) ssh.KeyboardInteractiveChallenge {
+func (m *Manager) kiChallenge(sessionID string, password string, pause *handshakePause) ssh.KeyboardInteractiveChallenge {
 	return func(name, instruction string, questions []string, echos []bool) ([]string, error) {
 		if len(questions) == 0 {
 			return []string{}, nil
@@ -1141,7 +1300,10 @@ func (m *Manager) kiChallenge(sessionID string, password string) ssh.KeyboardInt
 		if m.kiPrompt == nil {
 			return nil, errors.New("server requires interactive authentication")
 		}
-		return m.kiPrompt(sessionID, name, instruction, questions, echos)
+		// Typing a one-time code is not network progress.
+		return askUserAnswers(pause, func() ([]string, error) {
+			return m.kiPrompt(sessionID, name, instruction, questions, echos)
+		})
 	}
 }
 
@@ -1150,7 +1312,7 @@ func looksLikePasswordPrompt(q string) bool {
 	return strings.Contains(q, "password") || strings.Contains(q, "密码")
 }
 
-func (m *Manager) hostKeyCallback(profile types.Profile) ssh.HostKeyCallback {
+func (m *Manager) hostKeyCallback(profile types.Profile, pause *handshakePause) ssh.HostKeyCallback {
 	knownHostsPath, emit, confirm := m.knownHostsPath, m.emit, m.confirm
 	if err := os.MkdirAll(filepath.Dir(knownHostsPath), 0700); err != nil {
 		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
@@ -1181,7 +1343,9 @@ func (m *Manager) hostKeyCallback(profile types.Profile) ssh.HostKeyCallback {
 		hostPort := knownhosts.Normalize(sshAddress(profile.Host, profile.Port))
 		if len(keyErr.Want) == 0 {
 			// Unknown host: trust-on-first-use after native confirmation.
-			if confirm != nil && !confirm(hostname, fingerprint) {
+			// Reading the fingerprint and deciding is not network progress, so
+			// the handshake timeout is suspended for it.
+			if confirm != nil && !askUserYesNo(pause, func() bool { return confirm(hostname, fingerprint) }) {
 				return errors.New("host key rejected by user")
 			}
 			line := knownhosts.Line([]string{hostPort}, key)
@@ -1201,7 +1365,10 @@ func (m *Manager) hostKeyCallback(profile types.Profile) ssh.HostKeyCallback {
 		// Surface both fingerprints and let the user decide instead of dumping
 		// the raw knownhosts mismatch error.
 		oldFingerprint := fingerprintOfWanted(keyErr)
-		if m.confirmHostKeyChange == nil || !m.confirmHostKeyChange(hostname, oldFingerprint, fingerprint) {
+		accept := m.confirmHostKeyChange != nil && askUserYesNo(pause, func() bool {
+			return m.confirmHostKeyChange(hostname, oldFingerprint, fingerprint)
+		})
+		if !accept {
 			return fmt.Errorf("host key for %s has changed and was not accepted (stored %s, server now presents %s)", hostname, oldFingerprint, fingerprint)
 		}
 		line := knownhosts.Line([]string{hostPort}, key)
@@ -1256,36 +1423,10 @@ func appendLine(base string, line string) string {
 	return base + "\n" + line
 }
 
-// syncBuffer is a concurrency-safe capture buffer for exec output. On the
-// timeout/cancel paths the caller reads the partial output while Run's internal
-// stdout/stderr copy goroutines may still be writing, so every access must be
-// mutex-guarded (bytes.Buffer is not safe for concurrent use).
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
-}
-
-func (b *syncBuffer) Len() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Len()
-}
-
-// limitedBuffer caps captured output at limit bytes. Like syncBuffer, all
-// access is mutex-guarded because the timeout/cancel paths read while the
-// session's copy goroutines may still be writing.
+// limitedBuffer caps captured output at limit bytes. It is the only capture
+// buffer left in this package: all access is mutex-guarded because the
+// timeout/cancel paths read while the session's copy goroutines may still be
+// writing, and the limit keeps a runaway remote command from exhausting memory.
 type limitedBuffer struct {
 	mu        sync.Mutex
 	buf       bytes.Buffer
@@ -1321,6 +1462,14 @@ func (b *limitedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.buf.String()
+}
+
+// Len reports how many bytes were captured. Exec uses it to decide whether a
+// failing command said anything on stderr.
+func (b *limitedBuffer) Len() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Len()
 }
 
 func (b *limitedBuffer) Truncated() bool {

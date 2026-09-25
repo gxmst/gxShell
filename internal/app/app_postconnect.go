@@ -10,6 +10,7 @@ package app
 // unless AcceptEnv is configured, which it usually is not.
 
 import (
+	"regexp"
 	"strings"
 	"time"
 
@@ -40,7 +41,7 @@ func postConnectScript(profile types.Profile) []string {
 	if dir := sanitizeShellValue(profile.StartDirectory); dir != "" {
 		// cd, quoted, so a path with spaces works and a path with shell
 		// metacharacters cannot turn into a second command.
-		lines = append(lines, "cd "+singleQuote(dir))
+		lines = append(lines, "cd "+quotePath(dir))
 	}
 
 	for _, entry := range profile.Environment {
@@ -118,6 +119,33 @@ func sanitizeShellValue(value string) string {
 // single word no matter what the value contains.
 func singleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
+}
+
+// homeRefPattern matches the only leading-tilde forms that are safe to leave
+// unquoted: `~`, `~user`, and either followed by a slash. A value that merely
+// starts with ~ (say `~; rm -rf /`) does not match and is quoted whole.
+var homeRefPattern = regexp.MustCompile(`^~[A-Za-z0-9_.-]*(?:/|$)`)
+
+// quotePath quotes a path for the remote shell while leaving a leading ~
+// unquoted, so the shell expands it.
+//
+// Quoting the whole value — `cd '~/projects'` — asks for a literal directory
+// named "~", which is not what anyone typing a home-relative path means. The
+// rest of the path is still quoted, so a path with spaces or metacharacters
+// stays a single word.
+func quotePath(value string) string {
+	head := homeRefPattern.FindString(value)
+	if head == "" {
+		return singleQuote(value)
+	}
+	rest := value[len(head):]
+	if rest == "" {
+		return head
+	}
+	if strings.HasSuffix(head, "/") {
+		return head + singleQuote(rest)
+	}
+	return head + "/" + singleQuote(rest)
 }
 
 // postConnectPayload combines all actions into one SSH write. Keeping the
