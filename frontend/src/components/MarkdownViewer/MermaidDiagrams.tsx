@@ -13,10 +13,9 @@ function sourceFor(host: HTMLElement) {
   try { return decodeURIComponent(host.dataset.mermaidSource || ''); } catch { return ''; }
 }
 
-function MermaidDiagram({ host, source, theme, index, zh, visible, onNotify }: {
-  host: HTMLElement; source: string; theme: MermaidTheme; index: number; zh: boolean; visible: boolean; onNotify?: Notify;
+function MermaidDiagram({ host, source, theme, index, locale, visible, onNotify }: {
+  host: HTMLElement; source: string; theme: MermaidTheme; index: number; locale: string; visible: boolean; onNotify?: Notify;
 }) {
-  const language = zh ? 'zh-CN' : 'en';
   const [state, setState] = useState<DiagramState>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
   const [showSource, setShowSource] = useState(false);
@@ -30,7 +29,7 @@ function MermaidDiagram({ host, source, theme, index, zh, visible, onNotify }: {
   const lastRender = useRef<{ source: string; theme: MermaidTheme; attempt: number; drawing: MermaidDrawing }>();
   const inlineView = useRef<{ zoom: number | null; top: number; left: number }>({ zoom: null, top: 0, left: 0 });
   const restoreInlineScroll = useRef(false);
-  const title = t(language, "diagramTitle", { count: String(index + 1) });
+  const title = t(locale, "diagramTitle", { count: String(index + 1) });
 
   useEffect(() => {
     if (!visible) return;
@@ -111,7 +110,7 @@ function MermaidDiagram({ host, source, theme, index, zh, visible, onNotify }: {
       clearTimeout(copyTimer.current);
       copyTimer.current = setTimeout(() => setCopied(false), 1800);
     } catch {
-      onNotify?.(t(language, "diagramCopyFailed"), 'error');
+      onNotify?.(t(locale, "diagramCopyFailed"), 'error');
     }
   };
 
@@ -119,37 +118,37 @@ function MermaidDiagram({ host, source, theme, index, zh, visible, onNotify }: {
     <div className="md-diagram-toolbar" data-md-search-ignore>
       <span className="md-diagram-title">Mermaid</span>
       <div className="md-diagram-controls">
-        <button type="button" disabled={!drawing || showSource || scale <= 0.1} onClick={() => changeZoom(-0.2)} title={t(language, "diagramZoomOut")} aria-label={t(language, "diagramZoomOut")}><Minus size={14} /></button>
-        <button type="button" className="md-diagram-percent" disabled={!drawing || showSource} onClick={() => setZoom(1)} title={t(language, "diagramActualSize")}>{Math.round(scale * 100)}%</button>
-        <button type="button" disabled={!drawing || showSource || scale >= 4} onClick={() => changeZoom(0.2)} title={t(language, "diagramZoomIn")} aria-label={t(language, "diagramZoomIn")}><Plus size={14} /></button>
-        <button type="button" disabled={!drawing || showSource} onClick={() => setZoom(null)} aria-pressed={zoom === null} title={t(language, "diagramFitWidth")} aria-label={t(language, "diagramFitWidth")}><ScanLine size={14} /></button>
-        <button type="button" onClick={() => setShowSource((value) => !value)} aria-pressed={showSource} title={t(language, "diagramViewSource")}><Code size={14} /><span>{t(language, "diagramSourceToggle")}</span></button>
-        <button type="button" onClick={copySource} title={t(language, "diagramCopySource")} aria-label={t(language, "diagramCopySource")}>{copied ? <Check size={14} /> : <Copy size={14} />}<span aria-live="polite">{copied ? (t(language, "diagramCopied")) : ''}</span></button>
+        <button type="button" disabled={!drawing || showSource || scale <= 0.1} onClick={() => changeZoom(-0.2)} title={t(locale, "diagramZoomOut")} aria-label={t(locale, "diagramZoomOut")}><Minus size={14} /></button>
+        <button type="button" className="md-diagram-percent" disabled={!drawing || showSource} onClick={() => setZoom(1)} title={t(locale, "diagramActualSize")}>{Math.round(scale * 100)}%</button>
+        <button type="button" disabled={!drawing || showSource || scale >= 4} onClick={() => changeZoom(0.2)} title={t(locale, "diagramZoomIn")} aria-label={t(locale, "diagramZoomIn")}><Plus size={14} /></button>
+        <button type="button" disabled={!drawing || showSource} onClick={() => setZoom(null)} aria-pressed={zoom === null} title={t(locale, "diagramFitWidth")} aria-label={t(locale, "diagramFitWidth")}><ScanLine size={14} /></button>
+        <button type="button" onClick={() => setShowSource((value) => !value)} aria-pressed={showSource} title={t(locale, "diagramViewSource")}><Code size={14} /><span>{t(locale, "diagramSourceToggle")}</span></button>
+        <button type="button" onClick={copySource} title={t(locale, "diagramCopySource")} aria-label={t(locale, "diagramCopySource")}>{copied ? <Check size={14} /> : <Copy size={14} />}<span aria-live="polite">{copied ? (t(locale, "diagramCopied")) : ''}</span></button>
         {expanded
-          ? <button type="button" onClick={closeExpanded} title={t(language, "diagramCloseHint")} aria-label={t(language, "diagramClose")}><X size={15} /></button>
-          : <button type="button" disabled={!drawing && state.status !== 'error'} onClick={openExpanded} title={t(language, "diagramExpand")} aria-label={t(language, "diagramExpand")}><Maximize2 size={14} /></button>}
+          ? <button type="button" onClick={closeExpanded} title={t(locale, "diagramCloseHint")} aria-label={t(locale, "diagramClose")}><X size={15} /></button>
+          : <button type="button" disabled={!drawing && state.status !== 'error'} onClick={openExpanded} title={t(locale, "diagramExpand")} aria-label={t(locale, "diagramExpand")}><Maximize2 size={14} /></button>}
       </div>
     </div>
-    {state.status === 'loading' && <div className="md-diagram-status" role="status">{t(language, "diagramRendering")}</div>}
+    {state.status === 'loading' && <div className="md-diagram-status" role="status">{t(locale, "diagramRendering")}</div>}
     {state.status === 'error' && <div className="md-diagram-error" role="status">
-      <strong>{t(language, "diagramRenderFailed")}</strong>
+      <strong>{t(locale, "diagramRenderFailed")}</strong>
       <pre>{state.message}</pre>
-      <button type="button" onClick={() => setAttempt((value) => value + 1)}><RefreshCw size={14} />{t(language, "retry")}</button>
+      <button type="button" onClick={() => setAttempt((value) => value + 1)}><RefreshCw size={14} />{t(locale, "retry")}</button>
     </div>}
     {showSource || state.status === 'error'
-      ? <pre className="md-diagram-source" tabIndex={0} aria-label={t(language, "diagramSource")}><code>{source}</code></pre>
-      : drawing && <div ref={viewportRef} className="md-diagram-viewport" tabIndex={0} role="region" aria-label={t(language, "diagramScrollable")}>
+      ? <pre className="md-diagram-source" tabIndex={0} aria-label={t(locale, "diagramSource")}><code>{source}</code></pre>
+      : drawing && <div ref={viewportRef} className="md-diagram-viewport" tabIndex={0} role="region" aria-label={t(locale, "diagramScrollable")}>
         <div className="md-diagram-svg" style={{ width: drawing.width * scale, height: drawing.height * scale }} dangerouslySetInnerHTML={{ __html: drawing.svg }} />
       </div>}
     {drawing && !showSource && !expanded && scale < 0.6 && <button type="button" className="md-diagram-expand-hint" data-md-search-ignore onClick={openExpanded}>
-      <Maximize2 size={13} />{t(language, "diagramExpandHint")}
+      <Maximize2 size={13} />{t(locale, "diagramExpandHint")}
     </button>}
   </section>;
 
   // Render a single SVG instance. Duplicating it into a dialog would duplicate
   // marker/label IDs and break references in some browsers.
   return expanded && visible ? <>
-    <div className="md-diagram-status" style={{ height: placeholderHeight }}>{t(language, "diagramExpanded")}</div>
+    <div className="md-diagram-status" style={{ height: placeholderHeight }}>{t(locale, "diagramExpanded")}</div>
     <ModalShell className="md-diagram-modal" ariaLabel={title} onClose={closeExpanded}>{diagram}</ModalShell>
   </> : diagram;
 }
@@ -181,7 +180,7 @@ export function MermaidDiagrams({ rootRef, html, visible, previewKey, locale, on
   }, [html, previewKey, rootRef, visible]);
 
   return <>{hosts.map((host, index) => createPortal(
-    <MermaidDiagram host={host} source={sourceFor(host)} theme={theme} index={index} zh={locale === 'zh-CN'} visible={visible} onNotify={onNotify} />,
+    <MermaidDiagram host={host} source={sourceFor(host)} theme={theme} index={index} locale={locale} visible={visible} onNotify={onNotify} />,
     host,
     String(index),
   ))}</>;

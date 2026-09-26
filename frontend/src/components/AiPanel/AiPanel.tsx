@@ -799,10 +799,10 @@ export function AiPanel(props: {
                       className="mini-btn ai-copy-btn"
                       onClick={() => {
                         writeClipboardText(message.content)
-                          .then(() => props.onNotify(lang === "zh-CN" ? "已复制到剪贴板" : "Copied to clipboard", "success"))
-                          .catch(() => props.onNotify(lang === "zh-CN" ? "复制失败" : "Copy failed", "error"));
+                          .then(() => props.onNotify(t(lang, "copiedToClipboard"), "success"))
+                          .catch(() => props.onNotify(t(lang, "copyFailed"), "error"));
                       }}
-                      title={lang === "zh-CN" ? "复制内容" : "Copy content"}
+                      title={t(lang, "copyContent")}
                     >
                       <Copy size={11} />
                     </button>

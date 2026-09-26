@@ -1,5 +1,6 @@
 import { Activity, ArrowRightLeft, Bot, Box, CalendarClock, Cog, Command, FileText, Folder, Globe2, Settings, Shield, Video } from "lucide-react";
 import { types } from "../wailsjs/go/models";
+import { t, type LangKey } from "./i18n";
 import type { Drawer } from "./types";
 
 export const appThemes = [
@@ -33,20 +34,21 @@ export const fontPresets = [
 
 // Theme names double as the persisted settings value and the data-theme
 // attribute, so only the display label is localized — the keys stay English.
-const themeNamesZh: Record<string, string> = {
-  "Light": "浅色",
-  "Yuzu Study": "柚语书房",
-  "Sakura Mist": "樱雾",
-  "Matcha Green": "抹茶青",
-  "Dark": "深色",
-  "Deep Blue": "深海蓝",
-  "Ember Terminal": "余烬终端",
-  "Twilight Amber": "暮色琥珀",
-  "gx Dark": "gx 深色",
+const themeLabelKeys: Record<string, LangKey> = {
+  "Light": "themeLight",
+  "Yuzu Study": "themeYuzuStudy",
+  "Sakura Mist": "themeSakuraMist",
+  "Matcha Green": "themeMatchaGreen",
+  "Dark": "themeDark",
+  "Deep Blue": "themeDeepBlue",
+  "Ember Terminal": "themeEmberTerminal",
+  "Twilight Amber": "themeTwilightAmber",
+  "gx Dark": "themeGxDark",
 };
 
 export function themeDisplayName(theme: string, lang?: string): string {
-  return lang === "zh-CN" ? themeNamesZh[theme] || theme : theme;
+  const key = themeLabelKeys[theme];
+  return key ? t(lang || "en", key) : theme;
 }
 
 export const emptyProfile = (): types.Profile =>

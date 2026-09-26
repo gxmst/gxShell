@@ -180,7 +180,7 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
         setReady(true);
       });
       if (!events.length) setError(t(locale, "recordingEmpty"));
-      else if (truncated) setError(locale === "zh-CN" ? "录制事件过多，内置播放器仅载入前 25 万条。" : "This recording has too many events; the built-in player loaded the first 250,000.");
+      else if (truncated) setError(t(locale, "recordingTooManyEvents"));
     }).catch((err) => {
       if (!disposed) setError(String(err));
     });
@@ -284,7 +284,7 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
             onChange={(event) => { const value = Number(event.target.value); elapsedRef.current = value; setElapsed(value); }}
             onPointerUp={(event) => seekTo(Number(event.currentTarget.value))}
             onKeyUp={(event) => seekTo(Number(event.currentTarget.value))}
-            aria-label={locale === "zh-CN" ? "播放进度" : "Playback position"}
+            aria-label={t(locale, "playbackPosition")}
           />
           <span className="cast-time">{fmt(elapsed)} / {fmt(duration)}</span>
           <button className="cast-speed" onClick={cycleSpeed} title={t(locale, "playbackSpeed")}>{speed}x</button>
