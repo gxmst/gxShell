@@ -41,6 +41,7 @@ func TestClassifyCommandTiers(t *testing.T) {
 		{"aws s3 ls s3://assets/get-target/", tierObserve, riskObserve, "a key containing get/list is not an operation"},
 		{"aws ec2 describe-instances", tierObserve, riskObserve, "describing instances"},
 		{"aws --profile prod s3 ls", tierObserve, riskObserve, "global option values are not the service"},
+		{"aws route53 list-hosted-zones", tierObserve, riskObserve, "listing zones is a read, not a reason to approve it individually"},
 		{"systemctl status myapp", tierObserve, riskObserve, "service status is observation"},
 		{"docker ps", tierObserve, riskObserve, "container listing is observation"},
 		{"git status", tierObserve, riskObserve, "read-only git is observation"},
@@ -189,6 +190,10 @@ func TestClassifyCommandTiers(t *testing.T) {
 		{"kubectl delete pods --all -A", tierCritical, riskExternal, "deletes workloads across the cluster"},
 		{"aws s3 rb s3://bucket", tierCritical, riskIrreversible, "removes a bucket"},
 		{"aws ec2 terminate-instances --instance-ids i-1", tierCritical, riskIrreversible, "terminates instances"},
+		// T2 can be cleared by one "Allow all" in the approval panel; T3 can
+		// never enter a batch. Dropping a hosted zone takes a whole domain's
+		// DNS with it, so it must not be sweepable.
+		{"aws route53 delete-hosted-zone --id Z0123", tierCritical, riskIrreversible, "removes a hosted zone and its records"},
 	}
 
 	for _, tc := range cases {

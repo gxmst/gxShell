@@ -2228,6 +2228,14 @@ func classifyTerraform(c *segmentCtx) {
 
 // awsUnrecoverableOperations destroy a resource that cannot be recreated from
 // anything on this host. Matched against the operation token, exactly.
+//
+// The list has to name the operation, not the service. Matching the service —
+// the rule this replaced matched any command line containing "route53" — also
+// caught `aws route53 list-hosted-zones` and asked for an individual approval
+// on a read. The cost of that mistake is not symmetric: an operation missing
+// from this list still lands in the `delete-` branch below, which is T2 and can
+// be cleared by one "Allow all" in the approval panel, so a missing entry
+// silently turns "cannot be batched" into "batched".
 var awsUnrecoverableOperations = map[string]bool{
 	"rb":                  true,
 	"delete-bucket":       true,
@@ -2238,6 +2246,10 @@ var awsUnrecoverableOperations = map[string]bool{
 	"delete-table":        true,
 	"delete-key-pair":     true,
 	"delete-volume":       true,
+	// A hosted zone carries the DNS records for a whole domain. Deleting one
+	// (with --force, since AWS requires an empty zone otherwise) takes the
+	// domain off the air, and the records are not recoverable from this host.
+	"delete-hosted-zone": true,
 }
 
 // awsReadOnlyOperations change nothing. The list-*/describe-*/get-*/head-*
