@@ -442,7 +442,7 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
                 {tr.speed && tr.speed > 0 ? <span className="text-[9px] text-muted shrink-0">{formatRate(tr.speed)}</span> : null}
                 {tr.eta && tr.eta > 0 ? <span className="text-[9px] text-muted shrink-0">{formatEta(tr.eta)}</span> : null}
                 <span className="text-[9px] text-muted shrink-0 w-8 text-right tabular-nums">{pct}%</span>
-                <button className="mini-btn" onClick={() => void (tr.paused ? resumeTransfer(tr.jobId) : pauseTransfer(tr.jobId))} title={tr.paused ? (lang === "zh-CN" ? "继续" : "Resume") : (lang === "zh-CN" ? "暂停" : "Pause")}>
+                <button className="mini-btn" onClick={() => void (tr.paused ? resumeTransfer(tr.jobId) : pauseTransfer(tr.jobId))} title={tr.paused ? t(lang, "resume") : t(lang, "pause")}>
                   {tr.paused ? <Play size={10} /> : <Pause size={10} />}
                 </button>
                 <button className="mini-btn" onClick={() => void cancelTransfer(tr.jobId)} title={t(lang, "cancel")}><X size={10} /></button>
@@ -456,7 +456,7 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
               <span className={h.ok ? "text-[9px] text-ok shrink-0" : "text-[9px] text-bad shrink-0"} title={h.error}>
                 {h.ok ? t(lang, "transferComplete") : h.status === "cancelled" ? t(lang, "transferCancelled") : t(lang, "transferFailed")}
               </span>
-              {!h.ok && h.retryable && h.sourcePath && h.targetPath && <button className="mini-btn" onClick={() => void retryTransfer(h)} title={lang === "zh-CN" ? "重试" : "Retry"}><RefreshCw size={10} /></button>}
+              {!h.ok && h.retryable && h.sourcePath && h.targetPath && <button className="mini-btn" onClick={() => void retryTransfer(h)} title={t(lang, "retry")}><RefreshCw size={10} /></button>}
             </div>
           ))}
         </div>

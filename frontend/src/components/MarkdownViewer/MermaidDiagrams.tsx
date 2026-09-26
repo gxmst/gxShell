@@ -134,7 +134,7 @@ function MermaidDiagram({ host, source, theme, index, zh, visible, onNotify }: {
     {state.status === 'error' && <div className="md-diagram-error" role="status">
       <strong>{t(language, "diagramRenderFailed")}</strong>
       <pre>{state.message}</pre>
-      <button type="button" onClick={() => setAttempt((value) => value + 1)}><RefreshCw size={14} />{t(language, "diagramRetry")}</button>
+      <button type="button" onClick={() => setAttempt((value) => value + 1)}><RefreshCw size={14} />{t(language, "retry")}</button>
     </div>}
     {showSource || state.status === 'error'
       ? <pre className="md-diagram-source" tabIndex={0} aria-label={t(language, "diagramSource")}><code>{source}</code></pre>

@@ -169,7 +169,7 @@ const FileRow = memo(function FileRow(props: {
             const rect = event.currentTarget.getBoundingClientRect();
             props.onMenu(file, rect.right, rect.bottom + 3);
           }}
-          title={lang === "zh-CN" ? "更多操作" : "More actions"}
+          title={t(lang, "moreActions")}
         >
           <MoreHorizontal size={12} />
         </button>
@@ -555,8 +555,8 @@ export function SftpPanel(props: {
           <div className="sftp-browser-title">
             <span className="sftp-browser-icon"><FolderOpen size={14} /></span>
             <span>
-              <strong>{lang === "zh-CN" ? "远程文件" : "Remote files"}</strong>
-              <small>{active.title || (lang === "zh-CN" ? "当前连接" : "Current connection")}</small>
+              <strong>{t(lang, "remoteFiles")}</strong>
+              <small>{active.title || t(lang, "currentConnection")}</small>
             </span>
           </div>
           <div className="sftp-quick-actions">
@@ -653,7 +653,7 @@ export function SftpPanel(props: {
           <label className="sftp-search">
             <Search size={11} />
             <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t(lang, "filterFiles")} />
-            {filter && <button type="button" onClick={() => setFilter("")} title={lang === "zh-CN" ? "清除筛选" : "Clear filter"}><X size={10} /></button>}
+            {filter && <button type="button" onClick={() => setFilter("")} title={t(lang, "clearFilter")}><X size={10} /></button>}
           </label>
           <span className="sftp-item-count">{visibleFiles.length}{filter ? ` / ${files.length}` : ""}</span>
         </div>
@@ -663,7 +663,7 @@ export function SftpPanel(props: {
         <div className="sftp-file-head">
           <button className="sftp-col-name" onClick={() => changeSort("name")}>{t(lang, "name")}{sortIndicator("name")}</button>
           <button className="sftp-col-size" onClick={() => changeSort("size")}>{t(lang, "fileSizeCol")}{sortIndicator("size")}</button>
-          <button className="sftp-col-modified" onClick={() => changeSort("modified")}>{lang === "zh-CN" ? "修改" : "Modified"}{sortIndicator("modified")}</button>
+          <button className="sftp-col-modified" onClick={() => changeSort("modified")}>{t(lang, "fileModifiedCol")}{sortIndicator("modified")}</button>
           <span className="sftp-col-actions" />
         </div>
         <div className="sftp-file-body" ref={setListEl} onScroll={onListScroll}>
@@ -696,7 +696,7 @@ export function SftpPanel(props: {
         <span className="sftp-footer-status">
           {selectedPath
             ? selectedPath.split("/").pop()
-            : (lang === "zh-CN" ? `${files.length} 个项目` : `${files.length} item${files.length === 1 ? "" : "s"}`)}
+            : t(lang, files.length === 1 ? "sftpItemCountOne" : "sftpItemCountMany", { count: String(files.length) })}
         </span>
         <button className="sftp-terminal-btn" onClick={openTerminalHere} title={t(lang, "openTerminalInDir")}>
           <Terminal size={12} />

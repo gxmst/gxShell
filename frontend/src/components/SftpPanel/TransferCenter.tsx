@@ -85,7 +85,7 @@ export function TransferCenter(props: {
                       <button
                         className="mini-btn"
                         onClick={() => void (tr.paused ? resumeTransfer(tr.jobId) : pauseTransfer(tr.jobId))}
-                        title={tr.paused ? (lang === "zh-CN" ? "继续" : "Resume") : (lang === "zh-CN" ? "暂停" : "Pause")}
+                        title={tr.paused ? t(lang, "resume") : t(lang, "pause")}
                       >
                         {tr.paused ? <Play size={11} /> : <Pause size={11} />}
                       </button>
@@ -102,8 +102,8 @@ export function TransferCenter(props: {
                     <div className="xfer-center-item-meta">
                       <span>{formatFileSize(tr.done)} / {tr.total > 0 ? formatFileSize(tr.total) : "—"}</span>
                       <span>{speed}</span>
-                      <span>{eta !== "—" ? `${eta} ${lang === "zh-CN" ? "剩余" : "left"}` : "—"}</span>
-                      {tr.paused && <span className="xfer-paused-label">{lang === "zh-CN" ? "已暂停" : "Paused"}</span>}
+                      <span>{eta !== "—" ? `${eta} ${t(lang, "remaining")}` : "—"}</span>
+                      {tr.paused && <span className="xfer-paused-label">{t(lang, "paused")}</span>}
                     </div>
                   </div>
                 );
@@ -138,7 +138,7 @@ export function TransferCenter(props: {
                     {h.ok ? t(lang, "transferComplete") : h.status === "cancelled" ? t(lang, "transferCancelled") : t(lang, "transferFailed")}
                   </span>
                   {!h.ok && h.retryable && h.sourcePath && h.targetPath && (
-                    <button className="mini-btn" onClick={() => void retryTransfer(h)} title={lang === "zh-CN" ? "重试" : "Retry"}>
+                    <button className="mini-btn" onClick={() => void retryTransfer(h)} title={t(lang, "retry")}>
                       <RefreshCw size={11} />
                     </button>
                   )}
