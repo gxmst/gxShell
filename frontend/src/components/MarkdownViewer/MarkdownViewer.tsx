@@ -1,5 +1,5 @@
 import clsx from 'clsx';
-import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo, lazy, Suspense, useSyncExternalStore } from 'react';
 import { Braces, Columns2, ListTree, Pencil, RefreshCw, Save, Search, Type, X, ChevronUp, ChevronDown } from 'lucide-react';
 import {
   ReadLocalFile,
@@ -16,7 +16,7 @@ import { isWindowsPlatform, writeClipboardText } from '../../utils/clipboard';
 import { applyEol, detectEol, eolLabel, toLf, type Eol } from '../../utils/eol';
 import { documentEditorMode, extensionOf, isMarkdownPath, isPdfPath } from '../../utils/textFiles';
 import { documentPresentation, needsLightweightMarkdown, textDocumentHeadings, MAX_DOCUMENT_HEADINGS, type DocumentHeading, type DocumentOutline } from '../../utils/documentPresentation';
-import { readDocumentAppearance, writeDocumentAppearance, type DocumentAppearance } from '../../utils/documentReadingState';
+import { getDocumentAppearance, subscribeDocumentAppearance, updateDocumentAppearance, type DocumentAppearance } from '../../utils/documentReadingState';
 import type { JsonValidationResult } from '../../utils/jsonDocuments';
 import { MAX_SYNC_JSON_CHARS } from '../../utils/jsonDocumentTasks';
 import type { EditorStats, SourceEditorHandle } from './SourceEditor';
@@ -141,10 +141,11 @@ export default function MarkdownViewer({
   const [conflictVersion, setConflictVersion] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [formatting, setFormatting] = useState(false);
-  const [initialAppearance] = useState(readDocumentAppearance);
-  const [zoom, setZoom] = useState(initialAppearance.zoom);
-  const [leading, setLeading] = useState(initialAppearance.leading);
-  const [column, setColumn] = useState<DocumentAppearance['width']>(initialAppearance.width);
+  // One appearance for the whole app. Every viewer reads the same value and
+  // patches only the field it changed, so two panes of a split view cannot
+  // overwrite each other's settings with a stale copy.
+  const appearance = useSyncExternalStore(subscribeDocumentAppearance, getDocumentAppearance);
+  const { zoom, leading, width: column } = appearance;
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const [tocOpen, setTocOpen] = useState(true);
   const [compactReading, setCompactReading] = useState(false);
@@ -266,8 +267,6 @@ export default function MarkdownViewer({
       : presentation === 'log' ? t(lang, 'documentTypeLog')
         : markdownMode ? 'Markdown' : pdfMode ? 'PDF'
           : extensionOf(displayPath || '').slice(1).toUpperCase() || fileName;
-
-  useEffect(() => { writeDocumentAppearance({ zoom, leading, width: column }); }, [zoom, leading, column]);
 
   useEffect(() => {
     if (!appearanceOpen) return;
@@ -1057,7 +1056,7 @@ export default function MarkdownViewer({
       restore();
       return;
     }
-    setZoom(next);
+    updateDocumentAppearance({ zoom: next });
   }, [restore]);
 
   const cancelZoomGesture = useCallback((input: HTMLInputElement) => {
@@ -1225,7 +1224,7 @@ export default function MarkdownViewer({
               <button
                 type="button"
                 className="markdown-viewer-zoom-reset"
-                onClick={() => { beforeLayoutChange(); setZoom(1); }}
+                onClick={() => { beforeLayoutChange(); updateDocumentAppearance({ zoom: 1 }); }}
                 title={t(lang, 'documentZoomResetTitle')}
                 aria-label={t(lang, 'documentZoomReset')}
               >{Math.round(zoom * 100)}%</button>
@@ -1249,7 +1248,7 @@ export default function MarkdownViewer({
               onChange={(e) => {
                 if (!zoomGestureRef.current) {
                   beforeLayoutChange();
-                  setZoom(Number(e.currentTarget.value));
+                  updateDocumentAppearance({ zoom: Number(e.currentTarget.value) });
                 }
               }}
               onPointerUp={(e) => commitZoomGesture(e.currentTarget)}
@@ -1258,7 +1257,7 @@ export default function MarkdownViewer({
             {!editing && (presentation === 'prose' || richMarkdown) && <>
               <label className="markdown-appearance-label">
                 <span>{t(lang, 'documentLineHeight')}</span>
-                <select aria-label={t(lang, 'documentLineHeight')} value={leading} onChange={(event) => { beforeLayoutChange(); setLeading(Number(event.target.value)); }}>
+                <select aria-label={t(lang, 'documentLineHeight')} value={leading} onChange={(event) => { beforeLayoutChange(); updateDocumentAppearance({ leading: Number(event.target.value) }); }}>
                   <option value={1.5}>{t(lang, 'documentLeadingCompact')}</option>
                   <option value={1.85}>{t(lang, 'documentLeadingNormal')}</option>
                   <option value={2.1}>{t(lang, 'documentLeadingRelaxed')}</option>
@@ -1266,7 +1265,7 @@ export default function MarkdownViewer({
               </label>
               <label className="markdown-appearance-label">
                 <span>{t(lang, 'documentLineWidth')}</span>
-                <select aria-label={t(lang, 'documentLineWidth')} value={column} onChange={(event) => { beforeLayoutChange(); setColumn(event.target.value as DocumentAppearance['width']); }}>
+                <select aria-label={t(lang, 'documentLineWidth')} value={column} onChange={(event) => { beforeLayoutChange(); updateDocumentAppearance({ width: event.target.value as DocumentAppearance['width'] }); }}>
                   <option value="comfortable">{t(lang, 'documentWidthComfortable')}</option>
                   <option value="wide">{t(lang, 'documentWidthWide')}</option>
                   <option value="full">{t(lang, 'documentWidthFull')}</option>
