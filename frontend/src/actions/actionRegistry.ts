@@ -5,6 +5,8 @@
  * from the operation it invokes.
  */
 
+import { t } from "../i18n";
+
 export type ActionScope = "global" | "workspace" | "terminal" | "form" | "modal";
 
 export type ActionShortcut = {
@@ -169,6 +171,8 @@ export type HotkeyCallbacks = {
     terminalSearch: string;
     closeTab: string;
   }>;
+  /** Locale for the built-in labels, used when `labels` does not override them. */
+  locale?: string;
 };
 
 /** Build the default workspace actions without coupling the registry to React. */
@@ -180,7 +184,7 @@ export function createDefaultActionRegistry(
   registry.registerMany([
     {
       id: "workspace.next-tab",
-      label: callbacks.labels?.nextTab || "Next tab",
+      label: callbacks.labels?.nextTab || t(callbacks.locale || "en", "actionNextTab"),
       category: "Tabs",
       scope: "global",
       defaultShortcuts: ["Ctrl+Tab"],
@@ -191,7 +195,7 @@ export function createDefaultActionRegistry(
     },
     {
       id: "workspace.select-tab",
-      label: callbacks.labels?.selectTab || "Select tab by number",
+      label: callbacks.labels?.selectTab || t(callbacks.locale || "en", "actionSelectTab"),
       category: "Tabs",
       scope: "global",
       defaultShortcuts: ["Alt+1-9"],
@@ -201,7 +205,7 @@ export function createDefaultActionRegistry(
     },
     {
       id: "workspace.search",
-      label: callbacks.labels?.workspaceSearch || "Search workspace",
+      label: callbacks.labels?.workspaceSearch || t(callbacks.locale || "en", "actionWorkspaceSearch"),
       category: "Workspace",
       scope: "global",
       defaultShortcuts: ["Mod+K"],
@@ -210,7 +214,7 @@ export function createDefaultActionRegistry(
     },
     {
       id: "terminal.search",
-      label: callbacks.labels?.terminalSearch || "Find in terminal",
+      label: callbacks.labels?.terminalSearch || t(callbacks.locale || "en", "actionTerminalSearch"),
       category: "Terminal",
       scope: "terminal",
       defaultShortcuts: ["Mod+F"],
@@ -221,7 +225,7 @@ export function createDefaultActionRegistry(
     },
     {
       id: "workspace.close-tab",
-      label: callbacks.labels?.closeTab || "Close active tab",
+      label: callbacks.labels?.closeTab || t(callbacks.locale || "en", "actionCloseTab"),
       category: "Tabs",
       scope: "global",
       defaultShortcuts: ["Mod+Shift+W"],

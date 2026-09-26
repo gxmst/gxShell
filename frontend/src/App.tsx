@@ -424,7 +424,7 @@ function App() {
       notify(payload?.error || "Failed to finalize recording", "error");
     });
     const unsubSessionLogError = EventsOn("session-log:error", (payload: { error?: string }) => {
-      notify((langRef.current === "zh-CN" ? "会话日志已停止：" : "Session logging stopped: ") + (payload?.error || "unknown error"), "error");
+      notify(t(langRef.current, "sessionLoggingStopped", { error: payload?.error || t(langRef.current, "unknownError") }), "error");
     });
 
     // Surface local CLI HTTP server startup failures (e.g. port already in
@@ -991,10 +991,9 @@ function App() {
     const hadClosedTab = sessions.closedTabCount > 0;
     const restored = await sessions.reopenClosedTab();
     if (!restored && !hadClosedTab) {
-      const lang = profileState.settings?.language || "en";
-      notify(lang === "zh-CN" ? "没有可恢复的已关闭标签" : "There are no closed tabs to reopen", "info");
+      notify(tr("noClosedTabs"), "info");
     }
-  }, [notify, profileState.settings?.language, sessions.closedTabCount, sessions.reopenClosedTab]);
+  }, [notify, tr, sessions.closedTabCount, sessions.reopenClosedTab]);
 
   const renameActiveTab = useCallback(() => {
     const tab = tabsRef.current.find((item) => item.id === activeTabIdRef.current);
@@ -1004,8 +1003,6 @@ function App() {
   // This is the sole action registry for the keyboard, command palette, menus,
   // conflict detection, and future shortcut help/customization.
   const appActionRegistry = useMemo(() => {
-    const lang = profileState.settings?.language || "en";
-    const zh = lang === "zh-CN";
     const registry = createDefaultActionRegistry({
       onGlobalSearch: () => { setGlobalQuery(""); setGlobalSearchOpen(true); },
       onTerminalSearch: (tabId) => { setTerminalSearchTab(tabId); setTerminalSearchOpen(true); },
@@ -1013,18 +1010,12 @@ function App() {
       onNextTab: () => activateTabByOffset(1),
       onPrevTab: () => activateTabByOffset(-1),
       onSelectTab: activateTabByIndex,
-      labels: zh ? {
-        nextTab: "切换到相邻标签",
-        selectTab: "按编号切换标签",
-        workspaceSearch: "搜索工作区",
-        terminalSearch: "在终端中查找",
-        closeTab: "关闭当前标签",
-      } : undefined,
+      locale: lang,
     });
     registry.registerMany([
       {
         id: "workspace.reopen-closed-tab",
-        label: zh ? "恢复最近关闭的标签" : "Reopen closed tab",
+        label: tr("actionReopenClosedTab"),
         category: "Tabs",
         scope: "global",
         defaultShortcuts: ["Ctrl+Shift+T"],
@@ -1034,7 +1025,7 @@ function App() {
       },
       {
         id: "terminal.increase-font-size",
-        label: zh ? "放大终端字号" : "Increase terminal font size",
+        label: tr("actionIncreaseFont"),
         category: "Terminal",
         scope: "terminal",
         defaultShortcuts: ["Ctrl+="],
@@ -1050,7 +1041,7 @@ function App() {
       },
       {
         id: "terminal.decrease-font-size",
-        label: zh ? "缩小终端字号" : "Decrease terminal font size",
+        label: tr("actionDecreaseFont"),
         category: "Terminal",
         scope: "terminal",
         defaultShortcuts: ["Ctrl+-"],
@@ -1063,7 +1054,7 @@ function App() {
       },
       {
         id: "terminal.reset-font-size",
-        label: zh ? "重置终端字号" : "Reset terminal font size",
+        label: tr("actionResetFont"),
         category: "Terminal",
         scope: "terminal",
         defaultShortcuts: ["Ctrl+0"],
@@ -1073,7 +1064,7 @@ function App() {
       },
       {
         id: "workspace.rename-tab",
-        label: zh ? "重命名当前标签" : "Rename active tab",
+        label: tr("actionRenameTab"),
         category: "Tabs",
         scope: "workspace",
         defaultShortcuts: ["F2"],
@@ -1086,8 +1077,8 @@ function App() {
       {
         id: "workspace.toggle-zen-mode",
         label: zenMode
-          ? (zh ? "退出专注模式" : "Exit Zen mode")
-          : (zh ? "进入专注模式" : "Enter Zen mode"),
+          ? tr("exitZenMode")
+          : tr("enterZenMode"),
         category: "Workspace",
         scope: "global",
         defaultShortcuts: ["Ctrl+Shift+F11"],
@@ -1098,8 +1089,8 @@ function App() {
       {
         id: "workspace.toggle-activity-center",
         label: activityCenterOpen
-          ? (zh ? "关闭通知中心" : "Close notification center")
-          : (zh ? "打开通知中心" : "Open notification center"),
+          ? tr("closeNotificationCenter")
+          : tr("openNotificationCenter"),
         category: "Workspace",
         scope: "global",
         // Ctrl+Shift+N is a widely established new-window/incognito binding.
@@ -1110,7 +1101,7 @@ function App() {
       },
       {
         id: "workspace.shortcut-help",
-        label: zh ? "查看快捷键" : "Keyboard shortcuts",
+        label: tr("actionKeyboardShortcuts"),
         category: "Workspace",
         scope: "global",
         defaultShortcuts: [],
@@ -1118,7 +1109,7 @@ function App() {
       },
     ]);
     return registry;
-  }, [activityCenterOpen, activateTabByIndex, activateTabByOffset, adjustTerminalFontSize, closeTabForgettingFloating, profileState.settings?.language, renameActiveTab, reopenClosedTab, resetTerminalFontSize, setActivityCenterOpen, zenMode]);
+  }, [activityCenterOpen, activateTabByIndex, activateTabByOffset, adjustTerminalFontSize, closeTabForgettingFloating, lang, tr, renameActiveTab, reopenClosedTab, resetTerminalFontSize, setActivityCenterOpen, zenMode]);
 
   useHotkeys({
     activeTab: sessions.activeTab,
@@ -1399,8 +1390,6 @@ function App() {
     const parsedQuery = parsePaletteQuery(globalQuery);
     const q = parsedQuery.query.trim();
     const hasQuery = q.length > 0;
-    const lang = profileState.settings?.language || "en";
-    const zh = lang === "zh-CN";
     // Candidates are deliberately unfiltered and unranked here: paletteSearch
     // owns matching (including subsequence matches like "dkr" -> "docker"),
     // scoring, and the >/@/# mode filter. Filtering with a substring test or
@@ -1424,7 +1413,7 @@ function App() {
       .map((action) => ({
         type: "action",
         title: action.label,
-        subtitle: zh ? `${action.category} 操作` : `${action.category} action`,
+        subtitle: tr("actionSubtitle", { category: action.category }),
         keywords: `${action.id} ${action.category} ${action.label}`,
         category: action.category,
         scope: action.scope,
@@ -1433,10 +1422,10 @@ function App() {
         action: () => action.run({ ...paletteContext, event: new KeyboardEvent("keydown") }),
       }));
     const actionResults = [
-      { type: "action", title: t(lang, "newConnection"), subtitle: zh ? "创建并保存 SSH 连接" : "Create and save an SSH connection", keywords: "new connection server ssh 新建 连接 服务器", action: () => setProfileModal(emptyProfile()) },
+      { type: "action", title: t(lang, "newConnection"), subtitle: tr("paletteNewConnection"), keywords: "new connection server ssh 新建 连接 服务器", action: () => setProfileModal(emptyProfile()) },
       { type: "action", title: t(lang, "quickConnect"), subtitle: t(lang, "quickConnectHint"), keywords: "quick connect temporary 快速 临时 连接", action: () => setQuickConnectOpen(true) },
-      { type: "action", title: t(lang, "localTerminal"), subtitle: zh ? "打开本机命令行" : "Open a local shell", keywords: "local terminal shell 本地 终端", action: () => { searchConnectLocal().catch((err) => notify(String(err), "error")); } },
-      { type: "action", title: t(lang, "openDocument"), subtitle: zh ? "查看本地文档或编辑文本" : "View local documents or edit text", keywords: "open document pdf text markdown file 打开 文档 PDF 文本 文件", action: handleOpenMarkdown },
+      { type: "action", title: t(lang, "localTerminal"), subtitle: tr("paletteLocalTerminal"), keywords: "local terminal shell 本地 终端", action: () => { searchConnectLocal().catch((err) => notify(String(err), "error")); } },
+      { type: "action", title: t(lang, "openDocument"), subtitle: tr("paletteOpenDocument"), keywords: "open document pdf text markdown file 打开 文档 PDF 文本 文件", action: handleOpenMarkdown },
     ];
 
     const serverResults = suggestions(profilesRef.current
@@ -1453,7 +1442,7 @@ function App() {
     const tabResults = suggestions(searchTabs).map((tab) => ({
       type: "terminal",
       title: tab.title,
-      subtitle: zh ? "切换到已打开的标签" : "Switch to open tab",
+      subtitle: tr("paletteSwitchTab"),
       keywords: `${tab.title} ${tab.local ? "local terminal 本地终端" : "terminal session 终端 会话"}`,
       action: () => searchSetActiveTab(tab.id),
     }));
@@ -1485,13 +1474,13 @@ function App() {
     const areaResults = hasQuery ? drawerMeta.map((item) => ({
       type: "area",
       title: item.title,
-      subtitle: zh ? "打开工作区" : "Open workspace",
+      subtitle: tr("paletteOpenWorkspace"),
       keywords: `${item.title} ${item.drawer} ${item.keywords}`,
       action: () => requestDrawer(item.drawer),
     })) : [];
 
     return [...registeredActionResults, ...actionResults, ...tabResults, ...serverResults, ...commandResults, ...areaResults];
-  }, [appActionRegistry, globalQuery, handleOpenMarkdown, notify, profileState.settings?.language, requestDrawer, runOnActive, searchConnectLocal, searchConnectProfile, searchSetActiveTab, searchTabs, sessions.active?.type, sessions.activeTab]);
+  }, [appActionRegistry, globalQuery, handleOpenMarkdown, notify, lang, tr, requestDrawer, runOnActive, searchConnectLocal, searchConnectProfile, searchSetActiveTab, searchTabs, sessions.active?.type, sessions.activeTab]);
 
   const resolveTransferSession = (item: Pick<TransferHistoryItem, "sessionId" | "runtimeId" | "profileId">) => {
     const current = connectedSshTabs.find((tab) => (

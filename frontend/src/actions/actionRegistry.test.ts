@@ -108,4 +108,30 @@ describe("ActionRegistry", () => {
     expect(shortcutMatches(new KeyboardEvent("keydown", { key: "k", ctrlKey: true }), { key: "k", mod: true })).toBe(true);
     expect(shortcutMatches(new KeyboardEvent("keydown", { key: "k" }), { key: "k", mod: true })).toBe(false);
   });
+
+  // The built-in labels used to be English literals, so a zh-CN UI fell back to
+  // English unless the caller overrode every label by hand.
+  it("localizes the built-in action labels through callbacks.locale", () => {
+    const callbacks = {
+      onGlobalSearch: vi.fn(),
+      onTerminalSearch: vi.fn(),
+      onCloseTab: vi.fn(),
+      onNextTab: vi.fn(),
+      onPrevTab: vi.fn(),
+      onSelectTab: vi.fn(),
+      locale: "zh-CN",
+    };
+    const registry = createDefaultActionRegistry(callbacks);
+    expect(registry.get("workspace.next-tab")?.label).toBe("切换到相邻标签");
+    expect(registry.get("workspace.select-tab")?.label).toBe("按编号切换标签");
+    expect(registry.get("terminal.search")?.label).toBe("在终端中查找");
+
+    // An explicit label still wins over the locale default.
+    const overridden = createDefaultActionRegistry({ ...callbacks, labels: { nextTab: "自定义标签" } });
+    expect(overridden.get("workspace.next-tab")?.label).toBe("自定义标签");
+
+    // Omitting the locale keeps the English wording.
+    const english = createDefaultActionRegistry({ ...callbacks, locale: undefined });
+    expect(english.get("workspace.next-tab")?.label).toBe("Next tab");
+  });
 });
