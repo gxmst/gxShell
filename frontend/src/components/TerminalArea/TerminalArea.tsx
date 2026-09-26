@@ -139,17 +139,17 @@ export const TerminalArea = memo(function TerminalArea(props: {
       {active && active.type !== "markdown" && (active.state === "connecting" || active.state === "reconnecting" || active.state === "restoring") && (
         <div className="terminal-state-banner terminal-state-connecting">
           <span>{active.state === "reconnecting"
-            ? (lang === "zh-CN" ? `正在重新连接 ${active.title}…` : `Reconnecting to ${active.title}…`)
+            ? t(lang, "reconnectingTo", { name: active.title })
             : active.state === "restoring"
-              ? (lang === "zh-CN" ? `正在恢复 ${active.title}…` : `Restoring ${active.title}…`)
-              : (lang === "zh-CN" ? `正在连接 ${active.title}…` : `Connecting to ${active.title}…`)}</span>
-          <button onClick={() => props.onClose(active.id)}>{lang === "zh-CN" ? "取消" : "Cancel"}</button>
+              ? t(lang, "restoringTo", { name: active.title })
+              : t(lang, "connectingTo", { name: active.title })}</span>
+          <button onClick={() => props.onClose(active.id)}>{t(lang, "cancel")}</button>
         </div>
       )}
       {active && active.type !== "markdown" && (active.state === "error" || active.state === "disconnected") && (
         <div className={clsx("terminal-state-banner", active.state === "error" && "terminal-state-error")}>
-          <span title={active.error}>{active.error || (lang === "zh-CN" ? "连接已断开" : "Connection closed")}</span>
-          {!active.local && <button onClick={() => props.onReconnect(active)}>{lang === "zh-CN" ? "重新连接" : "Reconnect"}</button>}
+          <span title={active.error}>{active.error || t(lang, "connectionClosed")}</span>
+          {!active.local && <button onClick={() => props.onReconnect(active)}>{t(lang, "reconnect")}</button>}
         </div>
       )}
       {props.broadcastInput && (props.broadcastCount || 0) > 1 && (
@@ -224,7 +224,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
         <div
           ref={splitRef}
           className={clsx("split-divider", !isSplitVisible && "split-divider-hidden", split?.direction === "vertical" && "split-divider-vertical")}
-          role="separator" tabIndex={isSplitVisible ? 0 : -1} aria-label={lang === "zh-CN" ? "调整窗格宽高" : "Resize panes"} aria-orientation={split?.direction === "vertical" ? "horizontal" : "vertical"} aria-valuemin={20} aria-valuemax={80} aria-valuenow={Math.round((split?.ratio ?? 0.5)*100)}
+          role="separator" tabIndex={isSplitVisible ? 0 : -1} aria-label={t(lang, "resizePanes")} aria-orientation={split?.direction === "vertical" ? "horizontal" : "vertical"} aria-valuemin={20} aria-valuemax={80} aria-valuenow={Math.round((split?.ratio ?? 0.5)*100)}
           style={isSplitVisible ? { gridColumn: split!.direction !== "vertical" ? "2" : "1", gridRow: split!.bottom ? "1 / 4" : split!.direction !== "vertical" ? "1" : "2" } : undefined}
           onKeyDown={dividerKeyboard}
           onPointerDown={onDragSplit}
@@ -239,7 +239,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
             });
           }}
         />
-        {isSplitVisible && split.bottom && <div className="split-divider split-divider-vertical" data-axis="row" role="separator" tabIndex={0} aria-label={lang === "zh-CN" ? "调整窗格高度" : "Resize pane rows"} aria-orientation="horizontal" aria-valuemin={20} aria-valuemax={80} aria-valuenow={Math.round((split.rowRatio ?? 0.5)*100)} style={{ gridColumn: "1 / 4", gridRow: "2" }} onKeyDown={(e) => dividerKeyboard(e, true)} onPointerDown={onDragSplit} onPointerMove={onDragSplitMove} onPointerUp={(e) => finishSplitDrag(e)} onPointerCancel={(e) => finishSplitDrag(e, true)} onDoubleClick={() => props.onSplitChange?.({ ...split, rowRatio: 0.5 })} />}
+        {isSplitVisible && split.bottom && <div className="split-divider split-divider-vertical" data-axis="row" role="separator" tabIndex={0} aria-label={t(lang, "resizePaneRows")} aria-orientation="horizontal" aria-valuemin={20} aria-valuemax={80} aria-valuenow={Math.round((split.rowRatio ?? 0.5)*100)} style={{ gridColumn: "1 / 4", gridRow: "2" }} onKeyDown={(e) => dividerKeyboard(e, true)} onPointerDown={onDragSplit} onPointerMove={onDragSplitMove} onPointerUp={(e) => finishSplitDrag(e)} onPointerCancel={(e) => finishSplitDrag(e, true)} onDoubleClick={() => props.onSplitChange?.({ ...split, rowRatio: 0.5 })} />}
         {props.logViewer && (
           <div className="log-viewer-overlay">
             <div className="log-viewer-header">

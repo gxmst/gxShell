@@ -4,6 +4,7 @@ import type { Tab } from "../../types";
 import type { types } from "../../../wailsjs/go/models";
 import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import { GetLatestMetrics } from "../../../wailsjs/go/app/App";
+import { t } from "../../i18n";
 
 type Dims = { cols: number; rows: number };
 
@@ -23,7 +24,7 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
   onOpenCurrentDirectory?: (id: string, path: string) => void;
   language: string;
 }) {
-  const zh = props.language === "zh-CN";
+  const lang = props.language;
   const [latency, setLatency] = useState<number | null>(null);
   const [dims, setDims] = useState<Dims | null>(null);
   const [currentDirectory, setCurrentDirectory] = useState("");
@@ -62,15 +63,15 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
   const state = props.tab.state;
   const local = !!props.tab.local;
   const stateLabel =
-    state === "connected" ? (local ? (zh ? "就绪" : "Ready") : (zh ? "已连接" : "Connected"))
-    : state === "connecting" ? (zh ? "连接中" : "Connecting")
-    : state === "reconnecting" ? (zh ? "重连中" : "Reconnecting")
-    : state === "restoring" ? (zh ? "恢复中" : "Restoring")
-    : state === "error" ? (zh ? "错误" : "Error")
-    : (zh ? "已断开" : "Disconnected");
+    state === "connected" ? (local ? t(lang, "terminalStateReady") : t(lang, "serverStatusConnected"))
+    : state === "connecting" ? t(lang, "terminalStateConnecting")
+    : state === "reconnecting" ? t(lang, "terminalStateReconnecting")
+    : state === "restoring" ? t(lang, "terminalStateRestoring")
+    : state === "error" ? t(lang, "terminalStateError")
+    : t(lang, "terminalStateDisconnected");
 
   const target = local
-    ? (props.profile?.name || (zh ? "本地终端" : "Local"))
+    ? (props.profile?.name || t(lang, "terminalLocal"))
     : props.profile
       ? `${props.profile.username}@${props.profile.host}${props.profile.port && props.profile.port !== 22 ? `:${props.profile.port}` : ""}`
       : props.tab.title;
@@ -115,7 +116,7 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
       <span className="tsb-spacer" />
 
       {props.broadcastInput && (props.broadcastCount || 0) > 1 && (
-        <span className="tsb-seg tsb-broadcast" title={zh ? "输入广播已开启" : "Input broadcast on"}>
+        <span className="tsb-seg tsb-broadcast" title={t(lang, "terminalInputBroadcastOn")}>
           <Radio size={11} />
           {props.broadcastCount}
         </span>
@@ -126,8 +127,8 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
       <span className="tsb-sep" />
       <span className="tsb-seg tsb-enc">UTF-8</span>
       <span className="tsb-sep" />
-      <span className="tsb-seg tsb-sessions" title={zh ? "活动会话数" : "Active sessions"}>
-        {props.sessionCount} {zh ? "会话" : props.sessionCount === 1 ? "session" : "sessions"}
+      <span className="tsb-seg tsb-sessions" title={t(lang, "activeSessions")}>
+        {t(lang, props.sessionCount === 1 ? "sessionCountOne" : "sessionCountMany", { count: String(props.sessionCount) })}
       </span>
     </div>
   );
