@@ -401,16 +401,12 @@ export function ServicePanel(props: {
           : `${result.activeState || "unknown"}${result.subState ? `(${result.subState})` : ""}`;
         if (result.verified) {
           onNotifyRef.current(
-            lang === "zh-CN"
-              ? `${unit} 已执行${t(lang, ACTION_LABEL[action])}，当前 ${observed}`
-              : `${unit}: ${t(lang, ACTION_LABEL[action])} completed; current state ${observed}`,
+            t(lang, "svcActionCompleted", { unit, action: t(lang, ACTION_LABEL[action]), state: observed }),
             "success",
           );
         } else {
           onNotifyRef.current(
-            lang === "zh-CN"
-              ? `命令已执行，但未能确认 ${unit} 达到目标状态：${result.verification || observed}`
-              : `Command completed, but ${unit} did not verify: ${result.verification || observed}`,
+            t(lang, "svcActionUnverified", { unit, error: result.verification || observed }),
             "error",
           );
         }

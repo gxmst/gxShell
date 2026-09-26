@@ -44,7 +44,7 @@ export function CommandPanel(props: CommandPanelProps) {
       <div className="panel-page-header">
         <div className="panel-page-heading">
           <span className="panel-page-icon"><Command size={14} /></span>
-          <span><strong>{t(props.locale, "cmd")}</strong><small>{props.locale === "zh-CN" ? `${filtered.length}/${props.commands.length} 个命令模板` : `${filtered.length}/${props.commands.length} command templates`}</small></span>
+          <span><strong>{t(props.locale, "cmd")}</strong><small>{t(props.locale, "commandTemplateCount", { count: `${filtered.length}/${props.commands.length}` })}</small></span>
         </div>
         <button className="panel-page-primary" onClick={props.onNew}><Plus size={12} /> {t(props.locale, "newCommand")}</button>
       </div>
@@ -53,9 +53,9 @@ export function CommandPanel(props: CommandPanelProps) {
           <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
           <input className="input compact-input w-full command-search-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t(props.locale, "search")} />
         </label>
-        <select className="input compact-input min-w-0 max-w-[45%]" value={target} onChange={(event) => setTarget(event.target.value)} title={props.locale === "zh-CN" ? "执行目标" : "Run target"}>
-          <option value="active">{props.locale === "zh-CN" ? "当前会话" : "Active session"}</option>
-          <option value="all">{props.locale === "zh-CN" ? `全部 SSH (${broadcastTabs.length})` : `All SSH (${broadcastTabs.length})`}</option>
+        <select className="input compact-input min-w-0 max-w-[45%]" value={target} onChange={(event) => setTarget(event.target.value)} title={t(props.locale, "runTarget")}>
+          <option value="active">{t(props.locale, "activeSession")}</option>
+          <option value="all">{t(props.locale, "allSshCount", { count: String(broadcastTabs.length) })}</option>
           {connectedTabs.map((tab) => <option key={tab.id} value={tab.id}>{tab.title}</option>)}
         </select>
       </div>
@@ -76,7 +76,7 @@ export function CommandPanel(props: CommandPanelProps) {
             </div>
           </div>
         ))}
-        {!filtered.length && <div className="panel-empty"><Command size={20} /><span>{query ? (props.locale === "zh-CN" ? "没有匹配的命令" : "No matching commands") : (props.locale === "zh-CN" ? "还没有命令模板" : "No command templates yet")}</span></div>}
+        {!filtered.length && <div className="panel-empty"><Command size={20} /><span>{query ? t(props.locale, "noMatchingCommands") : t(props.locale, "noCommandTemplates")}</span></div>}
       </div>
     </div>
   );

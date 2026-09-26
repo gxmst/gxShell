@@ -177,7 +177,7 @@ export function FirewallPanel(props: {
       onNotifyRef.current(
         result.verified
           ? t(lang, "fwEnabledNotice", { port: String(result.status.sshPort || status.sshPort) })
-          : (lang === "zh-CN" ? `启用命令已执行，但回读未确认：${result.verification}` : `Enable command completed but did not verify: ${result.verification}`),
+          : t(lang, "fwEnableUnverified", { error: result.verification || "unknown" }),
         result.verified ? "success" : "error",
       );
     } catch (err) {
@@ -198,7 +198,7 @@ export function FirewallPanel(props: {
       if (activeSessionRef.current !== sessionID) return;
       if (result.status?.backend) setStatus(result.status);
       onNotifyRef.current(
-        result.verified ? t(lang, "fwDisabledNotice") : (lang === "zh-CN" ? `停用命令已执行，但回读未确认：${result.verification}` : `Disable command completed but did not verify: ${result.verification}`),
+        result.verified ? t(lang, "fwDisabledNotice") : t(lang, "fwDisableUnverified", { error: result.verification || "unknown" }),
         result.verified ? "success" : "error",
       );
     } catch (err) {
@@ -231,7 +231,7 @@ export function FirewallPanel(props: {
         if (activeSessionRef.current !== sessionID) return;
         if (lastResult?.status?.backend) setStatus(lastResult.status);
         onNotifyRef.current(
-          lastResult?.verified ? t(lang, "fwRuleDeleted") : (lang === "zh-CN" ? `删除命令已执行，但回读未确认：${lastResult?.verification || "unknown"}` : `Delete command completed but did not verify: ${lastResult?.verification || "unknown"}`),
+          lastResult?.verified ? t(lang, "fwRuleDeleted") : t(lang, "fwDeleteUnverified", { error: lastResult?.verification || "unknown" }),
           lastResult?.verified ? "success" : "error",
         );
       } catch (err) {
@@ -309,7 +309,7 @@ export function FirewallPanel(props: {
         if (activeSessionRef.current !== sessionID) return;
         if (result.status?.backend) setStatus(result.status);
         onNotifyRef.current(
-          result.verified ? t(lang, "fwRuleAdded") : (lang === "zh-CN" ? `添加命令已执行，但回读未确认：${result.verification}` : `Add command completed but did not verify: ${result.verification}`),
+          result.verified ? t(lang, "fwRuleAdded") : t(lang, "fwAddUnverified", { error: result.verification || "unknown" }),
           result.verified ? "success" : "error",
         );
         setForm((prev) => ({ ...prev, port: "", source: "" }));

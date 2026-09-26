@@ -49,19 +49,19 @@ export function LogsPanel(props: { locale: string; onOpenLog: (name: string, ses
   return (
     <div className="logs-file-only panel-page">
       <div className="logs-toolbar panel-page-header">
-        <div className="panel-page-heading"><span className="panel-page-icon"><FileText size={14} /></span><span><strong>{t(props.locale, "logFiles")}</strong><small>{props.locale === "zh-CN" ? "应用运行记录与诊断" : "Application activity and diagnostics"}</small></span></div>
+        <div className="panel-page-heading"><span className="panel-page-icon"><FileText size={14} /></span><span><strong>{t(props.locale, "logFiles")}</strong><small>{t(props.locale, "logsSubtitle")}</small></span></div>
         <button className="panel-page-action" disabled={loading} onClick={loadFiles} title={t(props.locale, "refresh")}><RefreshCw size={12} /></button>
       </div>
       <div className="flex gap-2 px-3 pb-2" role="tablist">
-        <button className="btn-secondary" role="tab" aria-selected={!sessionLog} onClick={() => setSessionLog(false)}>{props.locale === "zh-CN" ? "应用日志" : "Application"}</button>
-        <button className="btn-secondary" role="tab" aria-selected={sessionLog} onClick={() => setSessionLog(true)}>{props.locale === "zh-CN" ? "会话日志" : "Sessions"}</button>
+        <button className="btn-secondary" role="tab" aria-selected={!sessionLog} onClick={() => setSessionLog(false)}>{t(props.locale, "logsApplication")}</button>
+        <button className="btn-secondary" role="tab" aria-selected={sessionLog} onClick={() => setSessionLog(true)}>{t(props.locale, "logsSessions")}</button>
       </div>
-      <div className="px-3 pb-2"><input className="input compact-input" aria-label={props.locale === "zh-CN" ? "筛选日志" : "Filter logs"} placeholder={props.locale === "zh-CN" ? "筛选日志" : "Filter logs"} value={query} onChange={(e) => setQuery(e.target.value)} /></div>
+      <div className="px-3 pb-2"><input className="input compact-input" aria-label={t(props.locale, "filterLogs")} placeholder={t(props.locale, "filterLogs")} value={query} onChange={(e) => setQuery(e.target.value)} /></div>
       {error && <div className="text-bad px-3" role="alert">{error}</div>}
       {loading && <div className="px-3">{t(props.locale, "loading")}</div>}
       {!sessionLog && !!props.activities.length && (
         <section className="px-3 pb-2">
-          <div className="flex items-center gap-1.5 pb-1.5 text-[10px] font-semibold text-muted"><Activity size={11} />{props.locale === "zh-CN" ? "最近活动" : "Recent activity"}</div>
+          <div className="flex items-center gap-1.5 pb-1.5 text-[10px] font-semibold text-muted"><Activity size={11} />{t(props.locale, "recentActivity")}</div>
           <div className="panel-list max-h-48 overflow-auto rounded border border-border/50">
             {props.activities.slice(0, 20).map((item, index) => {
               const icon = item.phase === "started" ? <Loader2 size={11} className="animate-spin" /> : item.phase === "failed" ? <AlertCircle size={11} className="text-bad" /> : <CheckCircle2 size={11} className="text-ok" />;
