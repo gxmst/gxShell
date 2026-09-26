@@ -103,6 +103,41 @@ describe("ContainerPanel session scope", () => {
     expect(onNotify).not.toHaveBeenCalled();
   });
 
+  // The sidebar keys this panel by session, so switching hosts unmounts this
+  // instance and mounts another. `viewLogs` awaits a round trip before opening
+  // the stream, and the guard it used was a render-time ref — which the
+  // unmounted copy keeps frozen at the old id, so the guard always passed. The
+  // old instance then opened a `docker logs -f` on the host the user had just
+  // left, and nothing was ever going to stop it: the unmount cleanup had already
+  // run before the new stream id was assigned.
+  it("does not open a log stream on the host it was remounted away from", async () => {
+    appMocks.listContainers.mockResolvedValue([container("a1")]);
+    appMocks.streamContainerLogs.mockResolvedValue(undefined);
+    const stopping = deferred<unknown>();
+    appMocks.stopContainerLogs.mockReturnValue(stopping.promise);
+
+    const view = (sessionId: string) => (
+      <ContainerPanel key={sessionId} active={sshTab(sessionId)} locale="en" onNotify={vi.fn()} />
+    );
+    const { rerender } = render(view("session-a"));
+
+    const logs = await screen.findByTitle("View logs");
+    // The first click has no previous stream, so it opens one straight away.
+    fireEvent.click(logs);
+    await waitFor(() => expect(appMocks.streamContainerLogs).toHaveBeenCalledTimes(1));
+    expect(appMocks.streamContainerLogs.mock.calls[0][0]).toBe("session-a");
+
+    // The second click stops the stream it is replacing. That stop is the round
+    // trip the panel can be remounted during.
+    fireEvent.click(logs);
+    await waitFor(() => expect(appMocks.stopContainerLogs).toHaveBeenCalledTimes(1));
+
+    rerender(view("session-b"));
+    await act(async () => { stopping.resolve(undefined); });
+
+    expect(appMocks.streamContainerLogs).toHaveBeenCalledTimes(1);
+  });
+
   it("still reports an action that completes on the host on screen", async () => {
     appMocks.listContainers.mockResolvedValue([container("a1", "exited")]);
     appMocks.removeContainer.mockResolvedValue(undefined);

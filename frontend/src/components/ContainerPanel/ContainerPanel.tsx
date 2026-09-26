@@ -62,6 +62,27 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   const refreshSeqRef = useRef(0);
   activeSessionRef.current = props.active?.id || "";
 
+  // A render-time ref cannot see a remount. The sidebar keys this panel by
+  // session, so switching hosts unmounts this instance and mounts a new one —
+  // and the unmounted copy's `activeSessionRef` stays frozen at the old id,
+  // which made every "has the panel moved on?" guard below pass. A late reply
+  // then still ran: `viewLogs` opened a `docker logs -f` on the host the user
+  // had just left, and nothing was ever going to stop it, because the unmount
+  // cleanup had already run before the stream id was assigned.
+  //
+  // The session half of the check is kept for the same instance — it is what
+  // makes the panel correct if it is ever rendered without the key — so the two
+  // conditions are asked together, in one place.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  const stillOwnsSession = useCallback(
+    (sessionID: string) => mountedRef.current && activeSessionRef.current === sessionID,
+    [],
+  );
+
   const flushPendingLogs = useCallback(() => {
     if (pendingLogTimerRef.current !== null) {
       window.clearTimeout(pendingLogTimerRef.current);
@@ -96,16 +117,16 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
     setLoading(true);
     try {
       const list = await ListContainers(sessionID, showAll);
-      if (seq !== refreshSeqRef.current || activeSessionRef.current !== sessionID) return;
+      if (seq !== refreshSeqRef.current || !stillOwnsSession(sessionID)) return;
       setContainers(list || []);
     } catch (err) {
-      if (seq !== refreshSeqRef.current || activeSessionRef.current !== sessionID) return;
+      if (seq !== refreshSeqRef.current || !stillOwnsSession(sessionID)) return;
       if (notifyOnError) props.onNotify(String(err), "error");
       setContainers([]);
     } finally {
-      if (seq === refreshSeqRef.current && activeSessionRef.current === sessionID) setLoading(false);
+      if (seq === refreshSeqRef.current && stillOwnsSession(sessionID)) setLoading(false);
     }
-  }, [sessionId, showAll, props.onNotify]);
+  }, [sessionId, showAll, props.onNotify, stillOwnsSession]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -182,7 +203,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
     }
     // The stop above is a round trip, so re-check before opening the stream:
     // otherwise the panel would follow a container on the host it just left.
-    if (activeSessionRef.current !== sessionID) return;
+    if (!stillOwnsSession(sessionID)) return;
     flushPendingLogs();
     const streamID = nextLogStreamId();
     setLogContainer(c);
@@ -194,14 +215,14 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
     try {
       await StreamContainerLogs(sessionID, c.id, streamID, 200);
     } catch (err) {
-      if (activeSessionRef.current !== sessionID) return;
+      if (!stillOwnsSession(sessionID)) return;
       if (logStreamIdRef.current === streamID) {
         logStreamIdRef.current = null;
         setLogStreaming(false);
       }
       onNotifyRef.current(String(err), "error");
     }
-  }, [props.active?.id, flushPendingLogs]);
+  }, [props.active?.id, flushPendingLogs, stillOwnsSession]);
 
   const closeLogs = useCallback(() => {
     const streamID = logStreamIdRef.current;
@@ -248,17 +269,17 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
       setActionLoading(c.id);
       try {
         await run(sessionID);
-        if (activeSessionRef.current !== sessionID) return;
+        if (!stillOwnsSession(sessionID)) return;
         props.onNotify(`${c.names?.[0] || c.id}: ${t(lang, verb)}`, "success");
         await refresh();
       } catch (err) {
-        if (activeSessionRef.current !== sessionID) return;
+        if (!stillOwnsSession(sessionID)) return;
         props.onNotify(String(err), "error");
       } finally {
-        if (activeSessionRef.current === sessionID) setActionLoading(null);
+        if (stillOwnsSession(sessionID)) setActionLoading(null);
       }
     },
-    [props.active?.id, refresh, props.onNotify, lang],
+    [props.active?.id, refresh, props.onNotify, lang, stillOwnsSession],
   );
 
   const restart = useCallback((c: types.ContainerInfo) => (
