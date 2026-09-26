@@ -197,3 +197,36 @@ describe("TabBar overflow", () => {
     expect(onClose).toHaveBeenCalledWith("tab-1");
   });
 });
+
+// The strip's labels used to be `lang === "zh-CN" ? ... : ...` ternaries. The
+// English wording is unchanged, so only a zh-CN assertion proves the locale
+// actually reaches them.
+describe("TabBar locale", () => {
+  it("labels the tab strip and its context menu in the requested locale", () => {
+    const tab = { ...tabs[0], pinned: true, unread: true } as Tab;
+    render(
+      <TabBar
+        tabs={[tab]}
+        activeTab="tab-2"
+        profiles={[{ id: "profile-1" } as any]}
+        onActive={vi.fn()}
+        onClose={vi.fn()}
+        onReconnect={vi.fn()}
+        onRename={vi.fn()}
+        onTogglePin={vi.fn()}
+        onNewTerminal={vi.fn()}
+        language="zh-CN"
+      />,
+    );
+
+    expect(screen.getByRole("tablist", { name: "打开的标签" })).toBeInTheDocument();
+    expect(screen.getByLabelText("已固定")).toBeInTheDocument();
+    expect(screen.getByTitle("有新输出")).toBeInTheDocument();
+
+    fireEvent.contextMenu(screen.getByRole("tab").closest(".tab") as HTMLElement);
+    const menu = screen.getByRole("menu");
+    expect(within(menu).getByRole("menuitem", { name: "在新终端打开" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "重命名标签" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "取消固定" })).toBeInTheDocument();
+  });
+});

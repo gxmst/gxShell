@@ -230,7 +230,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
 
   return (
     <div className="tabbar" data-dragging={dragState ? "true" : "false"}>
-      <div className="tabs-scroll" ref={tabsScrollRef} role="tablist" aria-label={lang === "zh-CN" ? "打开的标签" : "Open tabs"}>
+      <div className="tabs-scroll" ref={tabsScrollRef} role="tablist" aria-label={t(lang, "openTabs")}>
         {tabs.map((tab, index) => {
           const profile = profileByID.get(tab.profileId);
           const automation = automationActivity?.[tab.id];
@@ -265,16 +265,16 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
               <button className="tab-main" role="tab" aria-selected={activeTab === tab.id} aria-label={tab.title} tabIndex={activeTab === tab.id ? 0 : -1} onClick={() => onActive(tab.id)} onKeyDown={(event) => onTabKeyDown(event, index)}>
                 {tab.type === "markdown" ? <FileText size={12} className="text-accent opacity-70 shrink-0" /> : tab.local ? <Terminal size={12} className="text-accent opacity-70 shrink-0" /> : <span className={clsx("status-dot", stateClass(tab.state))} />}
                 <span className="tab-title">{tab.title}</span>
-                {tab.pinned && <Pin size={10} className="tab-pin-mark" aria-label={lang === "zh-CN" ? "已固定" : "Pinned"} />}
-                {tab.unread && activeTab !== tab.id && <span className="tab-unread-dot" title={lang === "zh-CN" ? "有新输出" : "New output"} />}
-                {dirtySet.has(tab.id) && <span className="tab-dirty-dot" title={lang === "zh-CN" ? "未保存" : "Unsaved"} />}
+                {tab.pinned && <Pin size={10} className="tab-pin-mark" aria-label={t(lang, "tabPinned")} />}
+                {tab.unread && activeTab !== tab.id && <span className="tab-unread-dot" title={t(lang, "tabNewOutput")} />}
+                {dirtySet.has(tab.id) && <span className="tab-dirty-dot" title={t(lang, "tabUnsaved")} />}
                 {automation && <span className={clsx("automation-badge tab-automation-badge", `automation-${automation.source}`, automation.phase === "started" && "automation-running", automation.phase === "failed" && "automation-failed")}>{automation.source.toUpperCase()}</span>}
               </button>
               <button className="tab-close" tabIndex={activeTab === tab.id ? 0 : -1} aria-label={`${t(lang, "close")} ${tab.title}`} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onClose(tab.id); }}><X size={13} /></button>
               {contextTabId === tab.id && <div className="tab-context-menu" role="menu" onClick={(event) => event.stopPropagation()}>
-                {onNewTerminal && tab.type !== "markdown" && profileByID.has(tab.profileId) && <button role="menuitem" onClick={() => { setContextTabId(""); onNewTerminal(tab); }}><CopyPlus size={12} />{lang === "zh-CN" ? "在新终端打开" : "Open in new terminal"}</button>}
-                {onRename && <button role="menuitem" onClick={() => { setContextTabId(""); onRename(tab); }}>{lang === "zh-CN" ? "重命名标签" : "Rename tab"}</button>}
-                {onTogglePin && <button role="menuitem" onClick={() => { setContextTabId(""); onTogglePin(tab); }}>{tab.pinned ? <PinOff size={12} /> : <Pin size={12} />}{tab.pinned ? (lang === "zh-CN" ? "取消固定" : "Unpin") : (lang === "zh-CN" ? "固定标签" : "Pin tab")}</button>}
+                {onNewTerminal && tab.type !== "markdown" && profileByID.has(tab.profileId) && <button role="menuitem" onClick={() => { setContextTabId(""); onNewTerminal(tab); }}><CopyPlus size={12} />{t(lang, "openInNewTerminal")}</button>}
+                {onRename && <button role="menuitem" onClick={() => { setContextTabId(""); onRename(tab); }}>{t(lang, "renameTab")}</button>}
+                {onTogglePin && <button role="menuitem" onClick={() => { setContextTabId(""); onTogglePin(tab); }}>{tab.pinned ? <PinOff size={12} /> : <Pin size={12} />}{tab.pinned ? t(lang, "unpinTab") : t(lang, "pinTab")}</button>}
                 <button role="menuitem" onClick={() => { setContextTabId(""); onClose(tab.id); }}><X size={12} />{t(lang, "close")}</button>
               </div>}
             </div>
@@ -319,7 +319,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
           </button>
           {newMenuOpen && (
             <div className="tab-action-dropdown" role="menu" onClick={(e) => e.stopPropagation()}>
-              {active && active.type !== "markdown" && profileByID.has(active.profileId) && onNewTerminal && <button className="tab-action-item" role="menuitem" onClick={() => { setNewMenuOpen(false); onNewTerminal(active); }}><CopyPlus size={12} />{lang === "zh-CN" ? "在新终端打开" : "Open in new terminal"}</button>}
+              {active && active.type !== "markdown" && profileByID.has(active.profileId) && onNewTerminal && <button className="tab-action-item" role="menuitem" onClick={() => { setNewMenuOpen(false); onNewTerminal(active); }}><CopyPlus size={12} />{t(lang, "openInNewTerminal")}</button>}
               <button className="tab-action-item" role="menuitem" onClick={() => { setNewMenuOpen(false); onNewConnection?.(); }}>
                 <Server size={12} />
                 {t(lang, "sshConnection")}
@@ -380,7 +380,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
                 role="menuitem"
                 disabled={!active || active.type === "markdown" || tabs.filter((tab) => tab.type !== "markdown").length < 4}
                 onClick={() => { setToolsMenuOpen(false); if (active) onSplitToggle?.(active.id, "grid"); }}
-              ><Grid2X2 size={13} /><span>{lang === "zh-CN" ? "四分屏" : "Four panes"}</span></button>
+              ><Grid2X2 size={13} /><span>{t(lang, "fourPanes")}</span></button>
               <button
                 className={clsx("tab-action-item", broadcastInput && "active")}
                 role="menuitem"
@@ -390,7 +390,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
               >
                 <Radio size={13} />
                 <span>{t(lang, "broadcastToggle")}</span>
-                {broadcastInput && <span className="tab-tools-state-on">{lang === "zh-CN" ? "开启" : "ON"}</span>}
+                {broadcastInput && <span className="tab-tools-state-on">{t(lang, "tabToolsOn")}</span>}
               </button>
               <button
                 className="tab-action-item"
@@ -401,7 +401,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
               >
                 <Circle size={13} fill={recording ? "currentColor" : "none"} />
                 <span>{t(lang, recording ? "stopRecording" : "startRecording")}</span>
-                {recording && <span className="tab-tools-state-rec">{lang === "zh-CN" ? "录制中" : "REC"}</span>}
+                {recording && <span className="tab-tools-state-rec">{t(lang, "tabToolsRecording")}</span>}
               </button>
               <button
                 className="tab-action-item"

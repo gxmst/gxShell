@@ -289,10 +289,10 @@ export function Sidebar(props: {
     [props.automationByProfile]
   );
   const titleText = {
-    connections: lang === "zh-CN" ? "连接" : "Connect",
-    files: lang === "zh-CN" ? "文件" : "Files",
+    connections: t(lang, "connect"),
+    files: t(lang, "files"),
     documents: t(lang, "documentsNav"),
-    tools: lang === "zh-CN" ? "工具" : "Tools",
+    tools: t(lang, "navTools"),
   };
   const sectionKey = props.drawer === "ai" || props.drawer === "settings" ? props.drawer : activePrimary;
   const openPrimary = (nav: PrimaryNav) => {
@@ -320,7 +320,7 @@ export function Sidebar(props: {
       x: Math.min(rect.left, window.innerWidth - 210),
       y: rect.bottom + 5,
       items: [
-        ...(props.onBulkProfiles ? [{ label: lang === "zh-CN" ? "批量修改服务器" : "Bulk edit servers", action: props.onBulkProfiles }] : []),
+        ...(props.onBulkProfiles ? [{ label: t(lang, "bulkEditServers"), action: props.onBulkProfiles }] : []),
         { label: t(lang, "importProfiles"), action: props.onImportProfiles },
         { label: t(lang, "importOpenSSH"), action: props.onImportOpenSSH },
         { label: t(lang, "exportProfiles"), action: props.onExportProfiles },
@@ -335,14 +335,16 @@ export function Sidebar(props: {
     const session = props.profileStates?.[profile.id];
     const osType = detectServerOs(profile, props.detectedOsMap?.[profile.id]);
     const statusLabel = session?.state === "connected"
-      ? (lang === "zh-CN" ? "已连接" : "Connected")
+      ? t(lang, "serverStatusConnected")
       : session?.state === "connecting" || session?.state === "reconnecting" || session?.state === "restoring"
         ? t(lang, "connecting")
         : session?.state === "error"
-          ? (lang === "zh-CN" ? "连接错误" : "Connection error")
-          : (lang === "zh-CN" ? "未连接" : "Not connected");
+          ? t(lang, "serverStatusError")
+          : t(lang, "serverStatusDisconnected");
+    // English needs a singular form; Chinese does not, so both keys carry the
+    // same zh-CN text.
     const sessionCountTitle = session?.count
-      ? (lang === "zh-CN" ? `${session.count} 个活动会话` : `${session.count} ${session.count === 1 ? "active session" : "active sessions"}`)
+      ? t(lang, session.count === 1 ? "activeSessionCountOne" : "activeSessionCountMany", { count: String(session.count) })
       : undefined;
     const fullTarget = `${profile.username}@${profile.host}:${profile.port}`;
     return (
@@ -352,7 +354,7 @@ export function Sidebar(props: {
         title={`${profile.name ? `${profile.name}\n` : ""}${fullTarget} (${statusLabel})`}
       >
         <button type="button" className="server-row-main" aria-label={`${t(lang, "connect")} ${profile.name || profile.host}, ${statusLabel}`} onClick={() => props.onConnectProfile(profile)}>
-          <span className="server-avatar" title={session ? `${statusLabel} · ${session.count} ${lang === "zh-CN" ? "个会话" : (session.count === 1 ? "session" : "sessions")}${session.error ? ` · ${session.error}` : ""}` : statusLabel}>
+          <span className="server-avatar" title={session ? `${statusLabel} · ${t(lang, session.count === 1 ? "sessionCountOne" : "sessionCountMany", { count: String(session.count) })}${session.error ? ` · ${session.error}` : ""}` : statusLabel}>
             <ServerOsIcon os={osType} size={20} />
             <span className={clsx("status-dot", stateClass(session?.state || "disconnected"))} />
           </span>
@@ -401,8 +403,8 @@ export function Sidebar(props: {
           className="rail-resizer"
           role="separator"
           aria-orientation="vertical"
-          aria-label={lang === "zh-CN" ? "调整侧栏宽度" : "Resize sidebar"}
-          title={lang === "zh-CN" ? "拖动调整宽度，双击复位" : "Drag to resize, double-click to reset"}
+          aria-label={t(lang, "resizeSidebar")}
+          title={t(lang, "resizeSidebarHint")}
           tabIndex={0}
           aria-valuenow={props.panelWidth}
           aria-valuemin={props.panelWidthMin}
@@ -426,7 +428,7 @@ export function Sidebar(props: {
           }}
         />
       )}
-      <nav className="activity-rail" aria-label={lang === "zh-CN" ? "主导航" : "Primary navigation"}>
+      <nav className="activity-rail" aria-label={t(lang, "primaryNavigation")}>
         {(["connections", "files", "documents", "tools"] as PrimaryNav[]).map((item) => (
           <button
             key={item}

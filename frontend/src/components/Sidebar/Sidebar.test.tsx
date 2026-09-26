@@ -230,4 +230,29 @@ describe("Sidebar shell", () => {
     fireEvent.keyDown(grip, { key: "Enter" });
     expect(onResizeAdjust).toHaveBeenCalledTimes(4);
   });
+
+  // The rail, resize handle and server status used to be `lang === "zh-CN" ?
+  // ... : ...` ternaries. Their English wording is unchanged, so only a zh-CN
+  // assertion proves the locale reaches them.
+  it("labels the rail, resize handle and server status in the requested locale", () => {
+    const { container } = renderSidebar({
+      settings: { language: "zh-CN" } as any,
+      profileStates: { "web-1": { state: "connected", count: 1 } } as any,
+      // The resize grip only exists when the panel can actually be sized.
+      onResizeStart: vi.fn(),
+      onResizeAdjust: vi.fn(),
+      panelWidth: 328,
+      panelWidthMin: 240,
+      panelWidthMax: 480,
+    });
+
+    const rail = screen.getByRole("navigation", { name: "主导航" });
+    expect(within(rail).getByRole("button", { name: "工具" })).toBeInTheDocument();
+
+    expect(container.querySelector('[title="拖动调整宽度，双击复位"]')).not.toBeNull();
+    expect(container.querySelector('.rail-resizer')).toHaveAttribute("aria-label", "调整侧栏宽度");
+
+    // Status plus the singular session count, both from the same row.
+    expect(container.querySelector('.server-avatar')).toHaveAttribute("title", "已连接 · 1 个会话");
+  });
 });
