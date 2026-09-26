@@ -16,8 +16,10 @@ import (
 	"time"
 
 	"gxShell/backend/config"
+	"gxShell/backend/scheduler"
 	"gxShell/backend/types"
 	"gxShell/backend/version"
+	"gxShell/backend/websites"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -129,6 +131,38 @@ func (a *App) GetSettings() (types.AppSettings, error) {
 	// active, even when an older settings.json still contains true.
 	settings.CliAutoApprove = false
 	return settings, err
+}
+
+// uiLanguage is the interface language for backend-rendered text: approval
+// dialog framing, and the error messages that websites and scheduler build.
+//
+// It reads settings on every call rather than caching, so switching language
+// takes effect immediately without rebuilding the managers that hold this as a
+// getter. An unreadable or absent setting yields "", which every consumer reads
+// as English -- the same default the frontend and the tray menu use.
+func (a *App) uiLanguage() string {
+	if a.store == nil {
+		return ""
+	}
+	settings, err := a.store.GetSettings()
+	if err != nil {
+		return ""
+	}
+	return settings.Language
+}
+
+// newWebsitesManager and newSchedulerManager are the composition seam for the
+// two managers that render their own messages. They exist as methods so a test
+// can assert the interface language actually reaches the manager: a nil or
+// hard-coded getter at the construction site would compile, vet and pass every
+// other test, and the only symptom would be English errors shown to a user who
+// picked Chinese.
+func (a *App) newWebsitesManager() *websites.Manager {
+	return websites.NewManager(a.ssh, a.uiLanguage)
+}
+
+func (a *App) newSchedulerManager() *scheduler.Manager {
+	return scheduler.NewManager(a.ssh, a.uiLanguage)
 }
 
 // UpdateSettings updates application settings.

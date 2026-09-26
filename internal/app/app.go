@@ -349,8 +349,8 @@ func (a *App) startup(ctx context.Context) {
 	a.services.SetEmit(emit)
 	a.firewall = firewall.NewManager(a.ssh)
 	a.firewall.SetEmit(emit)
-	a.scheduler = scheduler.NewManager(a.ssh)
-	a.websites = websites.NewManager(a.ssh)
+	a.scheduler = a.newSchedulerManager()
+	a.websites = a.newWebsitesManager()
 	a.local = localterm.NewManager(emit)
 
 	// Cross-subsystem cleanup must follow EVERY disconnect path, not only the

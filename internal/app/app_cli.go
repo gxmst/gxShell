@@ -798,7 +798,7 @@ func (a *App) authorizeCliProfileRiskExecution(ctx context.Context, profile type
 		}
 		return cliApprovalDecision{Allowed: true, Source: source, Strength: strength.String()}
 	}
-	language := a.cliApprovalLanguage()
+	language := a.uiLanguage()
 	riskLines := assessment.riskLinesForLanguage(language)
 	display = formatRiskApprovalForLanguage(display, assessment, language, riskLines)
 	// The panel groups by tier and highlights the spans, both of which are
@@ -871,17 +871,6 @@ func formatRiskApprovalForLanguage(command string, assessment riskAssessment, la
 	return strings.Join(sections, "\n\n")
 }
 
-func (a *App) cliApprovalLanguage() string {
-	if a.store == nil {
-		return ""
-	}
-	settings, err := a.store.GetSettings()
-	if err != nil {
-		return ""
-	}
-	return settings.Language
-}
-
 func (a *App) confirmCliCriticalExecution(ctx context.Context, serverName string, item cliApprovalItem, assessment riskAssessment, strength approvalStrength) (bool, error) {
 	if a.cliConfirmRiskFn != nil {
 		// Legacy seam: tests drive the native path without a renderer. It keeps
@@ -893,7 +882,7 @@ func (a *App) confirmCliCriticalExecution(ctx context.Context, serverName string
 }
 
 func (a *App) confirmCliCriticalExecutionNative(callerCtx context.Context, serverName string, item cliApprovalItem) (bool, error) {
-	language := a.cliApprovalLanguage()
+	language := a.uiLanguage()
 	item.ID = "cmd-0"
 	items := []cliApprovalItem{item}
 	panelCtx, cancelPanel := liveRequestsContext([]context.Context{callerCtx})
@@ -1076,7 +1065,7 @@ func (a *App) confirmCliExecutionBatchNative(serverName string, items []cliAppro
 	if result, ok := a.requestCliApprovalPanel(panelCtx, cliApprovalPanelRequest{
 		Source:  "cli",
 		Server:  serverName,
-		Summary: cliBatchSummary(serverName, len(items), a.cliApprovalLanguage()),
+		Summary: cliBatchSummary(serverName, len(items), a.uiLanguage()),
 		Items:   items,
 	}); ok {
 		return result.mask(items)

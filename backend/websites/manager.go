@@ -2,6 +2,7 @@ package websites
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"gxShell/backend/i18n"
 	"gxShell/backend/types"
 )
 
@@ -17,14 +19,28 @@ type websiteSSH interface {
 }
 
 type Manager struct {
-	ssh       websiteSSH
-	rootMu    sync.Mutex
+	ssh      websiteSSH
+	language func() string
+	rootMu   sync.Mutex
+	// rootCache memoises "is this session root?" per session. Bounded below so a
+	// long-lived app that opens many sessions cannot grow it without limit.
 	rootCache map[string]bool
 }
 
-func NewManager(ssh websiteSSH) *Manager {
-	return &Manager{ssh: ssh, rootCache: make(map[string]bool)}
+// NewManager builds a manager whose error messages are rendered in the language
+// returned by language. The getter is called per message rather than captured
+// once so a language change in settings takes effect without rebuilding the
+// manager. A nil getter is treated as "no language set", which renders English.
+func NewManager(ssh websiteSSH, language func() string) *Manager {
+	if language == nil {
+		language = func() string { return "" }
+	}
+	return &Manager{ssh: ssh, language: language, rootCache: make(map[string]bool)}
 }
+
+// tr renders one of the two writings of a message. See backend/i18n for why the
+// pairs live at the call site instead of in a table.
+func (m *Manager) tr(zh, en string) string { return i18n.Text(m.language(), zh, en) }
 
 var siteNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
@@ -91,7 +107,7 @@ fi`
 	if err != nil && strings.TrimSpace(out) == "" {
 		return types.WebsiteStatus{}, err
 	}
-	status, parseErr := parseStatus(out)
+	status, parseErr := parseStatus(out, m.language())
 	if parseErr != nil {
 		return types.WebsiteStatus{}, parseErr
 	}
@@ -99,7 +115,7 @@ fi`
 }
 
 func (m *Manager) Config(sessionID, backend, mode, name string) (string, error) {
-	path, err := sitePath(backend, mode, name)
+	path, err := sitePath(backend, mode, name, m.language())
 	if err != nil {
 		return "", err
 	}
@@ -111,25 +127,25 @@ func (m *Manager) Config(sessionID, backend, mode, name string) (string, error) 
 	cmd := path + `; [ -f "$file" ] || exit 44; base64 < "$file" | tr -d '\n'`
 	out, execErr := m.ssh.Exec(sessionID, cmd, 20*time.Second)
 	if execErr != nil {
-		return "", fmt.Errorf("读取站点配置失败: %w", execErr)
+		return "", fmt.Errorf("%s: %w", m.tr("读取站点配置失败", "Failed to read the site configuration"), execErr)
 	}
 	decoded, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(out))
 	if decodeErr != nil {
-		return "", fmt.Errorf("站点配置返回了无效数据")
+		return "", errors.New(m.tr("站点配置返回了无效数据", "The site configuration returned invalid data"))
 	}
 	if len(decoded) > 2*1024*1024 {
-		return "", fmt.Errorf("站点配置超过 2 MiB，拒绝在面板中编辑")
+		return "", errors.New(m.tr("站点配置超过 2 MiB，拒绝在面板中编辑", "The site configuration exceeds 2 MiB and cannot be edited in the panel"))
 	}
 	return string(decoded), nil
 }
 
 func (m *Manager) Save(sessionID, backend, mode, name, config string) error {
-	path, err := sitePath(backend, mode, name)
+	path, err := sitePath(backend, mode, name, m.language())
 	if err != nil {
 		return err
 	}
 	if config == "" || len(config) > 2*1024*1024 || strings.IndexByte(config, 0) >= 0 {
-		return fmt.Errorf("站点配置不能为空且不能超过 2 MiB")
+		return errors.New(m.tr("站点配置不能为空且不能超过 2 MiB", "The site configuration must not be empty and must not exceed 2 MiB"))
 	}
 	payload := base64.StdEncoding.EncodeToString([]byte(config))
 	resolve := "dest=" + shellQuote(path)
@@ -158,11 +174,11 @@ if [ "$enabled" = 1 ]; then
   fi
   %s
 fi`, resolve, enabledCheck, shellQuote(payload), testCmd, reloadCmd)
-	return m.execRoot(sessionID, script, 45*time.Second, "保存站点配置失败")
+	return m.execRoot(sessionID, script, 45*time.Second, "保存站点配置失败", "Failed to save the site configuration")
 }
 
 func (m *Manager) SetEnabled(sessionID, backend, mode, name string, enabled bool) error {
-	path, err := sitePath(backend, mode, name)
+	path, err := sitePath(backend, mode, name, m.language())
 	if err != nil {
 		return err
 	}
@@ -196,17 +212,17 @@ func (m *Manager) SetEnabled(sessionID, backend, mode, name string, enabled bool
 			rollback = "a2ensite " + shellQuote(name) + " >/dev/null"
 		}
 	default:
-		return fmt.Errorf("不支持的站点后端")
+		return errors.New(m.tr("不支持的站点后端", "Unsupported site backend"))
 	}
 	script := fmt.Sprintf(`set -eu
 %s
 if ! output=$(%s 2>&1); then %s; printf '%%s\n' "$output"; exit 1; fi
 %s`, change, testCmd, rollback, reloadCmd)
-	return m.execRoot(sessionID, script, 45*time.Second, "切换站点状态失败")
+	return m.execRoot(sessionID, script, 45*time.Second, "切换站点状态失败", "Failed to change the site state")
 }
 
 func (m *Manager) Delete(sessionID, backend, mode, name string) error {
-	path, err := sitePath(backend, mode, name)
+	path, err := sitePath(backend, mode, name, m.language())
 	if err != nil {
 		return err
 	}
@@ -220,7 +236,7 @@ func (m *Manager) Delete(sessionID, backend, mode, name string) error {
 	case backend == "apache":
 		paths = []string{path, "/etc/apache2/sites-enabled/" + name}
 	default:
-		return fmt.Errorf("不支持的站点后端")
+		return errors.New(m.tr("不支持的站点后端", "Unsupported site backend"))
 	}
 	// The configuration is copied before removal so a failed global config test
 	// can restore it. Symlinks are reconstructed from the known safe target.
@@ -250,23 +266,23 @@ trap 'rm -f "$backup"' EXIT
 %s
 if ! output=$(%s 2>&1); then %s; printf '%%s\n' "$output"; exit 1; fi
 %s`, backupRestore, remove, testCmd, restore, reloadCmd)
-	return m.execRoot(sessionID, script, 45*time.Second, "删除站点失败")
+	return m.execRoot(sessionID, script, 45*time.Second, "删除站点失败", "Failed to delete the site")
 }
 
 func (m *Manager) Test(sessionID, backend string) (string, error) {
 	testCmd, _ := backendCommands(backend)
 	if testCmd == "" {
-		return "", fmt.Errorf("不支持的站点后端")
+		return "", errors.New(m.tr("不支持的站点后端", "Unsupported site backend"))
 	}
 	prefix := m.sudoPrefix(sessionID)
 	out, err := m.ssh.Exec(sessionID, prefix+testCmd+" 2>&1", 30*time.Second)
 	if err != nil {
-		return out, fmt.Errorf("配置检查失败: %v: %s", err, strings.TrimSpace(out))
+		return out, fmt.Errorf("%s: %v: %s", m.tr("配置检查失败", "Configuration check failed"), err, strings.TrimSpace(out))
 	}
 	return out, nil
 }
 
-func parseStatus(out string) (types.WebsiteStatus, error) {
+func parseStatus(out, language string) (types.WebsiteStatus, error) {
 	status := types.WebsiteStatus{Backends: []string{}, Sites: []types.WebsiteInfo{}}
 	backendSeen := make(map[string]bool)
 	for _, line := range strings.Split(out, "\n") {
@@ -292,7 +308,7 @@ func parseStatus(out string) (types.WebsiteStatus, error) {
 		nameBytes, nameErr := base64.StdEncoding.DecodeString(fields[4])
 		configBytes, configErr := base64.StdEncoding.DecodeString(fields[5])
 		if nameErr != nil || configErr != nil || len(configBytes) > 2*1024*1024 {
-			return types.WebsiteStatus{}, fmt.Errorf("站点列表包含无效数据")
+			return types.WebsiteStatus{}, errors.New(i18n.Text(language, "站点列表包含无效数据", "The site list contains invalid data"))
 		}
 		site := parseWebsiteConfig(fields[1], fields[2], string(nameBytes), fields[3] == "1", string(configBytes))
 		status.Sites = append(status.Sites, site)
@@ -341,9 +357,9 @@ func parseWebsiteConfig(backend, mode, name string, enabled bool, config string)
 	return site
 }
 
-func sitePath(backend, mode, name string) (string, error) {
+func sitePath(backend, mode, name, language string) (string, error) {
 	if !siteNameRe.MatchString(name) || strings.Contains(name, "..") {
-		return "", fmt.Errorf("无效的站点配置名称")
+		return "", errors.New(i18n.Text(language, "无效的站点配置名称", "Invalid site configuration name"))
 	}
 	switch {
 	case backend == "nginx" && mode == "sites":
@@ -359,7 +375,7 @@ func sitePath(backend, mode, name string) (string, error) {
 		}
 		return "/etc/apache2/sites-available/" + name, nil
 	default:
-		return "", fmt.Errorf("不支持的站点后端")
+		return "", errors.New(i18n.Text(language, "不支持的站点后端", "Unsupported site backend"))
 	}
 }
 
@@ -396,14 +412,19 @@ func (m *Manager) sudoPrefix(sessionID string) string {
 	return "sudo -n "
 }
 
-func (m *Manager) execRoot(sessionID, script string, timeout time.Duration, prefix string) error {
+// execRoot runs a script with sudo when the session is not root. zhPrefix and
+// enPrefix are the two writings of the message that labels a failure, e.g.
+// "Failed to save the site configuration". The sudo-specific message is decided
+// here because the sudo probe only becomes conclusive once the command has run.
+func (m *Manager) execRoot(sessionID, script string, timeout time.Duration, zhPrefix, enPrefix string) error {
 	sudo := m.sudoPrefix(sessionID)
 	out, err := m.ssh.Exec(sessionID, sudo+"sh -c "+shellQuote(script), timeout)
 	if err != nil {
 		combined := strings.ToLower(out + " " + err.Error())
 		if sudo != "" && (strings.Contains(combined, "sudo:") || strings.Contains(combined, "password is required")) {
-			return fmt.Errorf("该操作需要 root 或免密 sudo")
+			return errors.New(m.tr("该操作需要 root 或免密 sudo", "This action requires root or passwordless sudo"))
 		}
+		prefix := m.tr(zhPrefix, enPrefix)
 		if strings.TrimSpace(out) != "" {
 			return fmt.Errorf("%s: %v: %s", prefix, err, strings.TrimSpace(out))
 		}

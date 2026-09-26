@@ -664,7 +664,7 @@ func (a *App) confirmAiToolExecutionBatch(plans []aiToolExecutionPlan) []bool {
 	if result, ok := a.requestCliApprovalPanel(context.Background(), cliApprovalPanelRequest{
 		Source:  "ai",
 		Server:  plans[0].Target,
-		Summary: aiToolSummary(plans, a.cliApprovalLanguage()),
+		Summary: aiToolSummary(plans, a.uiLanguage()),
 		Items:   items,
 	}); ok {
 		return result.mask(items)

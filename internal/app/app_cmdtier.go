@@ -52,6 +52,8 @@ import (
 	"fmt"
 	"path"
 	"strings"
+
+	"gxShell/backend/i18n"
 )
 
 type commandTier int
@@ -200,9 +202,10 @@ func (r riskAssessment) riskLinesForLanguage(language string) []string {
 	return lines
 }
 
-func isChineseLanguage(language string) bool {
-	return strings.EqualFold(strings.TrimSpace(language), "zh-CN") || strings.EqualFold(strings.TrimSpace(language), "zh")
-}
+// isChineseLanguage keeps the classifier's local name for the shared predicate.
+// The definition lives in backend/i18n so the backend packages that render their
+// own messages (websites, scheduler) cannot drift from it.
+func isChineseLanguage(language string) bool { return i18n.Chinese(language) }
 
 // riskReasonZH turns the classifier's detailed English reason into a short
 // Chinese action statement. Category fallbacks are intentional: newly added

@@ -4,11 +4,13 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
 
+	"gxShell/backend/i18n"
 	"gxShell/backend/types"
 )
 
@@ -17,10 +19,24 @@ type schedulerSSH interface {
 }
 
 type Manager struct {
-	ssh schedulerSSH
+	ssh      schedulerSSH
+	language func() string
 }
 
-func NewManager(ssh schedulerSSH) *Manager { return &Manager{ssh: ssh} }
+// NewManager builds a manager whose error messages are rendered in the language
+// returned by language. The getter is read per message so a language change in
+// settings applies without rebuilding the manager. A nil getter renders English,
+// matching the frontend's own default for an unset language.
+func NewManager(ssh schedulerSSH, language func() string) *Manager {
+	if language == nil {
+		language = func() string { return "" }
+	}
+	return &Manager{ssh: ssh, language: language}
+}
+
+// tr renders one of the two writings of a message. See backend/i18n for why the
+// pairs live at the call site instead of in a table.
+func (m *Manager) tr(zh, en string) string { return i18n.Text(m.language(), zh, en) }
 
 const disabledPrefix = "# gxShell-disabled: "
 
@@ -44,7 +60,7 @@ func (m *Manager) List(sessionID string) ([]types.CronJob, error) {
 func (m *Manager) Save(sessionID, id, schedule, command string, enabled bool) error {
 	schedule = strings.TrimSpace(schedule)
 	command = strings.TrimSpace(command)
-	if err := validateJob(schedule, command); err != nil {
+	if err := validateJob(schedule, command, m.language()); err != nil {
 		return err
 	}
 	lines, err := m.readLines(sessionID)
@@ -63,7 +79,7 @@ func (m *Manager) Save(sessionID, id, schedule, command string, enabled bool) er
 	} else {
 		index := findJobLine(lines, id)
 		if index < 0 {
-			return fmt.Errorf("计划任务已发生变化，请刷新后重试")
+			return errors.New(m.tr("计划任务已发生变化，请刷新后重试", "The scheduled jobs changed; refresh and try again"))
 		}
 		lines[index] = line
 	}
@@ -77,7 +93,7 @@ func (m *Manager) Delete(sessionID, id string) error {
 	}
 	index := findJobLine(lines, id)
 	if index < 0 {
-		return fmt.Errorf("计划任务已发生变化，请刷新后重试")
+		return errors.New(m.tr("计划任务已发生变化，请刷新后重试", "The scheduled jobs changed; refresh and try again"))
 	}
 	lines = append(lines[:index], lines[index+1:]...)
 	return m.writeLines(sessionID, lines)
@@ -90,7 +106,7 @@ func (m *Manager) SetEnabled(sessionID, id string, enabled bool) error {
 	}
 	index := findJobLine(lines, id)
 	if index < 0 {
-		return fmt.Errorf("计划任务已发生变化，请刷新后重试")
+		return errors.New(m.tr("计划任务已发生变化，请刷新后重试", "The scheduled jobs changed; refresh and try again"))
 	}
 	raw := strings.TrimSpace(lines[index])
 	currentlyEnabled := !strings.HasPrefix(raw, disabledPrefix)
@@ -116,14 +132,14 @@ func (m *Manager) Run(sessionID, id string) (string, error) {
 			out, runErr := m.ssh.Exec(sessionID, job.Command, 5*time.Minute)
 			if runErr != nil {
 				if strings.TrimSpace(out) != "" {
-					return out, fmt.Errorf("计划任务执行失败: %v: %s", runErr, strings.TrimSpace(out))
+					return out, fmt.Errorf("%s: %v: %s", m.tr("计划任务执行失败", "Failed to run the scheduled job"), runErr, strings.TrimSpace(out))
 				}
-				return out, fmt.Errorf("计划任务执行失败: %w", runErr)
+				return out, fmt.Errorf("%s: %w", m.tr("计划任务执行失败", "Failed to run the scheduled job"), runErr)
 			}
 			return out, nil
 		}
 	}
-	return "", fmt.Errorf("计划任务已发生变化，请刷新后重试")
+	return "", errors.New(m.tr("计划任务已发生变化，请刷新后重试", "The scheduled jobs changed; refresh and try again"))
 }
 
 func (m *Manager) readLines(sessionID string) ([]string, error) {
@@ -131,7 +147,7 @@ func (m *Manager) readLines(sessionID string) ([]string, error) {
 	out, err := m.ssh.Exec(sessionID, cmd, 20*time.Second)
 	if err != nil {
 		if strings.Contains(out, "__GX_NO_CRONTAB__") || strings.Contains(strings.ToLower(err.Error()), "127") {
-			return nil, fmt.Errorf("远程主机未安装 crontab")
+			return nil, errors.New(m.tr("远程主机未安装 crontab", "crontab is not installed on the remote host"))
 		}
 		return nil, err
 	}
@@ -153,9 +169,9 @@ func (m *Manager) writeLines(sessionID string, lines []string) error {
 	out, err := m.ssh.Exec(sessionID, cmd, 20*time.Second)
 	if err != nil {
 		if strings.TrimSpace(out) != "" {
-			return fmt.Errorf("保存计划任务失败: %v: %s", err, strings.TrimSpace(out))
+			return fmt.Errorf("%s: %v: %s", m.tr("保存计划任务失败", "Failed to save the scheduled job"), err, strings.TrimSpace(out))
 		}
-		return fmt.Errorf("保存计划任务失败: %w", err)
+		return fmt.Errorf("%s: %w", m.tr("保存计划任务失败", "Failed to save the scheduled job"), err)
 	}
 	return nil
 }
@@ -219,23 +235,23 @@ func splitCronLine(raw string) (string, string, bool) {
 	return schedule, strings.TrimSpace(rest), strings.TrimSpace(rest) != ""
 }
 
-func validateJob(schedule, command string) error {
+func validateJob(schedule, command, language string) error {
 	if command == "" || len(command) > 8192 || strings.ContainsAny(command, "\r\n\x00") {
-		return fmt.Errorf("任务命令不能为空、不能换行，且长度不能超过 8192 个字符")
+		return errors.New(i18n.Text(language, "任务命令不能为空、不能换行，且长度不能超过 8192 个字符", "The job command must not be empty, must not contain newlines, and must not exceed 8192 characters"))
 	}
 	if strings.HasPrefix(schedule, "@") {
 		if !cronMacros[strings.ToLower(schedule)] {
-			return fmt.Errorf("不支持的计划表达式")
+			return errors.New(i18n.Text(language, "不支持的计划表达式", "Unsupported schedule expression"))
 		}
 		return nil
 	}
 	fields := strings.Fields(schedule)
 	if len(fields) != 5 {
-		return fmt.Errorf("Cron 表达式必须包含 5 个字段")
+		return errors.New(i18n.Text(language, "Cron 表达式必须包含 5 个字段", "The cron expression must contain 5 fields"))
 	}
 	for _, field := range fields {
 		if !cronFieldRe.MatchString(field) {
-			return fmt.Errorf("Cron 表达式包含无效字符")
+			return errors.New(i18n.Text(language, "Cron 表达式包含无效字符", "The cron expression contains invalid characters"))
 		}
 	}
 	return nil

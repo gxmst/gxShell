@@ -7,18 +7,37 @@ import (
 )
 
 func TestSitePathConfinement(t *testing.T) {
-	path, err := sitePath("nginx", "sites", "example.com")
+	path, err := sitePath("nginx", "sites", "example.com", "en")
 	if err != nil || path != "/etc/nginx/sites-available/example.com" {
 		t.Fatalf("path = %q, %v", path, err)
 	}
-	path, err = sitePath("nginx", "confd", "api")
+	path, err = sitePath("nginx", "confd", "api", "en")
 	if err != nil || path != "/etc/nginx/conf.d/api.conf" {
 		t.Fatalf("confd path = %q, %v", path, err)
 	}
 	for _, name := range []string{"../passwd", "a/b", "", ".hidden"} {
-		if _, err := sitePath("nginx", "sites", name); err == nil {
+		if _, err := sitePath("nginx", "sites", name, "en"); err == nil {
 			t.Errorf("unsafe name %q accepted", name)
 		}
+	}
+}
+
+// The rejection reason reaches the user verbatim, so it has to follow the
+// interface language like every other message this manager produces.
+func TestSitePathRejectionFollowsLanguage(t *testing.T) {
+	_, err := sitePath("nginx", "sites", "../passwd", "zh-CN")
+	if err == nil || err.Error() != "无效的站点配置名称" {
+		t.Fatalf("zh error = %v", err)
+	}
+	_, err = sitePath("nginx", "sites", "../passwd", "en")
+	if err == nil || err.Error() != "Invalid site configuration name" {
+		t.Fatalf("en error = %v", err)
+	}
+	// An unset language must not fall through to Chinese: the tray and the
+	// frontend both read an empty tag as English.
+	_, err = sitePath("nginx", "sites", "../passwd", "")
+	if err == nil || err.Error() != "Invalid site configuration name" {
+		t.Fatalf("empty-language error = %v", err)
 	}
 }
 
@@ -54,7 +73,7 @@ func TestParseStatusCountsUnreadableSites(t *testing.T) {
 		"UNREADABLE\tnginx\t" + enc("other.com"),
 	}, "\n")
 
-	status, err := parseStatus(out)
+	status, err := parseStatus(out, "en")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +84,7 @@ func TestParseStatusCountsUnreadableSites(t *testing.T) {
 		t.Errorf("Unreadable = %d, want 2", status.Unreadable)
 	}
 	// An ordinary listing must not report a permission problem that isn't there.
-	clean, err := parseStatus("BACKEND\tnginx\tsites")
+	clean, err := parseStatus("BACKEND\tnginx\tsites", "en")
 	if err != nil {
 		t.Fatal(err)
 	}
