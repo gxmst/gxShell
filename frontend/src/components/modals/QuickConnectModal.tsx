@@ -81,7 +81,7 @@ export function QuickConnectModal(props: {
       props.onClose();
     } catch (err) {
       setError(persisted
-        ? (lang === "zh-CN" ? `连接已保存，但连接失败：${String(err)}` : `Connection saved, but connecting failed: ${String(err)}`)
+        ? t(lang, "connectionSavedButFailed", { error: String(err) })
         : String(err));
     } finally {
       submittingRef.current = false;

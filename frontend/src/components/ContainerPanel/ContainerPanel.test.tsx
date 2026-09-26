@@ -117,6 +117,14 @@ describe("ContainerPanel session scope", () => {
     await waitFor(() => expect(onNotify).toHaveBeenCalledWith("app-a1: removed", "success"));
   });
 
+  it("counts the containers in the panel locale", async () => {
+    appMocks.listContainers.mockResolvedValue([container("a1"), container("a2")]);
+
+    render(<ContainerPanel active={sshTab("session-a")} locale="zh-CN" onNotify={vi.fn()} />);
+
+    expect(await screen.findByText("2 个容器")).toBeInTheDocument();
+  });
+
   it("treats a local terminal as no session at all", async () => {
     // A local terminal tab carries `local: true` and an empty profileId; it has
     // no remote session behind it, so there is nothing to list. Without the gate

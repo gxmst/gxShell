@@ -55,7 +55,7 @@ export function RecordingsPanel(props: {
   return (
     <div className="recordings-panel panel-page">
       <div className="recordings-toolbar panel-page-header">
-        <div className="panel-page-heading"><span className="panel-page-icon"><Video size={14} /></span><span><strong>{t(lang, "recordings")}</strong><small>{lang === "zh-CN" ? "回放和管理终端记录" : "Replay and manage terminal captures"}</small></span></div>
+        <div className="panel-page-heading"><span className="panel-page-icon"><Video size={14} /></span><span><strong>{t(lang, "recordings")}</strong><small>{t(lang, "recordingsSubtitle")}</small></span></div>
         <div className="panel-page-actions">
           <button className="panel-page-action" onClick={() => OpenRecordingsDir().catch(() => {})} title={t(lang, "openRecordingsDir")}><FolderOpen size={11} /></button>
           <button className="panel-page-action" onClick={load} title={t(lang, "refresh")}><RefreshCw size={11} /></button>

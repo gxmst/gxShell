@@ -46,7 +46,7 @@ export function SecretModal({ request, language, onSubmit, onClose }: { request:
       {error && <div className="profile-modal-error mt-2" role="alert">{error}</div>}
       <div className="dialog-footer">
         <button className="btn-secondary" disabled={submitting} onClick={onClose}>{t(language, "cancel")}</button>
-        <button className="btn-primary" disabled={submitting} onClick={submit}>{submitting ? (language === "zh-CN" ? "连接中…" : "Connecting…") : t(language, "connect")}</button>
+        <button className="btn-primary" disabled={submitting} onClick={submit}>{submitting ? t(language, "connectingEllipsis") : t(language, "connect")}</button>
       </div>
     </ModalShell>
   );

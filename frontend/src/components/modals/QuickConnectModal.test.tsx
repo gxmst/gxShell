@@ -38,4 +38,26 @@ describe("QuickConnectModal", () => {
     expect(onSave.mock.calls[1][0].id).toBe("saved-profile");
     expect(onConnect).toHaveBeenCalledTimes(2);
   });
+
+  it("reports a failed saved connection in the interface language", async () => {
+    const onSave = vi.fn(async (profile: types.Profile) => new types.Profile({ ...profile, id: "saved-profile" }));
+    const onConnect = vi.fn().mockRejectedValue(new Error("network unavailable"));
+
+    render(
+      <QuickConnectModal
+        language="zh-CN"
+        onClose={vi.fn()}
+        onPickKey={async () => ""}
+        onSave={onSave}
+        onConnect={onConnect}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("主机"), { target: { value: "example.test" } });
+    fireEvent.change(screen.getByLabelText("密码"), { target: { value: "secret" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /保存到服务器列表/ }));
+    fireEvent.click(screen.getByRole("button", { name: "保存并连接" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("连接已保存，但连接失败：Error: network unavailable");
+  });
 });

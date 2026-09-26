@@ -139,7 +139,7 @@ export function TunnelPanel({ active, locale, onNotify }: { active?: Tab; locale
   return (
     <div className="tunnel-panel panel-page">
       <div className="panel-page-header">
-        <div className="panel-page-heading"><span className="panel-page-icon"><ArrowRightLeft size={14} /></span><span><strong>{t(lang, "tunnelRules")}</strong><small>{lang === "zh-CN" ? `${tunnels.length} 条转发规则` : `${tunnels.length} forwarding rules`}</small></span></div>
+        <div className="panel-page-heading"><span className="panel-page-icon"><ArrowRightLeft size={14} /></span><span><strong>{t(lang, "tunnelRules")}</strong><small>{t(lang, "forwardingRuleCount", { count: String(tunnels.length) })}</small></span></div>
         <div className="panel-page-actions">
           <button className="panel-page-action" onClick={refresh} title={t(lang, "refresh")}><RefreshCw size={11} className={clsx(loading && "animate-spin")} /></button>
           <button className="panel-page-action" onClick={restart} title={t(lang, "restartTunnels")}><ArrowRightLeft size={11} /></button>

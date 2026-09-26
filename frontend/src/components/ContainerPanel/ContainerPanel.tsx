@@ -330,7 +330,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
       <div className="container-header panel-page-header">
         <div className="panel-page-heading">
           <span className="panel-page-icon"><Box size={14} /></span>
-          <span><strong>{t(lang, "containers")}</strong><small>{lang === "zh-CN" ? `${containers.length} 个容器` : `${containers.length} containers`}</small></span>
+          <span><strong>{t(lang, "containers")}</strong><small>{t(lang, "containerCount", { count: String(containers.length) })}</small></span>
         </div>
         <div className="panel-page-actions">
           <label className="panel-page-check">
