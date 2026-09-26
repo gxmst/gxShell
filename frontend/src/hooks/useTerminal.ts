@@ -18,6 +18,7 @@ import { analyzeTerminalPaste, terminalPasteTargets, type TerminalPasteRisk } fr
 import { hasActiveOverlay } from "../utils/overlayManager";
 import { parseOsc7Directory, type TerminalDirectory } from "../utils/terminalCwd";
 import { splitTerminalInput, terminalCompatibilityKey, terminalKeyData, type TerminalCompatibilityKey } from "../utils/terminalInput";
+import { createWebglBudget, notifyWebglOnce } from "../utils/terminalWebgl";
 
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 // requestAnimationFrame does not fire while the window is minimized/hidden in
@@ -28,11 +29,6 @@ const MAX_PENDING_OUTPUT_BYTES = 256 * 1024;
 const MAX_COMMAND_BUFFER_CHARS = 8192;
 const RESIZE_SETTLE_MS = 80;
 const MAX_HIGHLIGHT_DECORATIONS = 800;
-
-// The WebGL→canvas degradation toast fires from onContextLoss, which can
-// trigger repeatedly when many terminals force context recycling. Shown at
-// most once per app session.
-let webglFallbackToastShown = false;
 
 export type AppContextMenu = {
   x: number;
@@ -85,6 +81,9 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const fits = useRef<Record<string, FitAddon>>({});
   const searches = useRef<Record<string, SearchAddon>>({});
   const webgl = useRef<Record<string, WebglAddon>>({});
+  // Browsers cap concurrent WebGL contexts, so the hook decides which terminal
+  // gives one up rather than letting the browser pick a victim at random.
+  const webglBudget = useRef(createWebglBudget());
   const terminalHosts = useRef<Record<string, HTMLDivElement | null>>({});
   const bufferedOutput = useRef<Record<string, string[]>>({});
   const bufferedOutputSizes = useRef<Record<string, number>>({});
@@ -242,6 +241,63 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     }, 1000);
     return () => window.clearInterval(id);
   }, []);
+
+  const notifyWebglProblem = useCallback((key: "webglContextLost" | "webglUnavailable") => {
+    notifyWebglOnce(key, () => {
+      notifyRef.current(t(settingsRef.current?.language || "en", key), "info");
+    });
+  }, []);
+
+  const detachWebgl = useCallback((id: string) => {
+    const gl = webgl.current[id];
+    if (!gl) return;
+    delete webgl.current[id];
+    webglBudget.current.release(id);
+    gl.dispose();
+  }, []);
+
+  const attachWebgl = useCallback((id: string, term: Terminal) => {
+    const existing = webgl.current[id];
+    if (existing) {
+      webglBudget.current.touch(id);
+      return;
+    }
+    let gl: WebglAddon;
+    try {
+      gl = new WebglAddon();
+    } catch {
+      webglBudget.current.forget(id);
+      notifyWebglProblem("webglUnavailable");
+      return;
+    }
+    gl.onContextLoss(() => {
+      // The browser took this one away. Drop it and ask for another, so the next
+      // time the terminal is shown it is not stuck on the slow renderer for the
+      // rest of the session.
+      detachWebgl(id);
+      webglBudget.current.want(id);
+      notifyWebglProblem("webglContextLost");
+    });
+    try {
+      term.loadAddon(gl);
+    } catch {
+      gl.dispose();
+      webglBudget.current.forget(id);
+      notifyWebglProblem("webglUnavailable");
+      return;
+    }
+    webgl.current[id] = gl;
+    for (const evicted of webglBudget.current.acquire(id)) {
+      const addon = webgl.current[evicted];
+      delete webgl.current[evicted];
+      addon?.dispose();
+    }
+  }, [detachWebgl, notifyWebglProblem]);
+
+  // refitTerminal is defined further down with a stable identity, and this is
+  // how it reaches back without taking a dependency that would change it.
+  const attachWebglRef = useRef(attachWebgl);
+  attachWebglRef.current = attachWebgl;
 
   useEffect(() => {
     if (!activeTab || !activeIsTerminal || !settingsRef.current) return;
@@ -428,26 +484,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
           linkProviders.current[activeTab] = term.registerLinkProvider(provider);
         }
 
-        try {
-          const gl = new WebglAddon();
-          gl.onContextLoss(() => {
-            // Dispose the WebGL addon; xterm.js automatically falls back
-            // to the canvas renderer, avoiding flickering / white screens.
-            gl.dispose();
-            delete webgl.current[activeTab];
-            if (!webglFallbackToastShown) {
-              webglFallbackToastShown = true;
-              notifyRef.current("WebGL context lost, using canvas renderer", "info");
-            }
-          });
-          term.loadAddon(gl);
-          webgl.current[activeTab] = gl;
-        } catch {
-          if (!webglFallbackToastShown) {
-            webglFallbackToastShown = true;
-            notifyRef.current("WebGL unavailable, using canvas renderer", "info");
-          }
-        }
+        attachWebgl(activeTab, term);
 
         // The listener lives on xterm's root element, which moves with the
         // terminal when it is torn off/docked. Shift+right-click deliberately
@@ -577,7 +614,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     const cleanups = ids.map(attach);
     return () => cleanups.forEach((cleanup) => cleanup?.());
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, activeIsTerminal, enqueueTerminalInput, settingsReady, scheduleDisplayHighlights, splitPane]);
+  }, [activeTab, activeIsTerminal, enqueueTerminalInput, settingsReady, scheduleDisplayHighlights, splitPane, attachWebgl]);
 
   const flushPendingOutput = useCallback((sessionId: string) => {
     const chunks = pendingOutput.current[sessionId];
@@ -645,14 +682,14 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     delete linkProviders.current[id];
     clearHighlightDecorations(id);
     if (pendingHighlightFrames.current[id]) window.cancelAnimationFrame(pendingHighlightFrames.current[id]);
-    webgl.current[id]?.dispose();
+    detachWebgl(id);
+    webglBudget.current.forget(id);
     terminals.current[id]?.dispose();
     if (pendingFitFrames.current[id]) window.cancelAnimationFrame(pendingFitFrames.current[id]);
     if (pendingWriteFrames.current[id]) window.cancelAnimationFrame(pendingWriteFrames.current[id]);
     window.clearTimeout(pendingResizeTimers.current[id]);
     window.clearTimeout(pendingInputTimers.current[id]);
     window.clearTimeout(refitTimers.current[id]);
-    delete webgl.current[id];
     delete terminals.current[id];
     delete fits.current[id];
     delete searches.current[id];
@@ -679,7 +716,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     delete runtimeFontSize.current[id];
     delete settingsFontSize.current[id];
     delete appliedDisplaySettings.current[id];
-  }, [clearHighlightDecorations]);
+  }, [clearHighlightDecorations, detachWebgl]);
 
   const findNext = useCallback((id: string, query: string) => {
     if (!id || !query) return;
@@ -704,6 +741,9 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       return;
     }
     window.clearTimeout(refitTimers.current[id]);
+    // A real size means the terminal is on screen again, which is the moment to
+    // hand back a context the budget or the browser took away.
+    if (webglBudget.current.wantsWebgl(id)) attachWebglRef.current(id, term);
     refitTimers.current[id] = window.setTimeout(() => {
       delete refitTimers.current[id];
       try {
