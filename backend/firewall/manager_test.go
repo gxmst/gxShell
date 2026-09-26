@@ -243,14 +243,28 @@ func TestParseSSHConnectionPort(t *testing.T) {
 		out  string
 		want int
 	}{
-		{"direct", "203.0.113.9 51000 10.0.0.5 22\n", 22},
-		{"behind a forward", "203.0.113.9 51000 10.0.0.5 20022\n", 20022},
-		{"unset variable", "\n", 0},
+		{"direct", sshConnectionSentinel + "203.0.113.9 51000 10.0.0.5 22\n", 22},
+		{"behind a forward", sshConnectionSentinel + "203.0.113.9 51000 10.0.0.5 20022\n", 20022},
+		{"unset variable", sshConnectionSentinel + "\n", 0},
 		{"empty", "", 0},
-		{"truncated", "203.0.113.9 51000 10.0.0.5\n", 0},
-		{"not a number", "a b c nope\n", 0},
-		{"out of range", "a b c 70000\n", 0},
-		{"zero", "a b c 0\n", 0},
+		{"truncated", sshConnectionSentinel + "203.0.113.9 51000 10.0.0.5\n", 0},
+		{"not a number", sshConnectionSentinel + "a b c nope\n", 0},
+		{"out of range", sshConnectionSentinel + "a b c 70000\n", 0},
+		{"zero", sshConnectionSentinel + "a b c 0\n", 0},
+		// A non-interactive rc file that echoes unconditionally must not shift the
+		// fields. Taking position four from the raw output made this line parse as
+		// 51000 -- the client port -- and cache it as the server-side port, after
+		// which `deny 22` was accepted without force. That is the lockout the
+		// probe exists to catch, so the answer has to be marked, not inferred.
+		{"noise that looks like a tuple", "0 0 0 51000\n" + sshConnectionSentinel + "203.0.113.9 51000 10.0.0.5 22\n", 22},
+		{"noise before the answer", "Welcome to host\n" + sshConnectionSentinel + "203.0.113.9 51000 10.0.0.5 22\n", 22},
+		{"noise after the answer", sshConnectionSentinel + "203.0.113.9 51000 10.0.0.5 22\nlogout\n", 22},
+		// An unmarked line is not the answer, however plausible it looks. This is
+		// what keeps a future probe change from silently reintroducing the bug:
+		// dropping the sentinel degrades to "unknown", which the guards treat as
+		// the conservative case, instead of trusting the first four fields.
+		{"unmarked tuple", "203.0.113.9 51000 10.0.0.5 22\n", 0},
+		{"sentinel without a tuple", sshConnectionSentinel + "\n203.0.113.9 51000 10.0.0.5 22\n", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -341,7 +355,7 @@ func natFirewallSSH() *fakeFirewallSSH {
 	fake.exec = func(command string) (string, error) {
 		switch {
 		case command == sshConnectionProbe:
-			return "203.0.113.9 51000 10.0.0.5 22\n", nil
+			return sshConnectionSentinel + "203.0.113.9 51000 10.0.0.5 22\n", nil
 		case strings.Contains(command, "has_ufw=0"):
 			return "ufw\n", nil
 		case command == "id -u":
@@ -528,7 +542,7 @@ func TestEnableFirewalldOpensSSHPortOfflineBeforeStart(t *testing.T) {
 	fake.exec = func(command string) (string, error) {
 		switch {
 		case command == sshConnectionProbe:
-			return "203.0.113.9 51000 10.0.0.5 2222\n", nil
+			return sshConnectionSentinel + "203.0.113.9 51000 10.0.0.5 2222\n", nil
 		case strings.Contains(command, "has_ufw=0"):
 			return "firewalld\n", nil
 		case command == "id -u":
@@ -568,7 +582,7 @@ func TestEnableFirewalldRefusesUnsafeStartWithoutOfflineTool(t *testing.T) {
 	fake.exec = func(command string) (string, error) {
 		switch {
 		case command == sshConnectionProbe:
-			return "203.0.113.9 51000 10.0.0.5 2222\n", nil
+			return sshConnectionSentinel + "203.0.113.9 51000 10.0.0.5 2222\n", nil
 		case strings.Contains(command, "has_ufw=0"):
 			return "firewalld\n", nil
 		case command == "id -u":

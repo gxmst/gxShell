@@ -6,11 +6,19 @@ import (
 	"time"
 )
 
+// sshConnectionSentinel marks the answer so it cannot be confused with anything
+// else the session's shell prints. A non-interactive rc file that echoes
+// unconditionally would otherwise shift the field positions, and whatever landed
+// in position four would be cached as the server-side port — the lockout this
+// file exists to prevent, reintroduced by the guard itself. The same trick
+// already guards the crontab probe in backend/scheduler.
+const sshConnectionSentinel = "__GX_SSH_CONNECTION__"
+
 // sshConnectionProbe asks sshd for the connection tuple it exports into every
-// session's environment. printf is used so an unset variable yields an empty
-// line with a success status, which keeps "no value" distinguishable from "the
+// session's environment. printf is used so an unset variable yields the sentinel
+// alone with a success status, which keeps "no value" distinguishable from "the
 // channel is broken".
-const sshConnectionProbe = `printf '%s\n' "$SSH_CONNECTION"`
+const sshConnectionProbe = `printf '%s%s\n' "` + sshConnectionSentinel + `" "$SSH_CONNECTION"`
 
 // defaultSSHPort is assumed when the server-side port cannot be read.
 const defaultSSHPort = 22
@@ -112,16 +120,26 @@ func (m *Manager) sshSessionPorts(sessionID string) sshPorts {
 }
 
 // parseSSHConnectionPort reads the server-side port out of $SSH_CONNECTION,
-// which sshd formats as "client_ip client_port server_ip server_port". Zero is
-// returned for anything else, including an empty value.
+// which sshd formats as "client_ip client_port server_ip server_port".
+//
+// Only the sentinel-prefixed line is considered, so unrelated output cannot
+// shift the fields. Zero is returned for anything else, including an empty
+// value and a line whose shape is not exactly four fields.
 func parseSSHConnectionPort(out string) int {
-	fields := strings.Fields(out)
-	if len(fields) < 4 {
-		return 0
+	for _, line := range strings.Split(out, "\n") {
+		value, ok := strings.CutPrefix(strings.TrimSpace(line), sshConnectionSentinel)
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(value)
+		if len(fields) != 4 {
+			return 0
+		}
+		port, err := strconv.Atoi(fields[3])
+		if err != nil || port < 1 || port > 65535 {
+			return 0
+		}
+		return port
 	}
-	port, err := strconv.Atoi(fields[3])
-	if err != nil || port < 1 || port > 65535 {
-		return 0
-	}
-	return port
+	return 0
 }
