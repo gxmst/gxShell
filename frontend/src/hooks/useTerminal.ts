@@ -349,6 +349,17 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       };
 
       if (terminals.current[activeTab]) {
+        // Coming back to a live terminal is the moment it becomes the one on
+        // screen, and the only moment the budget can hear about it: a context is
+        // attached once, when the terminal is created, so without this the
+        // eviction order stays frozen at creation time - the context the limit
+        // drops can be the one being looked at, which is the exact failure this
+        // budget exists to prevent. A terminal that lost its context, to the
+        // budget or to the browser, takes one back here as well.
+        webglBudget.current.touch(activeTab);
+        if (webglBudget.current.wantsWebgl(activeTab)) {
+          attachWebgl(activeTab, terminals.current[activeTab]);
+        }
         fitAndResize();
       } else {
         const s = { ...settingsRef.current, terminal: overridesRef.current?.[activeTab] || settingsRef.current.terminal };

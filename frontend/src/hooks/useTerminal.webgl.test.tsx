@@ -72,6 +72,23 @@ function mountTerminal(notify: (text: string, tone?: string) => void) {
   return result;
 }
 
+/**
+ * Mounts the hook so the shown tab can change. mountTerminal cannot do this: it
+ * pins the id to "a", which is why the budget's behaviour across a tab switch
+ * went untested - and the tab switch is the only moment the budget hears that
+ * the user is looking somewhere else.
+ */
+function mountSwitchableTabs(ids: string[]) {
+  const { result, rerender } = renderHook(
+    ({ active }: { active: string }) => useTerminal(active, true, settings, vi.fn() as never),
+    // Start with no tab: the hosts have to exist before the attach effect runs,
+    // and the effect only runs again when the shown tab actually changes.
+    { initialProps: { active: "" } },
+  );
+  for (const id of ids) result.current.terminalHosts.current[id] = sizedHost();
+  return { result, show: (id: string) => rerender({ active: id }) };
+}
+
 beforeEach(() => {
   resetWebglNotices();
   mocks.addons.length = 0;
@@ -123,5 +140,45 @@ describe("terminal WebGL lifecycle", () => {
     act(() => { result.current.refitTerminal("a"); });
     act(() => { result.current.refitTerminal("a"); });
     expect(mocks.addons).toHaveLength(1);
+  });
+});
+
+describe("terminal WebGL budget across tab switches", () => {
+  it("takes a context back on a plain tab switch, with no other trigger", () => {
+    // Recovery used to need a font-size change, a split or a window resize:
+    // refitTerminal is what hands a context back, and switching tabs never
+    // called it. A hidden terminal host keeps its box (visibility: hidden, not
+    // display: none), so no resize fires either - the tab stayed on the slow
+    // renderer for the rest of the session.
+    const { show } = mountSwitchableTabs(["a", "b"]);
+    show("a");
+    show("b");
+    expect(mocks.addons).toHaveLength(2);
+
+    act(() => { mocks.addons[0].contextLoss?.(); });
+    expect(mocks.addons[0].disposed).toBe(true);
+
+    show("a");
+
+    expect(mocks.addons).toHaveLength(3);
+    expect(mocks.addons[2].disposed).toBe(false);
+  });
+
+  it("spends the limit on a tab nobody is looking at, not the one on screen", () => {
+    // The whole point of the budget is that the evicted context is not the one
+    // the user is reading. Recording "recently used" only when a context is
+    // created made it "recently created" instead, so the thirteenth terminal
+    // evicted the oldest tab even while that tab was the visible one.
+    const tabs = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m"];
+    const { show } = mountSwitchableTabs(tabs);
+    for (const id of tabs.slice(0, 12)) show(id);
+    expect(mocks.addons).toHaveLength(12);
+
+    show("a");
+    show("m");
+
+    expect(mocks.addons).toHaveLength(13);
+    expect(mocks.addons[0].disposed).toBe(false);
+    expect(mocks.addons[1].disposed).toBe(true);
   });
 });
