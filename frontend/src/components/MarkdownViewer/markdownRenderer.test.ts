@@ -106,6 +106,19 @@ describe('markdownRenderer', () => {
     expect(rendered.html).toContain('data-md-src="d.png"');
   });
 
+  it('labels the code copy control in the requested locale', () => {
+    const markdown = '```json\n{"a":1}\n```';
+    // The copy control is UI chrome inside generated HTML, so the locale has to
+    // travel with the render — a plain English assertion would pass either way.
+    const zh = buildMarkdown(markdown, 'zh-CN').html;
+    expect(zh).toContain('aria-label="复制代码"');
+    expect(zh).toContain('<span>复制</span>');
+
+    const en = buildMarkdown(markdown, 'en').html;
+    expect(en).toContain('aria-label="Copy code"');
+    expect(en).toContain('<span>Copy</span>');
+  });
+
   it('keeps the reported Chinese Mermaid source intact', () => {
     const rendered = buildMarkdown(workflowMarkdown.replace(/\r?\n/g, '\r\n'));
     expect(rendered.html).toContain('md-mermaid');

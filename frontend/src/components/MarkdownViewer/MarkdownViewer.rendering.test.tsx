@@ -78,14 +78,14 @@ describe('MarkdownViewer deferred rendering', () => {
     expect(rendererMocks.buildMarkdown).not.toHaveBeenCalled();
 
     rerender(<MarkdownViewer active {...props} />);
-    await waitFor(() => expect(rendererMocks.buildMarkdown).toHaveBeenCalledWith('hidden document'));
+    await waitFor(() => expect(rendererMocks.buildMarkdown).toHaveBeenCalledWith('hidden document', 'en'));
   });
 
   it('renders a visible split Markdown pane without enabling its global shortcuts', async () => {
     appMocks.readLocalFile.mockResolvedValue('split document');
     const { container } = render(<MarkdownViewer active={false} visible filePath={'C:\\split.md'} onClose={vi.fn()} />);
 
-    await waitFor(() => expect(rendererMocks.buildMarkdown).toHaveBeenCalledWith('split document'));
+    await waitFor(() => expect(rendererMocks.buildMarkdown).toHaveBeenCalledWith('split document', 'en'));
     expect(container.querySelector('.markdown-viewer')).toHaveAttribute('data-active', 'false');
     expect(container.querySelector('.markdown-viewer')).toHaveAttribute('data-visible', 'true');
   });
@@ -104,10 +104,10 @@ describe('MarkdownViewer deferred rendering', () => {
     const { rerender } = render(
       <MarkdownViewer active filePath={'C:\\first.md'} onClose={vi.fn()} />,
     );
-    await waitFor(() => expect(rendererMocks.buildMarkdown).toHaveBeenCalledWith('first source'));
+    await waitFor(() => expect(rendererMocks.buildMarkdown).toHaveBeenCalledWith('first source', 'en'));
 
     rerender(<MarkdownViewer active filePath={'C:\\second.md'} onClose={vi.fn()} />);
-    await waitFor(() => expect(rendererMocks.buildMarkdown).toHaveBeenCalledWith('second source'));
+    await waitFor(() => expect(rendererMocks.buildMarkdown).toHaveBeenCalledWith('second source', 'en'));
 
     await act(async () => { secondRender.resolve({ html: '<p>new result</p>', toc: [] }); });
     expect(screen.getByText('new result')).toBeInTheDocument();

@@ -326,7 +326,7 @@ export default function MarkdownViewer({
     if (!richMarkdown || !isVisible || loading) return;
     let cancelled = false;
     void getMarkdownRenderer()
-      .then((renderer) => renderer.buildMarkdown(content))
+      .then((renderer) => renderer.buildMarkdown(content, lang))
       .then((rendered) => {
         if (!cancelled) {
           previewContentRef.current = content;
@@ -337,13 +337,13 @@ export default function MarkdownViewer({
         if (!cancelled) setError(String(err));
       });
     return () => { cancelled = true; };
-  }, [content, isVisible, richMarkdown, loading]);
+  }, [content, isVisible, richMarkdown, loading, lang]);
 
   useEffect(() => {
     if (!markdownMode || lightweightDraft || !editing || !splitPreview || !isVisible) return;
     let cancelled = false;
     void getMarkdownRenderer()
-      .then((renderer) => renderer.buildMarkdown(previewDraft))
+      .then((renderer) => renderer.buildMarkdown(previewDraft, lang))
       .then((rendered) => {
         if (!cancelled) setDraftDoc(rendered);
       })
@@ -351,7 +351,7 @@ export default function MarkdownViewer({
         if (!cancelled) setError(String(err));
       });
     return () => { cancelled = true; };
-  }, [editing, isVisible, markdownMode, lightweightDraft, previewDraft, splitPreview]);
+  }, [editing, isVisible, markdownMode, lightweightDraft, previewDraft, splitPreview, lang]);
 
   useEffect(() => {
     if (!editing || !jsonMode || deferJsonValidation) {

@@ -46,7 +46,7 @@ import { PanelsTopLeft } from "lucide-react";
 import { isSupportedDocumentPath } from "./utils/textFiles";
 import type { DocumentOutline } from "./utils/documentPresentation";
 import { shellQuote } from "./utils/shellQuote";
-import { t } from "./i18n";
+import { t, type LangKey } from "./i18n";
 import { formatAutomationTerminalEvent } from "./utils/automation";
 import { CliApprovalQueue } from "./components/CliApprovalQueue/CliApprovalQueue";
 import { CliApprovalPanel } from "./components/CliApprovalPanel/CliApprovalPanel";
@@ -91,6 +91,11 @@ function App() {
     clearActivities,
   } = useToasts();
   const profileState = useProfiles(notify);
+  // Confirm dialogs and notifications all follow the settings language. `lang`
+  // and `tr` exist so those call sites read as a key plus its parameters instead
+  // of repeating the `settings?.language === "zh-CN"` ternary inline.
+  const lang = profileState.settings?.language || "en";
+  const tr = useCallback((key: LangKey, params?: Record<string, string>) => t(lang, key, params), [lang]);
   const updateCheck = useUpdateCheck();
   const [drawer, setDrawer] = usePersistedState<Drawer>("gx:drawer", "monitor");
   // Preferences only take effect on save, and leaving the drawer unmounts the
@@ -240,11 +245,15 @@ function App() {
       next[identity] = tab.state;
       const previous = previousSessionStates.current[identity];
       if (!previous || previous === tab.state) continue;
-      const zh = profileState.settings?.language === "zh-CN";
       const severity = tab.state === "connected" ? "success" : tab.state === "error" ? "error" : tab.state === "connecting" || tab.state === "reconnecting" ? "info" : "warning";
-      const stateText: Record<string, string> = zh
-        ? { connected: "连接已就绪", connecting: "正在连接", reconnecting: "正在重新连接", restoring: "正在恢复会话", disconnected: "连接已断开", error: "连接失败" }
-        : { connected: "Connection ready", connecting: "Connecting", reconnecting: "Reconnecting", restoring: "Restoring session", disconnected: "Connection closed", error: "Connection failed" };
+      const stateText: Record<string, string> = {
+        connected: tr("connectionStateConnected"),
+        connecting: tr("connectionStateConnecting"),
+        reconnecting: tr("connectionStateReconnecting"),
+        restoring: tr("connectionStateRestoring"),
+        disconnected: tr("connectionStateDisconnected"),
+        error: tr("connectionStateError"),
+      };
       recordActivity({
         text: tab.error || stateText[tab.state] || tab.state,
         title: tab.title,
@@ -257,7 +266,7 @@ function App() {
       });
     }
     previousSessionStates.current = next;
-  }, [profileState.settings?.language, recordActivity, sessions.tabs]);
+  }, [tr, recordActivity, sessions.tabs]);
 
   // Broadcast (synchronized input) target set, kept in a ref so the terminal's
   // onData closure always reads the current value without re-binding. Targets are
@@ -752,7 +761,7 @@ function App() {
   useEffect(() => {
     const offCloseRequest = EventsOn("app:close-requested", () => {
       if (backupBusyRef.current) {
-        notify(profileState.settings?.language === "zh-CN" ? "请等待备份操作完成后再关闭窗口" : "Wait for the backup operation to finish before closing the window", "info");
+        notify(tr("waitForBackupBeforeClose"), "info");
         return;
       }
       const hasUnsavedWork =
@@ -771,7 +780,7 @@ function App() {
       setQuitConfirmOpen(true);
     });
     return () => offCloseRequest();
-  }, [notify, profileState.settings?.language]);
+  }, [notify, tr]);
 
   // Keyboard tab navigation walks the tab strip, so it has to see the same order
   // and the same membership the strip shows: torn-off terminals live in their own
@@ -1192,11 +1201,11 @@ function App() {
 
   const openBackup = useCallback((mode: "export" | "import") => {
     if (settingsDirtyRef.current.dirty || namedWorkspaces.busy) {
-      notify(profileState.settings?.language === "zh-CN" ? "请先保存设置并等待工作区操作完成" : "Save settings and finish the workspace operation first", "info");
+      notify(tr("saveSettingsAndWorkspaceFirst"), "info");
       return;
     }
     setBackupMode(mode);
-  }, [namedWorkspaces.busy, notify, profileState.settings?.language]);
+  }, [namedWorkspaces.busy, notify, tr]);
 
   const saveCommand = async (command: types.CommandTemplate) => {
     try {
@@ -1250,7 +1259,7 @@ function App() {
     runCommandTemplate(cmd, async (command) => {
       const target = sessions.active;
       if (!target || target.type === "markdown" || target.state !== "connected") {
-        notify(profileState.settings?.language === "zh-CN" ? "请先选择一个已连接的终端" : "Select a connected terminal first", "error");
+        notify(tr("selectConnectedTerminal"), "error");
         return;
       }
       try {
@@ -1261,13 +1270,13 @@ function App() {
         notify(String(err), "error");
       }
     });
-  }, [runCommandTemplate, sessions.active, focusTerminal, notify, profileState.settings?.language]);
+  }, [runCommandTemplate, sessions.active, focusTerminal, notify, tr]);
 
   const runInSession = useCallback((cmd: types.CommandTemplate, sessionId: string) => {
     runCommandTemplate(cmd, async (command) => {
       const target = sessions.tabs.find((tab) => tab.id === sessionId);
       if (!target || target.type === "markdown" || target.state !== "connected") {
-        notify(profileState.settings?.language === "zh-CN" ? "目标会话已断开" : "The target session is disconnected", "error");
+        notify(tr("targetSessionDisconnected"), "error");
         return;
       }
       try {
@@ -1279,19 +1288,19 @@ function App() {
         notify(String(err), "error");
       }
     });
-  }, [focusTerminal, notify, profileState.settings?.language, runCommandTemplate, sessions.setActiveTab, sessions.tabs]);
+  }, [focusTerminal, notify, tr, runCommandTemplate, sessions.setActiveTab, sessions.tabs]);
 
   const runOnAll = useCallback((cmd: types.CommandTemplate) => {
     runCommandTemplate(cmd, (command) => {
       const targets = connectedSshTabs.map((tab) => ({ id: tab.id, title: tab.title }));
       if (targets.length === 0) {
-        notify(profileState.settings?.language === "zh-CN" ? "没有已连接的 SSH 会话" : "No connected SSH sessions", "error");
+        notify(tr("noConnectedSshSessions"), "error");
         return;
       }
       setBatchCommandProgress({ running: false, sent: 0, total: 0 });
       setBatchCommandRequest({ commandName: cmd.name, command, targets });
     });
-  }, [connectedSshTabs, notify, profileState.settings?.language, runCommandTemplate]);
+  }, [connectedSshTabs, notify, tr, runCommandTemplate]);
 
   const startBatchCommand = useCallback(async (options: BatchCommandOptions) => {
     const request = batchCommandRequest;
@@ -1300,7 +1309,7 @@ function App() {
     if (!sameTerminalPasteTargets(request.targets.map((target) => target.id), currentTargets.map((target) => target.id))) {
       setBatchCommandRequest({ ...request, targets: currentTargets });
       setBatchCommandProgress({ running: false, sent: 0, total: 0 });
-      notify(profileState.settings?.language === "zh-CN" ? "在线目标已变化，请核对后再次确认" : "Online targets changed; review and confirm again", "error");
+      notify(tr("onlineTargetsChanged"), "error");
       return;
     }
 
@@ -1317,10 +1326,10 @@ function App() {
         onProgress: (sent, total) => setBatchCommandProgress({ running: true, sent, total }),
       });
       if (result.cancelled) {
-        notify(profileState.settings?.language === "zh-CN" ? `已停止，发送 ${result.sent}/${result.total}` : `Stopped after ${result.sent}/${result.total} sends`, "info");
+        notify(tr("broadcastStopped", { sent: String(result.sent), total: String(result.total) }), "info");
         setBatchCommandProgress({ running: false, sent: result.sent, total: result.total });
       } else {
-        notify(profileState.settings?.language === "zh-CN" ? `已完成 ${result.sent} 次发送` : `Completed ${result.sent} sends`, "success");
+        notify(tr("broadcastCompleted", { sent: String(result.sent) }), "success");
         setBatchCommandRequest(null);
         setBatchCommandProgress({ running: false, sent: result.sent, total: result.total });
       }
@@ -1330,7 +1339,7 @@ function App() {
     } finally {
       if (batchCommandAbort.current === controller) batchCommandAbort.current = null;
     }
-  }, [batchCommandProgress.running, batchCommandRequest, connectedSshTabs, notify, profileState.settings?.language]);
+  }, [batchCommandProgress.running, batchCommandRequest, connectedSshTabs, notify, tr]);
 
   const stopBatchCommand = useCallback(() => {
     batchCommandAbort.current?.abort();
@@ -1347,9 +1356,7 @@ function App() {
   const handleOpenTerminalInDir = useCallback(async (sessionId: string, dirPath: string) => {
     const reportedDirectory = activeTerminal.getCurrentDirectory(sessionId)?.path || "";
     if (reportedDirectory && !reportedDirectory.startsWith("/")) {
-      notify(profileState.settings?.language === "zh-CN"
-        ? "远端 Shell 使用非 POSIX 路径，请在终端中手动切换目录"
-        : "The remote shell uses non-POSIX paths; change directory in the terminal manually", "error");
+      notify(tr("remoteNonPosixPaths"), "error");
       return false;
     }
     const cmd = dirPath && dirPath !== "."
@@ -1364,7 +1371,7 @@ function App() {
     sessions.setActiveTab(sessionId);
     setTimeout(() => focusTerminal(sessionId), 30);
     return true;
-  }, [activeTerminal.getCurrentDirectory, focusTerminal, notify, profileState.settings?.language, sessions.setActiveTab]);
+  }, [activeTerminal.getCurrentDirectory, focusTerminal, notify, tr, sessions.setActiveTab]);
   const handleOpenCurrentDirectory = useCallback((sessionId: string, dirPath: string) => {
     const tab = tabsRef.current.find((item) => item.id === sessionId);
     if (!tab || tab.local || tab.type === "markdown" || tab.state !== "connected") return;
@@ -1512,8 +1519,8 @@ function App() {
         <button
           type="button"
           className="zen-mode-exit"
-          aria-label={profileState.settings?.language === "zh-CN" ? "退出专注模式" : "Exit Zen mode"}
-          title={profileState.settings?.language === "zh-CN" ? "退出专注模式" : "Exit Zen mode"}
+          aria-label={tr("exitZenMode")}
+          title={tr("exitZenMode")}
           onClick={() => setZenMode(false)}
         >
           <PanelLeftOpen size={15} />
@@ -1552,7 +1559,7 @@ function App() {
           automationActivity={automationActivity}
           dirtyTabIds={dirtyTabIds}
           language={profileState.settings?.language || "en"}
-          rightAccessory={<><button className="tab-action" title={profileState.settings?.language === "zh-CN" ? "工作区" : "Workspaces"} aria-label={profileState.settings?.language === "zh-CN" ? "工作区" : "Workspaces"} onClick={() => { sessions.beginFocusRequest(); setWorkspacesOpen(true); }}><PanelsTopLeft size={15} /></button><ActivityCenter
+          rightAccessory={<><button className="tab-action" title={tr("workspacesTitle")} aria-label={tr("workspacesTitle")} onClick={() => { sessions.beginFocusRequest(); setWorkspacesOpen(true); }}><PanelsTopLeft size={15} /></button><ActivityCenter
             activities={activities}
             unreadCount={unreadActivityCount}
             locale={profileState.settings?.language || "en"}
@@ -1736,7 +1743,7 @@ function App() {
           const targetsChanged = !sameTerminalPasteTargets(request.targetIds, currentTargets)
             || request.targetIds.some((id) => !connected.has(id));
           if (targetsChanged) {
-            notify(profileState.settings?.language === "zh-CN" ? "目标终端已变化，请重新粘贴并确认" : "Terminal targets changed; paste again to confirm", "error");
+            notify(tr("pasteTargetsChanged"), "error");
             return;
           }
           request.commit();
@@ -1759,8 +1766,8 @@ function App() {
         onClose={() => setShortcutHelpOpen(false)}
       />}
       {renameTabRequest && <TextInputDialog
-        title={profileState.settings?.language === "zh-CN" ? "重命名标签" : "Rename tab"}
-        label={profileState.settings?.language === "zh-CN" ? "标签名称" : "Tab name"}
+        title={tr("renameTab")}
+        label={tr("tabName")}
         initialValue={renameTabRequest.title}
         locale={profileState.settings?.language || "en"}
         onClose={() => setRenameTabRequest(null)}
@@ -1770,7 +1777,7 @@ function App() {
         }}
       />}
       {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileState.settings?.language || "en"} terminalDefaults={profileState.settings?.terminal} sessionLogDefaults={profileState.settings?.sessionLog} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={(id) => setDeleteProfileRequest({ id, name: profileModal.name || profileModal.host, closeEditor: true })} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify(t(profileState.settings?.language || "en", "profileCopied"), "info"); }} onDirtyChange={handleProfileDirtyChange} />}
-      {bulkProfilesOpen && <BulkProfilesModal profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setBulkProfilesOpen(false)} onSave={async (ids, patch) => { await UpdateProfilesBatch(ids, patch); await profileState.reload(); notify(profileState.settings?.language === "zh-CN" ? "批量修改已保存" : "Batch changes saved", "success"); }} />}
+      {bulkProfilesOpen && <BulkProfilesModal profiles={profileState.profiles} language={profileState.settings?.language || "en"} onClose={() => setBulkProfilesOpen(false)} onSave={async (ids, patch) => { await UpdateProfilesBatch(ids, patch); await profileState.reload(); notify(tr("batchChangesSaved"), "success"); }} />}
       {workspacesOpen && <WorkspacesModal manager={namedWorkspaces} language={profileState.settings?.language || "en"} eligible={workspaceEligible} excluded={visibleTabs.length - workspaceEligible} onClose={() => setWorkspacesOpen(false)} />}
       {backupMode && <BackupModal
         mode={backupMode}
@@ -1779,10 +1786,10 @@ function App() {
         onBusyChange={handleBackupBusyChange}
         onApply={(token, previous, workspaces) => namedWorkspaces.restoreBackup(previous, workspaces, () => ApplyBackup(token, previous || "[]"))}
         onImported={() => {
-          notify(profileState.settings?.language === "zh-CN" ? "备份已恢复" : "Backup restored", "success");
-          void profileState.reload().catch((err) => notify(`${profileState.settings?.language === "zh-CN" ? "备份已恢复，但界面刷新失败" : "Backup restored, but refreshing the interface failed"}: ${String(err)}`, "error"));
+          notify(tr("backupRestored"), "success");
+          void profileState.reload().catch((err) => notify(`${tr("backupRestoredRefreshFailed")}: ${String(err)}`, "error"));
         }}
-        onExported={(path) => notify(profileState.settings?.language === "zh-CN" ? `加密备份已导出：${path}` : `Encrypted backup exported: ${path}`, "success")}
+        onExported={(path) => notify(tr("backupExported", { path }), "success")}
       />}
       {quickConnectOpen && <QuickConnectModal
         language={profileState.settings?.language || "en"}
@@ -1801,39 +1808,35 @@ function App() {
       {commandModal && <CommandModal command={commandModal} language={profileState.settings?.language || "en"} onClose={() => setCommandModal(null)} onSave={saveCommand} onDirtyChange={handleCommandDirtyChange} />}
       {deleteProfileRequest && <ConfirmDialog
         locale={profileState.settings?.language || "en"}
-        title={profileState.settings?.language === "zh-CN" ? "删除服务器配置？" : "Delete server profile?"}
-        body={profileState.settings?.language === "zh-CN"
-          ? `“${deleteProfileRequest.name}”及其保存的凭据将被永久删除；引用它的跳板机设置也会被清除。`
-          : `“${deleteProfileRequest.name}” and its saved credentials will be permanently deleted. ProxyJump references to it will also be cleared.`}
+        title={tr("deleteProfileConfirm")}
+        body={tr("deleteProfileConfirmBody", { name: deleteProfileRequest.name })}
         confirmText={t(profileState.settings?.language || "en", "delete")}
         onClose={() => setDeleteProfileRequest(null)}
         onConfirm={async () => {
           await profileState.deleteProfile(deleteProfileRequest.id);
           if (deleteProfileRequest.closeEditor) setProfileModal(null);
           setDeleteProfileRequest(null);
-          notify(profileState.settings?.language === "zh-CN" ? "服务器配置已删除" : "Server profile deleted", "success");
+          notify(tr("profileDeleted"), "success");
         }}
       />}
       {deleteCommandRequest && <ConfirmDialog
         locale={profileState.settings?.language || "en"}
-        title={profileState.settings?.language === "zh-CN" ? "删除命令模板？" : "Delete command template?"}
-        body={profileState.settings?.language === "zh-CN" ? `“${deleteCommandRequest.name}”将被永久删除。` : `“${deleteCommandRequest.name}” will be permanently deleted.`}
+        title={tr("deleteCommandConfirm")}
+        body={tr("deleteCommandConfirmBody", { name: deleteCommandRequest.name })}
         confirmText={t(profileState.settings?.language || "en", "delete")}
         onClose={() => setDeleteCommandRequest(null)}
         onConfirm={async () => {
           await DeleteCommand(deleteCommandRequest.id);
           profileState.setCommands(await ListCommands());
           setDeleteCommandRequest(null);
-          notify(profileState.settings?.language === "zh-CN" ? "命令模板已删除" : "Command template deleted", "success");
+          notify(tr("commandDeleted"), "success");
         }}
       />}
       {quitConfirmOpen && <ConfirmDialog
         locale={profileState.settings?.language || "en"}
-        title={profileState.settings?.language === "zh-CN" ? "退出 gxShell？" : "Quit gxShell?"}
-        body={profileState.settings?.language === "zh-CN"
-          ? "存在未保存的文档、设置、服务器配置或命令模板，退出将丢失这些更改。"
-          : "There are unsaved documents, settings, server profiles, or command templates. Quitting will discard them."}
-        confirmText={profileState.settings?.language === "zh-CN" ? "退出" : "Quit"}
+        title={tr("quitConfirm")}
+        body={tr("quitConfirmBody")}
+        confirmText={tr("quitAction")}
         onClose={() => { quitConfirmOpenRef.current = false; setQuitConfirmOpen(false); }}
         onConfirm={() => CloseWindow()}
       />}
@@ -1881,9 +1884,9 @@ function App() {
       />}
       {disconnectPrompt && <ConfirmDialog
         locale={profileState.settings?.language || "en"}
-        title={profileState.settings?.language === "zh-CN" ? "断开当前连接？" : "Disconnect this session?"}
-        body={profileState.settings?.language === "zh-CN" ? `“${disconnectPrompt.tab.title}”仍处于连接状态。` : `“${disconnectPrompt.tab.title}” is still connected.`}
-        confirmText={profileState.settings?.language === "zh-CN" ? "断开" : "Disconnect"}
+        title={tr("disconnectConfirm")}
+        body={tr("disconnectConfirmBody", { title: disconnectPrompt.tab.title })}
+        confirmText={tr("disconnectAction")}
         onClose={() => { disconnectPrompt.resolve(false); setDisconnectPrompt(null); }}
         onConfirm={() => { disconnectPrompt.resolve(true); setDisconnectPrompt(null); }}
       />}

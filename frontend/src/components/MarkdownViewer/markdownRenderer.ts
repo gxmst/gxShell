@@ -17,6 +17,7 @@ import xml from 'highlight.js/lib/languages/xml';
 import yaml from 'highlight.js/lib/languages/yaml';
 import { sanitizeRenderedHtml } from '../../utils/sanitizeHtml';
 import { headingDomId } from '../../utils/markdownHeadings';
+import { t } from '../../i18n';
 
 export type TocItem = { id: string; text: string; depth: number };
 export type RenderedMarkdown = { html: string; toc: TocItem[] };
@@ -118,7 +119,7 @@ function highlightCode(code: string, lang: string) {
   }
 }
 
-export function buildMarkdown(markdown: string): RenderedMarkdown {
+export function buildMarkdown(markdown: string, locale = 'en'): RenderedMarkdown {
   const renderer = new marked.Renderer();
   const toc: TocItem[] = [];
   const seen: Record<string, number> = {};
@@ -148,12 +149,15 @@ export function buildMarkdown(markdown: string): RenderedMarkdown {
     }
     const highlighted = highlightCode(text, lang);
     const label = highlighted.label || lang || 'text';
+    // The copy control is chrome, not document content, so its label follows the
+    // UI language. Callers must include the locale in whatever caches the
+    // rendered HTML, or a language switch would keep the old label.
     return [
       '<div class="md-code-block">',
       '<div class="md-code-header">',
       `<span>${escapeHtml(label)}</span>`,
-      '<button type="button" class="md-code-copy" data-code-copy="true" aria-label="Copy code">',
-      '<span>Copy</span>',
+      `<button type="button" class="md-code-copy" data-code-copy="true" aria-label="${escapeAttr(t(locale, 'copyCode'))}">`,
+      `<span>${escapeHtml(t(locale, 'copy'))}</span>`,
       '</button>',
       '</div>',
       `<pre><code class="hljs language-${escapeAttr(label)}">${highlighted.html}</code></pre>`,
