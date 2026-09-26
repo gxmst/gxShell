@@ -27,8 +27,8 @@ export function CommandModal({ command, language, onClose, onSave, onDirtyChange
   };
   const save = async () => {
     if (savingRef.current) return;
-    if (!draft.name.trim()) { setError(lang === "zh-CN" ? "命令名称不能为空" : "Command name is required"); return; }
-    if (!draft.command.trim()) { setError(lang === "zh-CN" ? "命令内容不能为空" : "Command is required"); return; }
+    if (!draft.name.trim()) { setError(t(lang, "commandNameRequired")); return; }
+    if (!draft.command.trim()) { setError(t(lang, "commandRequired")); return; }
     savingRef.current = true;
     setBusy(true);
     setError("");
@@ -42,8 +42,8 @@ export function CommandModal({ command, language, onClose, onSave, onDirtyChange
     }
   };
   return (
-    <ModalShell onClose={requestClose} ariaLabel={command.id ? (lang === "zh-CN" ? "编辑命令" : "Edit command") : t(lang, "newCommand")}>
-      <DialogHeader icon={<Command size={15} />} title={command.id ? (lang === "zh-CN" ? "编辑命令" : "Edit command") : t(lang, "newCommand")} description={lang === "zh-CN" ? "创建可复用的终端命令模板" : "Create a reusable terminal command template"} />
+    <ModalShell onClose={requestClose} ariaLabel={command.id ? t(lang, "editCommand") : t(lang, "newCommand")}>
+      <DialogHeader icon={<Command size={15} />} title={command.id ? t(lang, "editCommand") : t(lang, "newCommand")} description={t(lang, "newCommandHint")} />
       <div className="dialog-form">
         <Label text={t(lang, "name")}><input className="input" value={draft.name} onChange={(e) => update({ name: e.target.value })} /></Label>
         <Label text={t(lang, "category")}><input className="input" value={draft.category} onChange={(e) => update({ category: e.target.value })} /></Label>
@@ -52,7 +52,7 @@ export function CommandModal({ command, language, onClose, onSave, onDirtyChange
         {error && <div className="profile-modal-error" role="alert">{error}</div>}
         <div className="dialog-footer"><button className="btn-secondary" disabled={busy} onClick={requestClose}>{t(lang, "cancel")}</button><button className="btn-primary" disabled={busy} onClick={save}><Save size={15} /> {busy ? t(lang, "loading") : t(lang, "saveCommand")}</button></div>
       </div>
-      {confirmDiscard && <ConfirmDialog locale={lang} title={t(lang, "discardEdits")} body={t(lang, "unsavedChangesHint")} confirmText={lang === "zh-CN" ? "不保存" : "Discard"} onClose={() => setConfirmDiscard(false)} onConfirm={onClose} />}
+      {confirmDiscard && <ConfirmDialog locale={lang} title={t(lang, "discardEdits")} body={t(lang, "unsavedChangesHint")} confirmText={t(lang, "discardNoSave")} onClose={() => setConfirmDiscard(false)} onConfirm={onClose} />}
     </ModalShell>
   );
 }

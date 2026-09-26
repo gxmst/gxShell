@@ -137,7 +137,7 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
   return (
     <ModalShell onClose={requestClose} ariaLabel={draft.id ? t(lang, "editServer") : t(lang, "newServer")}>
       <div className="profile-modal-header">
-        <div className="profile-modal-heading"><span className="dialog-header-icon"><Server size={16} /></span><span><h2 className="profile-modal-title">{draft.id ? t(lang, "editServer") : t(lang, "newServer")}</h2><small>{dirty ? t(lang, "unsavedChangesHint") : (lang === "zh-CN" ? "连接、认证和自动化选项" : "Connection, authentication and automation")}</small></span></div>
+        <div className="profile-modal-heading"><span className="dialog-header-icon"><Server size={16} /></span><span><h2 className="profile-modal-title">{draft.id ? t(lang, "editServer") : t(lang, "newServer")}</h2><small>{dirty ? t(lang, "unsavedChangesHint") : t(lang, "profileModalSubtitle")}</small></span></div>
         <button className="icon-btn compact-icon" disabled={busy} onClick={requestClose} aria-label={t(lang, "close")}><X size={14} /></button>
       </div>
       <div className="profile-modal-grid">
@@ -206,15 +206,15 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
             <div className="profile-cli-trust-hint">{t(lang, "cliTrustHint")}</div>
           </div>
         )}
-        <Label text={t(lang, "description")} className="col-span-2"><textarea className="input compact-input min-h-[56px]" value={draft.description} onChange={(e) => update({ description: e.target.value })} placeholder={lang === "zh-CN" ? "可选备注说明" : "Optional notes"} /></Label>
+        <Label text={t(lang, "description")} className="col-span-2"><textarea className="input compact-input min-h-[56px]" value={draft.description} onChange={(e) => update({ description: e.target.value })} placeholder={t(lang, "optionalNotes")} /></Label>
       </div>
 
       {props.terminalDefaults && <div className="workbench-fields">
-        <label className="check"><input type="checkbox" checked={!!draft.terminal} onChange={(e) => update({ terminal: e.target.checked ? new types.TerminalSettings(props.terminalDefaults) : undefined })} />{lang === "zh-CN" ? "使用独立终端配置" : "Use profile terminal preferences"}</label>
+        <label className="check"><input type="checkbox" checked={!!draft.terminal} onChange={(e) => update({ terminal: e.target.checked ? new types.TerminalSettings(props.terminalDefaults) : undefined })} />{t(lang, "useProfileTerminal")}</label>
         {draft.terminal && <TerminalPreferencesFields value={draft.terminal} onChange={(terminal) => update({ terminal })} language={lang} />}
       </div>}
       <div className="workbench-fields">
-        <label className="check"><input type="checkbox" checked={!!draft.sessionLog} onChange={(e) => update({ sessionLog: e.target.checked ? { ...(props.sessionLogDefaults || defaultSessionLog) } : undefined })} />{lang === "zh-CN" ? "使用独立日志设置" : "Use profile logging preferences"}</label>
+        <label className="check"><input type="checkbox" checked={!!draft.sessionLog} onChange={(e) => update({ sessionLog: e.target.checked ? { ...(props.sessionLogDefaults || defaultSessionLog) } : undefined })} />{t(lang, "useProfileLogging")}</label>
         {draft.sessionLog && <SessionLogFields value={draft.sessionLog} onChange={(sessionLog) => update({ sessionLog })} locale={lang} />}
       </div>
       <div className="profile-modal-tunnel-header">
@@ -279,7 +279,7 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
           locale={lang}
           title={t(lang, "discardEdits")}
           body={t(lang, "unsavedChangesHint")}
-          confirmText={lang === "zh-CN" ? "不保存" : "Discard"}
+          confirmText={t(lang, "discardNoSave")}
           onClose={() => { confirmDiscardRef.current = false; setConfirmDiscard(false); }}
           onConfirm={() => { confirmDiscardRef.current = false; setConfirmDiscard(false); props.onClose(); }}
         />

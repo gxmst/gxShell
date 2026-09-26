@@ -31,3 +31,50 @@ describe('CommandModal dirty state', () => {
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 });
+
+// The modal used to pick these with an inline `lang === "zh-CN"` ternary, so
+// they stayed Chinese under an English interface (and vice versa).
+describe('CommandModal locale', () => {
+  const existing = () => new types.CommandTemplate({
+    id: 'cmd-1',
+    name: 'Status',
+    command: 'systemctl status nginx',
+    category: 'Ops',
+    description: '',
+    tags: [],
+  });
+
+  it('titles an existing command in the interface language', () => {
+    render(
+      <CommandModal command={existing()} language="zh-CN" onClose={vi.fn()} onSave={vi.fn()} />,
+    );
+
+    expect(screen.getByText('编辑命令')).toBeInTheDocument();
+  });
+
+  it('reports the empty-name validation in the interface language', () => {
+    render(
+      <CommandModal
+        command={new types.CommandTemplate({ id: '', name: '', command: 'ls', category: '', description: '', tags: [] })}
+        language="zh-CN"
+        onClose={vi.fn()}
+        onSave={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /保存命令/ }));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('命令名称不能为空');
+  });
+
+  it('labels the discard confirmation in the interface language', () => {
+    render(
+      <CommandModal command={existing()} language="zh-CN" onClose={vi.fn()} onSave={vi.fn()} />,
+    );
+
+    fireEvent.change(screen.getByLabelText('名称'), { target: { value: 'Status v2' } });
+    fireEvent.click(screen.getByRole('button', { name: '取消' }));
+
+    expect(screen.getByRole('button', { name: '不保存' })).toBeInTheDocument();
+  });
+});
