@@ -1662,9 +1662,20 @@ type remoteOwnership struct {
 
 // captureRemoteOwnership records the destination's current mode and owner so a
 // replacement keeps them.
+//
+// Only a regular file has a mode worth carrying. Lstat does not follow links,
+// so a destination that is a symlink reports the link's own permissions —
+// lrwxrwxrwx on Linux, i.e. 0777 — and a directory reports its directory bits.
+// Applying either to the freshly written temp file made it world-writable, and
+// in the upload path the transfer then failed *after* that chmod (the promotion
+// step refuses a non-regular destination) while the part file is deliberately
+// kept for resuming. The result was a 0777 orphan left on the server.
 func captureRemoteOwnership(client remoteFileOps, remotePath string) remoteOwnership {
 	info, err := client.Lstat(remotePath)
 	if err != nil {
+		return remoteOwnership{}
+	}
+	if !info.Mode().IsRegular() {
 		return remoteOwnership{}
 	}
 	owner := remoteOwnership{

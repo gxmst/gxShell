@@ -772,6 +772,38 @@ func TestApplyRemoteOwnershipDoesNothingWithoutADestination(t *testing.T) {
 	}
 }
 
+// A destination that is not a regular file has no mode worth carrying: Lstat
+// does not follow links, so a symlink reports lrwxrwxrwx (0777) and a directory
+// reports its directory bits. Applying either to the freshly written file is
+// how an upload onto a symlinked path chmodded its temp file to 0777 — and the
+// promotion step then failed, leaving that world-writable part file behind
+// because uploads keep parts for resuming.
+func TestApplyRemoteOwnershipIgnoresNonRegularDestinations(t *testing.T) {
+	cases := []struct {
+		name string
+		mode os.FileMode
+	}{
+		{"symlink", os.ModeSymlink | 0o777},
+		{"directory", os.ModeDir | 0o755},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ops := newFakeRemoteFileOps()
+			ops.addFile("/srv/target", tc.mode)
+
+			owner := captureRemoteOwnership(ops, "/srv/target")
+			if owner.known {
+				t.Fatalf("captured %#v from a %s", owner, tc.name)
+			}
+			applyRemoteOwnership(ops, "/srv/target.tmp", owner)
+			if len(ops.chmod) != 0 || len(ops.chown) != 0 {
+				t.Fatalf("metadata was carried over from a %s: chmod %#v chown %#v",
+					tc.name, ops.chmod, ops.chown)
+			}
+		})
+	}
+}
+
 func TestWriteRemoteFileFollowsASymlinkInsteadOfReplacingIt(t *testing.T) {
 	m, client := newTransferTestManager(t, sftp.InMemHandler())
 	putTransferTestFile(t, client, "/real.conf", []byte("original"))
