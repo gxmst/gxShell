@@ -127,6 +127,23 @@ export function FloatingCard({
     }
   }, [pos]);
 
+  // Escape has to be registered once per mount, not once per render.
+  //
+  // Every call site passes an inline arrow, so `onClose` has a new identity on
+  // each render of the card's parent. Depending on it re-ran this effect each
+  // time, and the cleanup removes this card's token from `openCards` before the
+  // effect pushes it back — so a card that merely re-rendered moved to the end
+  // of the stack. Cards do not all live in the same subtree (a monitor card
+  // hangs off the sidebar, a transfer window off the SFTP panel), so one can
+  // re-render while another does not, and the order stopped matching the
+  // stacking order: Escape then either closed the card underneath or, when the
+  // focus was in an input, closed nothing at all. The handler reads the latest
+  // callback from a ref instead.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
   useEffect(() => {
     const token = cardTokenRef.current;
     if (!token) return;
@@ -152,7 +169,7 @@ export function FloatingCard({
       // with the focus on the app chrome — claims the key.
       if (!ownsFocus && target?.closest(".xterm, input, textarea, select, [contenteditable='true']")) return;
       e.stopPropagation();
-      onClose();
+      onCloseRef.current();
     };
     document.addEventListener("keydown", handleEsc, true);
     return () => {
@@ -160,7 +177,7 @@ export function FloatingCard({
       const index = openCards.lastIndexOf(token);
       if (index >= 0) openCards.splice(index, 1);
     };
-  }, [onClose]);
+  }, []);
 
   if (typeof document === "undefined") return null;
 

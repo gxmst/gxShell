@@ -20,6 +20,28 @@ describe("FloatingCard", () => {
     expect(closeFirst).not.toHaveBeenCalled();
   });
 
+  // The two cards above are mounted into one root, so they re-render together
+  // and the order survives by accident. Real cards live in different subtrees —
+  // a monitor card hangs off the sidebar, a transfer window off the SFTP panel —
+  // so one can re-render while the other does not. Every call site passes an
+  // inline arrow, which means "re-rendered" and "got a new onClose" are the same
+  // event, and that used to move the card to the end of the Escape stack.
+  it("keeps the mount order when an older card re-renders on its own", () => {
+    const closeFirst = vi.fn();
+    const closeSecond = vi.fn();
+    const { rerender } = render(<FloatingCard onClose={closeFirst}><div>first</div></FloatingCard>);
+    render(<FloatingCard onClose={closeSecond}><div>second</div></FloatingCard>);
+
+    rerender(<FloatingCard onClose={() => closeFirst()}><div>first</div></FloatingCard>);
+
+    pressEscape(document.body);
+
+    // The card underneath must not have stolen the top of the stack from the
+    // card mounted after it.
+    expect(closeSecond).toHaveBeenCalledTimes(1);
+    expect(closeFirst).not.toHaveBeenCalled();
+  });
+
   it("leaves Escape to a terminal that is not inside the card", () => {
     const onClose = vi.fn();
     render(<FloatingCard onClose={onClose}><div>card</div></FloatingCard>);
