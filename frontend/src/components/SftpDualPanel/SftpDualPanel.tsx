@@ -7,6 +7,7 @@ import type { Tab, Toast } from "../../types";
 import { formatFileSize } from "../../utils/format";
 import { t } from "../../i18n";
 import { ConfirmDialog } from "../modals/ConfirmDialog";
+import { isImeComposing } from "../../utils/ime";
 
 function conflictBody(direction: "upload" | "download", source: types.LocalFile | types.RemoteFile, destination: types.LocalFile | types.RemoteFile, lang: string) {
   const formatTime = (value: unknown) => {
@@ -168,7 +169,7 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
               onKeyDown={(e) => {
                 // Enter commits an IME candidate while composing, so a Chinese
                 // directory name would be navigated to half-typed.
-                if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                if (isImeComposing(e)) return;
                 if (e.key === "Enter") loadLocalDir(localPath);
               }}
             />
@@ -237,7 +238,7 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
               onKeyDown={(e) => {
                 // See the local path field: Enter may be committing an IME
                 // candidate rather than confirming the path.
-                if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                if (isImeComposing(e)) return;
                 if (e.key === "Enter") loadRemoteDir(remotePath);
               }}
             />

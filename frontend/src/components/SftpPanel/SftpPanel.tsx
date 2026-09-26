@@ -47,6 +47,7 @@ import { TextInputDialog } from "../modals/TextInputDialog";
 import { TransferModal } from "../modals/TransferModal";
 import { TransferCenter } from "./TransferCenter";
 import { t } from "../../i18n";
+import { isImeComposing } from "../../utils/ime";
 
 type DialogState =
   | { type: "mkdir" }
@@ -586,7 +587,7 @@ export function SftpPanel(props: {
               onKeyDown={(e) => {
                 // Enter commits an IME candidate while composing, so navigating
                 // here would go to the half-typed path.
-                if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                if (isImeComposing(e)) return;
                 if (e.key === "Enter") {
                   e.preventDefault();
                   goTo(draftPath.trim() || ".");

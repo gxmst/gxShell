@@ -11,6 +11,7 @@ import { runQueue } from "../../utils/transferQueue";
 import { t } from "../../i18n";
 import { FloatingCard } from "../FloatingCard/FloatingCard";
 import { DialogHeader, ModalShell } from "./ModalShell";
+import { isImeComposing } from "../../utils/ime";
 
 type TransferContext = {
   sessionId: string;
@@ -352,7 +353,7 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
                 onKeyDown={(e) => {
                   // Enter commits an IME candidate while composing, so a Chinese
                   // directory name would be navigated to half-typed.
-                  if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                  if (isImeComposing(e)) return;
                   if (e.key === "Enter") loadLocalDir(localPath);
                 }}
               />
@@ -395,7 +396,7 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
                 onChange={(e) => setRemoteView((current) => ({ ...current, sessionId: activeSessionId, path: e.target.value }))}
                 onKeyDown={(e) => {
                   // See the local path field.
-                  if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                  if (isImeComposing(e)) return;
                   if (e.key === "Enter") loadRemoteDir(remotePath);
                 }}
               />

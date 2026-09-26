@@ -1,6 +1,7 @@
 import clsx from "clsx";
 import { createPortal } from "react-dom";
 import { useEffect, useRef, useSyncExternalStore } from "react";
+import { isImeComposing } from "../../utils/ime";
 import {
   getActiveOverlayId,
   getOverlayLayer,
@@ -78,7 +79,12 @@ export function ModalShell({
     window.requestAnimationFrame(() => initial.focus());
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && dismissOnEscape) {
+      // Escape cancels an open input-method composition, and cancelling a
+      // candidate is routine while typing Chinese. Treating that keystroke as
+      // "close" dismissed the dialog and discarded what the user was still
+      // typing. Only the Escape branch is gated: Tab still runs the focus trap,
+      // because Tab during a composition commits it and should move on.
+      if (event.key === "Escape" && dismissOnEscape && !isImeComposing(event)) {
         event.preventDefault();
         event.stopPropagation();
         onCloseRef.current();

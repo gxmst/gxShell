@@ -1,9 +1,10 @@
 import type { types } from "../../wailsjs/go/models";
+import { isImeComposing } from "./ime";
 
 export type TerminalCompatibilityKey = "Backspace" | "Delete";
 
 export function terminalCompatibilityKey(event: KeyboardEvent): TerminalCompatibilityKey | null {
-  if (event.type !== "keydown" || event.isComposing || event.keyCode === 229
+  if (event.type !== "keydown" || isImeComposing(event)
     || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return null;
   return event.key === "Backspace" || event.key === "Delete" ? event.key : null;
 }

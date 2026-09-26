@@ -2,6 +2,7 @@ import { useState } from "react";
 import { KeyRound } from "lucide-react";
 import { DialogHeader, ModalShell } from "./ModalShell";
 import { t } from "../../i18n";
+import { isImeComposing } from "../../utils/ime";
 
 export type KiRequest = {
   requestId: string;
@@ -48,7 +49,7 @@ export function KeyboardInteractiveDialog({ request, language, onSubmit, onCance
               onKeyDown={(e) => {
                 // Enter commits an IME candidate while composing, so it must not
                 // submit the last prompt with the half-typed answer.
-                if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                if (isImeComposing(e)) return;
                 if (e.key === "Enter" && idx === request.prompts.length - 1) submit();
               }}
             />

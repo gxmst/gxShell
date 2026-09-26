@@ -3,6 +3,7 @@ import { Braces, Terminal } from "lucide-react";
 import { DialogHeader, ModalShell, Label } from "./ModalShell";
 import { fillPlaceholders } from "../../utils/commandVars";
 import { t } from "../../i18n";
+import { isImeComposing } from "../../utils/ime";
 
 // Prompts the user to fill each <name> placeholder in a command template before
 // it runs. Shows a live preview of the resolved command. Submits only when
@@ -46,7 +47,7 @@ export function CommandVarsDialog({
               onKeyDown={(e) => {
                 // Enter commits an IME candidate while composing, so it must not
                 // submit the dialog with the half-typed text.
-                if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                if (isImeComposing(e)) return;
                 if (e.key === "Enter" && allFilled) submit();
               }}
             />

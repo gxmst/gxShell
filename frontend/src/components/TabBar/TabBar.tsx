@@ -6,6 +6,7 @@ import { Grid2X2 } from "lucide-react";
 import { stateClass } from "../../utils/format";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
+import { isImeComposing } from "../../utils/ime";
 
 function tabContext(tab: Tab, profile?: types.Profile) {
   if (tab.type === "markdown") return tab.remotePath || tab.filePath || "";
@@ -61,7 +62,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
       }
     };
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
+      if (event.key !== "Escape" || isImeComposing(event) || event.defaultPrevented) return;
       event.preventDefault();
       const returnFocus = toolsMenuOpen ? toolsMenuButtonRef.current : tabsMenuOpen ? tabsMenuButtonRef.current : newMenuButtonRef.current;
       setNewMenuOpen(false);
@@ -79,7 +80,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
   }, [contextTabId, newMenuOpen, tabsMenuOpen, toolsMenuOpen]);
 
   const onTabsMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (isImeComposing(event)) return;
     const target = event.target as HTMLElement;
     const input = target instanceof HTMLInputElement;
     if (input && event.key === "Enter" && filteredTabs[0]) {
@@ -158,7 +159,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
   }, [onActive, tabs]);
 
   const onTabKeyDown = useCallback((event: React.KeyboardEvent, index: number) => {
-    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (isImeComposing(event)) return;
     let nextIndex = -1;
     if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
     if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;

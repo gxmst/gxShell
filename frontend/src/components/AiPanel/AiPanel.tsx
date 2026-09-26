@@ -10,6 +10,7 @@ import { writeClipboardText } from "../../utils/clipboard";
 import { sanitizeRenderedHtml } from "../../utils/sanitizeHtml";
 import { isRemoteSession } from "../../utils/sessionIdentity";
 import { Label } from "../modals/ModalShell";
+import { isImeComposing } from "../../utils/ime";
 
 type ToolCallData = {
   id: string;
@@ -639,6 +640,10 @@ export function AiPanel(props: {
   }, [activeSessionId, props.activeTabId, lang]);
 
   const onKeyDown = (event: React.KeyboardEvent) => {
+    // Enter sends, but it also commits an IME candidate while a composition is
+    // open -- which is how a pinyin user finishes a word, so sending there would
+    // deliver the half-typed text.
+    if (isImeComposing(event)) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       send();

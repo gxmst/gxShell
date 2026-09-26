@@ -31,6 +31,7 @@ import { DocumentConflictDialog } from '../modals/DocumentConflictDialog';
 import { findHeadingElement, headingSlugOf } from '../../utils/markdownHeadings';
 import { BrowserOpenURL } from '../../../wailsjs/runtime/runtime';
 import '../../styles/markdown-viewer.css';
+import { isImeComposing } from "../../utils/ime";
 
 // Text browsing and editing share a viewport renderer, loaded on demand.
 const SourceEditor = lazy(() => import('./SourceEditor'));
@@ -276,7 +277,7 @@ export default function MarkdownViewer({
       if (event.target instanceof Node && !appearanceRef.current?.contains(event.target)) setAppearanceOpen(false);
     };
     const escape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.isComposing) return;
+      if (event.key !== 'Escape' || isImeComposing(event)) return;
       event.preventDefault();
       event.stopPropagation();
       setAppearanceOpen(false);
@@ -861,7 +862,7 @@ export default function MarkdownViewer({
   useEffect(() => {
     if (!active) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.isComposing || e.keyCode === 229 || hasActiveOverlay()) return;
+      if (isImeComposing(e) || hasActiveOverlay()) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
         e.preventDefault();
         e.stopPropagation();
@@ -897,7 +898,7 @@ export default function MarkdownViewer({
   }, [active, compactReading, compactTocOpen, editing, pdfMode, virtualTextPreview, searchOpen, openSearch, closeSearch]);
 
   const onSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+    if (isImeComposing(e)) return;
     if (e.key === 'Enter') {
       e.preventDefault();
       if (e.shiftKey) goPrev();

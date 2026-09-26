@@ -5,6 +5,7 @@ import { t } from "../../i18n";
 import type { LangKey } from "../../i18n";
 import type { CliApprovalPanelItem, CliApprovalPanelRequest } from "../../types";
 import { splitRiskText } from "../CliApprovalQueue/riskText";
+import { isImeComposing } from "../../utils/ime";
 
 // The panel is the review surface for an external CLI or AI request. It exists
 // because the native MessageBox could not carry a review: it has no scrollbar,
@@ -95,7 +96,7 @@ export function CliApprovalPanel({ request, locale, onResolve }: {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing || event.keyCode === 229) return;
+      if (isImeComposing(event)) return;
 
       // Enter is the panel-wide "approve what is ticked" shortcut, but a
       // focused button owns Enter: pressing it on Deny must deny, on a group

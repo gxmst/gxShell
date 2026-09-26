@@ -2,6 +2,7 @@ import { useState } from "react";
 import { PencilLine } from "lucide-react";
 import { DialogHeader, ModalShell, Label } from "./ModalShell";
 import { t } from "../../i18n";
+import { isImeComposing } from "../../utils/ime";
 
 export function TextInputDialog({ title, label, initialValue = "", confirmText, locale = "en", onSubmit, onClose }: { title: string; label: string; initialValue?: string; confirmText?: string; locale?: string; onSubmit: (value: string) => void; onClose: () => void }) {
   const [value, setValue] = useState(initialValue);
@@ -17,7 +18,7 @@ export function TextInputDialog({ title, label, initialValue = "", confirmText, 
           onKeyDown={(e) => {
             // Enter picks the IME candidate while a composition is open, so
             // submitting here would send the half-typed pinyin.
-            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+            if (isImeComposing(e)) return;
             if (e.key === "Enter" && value.trim()) onSubmit(value.trim());
           }}
         />

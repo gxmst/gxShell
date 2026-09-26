@@ -3,6 +3,7 @@ import { KeyRound } from "lucide-react";
 import type { SecretRequest } from "../../types";
 import { DialogHeader, ModalShell, Label } from "./ModalShell";
 import { t } from "../../i18n";
+import { isImeComposing } from "../../utils/ime";
 
 export function SecretModal({ request, language, onSubmit, onClose }: { request: SecretRequest; language: string; onSubmit: (password: string, passphrase: string) => Promise<void>; onClose: () => void }) {
   const [password, setPassword] = useState("");
@@ -30,14 +31,14 @@ export function SecretModal({ request, language, onSubmit, onClose }: { request:
           <input autoFocus className="input" disabled={submitting} type={show ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => {
             // A passphrase can contain non-ASCII characters; Enter commits an
             // IME candidate while composing and must not submit here.
-            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+            if (isImeComposing(e)) return;
             if (e.key === "Enter") submit();
           }} />
         </Label>
       ) : (
         <Label text={t(language, "passphrase")}>
           <input autoFocus className="input" disabled={submitting} type={show ? "text" : "password"} value={passphrase} onChange={(e) => setPassphrase(e.target.value)} onKeyDown={(e) => {
-            if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+            if (isImeComposing(e)) return;
             if (e.key === "Enter") submit();
           }} />
         </Label>

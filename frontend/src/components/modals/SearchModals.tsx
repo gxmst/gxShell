@@ -20,6 +20,7 @@ import {
   type PaletteResultLike,
 } from "../../utils/paletteSearch";
 import { ModalShell } from "./ModalShell";
+import { isImeComposing } from "../../utils/ime";
 
 export type CommandPaletteResult = GlobalSearchResult & Partial<Omit<PaletteResultLike, "type" | "title" | "action">>;
 
@@ -88,6 +89,11 @@ export function GlobalSearchModal({
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // Enter runs the highlighted command and Escape closes the palette; while a
+    // composition is open both belong to the IME (Enter picks the candidate,
+    // Escape cancels it). Without this, typing a Chinese query and pressing
+    // Enter to commit the word would execute whatever was highlighted.
+    if (isImeComposing(e)) return;
     if (e.key === "Escape") {
       e.preventDefault();
       onClose();
@@ -230,6 +236,9 @@ export function TerminalSearchModal({
             value={query}
             onChange={(e) => onQuery(e.target.value)}
             onKeyDown={(e) => {
+              // Enter steps to the next match and Escape closes the find bar;
+              // both belong to the IME while a composition is open.
+              if (isImeComposing(e)) return;
               if (e.key === "Enter") {
                 e.preventDefault();
                 if (e.shiftKey) onPrev();

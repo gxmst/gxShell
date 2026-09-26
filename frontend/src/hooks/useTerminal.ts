@@ -19,6 +19,7 @@ import { hasActiveOverlay } from "../utils/overlayManager";
 import { parseOsc7Directory, type TerminalDirectory } from "../utils/terminalCwd";
 import { splitTerminalInput, terminalCompatibilityKey, terminalKeyData, type TerminalCompatibilityKey } from "../utils/terminalInput";
 import { createWebglBudget, notifyWebglOnce } from "../utils/terminalWebgl";
+import { isImeComposing } from "../utils/ime";
 
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 // requestAnimationFrame does not fire while the window is minimized/hidden in
@@ -437,7 +438,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         // Keep Ctrl+C ergonomic without stealing SIGINT: copy only when xterm has
         // an actual selection; otherwise let the terminal receive the key.
         term.attachCustomKeyEventHandler((event) => {
-          if (event.isComposing || event.keyCode === 229) return true;
+          if (isImeComposing(event)) return true;
           const key = terminalCompatibilityKey(event);
           if (key) {
             event.preventDefault();
