@@ -21,7 +21,6 @@ export function UnsavedChangesDialog({
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const zh = locale === "zh-CN";
 
   const save = async () => {
     if (saving) return;
@@ -30,7 +29,7 @@ export function UnsavedChangesDialog({
     try {
       const ok = await onSave();
       if (!ok) {
-        setError(zh ? "保存失败，修改仍保留。" : "Save failed. Your changes are still here.");
+        setError(t(locale, "unsavedSaveFailed"));
         setSaving(false);
       }
     } catch (err) {
@@ -40,20 +39,20 @@ export function UnsavedChangesDialog({
   };
 
   return (
-    <ModalShell onClose={() => { if (!saving) onCancel(); }} compact ariaLabel={zh ? "保存更改？" : "Save changes?"}>
+    <ModalShell onClose={() => { if (!saving) onCancel(); }} compact ariaLabel={t(locale, "unsavedSaveTitle")}>
       <DialogHeader
         icon={<FileWarning size={15} />}
-        title={zh ? "保存更改？" : "Save changes?"}
+        title={t(locale, "unsavedSaveTitle")}
         description={title}
       />
       <div className="dialog-body-copy">
-        {body || (zh ? "此文档有尚未保存的修改。" : "This document has unsaved changes.")}
+        {body || t(locale, "unsavedBody")}
       </div>
       {error && <div className="profile-modal-error" role="alert">{error}</div>}
       <div className="dialog-footer">
         <button className="btn-secondary" disabled={saving} onClick={onCancel}>{t(locale, "cancel")}</button>
-        <button className="btn-danger" disabled={saving} onClick={onDiscard}>{zh ? "不保存" : "Discard"}</button>
-        <button className="btn-primary" disabled={saving} onClick={save}><Save size={13} /> {saving ? (zh ? "保存中…" : "Saving…") : t(locale, "save")}</button>
+        <button className="btn-danger" disabled={saving} onClick={onDiscard}>{t(locale, "discardNoSave")}</button>
+        <button className="btn-primary" disabled={saving} onClick={save}><Save size={13} /> {saving ? t(locale, "savingEllipsis") : t(locale, "save")}</button>
       </div>
     </ModalShell>
   );
