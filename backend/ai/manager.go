@@ -365,7 +365,11 @@ func (m *Manager) ChatWithContext(ctx context.Context, req ChatRequest, onChunk 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		// Bounded like every other error body: a failing or hostile endpoint can
+		// answer with an unbounded stream, and the request window here is minutes
+		// long. io.ReadAll would buffer it all before the error is even built, and
+		// an OOM is not something the stream recovery can catch.
+		respBody, _ := readLimited(resp.Body, maxErrorBodyBytes)
 		// Summarize only the message shape (role + counts), never the content.
 		// Message bodies and tool output can contain terminal data or secrets, and
 		// this error is surfaced to the frontend and written to the app log.
