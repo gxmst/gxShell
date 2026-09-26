@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ConnectLocal } from "../../wailsjs/go/app/App";
 import { types } from "../../wailsjs/go/models";
 import { useMarkdownTabs } from "./useMarkdownTabs";
 import { restoreProfilesInBatches, useSessions } from "./useSessions";
@@ -776,5 +777,93 @@ describe("closeTab outcome", () => {
     expect(closed).toBe(true);
     expect(appMocks.disconnect).toHaveBeenCalledWith("session-1");
     expect(result.current.tabs).toHaveLength(0);
+  });
+});
+
+describe("useSessions notifications", () => {
+  beforeEach(() => {
+    const values = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, String(value)); },
+      removeItem: (key: string) => { values.delete(key); },
+      clear: () => { values.clear(); },
+      key: (index: number) => Array.from(values.keys())[index] ?? null,
+      get length() { return values.size; },
+    });
+    // Keep this describe self-contained: ListSessions() runs on mount and the
+    // mock is shared across describes, so a filtered run (no sibling beforeEach)
+    // would otherwise hand the hook `undefined`.
+    appMocks.listSessions.mockReset();
+    appMocks.listSessions.mockResolvedValue([]);
+    appMocks.reconnect.mockReset();
+    vi.mocked(ConnectLocal).mockReset();
+  });
+
+  // These notices used to be English string literals baked into the hook, so a
+  // zh-CN session saw English. Asserting the localized text (and explicitly not
+  // the English one) is what makes the wiring load-bearing: reverting the hook
+  // to a literal fails here even though the English wording is unchanged.
+  it("renders the already-connected notice in the requested locale", async () => {
+    const notify = vi.fn();
+    const profile = makeProfile("one");
+    const { result } = renderHook(() => useSessions({
+      profiles: [profile],
+      notify,
+      reload: vi.fn(async () => undefined),
+      disposeTerminal: vi.fn(),
+      restoreWorkspace: false,
+      language: "zh-CN",
+    }));
+
+    act(() => {
+      result.current.setTabs([{ id: "session-existing", profileId: profile.id, title: profile.name, state: "connected" }]);
+    });
+    await waitFor(() => expect(result.current.tabs[0]?.state).toBe("connected"));
+
+    await act(async () => result.current.connectProfile(profile));
+
+    expect(notify).toHaveBeenCalledWith(`${profile.name}：已连接`, "info");
+    expect(notify).not.toHaveBeenCalledWith(`${profile.name}: already connected`, "info");
+  });
+
+  it("renders the local-terminal notice in the requested locale", async () => {
+    const notify = vi.fn();
+    vi.mocked(ConnectLocal).mockResolvedValue(new types.SessionInfo({ id: "local-1", profileId: "", name: "Local", state: "connected" }));
+    const { result } = renderHook(() => useSessions({
+      profiles: [],
+      notify,
+      reload: vi.fn(async () => undefined),
+      disposeTerminal: vi.fn(),
+      restoreWorkspace: false,
+      language: "zh-CN",
+    }));
+
+    await act(async () => { await result.current.connectLocal(); });
+
+    expect(notify).toHaveBeenCalledWith("正在打开本地终端…", "info");
+  });
+
+  it("renders the reconnect-failure notice in the requested locale", async () => {
+    const notify = vi.fn();
+    const profile = makeProfile("one");
+    appMocks.reconnect.mockRejectedValue(new Error("kex failed"));
+    const { result } = renderHook(() => useSessions({
+      profiles: [profile],
+      notify,
+      reload: vi.fn(async () => undefined),
+      disposeTerminal: vi.fn(),
+      restoreWorkspace: false,
+      language: "zh-CN",
+    }));
+
+    act(() => {
+      result.current.setTabs([{ id: "session-1", profileId: profile.id, title: profile.name, state: "disconnected" }]);
+    });
+    await waitFor(() => expect(result.current.tabs[0]?.state).toBe("disconnected"));
+
+    await act(async () => { await result.current.reconnectTab(result.current.tabs[0]); });
+
+    expect(notify).toHaveBeenCalledWith(`${profile.name}：重连失败：Error: kex failed`, "error");
   });
 });

@@ -5,7 +5,7 @@ import { types } from "../../wailsjs/go/models";
 import type { SecretRequest, Tab } from "../types";
 import { needsSecret, tabTitle } from "../utils/format";
 import { sameTerminal, terminalKey } from "../utils/sessionIdentity";
-import { t } from "../i18n";
+import { t, type LangKey } from "../i18n";
 
 type UseSessionsOptions = {
   profiles: types.Profile[];
@@ -169,6 +169,11 @@ export function useSessions(options: UseSessionsOptions) {
 
   const notifyRef = useRef(options.notify);
   notifyRef.current = options.notify;
+  // Every notification in this hook is user-facing. Resolve the locale once so
+  // the callbacks below read as a key plus its parameters instead of repeating
+  // the `options.language || "en"` fallback (and the zh/en ternaries) inline.
+  const language = options.language || "en";
+  const tr = useCallback((key: LangKey, params?: Record<string, string>) => t(language, key, params), [language]);
   const reloadRef = useRef(options.reload);
   reloadRef.current = options.reload;
   const disposeTerminalRef = useRef(options.disposeTerminal);
@@ -422,7 +427,7 @@ export function useSessions(options: UseSessionsOptions) {
   const openSession = useCallback(async (profile: types.Profile, password: string, passphrase: string, sessionOptions: SessionOpenOptions = {}) => {
     const request = { ...sessionOptions, focusRevision: sessionOptions.preserveActiveTab ? undefined : sessionOptions.focusRevision ?? beginFocusRequest() };
     const key = terminalKey(profile.id, request.instanceId);
-    notifyRef.current(`Connecting to ${profile.name || profile.host}...`, "info");
+    notifyRef.current(tr("connectingTo", { name: profile.name || profile.host }), "info");
     creatingProfiles.current.add(key);
     if (sessionOptions.preserveActiveTab) preserveFocusProfiles.current.add(key);
     if (request.focusRevision !== undefined) connectionFocus.current.set(key, request.focusRevision);
@@ -439,26 +444,24 @@ export function useSessions(options: UseSessionsOptions) {
       preserveFocusProfiles.current.delete(key);
       connectionFocus.current.delete(key);
     }
-  }, [appendSession, beginFocusRequest]);
+  }, [appendSession, beginFocusRequest, tr]);
 
   const connectWorkspaceProfile = useCallback(async (profile: types.Profile, password = "", passphrase = "", instanceId = "") => {
     const existing = tabsRef.current.find((tab) => tab.type !== "markdown" && sameTerminal(tab, profile.id, instanceId) && isSessionBusy(tab.state));
     if (existing) return existing.id;
-    if (creatingProfiles.current.has(terminalKey(profile.id, instanceId))) throw new Error("Connection already in progress");
+    if (creatingProfiles.current.has(terminalKey(profile.id, instanceId))) throw new Error(tr("connectionInProgress", { name: profile.name || profile.host }));
     return openSession(profile, password, passphrase, { preserveActiveTab: true, instanceId });
-  }, [openSession]);
+  }, [openSession, tr]);
 
   const connectProfile = useCallback(async (profile: types.Profile, sessionOptions: SessionOpenOptions = {}) => {
     if (creatingProfiles.current.has(terminalKey(profile.id, sessionOptions.instanceId))) {
-      notifyRef.current(`${profile.name || profile.host}: connection already in progress`, "info");
+      notifyRef.current(tr("connectionInProgress", { name: profile.name || profile.host }), "info");
       return;
     }
     const existing = tabsRef.current.find((tab) => tab.type !== "markdown" && sameTerminal(tab, profile.id, sessionOptions.instanceId) && isSessionBusy(tab.state));
     if (existing) {
       if (!sessionOptions.preserveActiveTab) setActiveTab(existing.id);
-      notifyRef.current(existing.state !== "connected"
-        ? `${existing.title}: connection already in progress`
-        : `${existing.title}: already connected`, "info");
+      notifyRef.current(tr(existing.state !== "connected" ? "connectionInProgress" : "alreadyConnected", { name: existing.title }), "info");
       return;
     }
     if (needsSecret(profile)) {
@@ -479,7 +482,7 @@ export function useSessions(options: UseSessionsOptions) {
         notifyRef.current(`${profile.name || profile.host}: ${String(err)}`, "error");
       }
     }
-  }, [openSession, setActiveTab]);
+  }, [openSession, setActiveTab, tr]);
 
   useEffect(() => {
     if (!sessionsHydrated || workspaceRestoreStarted.current || options.restoreWorkspace === undefined) return;
@@ -503,18 +506,17 @@ export function useSessions(options: UseSessionsOptions) {
     const pending = matched.filter((item) => !alreadyLive.has(terminalKey(item.profile.id, item.instanceId)));
     const restorable = pending.filter((item) => !needsSecret(item.profile));
     const skipped = pending.length - restorable.length;
-    const zh = options.language === "zh-CN";
     if (skipped > 0) {
-      notifyRef.current(zh ? `${skipped} 个工作区连接需要重新输入凭据，未自动恢复` : `${skipped} workspace connection${skipped === 1 ? "" : "s"} need credentials and were not restored`, "info");
+      notifyRef.current(tr("workspaceNeedsCredentials", { count: String(skipped) }), "info");
     }
     if (restorable.length > 0) {
-      notifyRef.current(zh ? `正在恢复 ${restorable.length} 个工作区连接` : `Restoring ${restorable.length} workspace connection${restorable.length === 1 ? "" : "s"}`, "info");
+      notifyRef.current(tr("workspaceRestoring", { count: String(restorable.length) }), "info");
     }
     restoreProfilesInBatches(restorable, (item) => connectProfile(item.profile, { preserveActiveTab: true, instanceId: item.instanceId })).finally(() => {
       pendingWorkspaceActiveProfile.current = workspaceProfiles.current.activeProfileId;
       setWorkspaceRestoreReady(true);
     });
-  }, [connectProfile, options.language, options.profiles, options.restoreWorkspace, sessionsHydrated]);
+  }, [connectProfile, tr, options.profiles, options.restoreWorkspace, sessionsHydrated]);
 
   useEffect(() => {
     if (!workspaceRestoreReady || !pendingWorkspaceActiveProfile.current) return;
@@ -559,7 +561,7 @@ export function useSessions(options: UseSessionsOptions) {
     const staleTab = tabsRef.current.find((tab) => tab.type !== "markdown" && tab.profileId === profile.id && (tab.state === "error" || tab.state === "disconnected"));
     if (!staleTab) creatingProfiles.current.add(profile.id);
     connectionFocus.current.set(profile.id, revision);
-    notifyRef.current(`Connecting to ${profile.name || profile.host}...`, "info");
+    notifyRef.current(tr("connectingTo", { name: profile.name || profile.host }), "info");
     try {
       const info = await ConnectQuick(profile, 120, 36);
       rememberSessionInfo(info);
@@ -574,7 +576,7 @@ export function useSessions(options: UseSessionsOptions) {
       creatingProfiles.current.delete(profile.id);
       connectionFocus.current.delete(profile.id);
     }
-  }, [appendSession, rememberSessionInfo, beginFocusRequest, finishFocusRequest]);
+  }, [appendSession, rememberSessionInfo, beginFocusRequest, finishFocusRequest, tr]);
 
   const replaceReconnectedTab = useCallback((oldID: string, info: types.SessionInfo) => {
     // A reconnect answered with the same session id means the backend reused a
@@ -597,12 +599,12 @@ export function useSessions(options: UseSessionsOptions) {
 
   const connectLocal = useCallback(async () => {
     const revision = beginFocusRequest();
-    notifyRef.current("Opening local terminal...", "info");
+    notifyRef.current(tr("openingLocalTerminal"), "info");
     const info = await ConnectLocal(120, 36);
     const runtime = rememberSessionInfo(info);
     setTabs((items) => [...items, { id: info.id, ...runtime, profileId: "", title: info.name || "Local Terminal", state: info.state, local: true }]);
     finishFocusRequest(info.id, revision);
-  }, [rememberSessionInfo, beginFocusRequest, finishFocusRequest]);
+  }, [rememberSessionInfo, beginFocusRequest, finishFocusRequest, tr]);
 
   const reopenClosedTab = useCallback(async () => {
     const record = closedTabs.current[0];
@@ -628,7 +630,7 @@ export function useSessions(options: UseSessionsOptions) {
     const profile = profilesRef.current.find((item) => item.id === tab.profileId);
     const quickProfile = record.quickProfile;
     if (!profile && !quickProfile) {
-      notifyRef.current("The closed connection profile is no longer available", "error");
+      notifyRef.current(tr("closedProfileUnavailable"), "error");
       return false;
     }
     const target = quickProfile || profile!;
@@ -651,7 +653,7 @@ export function useSessions(options: UseSessionsOptions) {
       notifyRef.current(String(err), "error");
       return false;
     }
-  }, [appendSession, openSession, rememberSessionInfo, beginFocusRequest, finishFocusRequest]);
+  }, [appendSession, openSession, rememberSessionInfo, beginFocusRequest, finishFocusRequest, tr]);
 
   const reconnectTab = useCallback(async (tab: Tab) => {
     setActiveTab(tab.id);
@@ -663,7 +665,7 @@ export function useSessions(options: UseSessionsOptions) {
     }
     const quickProfile = quickProfiles.current.get(tab.profileId);
     if (quickProfile) {
-      notifyRef.current(`Reconnecting to ${tab.title}...`, "info");
+      notifyRef.current(tr("reconnectingTo", { name: tab.title }), "info");
       setTabs((items) => items.map((item) => item.id === tab.id ? { ...item, state: "reconnecting", error: undefined } : item));
       try {
         // Drop the current transport first. The backend hands a caller the
@@ -684,7 +686,7 @@ export function useSessions(options: UseSessionsOptions) {
         userClosing.current.delete(tab.id);
         const message = String(err);
         setTabs((items) => items.map((item) => item.id === tab.id ? { ...item, state: "error", error: message } : item));
-        notifyRef.current(`${tab.title}: reconnect failed: ${message}`, "error");
+        notifyRef.current(tr("reconnectFailed", { name: tab.title, message }), "error");
       }
       return;
     }
@@ -693,7 +695,7 @@ export function useSessions(options: UseSessionsOptions) {
       setSecretRequest({ profile, mode: "reconnect", sessionId: tab.id, instanceId: tab.instanceId });
       return;
     }
-    notifyRef.current(`Reconnecting to ${tab.title}...`, "info");
+    notifyRef.current(tr("reconnectingTo", { name: tab.title }), "info");
     setTabs((items) => items.map((item) => item.id === tab.id ? { ...item, state: "reconnecting", error: undefined } : item));
     try {
       let info: types.SessionInfo;
@@ -714,9 +716,9 @@ export function useSessions(options: UseSessionsOptions) {
       userClosing.current.delete(tab.id);
       const message = String(err);
       setTabs((items) => items.map((item) => item.id === tab.id ? { ...item, state: "error", error: message } : item));
-      notifyRef.current(`${tab.title}: reconnect failed: ${message}`, "error");
+      notifyRef.current(tr("reconnectFailed", { name: tab.title, message }), "error");
     }
-  }, [connectLocal, replaceReconnectedTab, clearAutoReconnect, setActiveTab]);
+  }, [connectLocal, replaceReconnectedTab, clearAutoReconnect, setActiveTab, tr]);
 
   const submitSecret = useCallback(async (request: SecretRequest, password: string, passphrase: string) => {
     if (request.mode === "connect") {
@@ -742,10 +744,10 @@ export function useSessions(options: UseSessionsOptions) {
       await reloadRef.current();
     } catch (err) {
       userClosing.current.delete(request.sessionId);
-      notifyRef.current(`${request.profile.name || request.profile.host}: reconnect failed: ${String(err)}`, "error");
+      notifyRef.current(tr("reconnectFailed", { name: request.profile.name || request.profile.host, message: String(err) }), "error");
 	  throw err;
     }
-  }, [openSession, replaceReconnectedTab, setActiveTab]);
+  }, [openSession, replaceReconnectedTab, setActiveTab, tr]);
 
   const cancelSecretRequest = useCallback(() => {
     const request = secretRequest;
@@ -787,7 +789,7 @@ export function useSessions(options: UseSessionsOptions) {
     const prior = autoReconnect.current[tabId]?.attempts ?? 0;
     if (prior >= AUTO_RECONNECT_MAX) {
       autoReconnect.current[tabId] = { attempts: prior, timer: 0, gaveUp: true };
-      const message = t(options.language || "en", "autoReconnectGaveUp", { count: String(AUTO_RECONNECT_MAX) });
+      const message = tr("autoReconnectGaveUp", { count: String(AUTO_RECONNECT_MAX) });
       setTabs((items) => items.map((item) => item.id === tabId
         ? { ...item, state: "error", error: message }
         : item));
@@ -797,7 +799,7 @@ export function useSessions(options: UseSessionsOptions) {
     const attempt = prior;
     const delay = autoReconnectBackoffMs(attempt);
     setTabs((items) => items.map((item) => item.id === tabId ? { ...item, state: "reconnecting" } : item));
-    notifyRef.current(`${tab.title}: ${t(options.language || "en", "autoReconnectAttempt", { attempt: String(attempt + 1), count: String(AUTO_RECONNECT_MAX) })}`, "info");
+    notifyRef.current(`${tab.title}: ${tr("autoReconnectAttempt", { attempt: String(attempt + 1), count: String(AUTO_RECONNECT_MAX) })}`, "info");
 
     const timer = window.setTimeout(async () => {
       const attemptState = autoReconnect.current[tabId];
@@ -871,7 +873,7 @@ export function useSessions(options: UseSessionsOptions) {
     }, delay);
 
     autoReconnect.current[tabId] = { attempts: attempt, timer };
-  }, [clearAutoReconnect, discardUnclaimedSession, rememberSessionInfo, options.language]);
+  }, [clearAutoReconnect, discardUnclaimedSession, rememberSessionInfo, tr]);
 
   scheduleAutoReconnectRef.current = scheduleAutoReconnect;
 
