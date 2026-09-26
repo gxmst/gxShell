@@ -172,6 +172,26 @@ export function Sidebar(props: {
     if (props.drawer === "ai") setAiMounted(true);
   }, [props.drawer]);
 
+  // A panel's request outlives the panel. The drawers below are keyed by
+  // session, so switching hosts unmounts the old one - which is what keeps a
+  // late reply out of the new host's list - but the closure that request was
+  // issued from still holds the props it was called with, and a toast is not
+  // React state: without this, a failure that arrived after the switch raised
+  // an unlabelled "container not found" while a different host was on screen.
+  // Compared against the session that owns the call, not the drawer, because
+  // moving between drawers of the same host is not a change of subject.
+  const activeSessionId = props.active?.id || "";
+  const { onNotify } = props;
+  const activeIdRef = useRef(activeSessionId);
+  activeIdRef.current = activeSessionId;
+  const notifyForSession = useMemo(() => {
+    const ownerId = activeSessionId;
+    return (text: string, tone?: Toast["tone"]) => {
+      if (ownerId !== activeIdRef.current) return;
+      onNotify(text, tone);
+    };
+  }, [activeSessionId, onNotify]);
+
   const lastConnectedValue = useCallback((profile: types.Profile) => {
     const value = Date.parse(String(profile.lastConnectedAt || ""));
     return Number.isFinite(value) && value > Date.UTC(1970, 0, 1) ? value : 0;
@@ -595,14 +615,14 @@ export function Sidebar(props: {
                   Remounting per session removes that whole class of leak. */}
               <div className="tool-panel-body" key={`${props.drawer}:${props.active?.id || ""}`}>
                 {props.drawer === "commands" && <CommandPanel commands={props.commands} tabs={props.tabs} active={props.active} locale={lang} onRun={props.onRunCommand} onRunInSession={props.onRunCommandInSession} onRunAll={props.onRunCommandAll} onEdit={props.onEditCommand} onDelete={props.onDeleteCommand} onNew={props.onNewCommand} />}
-                {props.drawer === "tunnels" && <TunnelPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
+                {props.drawer === "tunnels" && <TunnelPanel active={props.active} locale={lang} onNotify={notifyForSession} />}
                 {props.drawer === "logs" && <LogsPanel locale={lang} onOpenLog={props.onOpenLog} activities={props.activityHistory || []} />}
-                {props.drawer === "containers" && <ContainerPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
-                {props.drawer === "services" && <ServicePanel active={props.active} locale={lang} onNotify={props.onNotify} />}
-                {props.drawer === "firewall" && <FirewallPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
-                {props.drawer === "cron" && <CronPanel active={props.active} locale={lang} onNotify={props.onNotify} />}
-                {props.drawer === "websites" && <WebsitePanel active={props.active} locale={lang} onNotify={props.onNotify} />}
-                {props.drawer === "recordings" && <RecordingsPanel active={props.active} locale={lang} onNotify={props.onNotify} settings={props.settings} />}
+                {props.drawer === "containers" && <ContainerPanel active={props.active} locale={lang} onNotify={notifyForSession} />}
+                {props.drawer === "services" && <ServicePanel active={props.active} locale={lang} onNotify={notifyForSession} />}
+                {props.drawer === "firewall" && <FirewallPanel active={props.active} locale={lang} onNotify={notifyForSession} />}
+                {props.drawer === "cron" && <CronPanel active={props.active} locale={lang} onNotify={notifyForSession} />}
+                {props.drawer === "websites" && <WebsitePanel active={props.active} locale={lang} onNotify={notifyForSession} />}
+                {props.drawer === "recordings" && <RecordingsPanel active={props.active} locale={lang} onNotify={notifyForSession} settings={props.settings} />}
               </div>
             </>
           )}

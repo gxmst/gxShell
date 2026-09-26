@@ -1,19 +1,34 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { types } from "../../../wailsjs/go/models";
 import { Sidebar } from "./Sidebar";
+
+// The containers drawer is the cheapest way to reach a session-scoped panel:
+// it loads on mount and reports a failed load through onNotify.
+const appMocks = vi.hoisted(() => ({
+  listContainers: vi.fn(
+    (_sessionId: string, _showAll?: boolean): Promise<types.ContainerInfo[]> => Promise.resolve([]),
+  ),
+}));
 
 vi.mock("../../../wailsjs/go/app/App", () => ({
   PingHost: vi.fn(),
   TraceRoute: vi.fn(),
   UpdateSettings: vi.fn(() => Promise.resolve()),
   GetLatestMetrics: vi.fn(() => Promise.resolve(undefined)),
+  ListContainers: appMocks.listContainers,
 }));
 
 vi.mock("../../../wailsjs/runtime/runtime", () => ({
   EventsOn: vi.fn(() => () => undefined),
   EventsOff: vi.fn(),
 }));
+
+function deferred<T>() {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((_resolve, rejectPromise) => { reject = rejectPromise; });
+  return { promise, reject };
+}
 
 const profile = (id: string, extra: Partial<types.Profile> = {}) => new types.Profile({
   id,
@@ -254,5 +269,54 @@ describe("Sidebar shell", () => {
 
     // Status plus the singular session count, both from the same row.
     expect(container.querySelector('.server-avatar')).toHaveAttribute("title", "已连接 · 1 个会话");
+  });
+});
+
+describe("Sidebar notifications from a session-scoped panel", () => {
+  const sshTab = (id: string) => ({ id, profileId: `profile-${id}`, title: id, state: "connected", type: "ssh" }) as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    appMocks.listContainers.mockImplementation(() => Promise.resolve([]));
+  });
+
+  /** Mounts the containers drawer for host A and waits for its load to start. */
+  async function openContainers(load: { promise: Promise<types.ContainerInfo[]> }, onNotify: (text: string) => void) {
+    appMocks.listContainers.mockImplementation((sessionId: string) => (
+      sessionId === "host-a" ? load.promise : Promise.resolve([])
+    ));
+    const rendered = renderSidebar({ drawer: "containers", active: sshTab("host-a"), onNotify });
+    // The panel is lazily imported, so the request only exists after the
+    // Suspense boundary resolves - asserting it here keeps the test below from
+    // passing because no request was ever made.
+    await waitFor(() => {
+      expect(appMocks.listContainers.mock.calls.some(([id]) => id === "host-a")).toBe(true);
+    });
+    return rendered;
+  }
+
+  it("reports a failed load while that panel's host is still the one on screen", async () => {
+    const load = deferred<types.ContainerInfo[]>();
+    const onNotify = vi.fn();
+    await openContainers(load, onNotify);
+
+    await act(async () => { load.reject(new Error("docker is not running")); });
+
+    expect(onNotify).toHaveBeenCalledWith(expect.stringContaining("docker is not running"), "error");
+  });
+
+  it("stays quiet when the reply arrives after the user left that host", async () => {
+    // The panel is remounted per session, which is what keeps a late reply out
+    // of the new host's list - but the closure that issued the request still
+    // holds the onNotify it was given, and a toast is not React state. Host A's
+    // failure used to surface over host B with nothing naming the host.
+    const load = deferred<types.ContainerInfo[]>();
+    const onNotify = vi.fn();
+    const { rerender, props } = await openContainers(load, onNotify);
+
+    rerender(<Sidebar {...props} active={sshTab("host-b")} />);
+    await act(async () => { load.reject(new Error("docker is not running")); });
+
+    expect(onNotify).not.toHaveBeenCalled();
   });
 });
