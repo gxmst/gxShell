@@ -64,7 +64,6 @@ function SettingsToggle({ checked, label, hint, onChange }: { checked: boolean; 
 
 export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir, onNotify, onDirtyChange, onExportBackup, onImportBackup }: { settings: types.AppSettings; language: string; onSave: (settings: types.AppSettings) => void | Promise<void>; onOpenData: () => void; dataDir: string; onNotify?: (text: string, tone?: "info" | "error" | "success") => void; onDirtyChange?: (dirty: boolean, save: () => Promise<boolean>) => void; onExportBackup?: () => void; onImportBackup?: () => void }) {
   const lang = language;
-  const zh = lang === "zh-CN";
   const [draft, setDraft] = useState(new types.AppSettings(settings));
   const [settingsQuery, setSettingsQuery] = useState("");
   const settingsPageRef = useRef<HTMLDivElement>(null);
@@ -106,7 +105,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
   // prompt can keep itself open on failure instead of discarding the edits.
   const commit = useCallback(async () => {
     if (!dirty) return true;
-    const ruleError = (draft.highlightRules || []).map(highlightRuleError).find(Boolean);
+    const ruleError = (draft.highlightRules || []).map((rule) => highlightRuleError(rule, lang)).find(Boolean);
     if (ruleError) { onNotify?.(ruleError, "error"); return false; }
     try {
       await onSave(normalizedDraft);
@@ -115,7 +114,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
       onNotify?.(String(err), "error");
       return false;
     }
-  }, [dirty, draft.highlightRules, normalizedDraft, onSave, onNotify]);
+  }, [dirty, draft.highlightRules, lang, normalizedDraft, onSave, onNotify]);
 
   // Publish the dirty state upward so closing or switching the drawer can stop
   // and ask instead of silently dropping the edits. The save closure is passed
@@ -207,11 +206,11 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
         <div className="settings-hero-top">
           <div className="settings-hero-icon"><Settings2 size={15} /></div>
           <div className="settings-hero-heading">
-            <div className="settings-hero-title">{zh ? "偏好设置" : "Preferences"}</div>
+            <div className="settings-hero-title">{t(lang, "settingsPreferences")}</div>
             <div className="settings-hero-subtitle">
               {dirty
                 ? <span className="settings-dirty-note">{t(lang, "unsavedChangesHint")}</span>
-                : (zh ? "调整外观、终端行为和本地集成" : "Tune appearance, terminal behavior and local integrations")}
+                : t(lang, "settingsHeroHint")}
             </div>
           </div>
           <button className={dirty ? "btn-primary settings-save settings-save-dirty" : "btn-primary settings-save"} disabled={!dirty} onClick={() => void commit()} title="Ctrl+S">
@@ -237,7 +236,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
       </header>
 
       <div className="settings-sections">
-        <SettingsSection icon={<Palette size={15} />} title={zh ? "外观" : "Appearance"} description={zh ? "应用主题、语言和整体视觉风格" : "App theme, language and visual style"}>
+        <SettingsSection icon={<Palette size={15} />} title={t(lang, "settingsAppearance")} description={t(lang, "settingsAppearanceHint")}>
           <div className="settings-grid">
             <SettingsField label={t(lang, "lang")}>
               <select className="input compact-input" value={draft.language || "en"} onChange={(event) => update({ language: event.target.value })}><option value="en">English</option><option value="zh-CN">简体中文</option></select>
@@ -260,7 +259,7 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
           </div>
         </SettingsSection>
 
-        <SettingsSection icon={<TerminalSquare size={15} />} title={zh ? "终端" : "Terminal"} description={zh ? "字体、颜色和输出显示方式" : "Typography, colors and output rendering"}>
+        <SettingsSection icon={<TerminalSquare size={15} />} title={t(lang, "settingsTerminal")} description={t(lang, "settingsTerminalHint")}>
           <div className="settings-grid">
             <SettingsField label={t(lang, "termTheme")}><select className="input compact-input" value={draft.terminal.themeName} onChange={(event) => updateTerm({ themeName: event.target.value })}>{Object.keys(terminalThemes).map((theme) => <option key={theme} value={theme}>{themeDisplayName(theme, lang)}</option>)}</select></SettingsField>
             <SettingsField label={t(lang, "size")}><input className="input compact-input" type="number" min={9} max={30} value={draft.terminal.fontSize} onChange={(event) => { const value = event.currentTarget.valueAsNumber; if (Number.isFinite(value)) updateTerm({ fontSize: value }); }} onBlur={() => updateTerm({ fontSize: normalizeFontSize(draft.terminal.fontSize) })} /></SettingsField>
@@ -303,17 +302,17 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
             </SettingsField>
             <SettingsField label={t(lang, "font")} wide><select className="input compact-input" value={draft.terminal.fontFamily} onChange={(event) => updateTerm({ fontFamily: event.target.value })}>{fontPresets.map((font) => <option key={font} value={font}>{font.split(",")[0].trim()}</option>)}</select></SettingsField>
             <SettingsField label={t(lang, "highlighting")} wide><select className="input compact-input" value={draft.highlightLevel || "off"} onChange={(event) => update({ highlightLevel: event.target.value })}><option value="off">{t(lang, "highlightOff")}</option><option value="basic">{t(lang, "highlightBasic")}</option><option value="full">{t(lang, "highlightFull")}</option></select></SettingsField>
-            <TerminalCompatibilityFields value={draft.terminal} onChange={updateTerm} zh={zh} />
+            <TerminalCompatibilityFields value={draft.terminal} onChange={updateTerm} locale={lang} />
             <SettingsField
-              label={zh ? "本地 Shell" : "Local shell"}
-              hint={zh ? "留空或填写 auto 自动选择；也可填写 pwsh.exe、cmd.exe、wsl.exe 或完整路径。下次新建本地终端生效。" : "Leave blank or use auto, or enter pwsh.exe, cmd.exe, wsl.exe, or a full executable path. Applies to new local terminals."}
+              label={t(lang, "settingsLocalShell")}
+              hint={t(lang, "settingsLocalShellHint")}
               wide
             >
               <input className="input compact-input" value={draft.terminal.localShell || ""} placeholder="auto" onChange={(event) => updateTerm({ localShell: event.target.value })} />
             </SettingsField>
             <SettingsField
-              label={zh ? "本地终端起始目录" : "Local start directory"}
-              hint={zh ? "留空时使用用户主目录；支持 ~ 和环境变量。" : "Uses your home directory when blank; supports ~ and environment variables."}
+              label={t(lang, "settingsLocalStartDir")}
+              hint={t(lang, "settingsLocalStartDirHint")}
               wide
             >
               <input className="input compact-input" value={draft.terminal.localStartDirectory || ""} placeholder="~" onChange={(event) => updateTerm({ localStartDirectory: event.target.value })} />
@@ -321,12 +320,12 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
           </div>
           <SettingsToggle checked={draft.terminal.cursorBlink} onChange={(checked) => updateTerm({ cursorBlink: checked })} label={t(lang, "cursorBlinkLabel")} />
           <SettingsToggle checked={draft.smartHighlight !== false} onChange={(checked) => update({ smartHighlight: checked })} label={t(lang, "clickableLinks")} hint={t(lang, "clickableLinksHint")} />
-          <HighlightRulesEditor rules={draft.highlightRules || []} onChange={(highlightRules) => update({ highlightRules })} zh={zh} />
-          <SessionLogFields value={draft.sessionLog || defaultSessionLog} onChange={(sessionLog) => update({ sessionLog })} zh={zh} />
+          <HighlightRulesEditor rules={draft.highlightRules || []} onChange={(highlightRules) => update({ highlightRules })} locale={lang} />
+          <SessionLogFields value={draft.sessionLog || defaultSessionLog} onChange={(sessionLog) => update({ sessionLog })} locale={lang} />
           <SessionLogRetentionFields value={draft.sessionLogRetention || defaultSessionLogRetention} onChange={(sessionLogRetention) => update({ sessionLogRetention })} language={lang} />
         </SettingsSection>
 
-        <SettingsSection icon={<Activity size={15} />} title={zh ? "连接与自动化" : "Connections & automation"} description={zh ? "监控频率、连接保护和 CLI 接入" : "Monitoring cadence, connection safeguards and CLI access"}>
+        <SettingsSection icon={<Activity size={15} />} title={t(lang, "settingsConnections")} description={t(lang, "settingsConnectionsHint")}>
           <div className="settings-grid">
             <SettingsField label={t(lang, "monitorInterval")}><input className="input compact-input" type="number" min={1} value={draft.monitorIntervalSec} onChange={(event) => update({ monitorIntervalSec: Number(event.target.value) })} /></SettingsField>
             <SettingsField label={t(lang, "timeout")}><input className="input compact-input" type="number" min={1} value={draft.connectionTimeout} onChange={(event) => update({ connectionTimeout: Number(event.target.value) })} /></SettingsField>
@@ -336,13 +335,13 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
           <SettingsToggle
             checked={draft.restoreWorkspace || false}
             onChange={(checked) => update({ restoreWorkspace: checked })}
-            label={zh ? "恢复上次工作区" : "Restore last workspace"}
-            hint={zh ? "启动时重新连接上次仍打开的服务器；最多同时恢复 3 个连接。" : "Reconnect servers that were still open at exit, with at most 3 concurrent restores."}
+            label={t(lang, "settingsRestoreWorkspace")}
+            hint={t(lang, "settingsRestoreWorkspaceHint")}
           />
           <SettingsToggle checked={draft.cliServerEnabled ?? false} onChange={(checked) => update({ cliServerEnabled: checked })} label={t(lang, "cliServerEnabled")} hint={t(lang, "cliServerEnabledHint")} />
         </SettingsSection>
 
-        <SettingsSection icon={<ShieldCheck size={15} />} title={zh ? "系统集成" : "System integration"} description={zh ? "Windows 右键菜单和本地文件入口" : "Windows context menus and local file entry points"}>
+        <SettingsSection icon={<ShieldCheck size={15} />} title={t(lang, "settingsSystemIntegration")} description={t(lang, "settingsSystemIntegrationHint")}>
           <SettingsToggle checked={mdMenu} onChange={toggleMdMenu} label={t(lang, "mdContextMenu")} hint={t(lang, "mdContextMenuHint")} />
         </SettingsSection>
 
@@ -372,14 +371,14 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
           )}
         </SettingsSection>
 
-        <SettingsSection icon={<Database size={15} />} title={zh ? "数据与信任" : "Data & trust"} description={zh ? "日志、历史记录和已信任主机" : "Logs, command history and trusted hosts"}>
+        <SettingsSection icon={<Database size={15} />} title={t(lang, "settingsDataTrust")} description={t(lang, "settingsDataTrustHint")}>
           <div className="settings-action-grid">
             <button className="btn-secondary" onClick={onOpenData}><HardDrive size={13} /> {t(lang, "openData")}</button>
             <button className="btn-secondary" onClick={() => ExportHistory().catch(() => {})}><FileText size={13} /> {t(lang, "exportHistory")}</button>
-            {onExportBackup && <button className="btn-secondary" disabled={dirty} onClick={onExportBackup}><Download size={13} /> {zh ? "导出加密备份" : "Export encrypted backup"}</button>}
-            {onImportBackup && <button className="btn-secondary" disabled={dirty} onClick={onImportBackup}><RefreshCw size={13} /> {zh ? "导入加密备份" : "Import encrypted backup"}</button>}
+            {onExportBackup && <button className="btn-secondary" disabled={dirty} onClick={onExportBackup}><Download size={13} /> {t(lang, "settingsExportBackup")}</button>}
+            {onImportBackup && <button className="btn-secondary" disabled={dirty} onClick={onImportBackup}><RefreshCw size={13} /> {t(lang, "settingsImportBackup")}</button>}
           </div>
-          {dirty && (onExportBackup || onImportBackup) && <p className="backup-hint">{zh ? "请先保存当前设置，再进行备份或恢复。" : "Save your current settings before exporting or restoring a backup."}</p>}
+          {dirty && (onExportBackup || onImportBackup) && <p className="backup-hint">{t(lang, "settingsBackupSaveFirst")}</p>}
           <div className="settings-data-path"><HardDrive size={11} /><span>{dataDir}</span></div>
           <KnownHostsManager language={lang} onNotify={onNotify} />
         </SettingsSection>

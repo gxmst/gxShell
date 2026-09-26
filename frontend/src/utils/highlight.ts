@@ -1,14 +1,15 @@
 import { RE2JS } from "re2js";
 import type { types } from "../../wailsjs/go/models";
+import { t } from "../i18n";
 
 export type HighlightLevel = "off" | "basic" | "full";
 
-export function highlightRuleError(rule: types.HighlightRule): string {
-  if (!/^#[\da-f]{6}$/i.test(rule.color)) return "Invalid color";
-  if (rule.mode !== "regex" && rule.mode !== "literal") return "Invalid mode";
-  if (rule.pattern.length > 256) return "Maximum 256 characters";
+export function highlightRuleError(rule: types.HighlightRule, locale = "en"): string {
+  if (!/^#[\da-f]{6}$/i.test(rule.color)) return t(locale, "highlightInvalidColor");
+  if (rule.mode !== "regex" && rule.mode !== "literal") return t(locale, "highlightInvalidMode");
+  if (rule.pattern.length > 256) return t(locale, "highlightMaxChars");
   if (!rule.enabled) return "";
-  if (!rule.pattern) return "Pattern required";
+  if (!rule.pattern) return t(locale, "highlightPatternRequired");
   try { compileRule(rule); return ""; } catch (error) { return String(error); }
 }
 

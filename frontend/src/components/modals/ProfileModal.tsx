@@ -215,7 +215,7 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
       </div>}
       <div className="workbench-fields">
         <label className="check"><input type="checkbox" checked={!!draft.sessionLog} onChange={(e) => update({ sessionLog: e.target.checked ? { ...(props.sessionLogDefaults || defaultSessionLog) } : undefined })} />{lang === "zh-CN" ? "使用独立日志设置" : "Use profile logging preferences"}</label>
-        {draft.sessionLog && <SessionLogFields value={draft.sessionLog} onChange={(sessionLog) => update({ sessionLog })} zh={lang === "zh-CN"} />}
+        {draft.sessionLog && <SessionLogFields value={draft.sessionLog} onChange={(sessionLog) => update({ sessionLog })} locale={lang} />}
       </div>
       <div className="profile-modal-tunnel-header">
         <span className="profile-modal-tunnel-title">{t(lang, "tunnelRules")}</span>
