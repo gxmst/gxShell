@@ -64,4 +64,19 @@ describe("FloatingCard", () => {
 
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  // The case above is exactly why this one has to exist: the card deliberately
+  // claims Escape from an input inside itself, so a path being typed in Chinese
+  // would lose the whole card — and its draft — to the keystroke that cancels a
+  // candidate.
+  it("does not close when Escape cancels an IME composition in a card input", () => {
+    const onClose = vi.fn();
+    render(<FloatingCard onClose={onClose}><input data-testid="card-input" /></FloatingCard>);
+    const input = screen.getByTestId("card-input");
+    input.focus();
+
+    fireEvent.keyDown(input, { key: "Escape", isComposing: true });
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });

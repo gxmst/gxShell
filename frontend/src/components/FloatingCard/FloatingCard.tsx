@@ -1,6 +1,7 @@
 import { useRef, useState, useCallback, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
+import { isImeComposing } from "../../utils/ime";
 import { hasActiveOverlay } from "../../utils/overlayManager";
 
 // Open cards, oldest first. Every card listens for Escape on document, so an
@@ -132,6 +133,11 @@ export function FloatingCard({
     openCards.push(token);
     const handleEsc = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      // Escape cancels an open IME composition, and cancelling a candidate is
+      // routine while typing a path in Chinese. The focus test below deliberately
+      // claims Escape from an input inside this card, so without this the card
+      // would close and take the draft with it.
+      if (isImeComposing(e)) return;
       // A modal owns Escape while it is open, so Escape must not also dismiss
       // the card behind it — that is how pressing Escape in a transfer conflict
       // dialog used to close the whole transfer window.
