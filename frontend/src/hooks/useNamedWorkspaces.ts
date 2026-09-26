@@ -7,15 +7,21 @@ import { needsSecret } from "../utils/format";
 import { sameTerminal, terminalKey } from "../utils/sessionIdentity";
 import { applyWorkspace, captureWorkspace, parseWorkspaces, WORKSPACES_KEY, workspacePathKey, type NamedWorkspace } from "../utils/workspaces";
 import { applyBackupWorkspaces } from "../utils/backupWorkspaces";
+import { t, type LangKey } from "../i18n";
 
 type SecretPrompt = { profile: types.Profile; submit: (password: string, passphrase: string) => Promise<void>; cancel: () => void };
 
 export function useNamedWorkspaces(options: { sessions: ReturnType<typeof useSessions>; profiles: types.Profile[]; floating: string[]; split: SplitPane | null; setSplit: (split: SplitPane | null) => void; dock: (ids: string[]) => void; language: string }) {
-  const [initial] = useState(() => { try { return { items: parseWorkspaces(localStorage.getItem(WORKSPACES_KEY)), error: "" }; } catch (err) { return { items: [], error: String(err) }; } });
+  const [initial] = useState(() => { try { return { items: parseWorkspaces(localStorage.getItem(WORKSPACES_KEY), options.language || "en"), error: "" }; } catch (err) { return { items: [], error: String(err) }; } });
   const [workspaces, setWorkspaces] = useState<NamedWorkspace[]>(initial.items);
   const saved = useRef(workspaces);
   const current = useRef(options);
   current.current = options;
+  // Workspace operations report both notices and thrown errors to the user, so
+  // every message below has to follow the language setting. `tr` reads the ref
+  // rather than closing over `options`, which keeps its identity stable — the
+  // callbacks that use it are declared with `[]` or `[persist]` deps.
+  const tr = useCallback((key: LangKey, params?: Record<string, string>) => t(current.current.language || "en", key, params), []);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
   const [secretPrompt, setSecretPrompt] = useState<SecretPrompt | null>(null);
@@ -42,37 +48,37 @@ export function useNamedWorkspaces(options: { sessions: ReturnType<typeof useSes
   }, [pending]);
 
   const persist = useCallback((next: NamedWorkspace[]) => {
-    if (importing.current) throw new Error("Workspace import is in progress");
+    if (importing.current) throw new Error(tr("workspacesImportInProgress"));
     localStorage.setItem(WORKSPACES_KEY, JSON.stringify(next));
     saved.current = next;
     setWorkspaces(next);
-  }, []);
+  }, [tr]);
   const restoreBackup = useCallback(async (previous: string | null, next: string, apply: () => Promise<void>) => {
-    if (running.current || importing.current) throw new Error("A workspace operation is already in progress");
+    if (running.current || importing.current) throw new Error(tr("workspacesBusy"));
     importing.current = true;
     setBusy(true);
     try {
-      const parsed = await applyBackupWorkspaces(previous, next, apply);
+      const parsed = await applyBackupWorkspaces(previous, next, apply, current.current.language || "en");
       saved.current = parsed;
       setWorkspaces(parsed);
     } finally {
       importing.current = false;
       setBusy(false);
     }
-  }, []);
+  }, [tr]);
   const snapshot = useCallback((name: string, id?: string) => {
     const o = current.current;
-    if (!id && saved.current.length >= 30) throw new Error("Maximum 30 workspaces");
-    if (saved.current.some((w) => w.id !== id && w.name.toLowerCase() === name.trim().toLowerCase())) throw new Error("Workspace name already exists");
-    const captured = captureWorkspace(name, o.sessions.tabs.filter((tab) => !o.floating.includes(tab.id)), o.profiles, o.sessions.activeTab, o.split);
+    if (!id && saved.current.length >= 30) throw new Error(tr("workspacesLimit", { count: "30" }));
+    if (saved.current.some((w) => w.id !== id && w.name.toLowerCase() === name.trim().toLowerCase())) throw new Error(tr("workspacesNameExists"));
+    const captured = captureWorkspace(name, o.sessions.tabs.filter((tab) => !o.floating.includes(tab.id)), o.profiles, o.sessions.activeTab, o.split, o.language || "en");
     if (id) captured.id = id;
     persist([...saved.current.filter((w) => w.id !== id), captured]);
-  }, [persist]);
+  }, [persist, tr]);
   const rename = useCallback((id: string, name: string) => {
-    if (!name.trim() || name.trim().length > 64) throw new Error("Workspace name must contain 1 to 64 characters");
-    if (saved.current.some((w) => w.id !== id && w.name.toLowerCase() === name.trim().toLowerCase())) throw new Error("Workspace name already exists");
+    if (!name.trim() || name.trim().length > 64) throw new Error(tr("workspacesNameLength"));
+    if (saved.current.some((w) => w.id !== id && w.name.toLowerCase() === name.trim().toLowerCase())) throw new Error(tr("workspacesNameExists"));
     persist(saved.current.map((w) => w.id === id ? { ...w, name: name.trim(), updatedAt: Date.now() } : w));
-  }, [persist]);
+  }, [persist, tr]);
   const remove = useCallback((id: string) => persist(saved.current.filter((w) => w.id !== id)), [persist]);
 
   const cancel = useCallback(() => {
@@ -97,13 +103,13 @@ export function useNamedWorkspaces(options: { sessions: ReturnType<typeof useSes
       if (paths.length) {
         try { granted = await RestoreTextFiles(paths) || []; } catch (err) { issues.push(String(err)); }
         for (const path of paths) {
-          if (!granted.some((p) => workspacePathKey(p) === workspacePathKey(path)) && !current.current.sessions.tabs.some((t) => t.filePath && workspacePathKey(t.filePath) === workspacePathKey(path))) issues.push(`${path}: ${current.current.language === "zh-CN" ? "文件不可用或需要重新授权" : "file unavailable or authorization required"}`);
+          if (!granted.some((p) => workspacePathKey(p) === workspacePathKey(path)) && !current.current.sessions.tabs.some((t) => t.filePath && workspacePathKey(t.filePath) === workspacePathKey(path))) issues.push(`${path}: ${tr("workspacesFileUnavailable")}`);
         }
       }
       for (const item of workspace.items.filter((i) => i.kind === "profile")) {
         if (token !== operation.current) break;
         const profile = current.current.profiles.find((p) => p.id === item.target);
-        if (!profile) { issues.push(`${item.title}: ${current.current.language === "zh-CN" ? "连接配置已不存在" : "profile no longer exists"}`); continue; }
+        if (!profile) { issues.push(`${item.title}: ${tr("workspacesProfileMissing")}`); continue; }
         setProgress(profile.name || profile.host);
         try {
           const existing = current.current.sessions.tabs.find((t) => t.type !== "markdown" && sameTerminal(t, profile.id, item.instanceId) && ["connected", "connecting", "restoring", "reconnecting"].includes(t.state));
@@ -119,7 +125,7 @@ export function useNamedWorkspaces(options: { sessions: ReturnType<typeof useSes
             });
           } else id = await current.current.sessions.connectWorkspaceProfile(profile, "", "", item.instanceId);
           if (id) connected.set(terminalKey(profile.id, item.instanceId), id);
-          else issues.push(`${item.title}: ${current.current.language === "zh-CN" ? "已跳过认证" : "authentication skipped"}`);
+          else issues.push(`${item.title}: ${tr("workspacesAuthSkipped")}`);
         } catch (err) { issues.push(`${item.title}: ${String(err)}`); }
       }
       if (token !== operation.current) return issues;
@@ -129,7 +135,7 @@ export function useNamedWorkspaces(options: { sessions: ReturnType<typeof useSes
       running.current = false;
       setBusy(false); setProgress("");
     }
-  }, []);
+  }, [tr]);
 
   return { workspaces, snapshot, rename, remove, restoreBackup, open, cancel, busy, progress, secretPrompt, storageError: initial.error };
 }

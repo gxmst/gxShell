@@ -3,13 +3,14 @@ import type { SplitPane, Tab } from "../types";
 import { isWindowsPlatform } from "./clipboard";
 import { clampSplitRatio, splitPaneIds } from "./splitPane";
 import { sameTerminal, terminalKey } from "./sessionIdentity";
+import { t } from "../i18n";
 
 export type WorkspaceItem = { key: string; kind: "profile" | "file"; target: string; instanceId?: string; title: string; pinned?: boolean; customTitle?: boolean };
 export type NamedWorkspace = { id: string; name: string; items: WorkspaceItem[]; active: string; layout: { keys: string[]; direction: SplitPane["direction"]; ratio: number; rowRatio: number } | null; updatedAt: number };
 export const WORKSPACES_KEY = "gx:namedWorkspaces:v1";
 export const workspacePathKey = (path: string) => { const normalized = path.replace(/\\/g, "/"); return isWindowsPlatform() ? normalized.toLowerCase() : normalized; };
 
-export function captureWorkspace(name: string, tabs: Tab[], profiles: types.Profile[], activeTab: string, split: SplitPane | null): NamedWorkspace {
+export function captureWorkspace(name: string, tabs: Tab[], profiles: types.Profile[], activeTab: string, split: SplitPane | null, locale = "en"): NamedWorkspace {
   const items: WorkspaceItem[] = [];
   const tabKeys = new Map<string, string>();
   for (const tab of tabs) {
@@ -20,17 +21,17 @@ export function captureWorkspace(name: string, tabs: Tab[], profiles: types.Prof
     tabKeys.set(tab.id, item.key);
     if (!items.some((i) => i.key === item.key)) items.push({ ...item, pinned: tab.pinned, customTitle: tab.customTitle });
   }
-  if (!name.trim() || name.trim().length > 64) throw new Error("Workspace name must contain 1 to 64 characters");
-  if (!items.length || items.length > 30) throw new Error("A workspace must contain 1 to 30 saved servers or local files");
+  if (!name.trim() || name.trim().length > 64) throw new Error(t(locale, "workspacesNameLength"));
+  if (!items.length || items.length > 30) throw new Error(t(locale, "workspacesNeedsItems"));
   const keys = splitPaneIds(split).map((id) => tabKeys.get(id) || "");
   const layout = split && keys.length >= 2 && keys.every(Boolean) && new Set(keys).size === keys.length
     ? { keys, direction: split.direction, ratio: clampSplitRatio(split.ratio), rowRatio: clampSplitRatio(split.rowRatio ?? 0.5) } : null;
   return { id: crypto.randomUUID(), name: name.trim(), items, active: tabKeys.get(activeTab) || items[0].key, layout, updatedAt: Date.now() };
 }
 
-export function parseWorkspaces(raw: string | null): NamedWorkspace[] {
+export function parseWorkspaces(raw: string | null, locale = "en"): NamedWorkspace[] {
   const data: unknown = JSON.parse(raw || "[]");
-  if (!Array.isArray(data)) throw new Error("Invalid workspace data");
+  if (!Array.isArray(data)) throw new Error(t(locale, "workspacesInvalidData"));
   const result: NamedWorkspace[] = [];
   for (const record of data.slice(0, 30)) {
     if (!record || typeof record.id !== "string" || typeof record.name !== "string" || !record.name.trim() || record.name.length > 64 || !Array.isArray(record.items)) continue;

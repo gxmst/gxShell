@@ -5,7 +5,7 @@ import { types } from "../../wailsjs/go/models";
 import type { SplitPane, Tab } from "../types";
 import { useSessions } from "./useSessions";
 import { useNamedWorkspaces } from "./useNamedWorkspaces";
-import { captureWorkspace } from "../utils/workspaces";
+import { captureWorkspace, WORKSPACES_KEY } from "../utils/workspaces";
 
 const bridge = vi.hoisted(() => ({ files: vi.fn(), connect: vi.fn(), events: new Map<string, (...args: any[]) => void>() }));
 vi.mock("../../wailsjs/go/app/App", () => ({ RestoreTextFiles: bridge.files, Connect: bridge.connect, ConnectWithSecrets: bridge.connect, ConnectTerminal: bridge.connect, ConnectQuick: vi.fn(), ConnectLocal: vi.fn(), Disconnect: vi.fn(), ListSessions: vi.fn(async () => []), Reconnect: vi.fn(), ReconnectWithSecrets: vi.fn(), StopMonitor: vi.fn() }));
@@ -102,5 +102,78 @@ describe("workspace restoration lifecycle", () => {
     await waitFor(() => expect(result.current.manager.busy).toBe(false));
     expect(result.current.sessions.activeTab).toBe("replacement-a");
     expect(result.current.split).toMatchObject({ left: "replacement-a", right: "session-b", ratio: 0.4 });
+  });
+});
+
+// These strings reach the user twice over: `open` returns them and
+// WorkspacesModal renders them in a role="alert" region, and the other
+// callbacks throw them into the same place. They used to be English literals
+// (or zh/en ternaries), so a zh-CN UI showed English. Asserting the localized
+// text is what keeps the wiring load-bearing — the English wording is
+// unchanged, so an English assertion would pass either way.
+function useZhHarness() {
+  const sessions = useSessions({ profiles, notify: vi.fn(), reload: vi.fn(async () => undefined), disposeTerminal: vi.fn(), restoreWorkspace: false, language: "zh-CN" });
+  const [split, setSplit] = useState<SplitPane | null>(null);
+  const manager = useNamedWorkspaces({ sessions, profiles, floating: [], split, setSplit, dock: vi.fn(), language: "zh-CN" });
+  return { sessions, manager, split };
+}
+
+describe("workspace notices follow the language setting", () => {
+  beforeEach(() => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value) });
+    bridge.files.mockReset().mockResolvedValue([]);
+    bridge.connect.mockReset().mockImplementation(async (id: string) => new types.SessionInfo({ id: `session-${id}`, profileId: id, state: "connected" }));
+  });
+
+  it("reports an unavailable file in the requested locale", async () => {
+    const { result } = renderHook(useZhHarness);
+    const workspace = captureWorkspace("Files", [document], profiles, document.id, null);
+    let opening!: Promise<string[] | null>;
+    let issues: string[] | null = null;
+    act(() => { opening = result.current.manager.open(workspace); });
+    await act(async () => { issues = await opening; });
+
+    expect(issues).toEqual(["/notes.md: 文件不可用或需要重新授权"]);
+  });
+
+  it("throws workspace name errors in the requested locale", () => {
+    const { result } = renderHook(useZhHarness);
+
+    expect(() => result.current.manager.rename("missing", "")).toThrow("工作区名称需为 1 到 64 个字符");
+  });
+
+  it("reports a duplicate workspace name in the requested locale", () => {
+    const { result } = renderHook(useZhHarness);
+    act(() => result.current.sessions.setTabs([server("a")]));
+    act(() => result.current.manager.snapshot("Named"));
+
+    expect(() => result.current.manager.snapshot("named")).toThrow("工作区名称已存在");
+  });
+
+  it("reports captureWorkspace rejections in the requested locale", () => {
+    const { result } = renderHook(useZhHarness);
+
+    // No eligible tabs, so captureWorkspace rejects before anything is stored.
+    expect(() => result.current.manager.snapshot("Empty")).toThrow("工作区需包含 1 到 30 个已保存的服务器或本地文件");
+  });
+
+  it("reports invalid stored data in the requested locale", () => {
+    localStorage.setItem(WORKSPACES_KEY, JSON.stringify({ not: "an array" }));
+
+    const { result } = renderHook(useZhHarness);
+
+    // storageError is String(err) — the same text WorkspacesModal renders.
+    expect(result.current.manager.storageError).toBe("Error: 工作区数据无效");
+  });
+
+  it("reports a stale preview in the requested locale", async () => {
+    const { result } = renderHook(useZhHarness);
+    const next = JSON.stringify([captureWorkspace("W", [server("a")], profiles, "session-a", null)]);
+    localStorage.setItem(WORKSPACES_KEY, "changed behind the preview");
+
+    await act(async () => {
+      await expect(result.current.manager.restoreBackup(null, next, async () => undefined)).rejects.toThrow("工作区在预览后已变化，请重新预览");
+    });
   });
 });
