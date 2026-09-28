@@ -42,9 +42,9 @@ try {
       '/labels.md': '# Label variants\n\n```mermaid\nflowchart LR\n A["中文<br/>换行"] -->|证据| B["`**模型** 回答`"]\n```\n\n```mermaid\nstateDiagram-v2\n state "中文状态" as Ready\n [*] --> Ready\n Ready --> [*]\n```\n\n```mermaid\nclassDiagram\n class Document["文档"]\n class Answer["回答"]\n Document --> Answer : 引用\n```',
     };
     const app = {
-      GetSettings: () => settings, UpdateSettings: (value) => Object.assign(settings, value), GetVersion: () => '1.7.0', GetStartupFile: () => '',
+      GetSettings: () => settings, UpdateSettings: (value) => Object.assign(settings, value), GetVersion: () => '1.8.0', GetStartupFile: () => '',
       ListProfiles: () => [], ListCommands: () => [], ListSessions: () => [], GetAppInfo: () => ({ dataDir: 'isolated-smoke-data' }),
-      ReadLocalFile: (path) => files[path], ListTextFilesInDir: () => Object.keys(files), RestoreTextFiles: (paths) => paths,
+      ReadLocalFile: (path) => ({ content: files[path], version: 'smoke-version' }), ListTextFilesInDir: () => Object.keys(files), RestoreTextFiles: (paths) => paths,
       IsTextContextMenuRegistered: () => false, IsWindowMaximised: () => false,
     };
     window.go = { app: { App: new Proxy(app, { get: (target, key) => (...args) => Promise.resolve(target[key] ? target[key](...args) : /^List|^Read/.test(String(key)) ? [] : undefined) }) } };

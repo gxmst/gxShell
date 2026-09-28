@@ -12,19 +12,15 @@
   --section-accent-soft: color-mix(in srgb, var(--section-accent) 12%, transparent);
 }
 
-.side-content[data-section="files"] { --section-accent: #5ee0a3; }
-.side-content[data-section="tools"] { --section-accent: #a78bfa; }
-.side-content[data-section="ai"] { --section-accent: #c084fc; }
-.side-content[data-section="settings"] { --section-accent: #60a5fa; }
+.side-content[data-section="files"] { --section-accent: var(--ok); }
+.side-content[data-section="tools"] { --section-accent: var(--accent); }
+.side-content[data-section="ai"] { --section-accent: var(--accent); }
+.side-content[data-section="settings"] { --section-accent: var(--accent); }
 
 .left-rail {
   border-right-color: color-mix(in srgb, var(--border-strong) 78%, transparent);
-  background:
-    radial-gradient(360px 240px at 12% -4%, color-mix(in srgb, var(--accent) 11%, transparent), transparent 70%),
-    linear-gradient(180deg, color-mix(in srgb, var(--panel-soft) 88%, var(--panel)), color-mix(in srgb, var(--panel) 94%, var(--bg)));
-  box-shadow:
-    inset -1px 0 0 color-mix(in srgb, var(--text) 3%, transparent),
-    14px 0 38px color-mix(in srgb, var(--shadow-color) 18%, transparent);
+  background: var(--panel);
+  box-shadow: none;
 }
 
 .side-content {
@@ -113,8 +109,8 @@
   padding: 8px;
   border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
   border-radius: var(--radius-md);
-  background: linear-gradient(145deg, color-mix(in srgb, var(--panel-raised) 48%, transparent), color-mix(in srgb, var(--terminal) 22%, transparent));
-  box-shadow: var(--hairline), 0 8px 24px color-mix(in srgb, var(--shadow-color) 13%, transparent);
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-md);
 }
 
 .current-server-block .section-title { padding: 1px 2px 6px; }
@@ -151,7 +147,7 @@
   padding: 4px;
   border-radius: 12px;
   background: color-mix(in srgb, var(--terminal-top) 46%, transparent);
-  box-shadow: var(--hairline), 0 7px 20px color-mix(in srgb, var(--shadow-color) 11%, transparent);
+  box-shadow: none;
 }
 
 .subnav-chip {
@@ -193,7 +189,7 @@
   border: 1px solid color-mix(in srgb, var(--section-accent) 16%, var(--border));
   border-radius: 11px;
   background: linear-gradient(135deg, color-mix(in srgb, var(--section-accent) 8%, var(--panel-raised)), color-mix(in srgb, var(--panel) 58%, transparent));
-  box-shadow: var(--hairline), 0 7px 20px color-mix(in srgb, var(--shadow-color) 12%, transparent);
+  box-shadow: none;
 }
 
 .panel-page-heading {
@@ -463,8 +459,8 @@
 
 .ai-msg-assistant .ai-msg-content {
   border-radius: 15px 15px 15px 4px;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--panel-raised) 78%, transparent), color-mix(in srgb, var(--panel) 64%, transparent));
-  box-shadow: var(--hairline), 0 7px 20px color-mix(in srgb, var(--shadow-color) 12%, transparent);
+  background: var(--panel-soft);
+  box-shadow: none;
 }
 
 .ai-msg-icon {
@@ -480,8 +476,8 @@
   padding: 6px;
   border: 1px solid color-mix(in srgb, #c084fc 18%, var(--border));
   border-radius: 13px;
-  background: linear-gradient(145deg, color-mix(in srgb, var(--panel-raised) 64%, transparent), color-mix(in srgb, var(--panel) 64%, transparent));
-  box-shadow: var(--hairline), 0 9px 24px color-mix(in srgb, var(--shadow-color) 15%, transparent);
+  background: var(--panel-soft);
+  box-shadow: none;
 }
 
 .ai-input {
@@ -545,7 +541,7 @@
 .transfer-modal {
   border-color: color-mix(in srgb, var(--border-strong) 88%, transparent);
   background: linear-gradient(145deg, color-mix(in srgb, var(--panel-raised) 96%, black), color-mix(in srgb, var(--panel) 96%, black));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 5%, transparent), 0 28px 80px color-mix(in srgb, var(--shadow-color) 58%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 5%, transparent), var(--shadow-lg);
 }
 
 .cast-progress-input {
@@ -573,7 +569,7 @@
   background:
     radial-gradient(420px 180px at 0 0, color-mix(in srgb, var(--accent) 8%, transparent), transparent 72%),
     linear-gradient(145deg, color-mix(in srgb, var(--panel-raised) 98%, black), color-mix(in srgb, var(--panel) 98%, black));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 6%, transparent), 0 32px 100px color-mix(in srgb, var(--shadow-color) 62%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 6%, transparent), var(--shadow-lg);
 }
 
 .modal::before {
@@ -840,7 +836,7 @@
 .modal-palette {
   border-radius: 18px;
   background: color-mix(in srgb, var(--panel-raised) 96%, black);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 6%, transparent), 0 30px 90px color-mix(in srgb, var(--shadow-color) 62%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text) 6%, transparent), var(--shadow-lg);
   backdrop-filter: blur(18px);
 }
 
@@ -895,8 +891,8 @@
 
 .sftp-dual-panel {
   border-radius: var(--radius-md);
-  background: linear-gradient(145deg, color-mix(in srgb, var(--panel-raised) 58%, transparent), color-mix(in srgb, var(--panel) 58%, transparent));
-  box-shadow: var(--hairline), 0 12px 30px color-mix(in srgb, var(--shadow-color) 16%, transparent);
+  background: var(--panel-soft);
+  box-shadow: var(--shadow-md);
 }
 
 .log-viewer-overlay {

@@ -73,7 +73,7 @@ function CpuDetail({ metrics, history, lang }: { metrics?: types.Metrics; histor
       <DetailStatGrid>
         <DetailStat label={t(lang, "cpuUsage")} value={`${cpuPct.toFixed(0)}%`} tone={tone(cpuPct)} />
         <DetailStat label={t(lang, "load")} value={load} />
-        <DetailStat label={t(lang, "latency")} value={`${metrics?.latencyMs || 0}ms`} />
+        <DetailStat label={t(lang, "collectionTime")} value={`${metrics?.latencyMs || 0}ms`} />
       </DetailStatGrid>
       <HistoryChart
         values={history.map((s) => s.cpuPercent)}
@@ -117,7 +117,7 @@ function NetworkDetail({ metrics, history, lang }: { metrics?: types.Metrics; hi
   return (
     <>
       <DetailStatGrid>
-        <DetailStat label={t(lang, "ping")} value={`${latency}ms`} tone={latency >= 300 ? "bad" : latency >= 100 ? "warn" : "ok"} />
+        <DetailStat label={t(lang, "collectionTime")} value={`${latency}ms`} />
         <DetailStat label={t(lang, "down")} value={formatBytes(metrics?.networkRxPerSec || 0)} />
         <DetailStat label={t(lang, "up")} value={formatBytes(metrics?.networkTxPerSec || 0)} />
       </DetailStatGrid>

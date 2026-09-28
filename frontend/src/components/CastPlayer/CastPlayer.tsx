@@ -5,7 +5,7 @@ import { Pause, Play, RotateCcw, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import { types } from "../../../wailsjs/go/models";
 import { ReadRecording } from "../../../wailsjs/go/app/App";
-import { getTerminalTheme } from "../../utils/format";
+import { getTerminalContrastRatio, getTerminalTheme } from "../../utils/format";
 import { normalizeFontSize, normalizeLineHeight } from "../../utils/terminalSettings";
 import { t } from "../../i18n";
 import { parseCast, type CastEvent } from "./castParser";
@@ -160,6 +160,7 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
         rows: header.height,
         scrollback: 5000,
         theme: settings ? getTerminalTheme(settings) : undefined,
+        minimumContrastRatio: settings ? getTerminalContrastRatio(settings) : 1,
         disableStdin: true,
         cursorBlink: false,
       });
@@ -228,6 +229,7 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
     const term = termRef.current;
     if (!term || !settings) return;
     term.options.theme = getTerminalTheme(settings);
+    term.options.minimumContrastRatio = getTerminalContrastRatio(settings);
     term.options.fontFamily = settings.terminal.fontFamily;
     term.options.fontSize = normalizeFontSize(settings.terminal.fontSize);
     term.options.lineHeight = normalizeLineHeight(settings.terminal.lineHeight);

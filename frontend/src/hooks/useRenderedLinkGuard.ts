@@ -35,8 +35,11 @@ function findHref(target: Element): string | null {
 // not on a link at all, so the caller leaves it alone.
 export function classifyRenderedLink(target: Element | null): RenderedLink | null {
   if (!target) return null;
-  const href = (findHref(target) || '').trim();
-  if (href === '') return null;
+  const rawHref = findHref(target);
+  if (rawHref === null) return null;
+  // An empty href still navigates to the current page. Only an absent
+  // attribute is inert; empty and whitespace-only links must be blocked.
+  const href = rawHref.trim();
   if (href.startsWith('#')) return { kind: 'fragment', href };
   if (/^(https?:|mailto:)/i.test(href)) return { kind: 'external', href };
   return { kind: 'blocked', href };

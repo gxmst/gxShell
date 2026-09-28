@@ -51,6 +51,8 @@ type cliJob struct {
 	RiskAssessment     riskAssessment
 	Approval           string
 	ApprovalStrength   string
+	CancelRequested    bool
+	RemoteState        string
 	cancel             context.CancelFunc
 }
 
@@ -133,9 +135,10 @@ func (a *App) startCliJob(alias, profileID, sessionID, command string, stdin *st
 
 		job.mu.Lock()
 		job.Result = result
+		job.RemoteState = cliRemoteState(result, err)
 		job.FinishedAt = time.Now()
 		switch {
-		case ctx.Err() != nil:
+		case ctx.Err() != nil && !result.RemoteExitObserved:
 			job.State = "cancelled"
 		case result.TimedOut:
 			job.State = "failed"
@@ -177,11 +180,18 @@ func (a *App) handleCliJobs(w http.ResponseWriter, r *http.Request) {
 		job.mu.Lock()
 		terminal := isCliJobTerminal(job.State)
 		cancel := job.cancel
+		after := job.NextSeq
+		if !terminal && cancel != nil {
+			job.CancelRequested = true
+		}
 		job.mu.Unlock()
 		if !terminal && cancel != nil {
 			cancel()
 		}
-		writeCliJSON(w, http.StatusOK, map[string]any{"jobId": id, "cancelRequested": !terminal})
+		payload := cliJobSnapshot(job, after)
+		delete(payload, "events")
+		payload["cancelRequested"] = !terminal && cancel != nil
+		writeCliJSON(w, http.StatusOK, payload)
 	default:
 		writeCliError(w, http.StatusMethodNotAllowed, "validation", "method not allowed")
 	}
@@ -216,7 +226,8 @@ func cliJobSnapshot(job *cliJob, after int64) map[string]any {
 		}
 	}
 	payload := map[string]any{
-		"jobId": job.ID, "alias": job.Alias, "state": job.State,
+		"cancelRequested": job.CancelRequested,
+		"jobId":           job.ID, "alias": job.Alias, "state": job.State,
 		"createdAt": job.CreatedAt, "events": events, "nextSequence": job.NextSeq,
 		"blocked":            false,
 		"reusedConnection":   job.ReusedConnection,
@@ -232,6 +243,14 @@ func cliJobSnapshot(job *cliJob, after int64) map[string]any {
 		payload["startedAt"] = job.StartedAt
 	}
 	if !job.FinishedAt.IsZero() {
+		remoteState := job.RemoteState
+		if remoteState == "" {
+			remoteState = "unknown"
+		}
+		payload["remoteState"] = remoteState
+		if remoteState == "unknown" {
+			payload["message"] = "The SSH operation has ended, but remote process termination was not confirmed. Check the remote state before retrying."
+		}
 		payload["finishedAt"] = job.FinishedAt
 		payload["exitCode"] = job.Result.ExitCode
 		payload["timedOut"] = job.Result.TimedOut
@@ -275,8 +294,19 @@ func (a *App) cancelCliJobs() {
 	for _, job := range jobs {
 		job.mu.Lock()
 		if !isCliJobTerminal(job.State) && job.cancel != nil {
+			job.CancelRequested = true
 			job.cancel()
 		}
 		job.mu.Unlock()
 	}
+}
+
+func cliRemoteState(result sshmanager.CommandExecutionResult, err error) string {
+	if result.RemoteExitObserved {
+		return "exited"
+	}
+	if sshmanager.IsCommandNotStartedError(err) {
+		return "not_started"
+	}
+	return "unknown"
 }

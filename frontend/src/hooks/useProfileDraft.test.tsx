@@ -5,6 +5,42 @@ import { clearProfileDrafts, useDiscardGuard, useProfileDraft } from "./useProfi
 afterEach(() => clearProfileDrafts());
 
 describe("useProfileDraft", () => {
+  it.each([false, true])("retires an unchanged saved draft after unmount (remounted=%s)", (remounted) => {
+    const first = renderHook(() => useProfileDraft<object | null>("saved", "a", null));
+    const submitted = { text: "saved" };
+    act(() => first.result.current[1](submitted));
+    const complete = first.result.current[2];
+    first.unmount();
+    const second = remounted ? renderHook(() => useProfileDraft<object | null>("saved", "a", null)) : null;
+    act(() => { expect(complete(submitted, null)).toBe(false); });
+    if (second) expect(second.result.current[0]).toBeNull();
+    const third = renderHook(() => useProfileDraft<object | null>("saved", "a", null));
+    expect(third.result.current[0]).toBeNull();
+  });
+  it("only completes the immutable snapshot submitted by a save", () => {
+    const { result } = renderHook(() => useProfileDraft<{ text: string } | null>("t", "a", null));
+    const submitted = { text: "submitted" };
+    act(() => result.current[1](submitted));
+    const complete = result.current[2];
+    act(() => result.current[1]({ text: "new edits" }));
+    act(() => expect(complete(submitted, null)).toBe(false));
+    expect(result.current[0]?.text).toBe("new edits");
+    act(() => expect(result.current[2](result.current[0], null)).toBe(true));
+    expect(result.current[0]).toBeNull();
+  });
+
+  it("ignores updates from a panel that no longer owns the host", () => {
+    const first = renderHook(() => useProfileDraft<string | null>("t", "a", null));
+    act(() => first.result.current[1]("submitted"));
+    const [, update, complete] = first.result.current;
+    first.unmount();
+    const second = renderHook(() => useProfileDraft<string | null>("t", "a", null));
+    act(() => second.result.current[1]("new edits"));
+    act(() => { update("stale load"); expect(complete("submitted", null)).toBe(false); });
+    second.unmount();
+    const third = renderHook(() => useProfileDraft<string | null>("t", "a", null));
+    expect(third.result.current[0]).toBe("new edits");
+  });
   it("keeps each host's draft apart, so returning to a host finds it again", () => {
     const { result, rerender } = renderHook(
       ({ profileId }: { profileId: string }) => useProfileDraft<string | null>("t", profileId, null),

@@ -255,10 +255,15 @@ export function SftpPanel(props: {
   // math tracks the real value instead of hardcoding it.
   useEffect(() => {
     if (!listEl) return;
-    const row = listEl.querySelector<HTMLElement>(".sftp-file-row");
-    if (!row) return;
-    const height = row.getBoundingClientRect().height;
-    if (height > 0) setRowHeight((prev) => (Math.abs(prev - height) < 0.5 ? prev : height));
+    const measure = () => {
+      const row = listEl.querySelector<HTMLElement>(".sftp-file-row");
+      const height = row?.getBoundingClientRect().height || 0;
+      if (height > 0) setRowHeight((prev) => (Math.abs(prev - height) < 0.5 ? prev : height));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(listEl);
+    return () => observer.disconnect();
   }, [listEl, files]);
 
   const draftPath = draftPathState.sessionId === activeSessionId ? draftPathState.value : path;
@@ -668,12 +673,12 @@ export function SftpPanel(props: {
           <span className="sftp-col-actions" />
         </div>
         <div className="sftp-file-body" ref={setListEl} onScroll={onListScroll}>
-          {busy && <div className="sftp-list-state"><RefreshCw size={15} className="sftp-spin" />{t(lang, "loading")}</div>}
+          {busy && files.length === 0 && <div className="sftp-list-state"><RefreshCw size={15} className="sftp-spin" />{t(lang, "loading")}</div>}
           {!busy && visibleFiles.length === 0 && (
             <div className="sftp-list-state"><FolderOpen size={18} />{filter ? t(lang, "noMatchingFiles") : t(lang, "emptyFolder")}</div>
           )}
-          {!busy && topPad > 0 && <div style={{ height: topPad }} aria-hidden="true" />}
-          {!busy &&
+          {topPad > 0 && <div style={{ height: topPad }} aria-hidden="true" />}
+          {
             windowedFiles.map((file) => (
               <FileRow
                 key={file.path}
@@ -689,7 +694,7 @@ export function SftpPanel(props: {
                 onDownload={onRowDownload}
               />
             ))}
-          {!busy && bottomPad > 0 && <div style={{ height: bottomPad }} aria-hidden="true" />}
+          {bottomPad > 0 && <div style={{ height: bottomPad }} aria-hidden="true" />}
         </div>
       </div>
 

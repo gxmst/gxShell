@@ -46,11 +46,15 @@ try {
     let profiles = ['web-01', 'api-01', 'db-01', 'backup-01'].map((id, index) => ({ id, name: index === 0 ? '生产环境 / 华东区域 / primary-database-cluster / maintenance-connection-web-01' : id, group: index < 2 ? 'Production' : 'Infrastructure', host: `${id}.test`, port: 22, username: 'ops', authType: 'agent', rememberPassword: false, favorite: false, tags: [], tunnels: [], cliEnabled: false, autoReconnect: false, description: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), ...(index === 2 ? { terminal: { ...settings.terminal, themeName: 'Dark', fontSize: 18, backspaceKey: 'ctrl-h', deleteKey: 'del' } } : {}) }));
     let sessions = profiles.map((p) => ({ id: `session-${p.id}`, profileId: p.id, runtimeId: `profile:${p.id}`, generation: 1, name: p.name, state: 'connected', cols: 80, rows: 24 }));
     const app = {
-      GetSettings: () => settings, UpdateSettings: (value) => { settings = value; return value; }, GetVersion: () => '1.7.0', GetStartupFile: () => '',
+      GetSettings: () => settings, UpdateSettings: (value) => { settings = value; return value; }, GetVersion: () => '1.8.0', GetStartupFile: () => '',
       ListProfiles: () => profiles, ListCommands: () => [], ListSessions: () => sessions, GetAppInfo: () => ({ dataDir: 'isolated-smoke-data' }),
+      GetLatestMetrics: (sessionId) => ({ sessionId, online: true, cpuPercent: 12, memoryPercent: 62, memoryUsedMb: 1211, memoryTotalMb: 1936, diskPercent: 38, diskUsed: '7.5 GB', diskTotal: '19.5 GB', latencyMs: 382, networkRxPerSec: 21900, networkTxPerSec: 19800, loadAverage: '0.10 0.08 0.04' }),
       ListLogFiles: () => [], ListSessionLogFiles: () => [{ name: '2026-09-08-web-01.log', size: 1234, modTime: new Date().toISOString() }], ReadSessionLogFile: () => '[2026-09-08] session log entry',
-      ListRemoteDir: () => [], ListTextFilesInDir: () => window.smokeSiblings || ['/notes.md', '/deploy.md', '/Dockerfile', '/.env.production', '/settings.jsonc', '/events.ndjson', '/service.yml'], ReadLocalFile: (path) => window.smokeDocuments[path] ?? (path.endsWith('.jsonc') ? '// deployment note\n{"big":9007199254740993,"enabled":true,}\n' : '# Notes\n\n中文说明\n\n```sh\necho ready\n```'), RestoreTextFiles: (paths) => paths,
-      WriteLocalFile: (path, content) => { window.smokeDocumentWrites.push({ path, content }); },
+      ListRemoteDir: (_id, path) => {
+        window.smokeRemoteReads = (window.smokeRemoteReads || 0) + 1;
+        return ['.cache', '.config', '.docker', '.ssh', 'application-production.yaml', 'README.md'].map((name, i) => ({ name, path: `${path}/${name}`, isDir: i < 4, size: 2048, modTime: '2026-09-28T10:00:00Z' }));
+      }, ListTextFilesInDir: () => window.smokeSiblings || ['/notes.md', '/deploy.md', '/Dockerfile', '/.env.production', '/settings.jsonc', '/events.ndjson', '/service.yml'], ReadLocalFile: (path) => ({ version: 'smoke-version', content: window.smokeDocuments[path] ?? (path.endsWith('.jsonc') ? '// deployment note\n{"big":9007199254740993,"enabled":true,}\n' : '# Notes\n\n中文说明\n\n```sh\necho ready\n```') }), RestoreTextFiles: (paths) => paths,
+      WriteLocalFile: (path, content) => { window.smokeDocumentWrites.push({ path, content }); return { version: 'smoke-saved', conflict: false }; },
       WriteToTerminal: (id, data) => { window.smokeWrites.push({ id, data }); },
       UpdateProfilesBatch: (ids, patch) => { profiles = profiles.map((p) => ids.includes(p.id) ? { ...p, ...patch } : p); return profiles; },
       Disconnect: (id) => { sessions = sessions.filter((s) => s.id !== id); },
@@ -88,6 +92,61 @@ try {
   page.on('pageerror', (error) => errors.push(String(error)));
   page.on('console', (message) => { if (message.type() === 'error' && /Maximum update|Cannot update|ErrorBoundary/.test(message.text())) errors.push(message.text()); });
   await page.goto(server.resolvedUrls.local[0]);
+  await page.locator('.xterm').first().waitFor();
+  // Long server names must yield to all four hover controls at both sidebar
+  // limits, without hiding the address or overlapping adjacent buttons.
+  for (const width of [240, 328, 480]) {
+    const grip = page.getByRole('separator', { name: '调整侧栏宽度', exact: true });
+    await grip.focus();
+    await page.keyboard.press('Home');
+    for (let value = 240; value < width; value += 16) await page.keyboard.press('ArrowRight');
+    const row = page.locator('.server-row').filter({ hasText: 'maintenance-connection-web-01' }).first();
+    await row.hover();
+    assert(await row.evaluate((node) => {
+      const bounds = node.getBoundingClientRect();
+      const buttons = [...node.querySelectorAll('.row-actions button')].map((button) => button.getBoundingClientRect());
+      const title = node.querySelector('.server-title-line').getBoundingClientRect();
+      const address = node.querySelector('.server-subtitle').getBoundingClientRect();
+      return buttons.length === 4 && buttons.every((box, index) =>
+        box.width >= 24 && box.left >= bounds.left && box.right <= bounds.right &&
+        box.bottom <= address.top + 1 && (!index || box.left >= buttons[index - 1].right)) &&
+        title.right - parseFloat(window.getComputedStyle(node.querySelector('.server-title-line')).paddingRight) <= buttons[0].left;
+    }), `Server controls overlap at sidebar width ${width}`);
+    await page.screenshot({ path: join(out, `server-actions-${width}.png`), animations: 'disabled' });
+  }
+  if (process.argv.includes('--sftp')) {
+    await page.getByRole('button', { name: '文件', exact: true }).click();
+    await page.locator('.sftp-file-row').first().waitFor();
+    const reads = await page.evaluate(() => window.smokeRemoteReads);
+    await page.locator('.activity-rail .rail-btn').first().click();
+    await page.getByRole('button', { name: '文件', exact: true }).click();
+    await page.locator('.sftp-file-row').first().waitFor();
+    assert.equal(await page.evaluate(() => window.smokeRemoteReads), reads, 'Switching drawers refetched a fresh directory');
+    for (const width of [240, 328, 480]) {
+      const grip = page.getByRole('separator', { name: '调整侧栏宽度', exact: true });
+      await grip.focus(); await page.keyboard.press('Home');
+      for (let value = 240; value < width; value += 16) await page.keyboard.press('ArrowRight');
+      await page.waitForTimeout(100);
+      const name = page.locator('.sftp-file-name').filter({ hasText: '.config' });
+      assert(await name.evaluate((node) => node.scrollWidth <= node.clientWidth + 1), `Short filename truncated at ${width}`);
+      await page.screenshot({ path: join(out, `sftp-${width}.png`), animations: 'disabled' });
+    }
+    for (const theme of ['Light', 'Dark', 'Sakura Mist', 'Matcha Green', 'Yuzu Study', 'Deep Blue', 'Ember Terminal', 'Twilight Amber']) {
+      await page.locator('.app-shell').evaluate((node, theme) => { node.dataset.theme = theme; }, theme);
+      await page.screenshot({ path: join(out, `theme-${theme}.png`), animations: 'disabled' });
+    }
+    assert.equal(errors.length, 0, errors.join('\n'));
+    console.log(JSON.stringify({ status: 'passed', screenshots: out, checks: ['directory cache on drawer switches', 'file names at three panel widths', 'eight theme surfaces'] }));
+  } else if (process.argv.includes('--ui')) {
+    await page.getByRole('button', { name: '展开监控卡片', exact: true }).click();
+    await page.screenshot({ path: join(out, 'monitor-expanded.png'), animations: 'disabled' });
+    assert(await page.getByText('采集耗时 382 ms', { exact: true }).isVisible());
+    assert.equal(await page.locator('.tsb-latency.tsb-bad').count(), 0);
+    assert.equal(errors.length, 0, errors.join('\n'));
+    console.log(JSON.stringify({ status: 'passed', screenshots: out, checks: ['four hover controls at three sidebar widths', 'compact and expanded monitor', 'collection duration labeling'] }));
+  } else {
+  // Restore the fixture's preferred width before the existing geometry checks.
+  await page.evaluate(() => { window.location.reload(); });
   await page.locator('.xterm').first().waitFor();
   await page.locator('.tab-tools-toggle').click();
   await page.getByRole('menuitem', { name: '四分屏' }).click();
@@ -323,6 +382,11 @@ try {
   assert.deepEqual(savedNdjson, { path: '/events.ndjson', lines: 100000, exactNumber: true });
   console.log(`Large JSON worker smoke: 5,000,000 bytes / 100,000 lines, ${workerFrames} UI frames during format.`);
   await ndjson.locator('.text-document-virtual .cm-editor').waitFor();
+  // Saving recreates the read-only view; select text explicitly instead of
+  // relying on the editor's old search selection surviving that remount.
+  await ndjson.locator('.text-document-virtual .cm-content').focus();
+  await page.keyboard.press('Control+Home');
+  await page.keyboard.press('Shift+End');
   await ndjson.locator('.text-document-virtual .cm-selectionBackground').first().waitFor();
   await ndjson.getByPlaceholder('查找').press('Escape');
   await page.getByRole('button', { name: '关闭 events.ndjson', exact: true }).click();
@@ -429,6 +493,7 @@ try {
   assert.equal(await page.evaluate(() => window.smokeBackups.filter((item) => item.action === 'apply').length), 1);
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ status: 'passed', mode: production ? 'production' : 'development', screenshots: out, sidebarPerformance, workerFrames, viewports: ['1440x960', '900x700', '900x260', '540x720'], checks: ['four nonblank terminal panes', 'per-pane input routing', 'physical Backspace and Delete', 'per-server broadcast key mapping', 'document focus and shared sidebar geometry', '5001 sibling files paged with full-folder filtering and reveal', 'JSONC format/save preserves comments and numeric precision', '5 MB NDJSON worker formatting and save validation', 'preferred width after viewport changes', 'long-title search and complete names', 'IME-safe tab picker with keyboard navigation and short-window bounds', 'bounded terminal geometry changes on collapse', 'workspace persistence', 'atomic batch UI', 'highlight settings', 'opt-in log retention and saved limits', 'masked backup passphrases', 'localized export omission summary', 'AI configuration comparison before import', 'backup preview and explicit apply', 'close gate during import'] }));
+  }
 } catch (error) {
   if (page && !page.isClosed()) {
     console.error(JSON.stringify({ screenshots: out, errors }));

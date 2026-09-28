@@ -197,6 +197,9 @@ func (a *App) approvalPanelAvailable() bool {
 // dialog: that dialog is the thing this panel replaced, and a batch too long to
 // read is exactly what it cannot show.
 func (a *App) requestCliApprovalPanel(ctx context.Context, req cliApprovalPanelRequest) (cliApprovalPanelResult, bool) {
+	if ctx != nil && ctx.Err() != nil {
+		return cliApprovalPanelResult{}, true
+	}
 	if !a.approvalPanelAvailable() || len(req.Items) == 0 {
 		return cliApprovalPanelResult{}, false
 	}
@@ -209,6 +212,9 @@ func (a *App) requestCliApprovalPanel(ctx context.Context, req cliApprovalPanelR
 		return cliApprovalPanelResult{}, true
 	}
 	defer a.releaseApprovalGate()
+	if ctx.Err() != nil {
+		return cliApprovalPanelResult{}, true
+	}
 
 	panelID, ch := a.approvalPanel.register()
 	req.ID = panelID
@@ -226,6 +232,9 @@ func (a *App) requestCliApprovalPanel(ctx context.Context, req cliApprovalPanelR
 
 	select {
 	case result := <-ch:
+		if ctx.Err() != nil {
+			return cliApprovalPanelResult{}, true
+		}
 		return result, true
 	case <-ctx.Done():
 		// The caller disconnected. Showing a native dialog now would prompt for
@@ -277,29 +286,35 @@ func (a *App) releaseApprovalGate() {
 // nobody is waiting, so the user is never asked to review a dead request.
 func liveRequestsContext(callers []context.Context) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
-	live := 0
+	var live []context.Context
+	hasCallers := false
 	for _, caller := range callers {
-		if caller != nil && caller.Err() == nil {
-			live++
+		if caller != nil {
+			hasCallers = true
+			if caller.Err() == nil {
+				live = append(live, caller)
+			}
 		}
 	}
-	if live == 0 {
-		// No caller to watch (the AI path, or a batch with no context). The
-		// panel then waits for the user or the safety timeout.
+	if len(live) == 0 {
+		if hasCallers {
+			cancel()
+		}
+		// A genuinely context-free request waits for the user or timeout.
 		return ctx, cancel
 	}
-	gone := make(chan struct{}, live)
-	for _, caller := range callers {
-		if caller == nil || caller.Err() != nil {
-			continue
-		}
+	gone := make(chan struct{}, len(live))
+	for _, caller := range live {
 		go func(c context.Context) {
-			<-c.Done()
-			gone <- struct{}{}
+			select {
+			case <-c.Done():
+				gone <- struct{}{}
+			case <-ctx.Done():
+			}
 		}(caller)
 	}
 	go func() {
-		for i := 0; i < live; i++ {
+		for range live {
 			select {
 			case <-gone:
 			case <-ctx.Done():

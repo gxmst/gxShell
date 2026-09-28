@@ -59,7 +59,7 @@ func (a *App) startCliServer() {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/cli/exec", a.requireCliAuth(token, a.handleCliExec))
+	mux.HandleFunc("/cli/exec", a.requireCliAuth(token, a.deduplicateCliExec(a.handleCliExec)))
 	mux.HandleFunc("/cli/secrets", a.requireCliAuth(token, a.handleCliSecrets))
 	mux.HandleFunc("/cli/jobs", a.requireCliAuth(token, a.handleCliJobs))
 	mux.HandleFunc("/cli/copy", a.requireCliAuth(token, a.handleCliCopy))
@@ -303,6 +303,12 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// Connecting can wait for authentication. Do not accept a detached job
+	// whose caller left during that wait; it would never receive the job ID.
+	if r.Context().Err() != nil {
+		a.log.InfoFields("CLI command abandoned during connection", fields)
+		return
+	}
 
 	// A CLI-created or otherwise backend-only session has no React tab yet.
 	// Announce the selected session on every request; the frontend handles this
@@ -388,6 +394,7 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		"durationMs":         result.Duration.Milliseconds(),
 		"timeoutMs":          int(timeout / time.Millisecond),
 		"timedOut":           result.TimedOut,
+		"remoteState":        cliRemoteState(result, err),
 		"truncated":          result.Truncated,
 		"blocked":            false,
 		"approval":           approvalSource,
@@ -488,7 +495,7 @@ func (a *App) handleCliPing(w http.ResponseWriter, r *http.Request) {
 		writeCliError(w, http.StatusMethodNotAllowed, "validation", "method not allowed")
 		return
 	}
-	writeCliJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	writeCliJSON(w, http.StatusOK, map[string]string{"status": "ok", "execRequestDeduplication": "process-30m-v1"})
 }
 
 func (a *App) findCliProfile(name string) (types.Profile, error) {

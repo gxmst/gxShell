@@ -76,7 +76,6 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
       ? `${props.profile.username}@${props.profile.host}${props.profile.port && props.profile.port !== 22 ? `:${props.profile.port}` : ""}`
       : props.tab.title;
 
-  const latencyTone = latency == null ? "" : latency < 80 ? "ok" : latency < 200 ? "warn" : "bad";
 
   return (
     <div className="terminal-statusbar" data-state={state}>
@@ -106,9 +105,8 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
       {!local && state === "connected" && latency != null && (
         <>
           <span className="tsb-sep" />
-          <span className={`tsb-seg tsb-latency tsb-${latencyTone}`}>
-            <span className="tsb-latency-dot" />
-            {latency} ms
+          <span className="tsb-seg tsb-latency" title={t(lang, "collectionTime")}>
+            {t(lang, "collectionTime")} {latency} ms
           </span>
         </>
       )}

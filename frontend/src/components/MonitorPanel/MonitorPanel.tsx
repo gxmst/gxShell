@@ -43,6 +43,8 @@ export function MonitorPanel({
         onClick={onExpand}
         title={t(lang, "expandMonitor")}
         role="button"
+        aria-label={`${t(lang, "expandMonitor")} · ${active.title}`}
+        aria-expanded={false}
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -53,21 +55,19 @@ export function MonitorPanel({
       >
         <div className="flex items-center gap-1.5 min-w-0 flex-1">
           <span className={clsx("status-dot shrink-0", stateClass(active.state))} />
-          <span className="truncate text-[11px] font-medium text-text">{active.title}</span>
+          <span className="truncate text-[11px] font-medium text-[color:var(--text)]">{active.title}</span>
         </div>
         {metrics && (
-          <div className="flex items-center gap-1.5 shrink-0 text-[10px] font-mono">
+          <div className="monitor-summary-metrics">
             <span className={clsx("compact-pill", metrics.cpuPercent >= 85 ? "text-bad" : metrics.cpuPercent >= 60 ? "text-warn" : "text-ok")}>
               CPU {metrics.cpuPercent.toFixed(0)}%
             </span>
             <span className={clsx("compact-pill", metrics.memoryPercent >= 85 ? "text-bad" : metrics.memoryPercent >= 60 ? "text-warn" : "text-muted")}>
               MEM {metrics.memoryPercent.toFixed(0)}%
             </span>
-            {metrics.latencyMs != null && (
-              <span className={clsx("compact-pill", metrics.latencyMs < 80 ? "text-ok" : metrics.latencyMs < 200 ? "text-warn" : "text-bad")}>
-                {metrics.latencyMs}ms
-              </span>
-            )}
+            <span className="monitor-summary-network" title={`${t(lang, "down")} / ${t(lang, "up")}`}>
+              ↓ {formatBytes(metrics.networkRxPerSec)} · ↑ {formatBytes(metrics.networkTxPerSec)}
+            </span>
           </div>
         )}
       </div>
@@ -124,11 +124,7 @@ function loadTone(loadAvg: string): "ok" | "warn" | "bad" | undefined {
 }
 
 function speedTone(bps: number): "ok" | "warn" | "bad" | undefined {
-  if (!bps || bps <= 0) return undefined;
-  const kbps = bps / 1024;
-  if (kbps >= 1024) return "bad";
-  if (kbps >= 256) return "warn";
-  return "ok";
+  return bps > 0 ? "ok" : undefined;
 }
 
 function MetricRow({ icon, label, value, detail, clickable, onClick }: { icon: JSX.Element; label: string; value: number; detail?: string; clickable?: boolean; onClick?: () => void }) {

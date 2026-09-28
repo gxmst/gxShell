@@ -17,6 +17,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * One map per panel keeps the two drafts from sharing a namespace.
  */
 const draftsByPanel = new Map<string, Map<string, unknown>>();
+const listeners = new WeakMap<Map<string, unknown>, Map<string, Set<() => void>>>();
+
+function notifyDraft(store: Map<string, unknown>, profileId: string) {
+  listeners.get(store)?.get(profileId)?.forEach((listener) => listener());
+}
 
 function panelStore(panel: string): Map<string, unknown> {
   let store = draftsByPanel.get(panel);
@@ -46,7 +51,7 @@ export function useProfileDraft<T>(
   panel: string,
   profileId: string,
   closed: T,
-): [T, (next: T | ((prev: T) => T)) => void] {
+): [T, (next: T | ((prev: T) => T)) => void, (expected: T, next: T) => boolean] {
   const store = panelStore(panel);
   const [draft, setDraft] = useState<T>(() =>
     store.has(profileId) ? (store.get(profileId) as T) : closed,
@@ -55,25 +60,57 @@ export function useProfileDraft<T>(
   closedRef.current = closed;
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  const mountedRef = useRef(false);
+  const profileRef = useRef(profileId);
+  profileRef.current = profileId;
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // Adopt the incoming host's draft. The outgoing one is already parked,
   // because every write goes to the store as well.
   useEffect(() => {
-    setDraft(store.has(profileId) ? (store.get(profileId) as T) : closedRef.current);
+    const sync = () => {
+      const value = store.has(profileId) ? (store.get(profileId) as T) : closedRef.current;
+      draftRef.current = value;
+      setDraft(value);
+    };
+    let profiles = listeners.get(store);
+    if (!profiles) { profiles = new Map(); listeners.set(store, profiles); }
+    let subscribers = profiles.get(profileId);
+    if (!subscribers) { subscribers = new Set(); profiles.set(profileId, subscribers); }
+    subscribers.add(sync);
+    sync();
+    return () => {
+      subscribers.delete(sync);
+      if (subscribers.size === 0) profiles.delete(profileId);
+    };
   }, [store, profileId]);
 
   const update = useCallback(
     (next: T | ((prev: T) => T)) => {
+      if (!mountedRef.current || profileRef.current !== profileId) return;
       const value =
         typeof next === "function" ? (next as (prev: T) => T)(draftRef.current) : next;
       draftRef.current = value;
       store.set(profileId, value);
-      setDraft(value);
+      notifyDraft(store, profileId);
     },
     [store, profileId],
   );
 
-  return [draft, update];
+  // A completed save can retire its unchanged cached snapshot even after
+  // unmount. Subscribers update a remounted editor; the old caller must not
+  // refresh or navigate a panel it no longer owns.
+  const replaceIfCurrent = useCallback((expected: T, next: T) => {
+    if (store.get(profileId) !== expected) return false;
+    store.set(profileId, next);
+    notifyDraft(store, profileId);
+    return mountedRef.current && profileRef.current === profileId;
+  }, [store, profileId]);
+
+  return [draft, update, replaceIfCurrent];
 }
 
 /**

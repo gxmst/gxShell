@@ -1,8 +1,12 @@
 package app
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
+
+	sshmanager "gxShell/backend/ssh"
 )
 
 func TestCliJobSnapshotFiltersEvents(t *testing.T) {
@@ -27,6 +31,28 @@ func TestCliJobSnapshotFiltersEvents(t *testing.T) {
 	categories, ok := snapshot["riskCategories"].([]string)
 	if !ok || len(categories) != 1 || categories[0] != string(riskUndecidable) {
 		t.Fatalf("riskCategories = %#v", snapshot["riskCategories"])
+	}
+}
+
+func TestCliRemoteOutcomeIsConservative(t *testing.T) {
+	for _, test := range []struct {
+		result sshmanager.CommandExecutionResult
+		err    error
+		want   string
+	}{
+		{sshmanager.CommandExecutionResult{RemoteExitObserved: true}, nil, "exited"},
+		{sshmanager.CommandExecutionResult{}, &sshmanager.CommandNotStartedError{Stage: "cancelled", Err: context.Canceled}, "not_started"},
+		{sshmanager.CommandExecutionResult{TimedOut: true}, errors.New("timeout"), "unknown"},
+		{sshmanager.CommandExecutionResult{}, context.Canceled, "unknown"},
+	} {
+		if got := cliRemoteState(test.result, test.err); got != test.want {
+			t.Fatalf("got %s want %s", got, test.want)
+		}
+	}
+	job := &cliJob{State: "cancelled", CancelRequested: true, RemoteState: "unknown", FinishedAt: time.Now()}
+	snapshot := cliJobSnapshot(job, 0)
+	if snapshot["remoteState"] != "unknown" || snapshot["cancelRequested"] != true || snapshot["message"] == nil {
+		t.Fatalf("snapshot=%v", snapshot)
 	}
 }
 

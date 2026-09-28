@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,14 +42,17 @@ const (
 var version = appversion.Version
 
 var httpClient = &http.Client{Timeout: cliRequestTimeout}
+var requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,96}$`)
 
 type cliOptions struct {
-	json    bool
-	timeout time.Duration
-	shell   string
-	follow  bool
-	detach  bool
-	secrets map[string]string
+	command   string
+	requestID string
+	json      bool
+	timeout   time.Duration
+	shell     string
+	follow    bool
+	detach    bool
+	secrets   map[string]string
 }
 
 func main() {
@@ -60,6 +65,7 @@ func main() {
 		return
 	}
 
+	opts.command = args[0]
 	switch args[0] {
 	case "exec":
 		server, command, nextOpts, err := parseExecArgs(args[1:], opts)
@@ -532,7 +538,7 @@ func handleJobCommand(args []string, opts cliOptions) {
 		if opts.json {
 			printJSON(result)
 		} else if requested, _ := boolField(result, "cancelRequested"); requested {
-			fmt.Println("Cancellation requested for", id)
+			fmt.Println("Cancellation requested for", id, "— remote process termination is not yet confirmed.")
 		} else {
 			fmt.Println("Job is already finished:", id)
 		}
@@ -556,6 +562,9 @@ func showJobStatus(id string, opts cliOptions) {
 		fmt.Printf(" (exit %d)", exitCode)
 	}
 	fmt.Println()
+	if stringField(result, "remoteState") == "unknown" {
+		fmt.Println("Remote process termination is unconfirmed; check the server before retrying.")
+	}
 	if errMsg := stringField(result, "error"); errMsg != "" {
 		fmt.Println("Error:", errMsg)
 	}
@@ -602,6 +611,9 @@ func followJob(id string, opts cliOptions, exitWithJob bool) {
 				printJSON(result)
 			} else if errMsg := stringField(result, "error"); errMsg != "" && state != "cancelled" {
 				fmt.Fprintln(os.Stderr, "Error:", errMsg)
+			}
+			if !opts.json && stringField(result, "remoteState") == "unknown" {
+				fmt.Fprintln(os.Stderr, "Remote process termination is unconfirmed; check the server before retrying.")
 			}
 			if !exitWithJob {
 				return
@@ -889,6 +901,15 @@ func buildDoctorReport() map[string]any {
 }
 
 func requestJSON(method, path string, payload any, opts cliOptions) map[string]any {
+	if err := validateRequestIDScope(opts); err != nil {
+		fatalErrorKind(opts, 1, "validation", err.Error())
+	}
+	if method == http.MethodPost && path == "/cli/exec" && opts.requestID != "" {
+		capabilities := requestJSON(http.MethodGet, "/cli/ping", nil, opts)
+		if stringField(capabilities, "execRequestDeduplication") != "process-30m-v1" {
+			fatalError(opts, 1, "This gxShell instance does not support protected request retries. Update the desktop app before using --request-id; no command was sent.")
+		}
+	}
 	token, err := loadToken()
 	if err != nil {
 		fatalError(opts, 1, err.Error()+". Start gxShell once so it can create the local CLI token.")
@@ -908,24 +929,52 @@ func requestJSON(method, path string, payload any, opts cliOptions) map[string]a
 		fatalError(opts, 1, "failed to create request: "+err.Error())
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	requestID := ""
+	if method == http.MethodPost && path == "/cli/exec" {
+		requestID = opts.requestID
+		if requestID == "" {
+			var raw [16]byte
+			if _, err := rand.Read(raw[:]); err != nil {
+				fatalError(opts, 1, "failed to generate request ID: "+err.Error())
+			}
+			requestID = hex.EncodeToString(raw[:])
+		}
+		req.Header.Set("X-GxShell-Request-ID", requestID)
+	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		fatalError(opts, 1, describeTransportError(err))
+		fatalRequestError(opts, requestID, describeTransportError(err))
 	}
 	defer resp.Body.Close()
 
 	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		fatalError(opts, 1, "failed to parse response: "+err.Error())
+		fatalRequestError(opts, requestID, "failed to parse response: "+err.Error())
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
 		fatalError(opts, 1, "unauthorized CLI request. Restart gxShell and rebuild or rerun this CLI from the same user account.")
 	}
+	if requestID != "" {
+		result["requestId"] = requestID
+		result["requestProtected"] = resp.Header.Get("X-GxShell-Request-ID") == requestID
+		result["replayed"] = resp.Header.Get("X-GxShell-Request-Replayed") == "true"
+	}
 	return result
+}
+
+func fatalRequestError(opts cliOptions, id, message string) {
+	if id != "" {
+		message += " Request ID: " + id + ". Keep this ID when checking or retrying the request; do not blindly repeat a state-changing command."
+	}
+	if opts.json {
+		printJSON(map[string]any{"error": message, "errorKind": "cli", "outcome": "client_error", "blocked": false, "requestId": id})
+		os.Exit(1)
+	}
+	fatalError(opts, 1, message)
 }
 
 // describeTransportError separates "the daemon is not there" from "the request
@@ -953,9 +1002,22 @@ func describeTransportError(err error) string {
 	return "gxShell request failed: " + err.Error()
 }
 
+func validateRequestIDScope(opts cliOptions) error {
+	if opts.requestID != "" && opts.command != "exec" && opts.command != "exec-file" && opts.command != "exec-stdin" {
+		return errors.New("--request-id is supported only for exec, exec-file and exec-stdin; no request was sent")
+	}
+	return nil
+}
+
 func parseLeadingFlags(args []string, opts cliOptions) ([]string, cliOptions, error) {
 	for len(args) > 0 {
 		switch args[0] {
+		case "--request-id":
+			if len(args) < 2 || !requestIDPattern.MatchString(args[1]) {
+				return args, opts, fmt.Errorf("--request-id requires 1-96 letters, digits, underscores or hyphens")
+			}
+			opts.requestID = args[1]
+			args = args[2:]
 		case "--json":
 			opts.json = true
 			args = args[1:]
@@ -1061,6 +1123,15 @@ func parseNoArgCommand(args []string, opts cliOptions, name string) (cliOptions,
 func stripTrailingFlags(args []string, opts cliOptions) ([]string, cliOptions, error) {
 	out := append([]string(nil), args...)
 	for len(out) > 0 {
+		if len(out) >= 2 && out[len(out)-2] == "--request-id" {
+			_, parsed, err := parseLeadingFlags(out[len(out)-2:], opts)
+			if err != nil {
+				return args, opts, err
+			}
+			opts = parsed
+			out = out[:len(out)-2]
+			continue
+		}
 		last := out[len(out)-1]
 		if last == "--json" {
 			opts.json = true
@@ -1425,6 +1496,7 @@ SECURITY:
 OPTIONS:
   --json                       Print machine-readable JSON
   --timeout <duration>          Remote command timeout, e.g. 60, 90s, 5m
+  --request-id <id>             Optional exec retry ID (normally automatic)
   --shell <name>                Script interpreter: sh, bash, dash, zsh, or ksh
   --follow                      Run as a job and stream output until completion
   --detach                      Run as a job and return its ID immediately

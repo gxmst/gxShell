@@ -39,5 +39,13 @@ user configuration.
 
 ## Supported release target
 
+For a local archived candidate, run `./scripts/build-archive.ps1` from PowerShell.
+It builds in the standard locations, then copies only deliverables into a new
+`../_build_artifacts/gxShell/<timestamp>-<commit>[-dirty]/` directory, checks copied
+file hashes, smoke-tests the CLI version, and creates the zip and SHA-256 list.
+It does not publish, tag, prune caches, or overwrite previous archives. A dirty
+candidate is for local review; official publication still requires the exact
+committed source to pass CI as described above.
+
 Windows x64 is the supported downloadable target. Linux and macOS desktop jobs
 remain compile-only CI artifacts until they receive runtime testing.

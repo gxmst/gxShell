@@ -171,6 +171,7 @@ type App struct {
 	// profile gains or extends time-limited automation trust.
 	cliTrustConfirmFn func(types.Profile) bool
 	cliJobsMu         sync.Mutex
+	cliRequests       cliRequestRegistry
 	cliJobs           map[string]*cliJob
 	cliTunnelsMu      sync.Mutex
 	cliTunnels        map[string]cliTunnelRecord

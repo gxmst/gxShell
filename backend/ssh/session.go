@@ -863,15 +863,16 @@ func (s *Session) clearPendingConn(conn net.Conn) {
 }
 
 type CommandExecutionResult struct {
-	Stdout    string
-	Stderr    string
-	Output    string
-	Summary   string
-	ExitCode  int
-	TimedOut  bool
-	Truncated bool
-	Duration  time.Duration
-	Error     string
+	RemoteExitObserved bool
+	Stdout             string
+	Stderr             string
+	Output             string
+	Summary            string
+	ExitCode           int
+	TimedOut           bool
+	Truncated          bool
+	Duration           time.Duration
+	Error              string
 }
 
 // CommandNotStartedError means the exec request failed before ssh.Session.Run
@@ -935,6 +936,9 @@ func (m *Manager) ExecuteCommandResultStream(ctx context.Context, sessionID stri
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		return result, &CommandNotStartedError{Stage: "cancelled", Err: err}
+	}
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
@@ -948,6 +952,9 @@ func (m *Manager) ExecuteCommandResultStream(ctx context.Context, sessionID stri
 	if client == nil {
 		return result, &CommandNotStartedError{Stage: "client", Err: errors.New("SSH client not available"), Retryable: true}
 	}
+	if err := ctx.Err(); err != nil {
+		return result, &CommandNotStartedError{Stage: "cancelled", Err: err}
+	}
 	sshSession, err := client.NewSession()
 	if err != nil {
 		return result, &CommandNotStartedError{
@@ -957,6 +964,11 @@ func (m *Manager) ExecuteCommandResultStream(ctx context.Context, sessionID stri
 		}
 	}
 	defer sshSession.Close()
+	// Opening a channel is itself a network round trip. Cancellation during
+	// that wait must not be followed by an exec request.
+	if err := ctx.Err(); err != nil {
+		return result, &CommandNotStartedError{Stage: "cancelled", Err: err}
+	}
 	stdout := newLimitedBuffer(maxOutput)
 	stderr := newLimitedBuffer(maxOutput)
 	sshSession.Stdout = &commandOutputWriter{stream: "stdout", buffer: stdout, callback: onOutput}
@@ -978,11 +990,17 @@ func (m *Manager) ExecuteCommandResultStream(ctx context.Context, sessionID stri
 	started := time.Now()
 	done := make(chan error, 1)
 	go func() {
+		if err := ctx.Err(); err != nil {
+			done <- &CommandNotStartedError{Stage: "cancelled", Err: err}
+			return
+		}
 		done <- sshSession.Run(command)
 	}()
 
 	select {
 	case err = <-done:
+		var exitErr *ssh.ExitError
+		result.RemoteExitObserved = err == nil || errors.As(err, &exitErr)
 	case <-ctx.Done():
 		_ = sshSession.Close()
 		err = fmt.Errorf("command cancelled: %w", ctx.Err())

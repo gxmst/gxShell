@@ -148,9 +148,9 @@ export function Sidebar(props: {
   });
   const [monitorCollapsed, setMonitorCollapsed] = useState<boolean>(() => {
     try {
-      return localStorage.getItem(MONITOR_COLLAPSED_KEY) === "true";
+      return localStorage.getItem(MONITOR_COLLAPSED_KEY) !== "false";
     } catch {
-      return false;
+      return true;
     }
   });
 

@@ -32,6 +32,18 @@ export function getTerminalTheme(settings: Pick<types.AppSettings, "terminal" | 
   return terminalThemes[requested] || terminalThemes[normalizeAppTheme(settings.themeName)] || terminalThemes["Light"];
 }
 
+// ANSI truecolor output can bypass the palette. Let xterm improve unreadable
+// text on light surfaces without changing the selected palette or dark themes.
+export function getTerminalContrastRatio(settings: Pick<types.AppSettings, "terminal" | "themeName">) {
+  const background = getTerminalTheme(settings).background || "";
+  if (!/^#[\da-f]{6}$/i.test(background)) return 1;
+  const channels = [1, 3, 5].map((offset) => {
+    const value = parseInt(background.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722 > 0.5 ? 4.5 : 1;
+}
+
 export function needsSecret(profile: types.Profile) {
   // Agent auth never prompts: the running SSH agent holds the keys. Password
   // and private-key auth need a secret unless it is already remembered.

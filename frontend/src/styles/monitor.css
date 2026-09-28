@@ -18,7 +18,8 @@
 
 .monitor-compact-bar {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   justify-content: space-between;
   gap: 6px;
   padding: 6px 9px;
@@ -27,6 +28,25 @@
   border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.monitor-summary-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 8px;
+  font: 10px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.monitor-summary-network {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.monitor-compact-bar:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .monitor-compact-bar:hover {
@@ -144,9 +164,9 @@
   min-width: 0;
   border-radius: var(--radius-xs);
   padding: 4px 7px;
-  border: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
-  background: color-mix(in srgb, var(--panel-raised) 45%, transparent);
-  box-shadow: var(--hairline);
+  border: 1px solid transparent;
+  background: transparent;
+  box-shadow: none;
   transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
 }
 

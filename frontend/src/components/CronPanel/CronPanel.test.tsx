@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CronPanel } from "./CronPanel";
 import { clearProfileDrafts } from "../../hooks/useProfileDraft";
@@ -56,6 +56,34 @@ afterEach(() => {
 });
 
 describe("CronPanel draft retention", () => {
+  it("does not discard edits made while an earlier save is pending", async () => {
+    let finish!: () => void;
+    appMocks.saveCronJob.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    render(panel(tab("session-a")));
+    await openJob();
+    fireEvent.change(commandBox()!, { target: { value: "/opt/submitted.sh" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    fireEvent.change(commandBox()!, { target: { value: "/opt/new-edits.sh" } });
+    await act(async () => { finish(); });
+    expect(appMocks.saveCronJob).toHaveBeenCalledWith("session-a", "job-1", job.schedule, "/opt/submitted.sh", true);
+    expect(commandBox()?.value).toBe("/opt/new-edits.sh");
+  });
+
+  it("does not let an unmounted panel clear the replacement's draft", async () => {
+    let finish!: () => void;
+    appMocks.saveCronJob.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const first = render(panel(tab("session-a")));
+    await openJob();
+    fireEvent.change(commandBox()!, { target: { value: "/opt/submitted.sh" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    first.unmount();
+    const second = render(panel(tab("session-b")));
+    fireEvent.change(commandBox()!, { target: { value: "/opt/new-edits.sh" } });
+    await act(async () => { finish(); });
+    second.unmount();
+    render(panel(tab("session-b")));
+    await waitFor(() => expect(commandBox()?.value).toBe("/opt/new-edits.sh"));
+  });
   it("keeps the draft when another terminal on the same host becomes active", async () => {
     const { rerender } = render(panel(tab("session-a")));
     await openJob();

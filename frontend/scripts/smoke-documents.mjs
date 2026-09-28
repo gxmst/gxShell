@@ -49,10 +49,10 @@ try {
       terminal: { fontFamily: 'Consolas, monospace', fontSize: 14, lineHeight: 1.25, cursorStyle: 'block', cursorBlink: true, themeName: 'Light', backgroundOpacity: 1, scrollbackLines: 5000 },
     };
     const app = {
-      GetSettings: () => settings, UpdateSettings: (value) => Object.assign(settings, value), GetVersion: () => '1.7.0', GetStartupFile: () => '',
+      GetSettings: () => settings, UpdateSettings: (value) => Object.assign(settings, value), GetVersion: () => '1.8.0', GetStartupFile: () => '',
       ListProfiles: () => [], ListCommands: () => [], ListSessions: () => [], GetAppInfo: () => ({ dataDir: 'isolated-smoke-data' }),
-      ReadLocalFile: (path) => files[path], ListTextFilesInDir: () => Object.keys(files), RestoreTextFiles: (paths) => paths,
-      WriteLocalFile: (path, content) => { files[path] = content; window.documentSmokeWrites.push({ path, content }); },
+      ReadLocalFile: (path) => ({ content: files[path], version: 'smoke-version' }), ListTextFilesInDir: () => Object.keys(files), RestoreTextFiles: (paths) => paths,
+      WriteLocalFile: (path, content) => { files[path] = content; window.documentSmokeWrites.push({ path, content }); return { version: 'smoke-saved', conflict: false }; },
       IsTextContextMenuRegistered: () => false, IsWindowMaximised: () => false,
     };
     window.go = { app: { App: new Proxy(app, { get: (target, key) => (...args) => Promise.resolve(target[key] ? target[key](...args) : /^List|^Read/.test(String(key)) ? [] : undefined) }) } };

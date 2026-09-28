@@ -50,7 +50,7 @@ const PRE_EXISTING = new Set([
   "admin-item", "admin-panel", "ai-persistent-host", "cast-progress", "command-panel",
   "cron-editor", "fill-muted", "fill-ok", "firewall-header", "firewall-list", "firewall-panel",
   "quick-connect-grid", "recordings-panel", "recordings-toolbar", "service-header",
-  "service-list", "service-panel", "sftp-col-actions", "sftp-col-name",
+  "service-list", "service-panel", "sftp-col-name",
   "site-editor", "svc-item", "terminal-state-connecting", "tsb-sessions",
 ]);
 

@@ -16,11 +16,16 @@
    assembled in JS). */
 .side-content {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, var(--side-split, 45%)) auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   padding: 8px 8px 8px 10px;
   gap: 0;
+}
+
+.side-content > * {
+  min-width: 0;
 }
 
 .side-content.side-content-monitor-collapsed {
@@ -796,6 +801,7 @@
 
 .server-session-count {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   min-width: 17px;
@@ -922,10 +928,14 @@
   min-width: 0;
   align-items: center;
   gap: 6px;
-  /* Reserve room for the hover-only .row-actions (4 mini-btns + gaps + right
-     offset) on the title line only, so the subtitle keeps the full row width
-     and hosts a complete address. */
-  padding-right: 90px;
+  min-height: 24px;
+}
+
+/* Four 24px controls, three 3px gaps and clearance. Keep the address full
+   width, and only shorten the title while the controls are available. */
+.server-row:hover .server-title-line,
+.server-row:focus-within .server-title-line {
+  padding-right: 112px;
 }
 
 .server-title-group {
@@ -938,7 +948,14 @@
 
 .server-title-group .server-title {
   min-width: 0;
-  flex: 0 1 auto;
+  flex: 1;
+}
+
+/* Keep the independent trust control on the address line, clear of the
+   four hover actions above it. */
+.server-row > .server-cli-trust-indicator {
+  align-self: flex-end;
+  margin-bottom: 1px;
 }
 
 .server-cli-trust-indicator {
@@ -1074,11 +1091,12 @@
   top: 4px;
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   padding: 0;
   border-radius: var(--radius-xs);
   background: transparent;
   opacity: 0;
+  visibility: hidden;
   pointer-events: none;
   transition: opacity var(--dur-fast) var(--ease);
 }
@@ -1086,10 +1104,14 @@
 .server-row:hover .row-actions,
 .server-row:focus-within .row-actions {
   opacity: 1;
+  visibility: visible;
   pointer-events: auto;
 }
 
 .row-actions .mini-btn {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 24px;
   opacity: 1;
   background: color-mix(in srgb, var(--panel-raised) 72%, transparent);
   border-color: color-mix(in srgb, var(--border) 68%, transparent);
@@ -1162,20 +1184,16 @@
   height: 8px;
   flex-shrink: 0;
   border-radius: 999px;
-  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 12%, transparent);
+  box-shadow: none;
   transition: box-shadow var(--dur) var(--ease);
 }
 
 .status-dot.bg-ok {
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--ok) 14%, transparent),
-    0 0 8px color-mix(in srgb, var(--ok) 58%, transparent);
+  box-shadow: none;
 }
 
 .status-dot.bg-bad {
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--bad) 14%, transparent),
-    0 0 8px color-mix(in srgb, var(--bad) 45%, transparent);
+  box-shadow: none;
 }
 
 .logs-file-only {

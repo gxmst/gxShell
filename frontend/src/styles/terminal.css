@@ -112,7 +112,7 @@
   flex: 0 0 auto;
   border-radius: 999px;
   background: var(--accent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent), 0 0 6px var(--accent);
+  box-shadow: none;
   /* Draws attention when the output arrives, then settles. A terminal stays open
      all day, so an infinite animation here would keep the compositor awake for
      as long as any tab is unread — one permanently animating layer per dot. */
@@ -200,6 +200,22 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.tab-server-icon {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 15px;
+  color: var(--muted);
+}
+
+.tab-server-icon .status-dot {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  bottom: -2px;
+  right: -1px;
+  outline: 2px solid var(--panel);
 }
 
 .tab-close {

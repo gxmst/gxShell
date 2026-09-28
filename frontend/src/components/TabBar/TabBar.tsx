@@ -264,7 +264,7 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
               }}
             >
               <button className="tab-main" role="tab" aria-selected={activeTab === tab.id} aria-label={tab.title} tabIndex={activeTab === tab.id ? 0 : -1} onClick={() => onActive(tab.id)} onKeyDown={(event) => onTabKeyDown(event, index)}>
-                {tab.type === "markdown" ? <FileText size={12} className="text-accent opacity-70 shrink-0" /> : tab.local ? <Terminal size={12} className="text-accent opacity-70 shrink-0" /> : <span className={clsx("status-dot", stateClass(tab.state))} />}
+                {tab.type === "markdown" ? <FileText size={13} className="text-accent shrink-0" /> : tab.local ? <Terminal size={13} className="text-accent shrink-0" /> : <span className="tab-server-icon" title={t(lang, tab.state === "connected" ? "serverStatusConnected" : tab.state === "error" ? "serverStatusError" : tab.state === "disconnected" ? "serverStatusDisconnected" : "terminalStateConnecting")}><Server size={13} /><span className={clsx("status-dot", stateClass(tab.state))} /></span>}
                 <span className="tab-title">{tab.title}</span>
                 {tab.pinned && <Pin size={10} className="tab-pin-mark" aria-label={t(lang, "tabPinned")} />}
                 {tab.unread && activeTab !== tab.id && <span className="tab-unread-dot" title={t(lang, "tabNewOutput")} />}

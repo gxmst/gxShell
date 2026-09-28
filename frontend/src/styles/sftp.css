@@ -1,6 +1,7 @@
 /* ── SFTP file workspace ────────────────────────────── */
 
 .sftp-panel {
+  container-type: inline-size;
   display: flex;
   height: 100%;
   min-height: 0;
@@ -8,8 +9,8 @@
   flex-direction: column;
   border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   border-radius: 13px;
-  background: color-mix(in srgb, var(--panel) 82%, transparent);
-  box-shadow: var(--hairline), 0 12px 30px color-mix(in srgb, var(--shadow-color) 14%, transparent);
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-md);
 }
 
 .sftp-browser-header {
@@ -18,8 +19,7 @@
   flex: 0 0 auto;
   padding: 9px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-  background:
-    linear-gradient(145deg, color-mix(in srgb, var(--section-accent) 8%, var(--panel-raised)), color-mix(in srgb, var(--panel) 76%, transparent));
+  background: var(--panel-soft);
 }
 
 .sftp-browser-topline {
@@ -558,11 +558,24 @@
   to { transform: rotate(360deg); }
 }
 
-@media (max-width: 760px) {
-  .sftp-file-head,
-  .sftp-file-row { grid-template-columns: minmax(0, 1fr) 45px 45px; }
-  .sftp-col-modified,
-  .sftp-file-modified { display: none; }
+/* Adapt to the panel, not the window: a wide desktop can have a narrow rail. */
+@container (max-width: 380px) {
+  .sftp-file-head { grid-template-columns: minmax(0, 1fr) 48px 64px; }
+  .sftp-col-actions { display: none; }
+  .sftp-file-row {
+    grid-template-columns: minmax(0, 1fr) auto 44px;
+    grid-template-rows: 20px 16px;
+    gap: 2px 7px;
+    height: 48px;
+    padding: 4px 8px;
+  }
+  .sftp-file-main { grid-column: 1 / -1; grid-row: 1; }
+  .sftp-file-size { grid-column: 1; grid-row: 2; text-align: left; padding-left: 21px; font-size: 9px; }
+  .sftp-file-modified { grid-column: 2; grid-row: 2; font-size: 9px; }
+  .sftp-file-actions { grid-column: 3; grid-row: 2; }
+  .sftp-file-name { font-size: 11px; }
+  .sftp-browser-topline { flex-wrap: wrap; gap: 6px; }
+  .sftp-browser-title { flex: 1 1 100%; }
 }
 
 /* Legacy class names kept for TransferModal / other panels */

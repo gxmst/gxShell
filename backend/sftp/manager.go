@@ -1112,7 +1112,7 @@ func (m *Manager) uploadFileWithPolicy(sessionID, localPath, remotePath string, 
 	if os.IsNotExist(partErr) {
 		flags |= os.O_EXCL
 	}
-	dst, err := client.OpenFile(tmpPath, flags)
+	dst, defaultMode, err := openPrivateRemoteFile(client, tmpPath, flags)
 	if err != nil {
 		return err
 	}
@@ -1205,7 +1205,18 @@ func (m *Manager) uploadFileWithPolicy(sessionID, localPath, remotePath string, 
 	// user, which is how a site starts returning 500 after a successful upload.
 	// Capture the destination before the rename and carry it onto the completed
 	// part file. A destination that does not exist yields nothing to carry.
-	applyRemoteOwnership(client, tmpPath, captureRemoteOwnership(client, remotePath))
+	owner := captureRemoteOwnership(client, remotePath)
+	if !owner.known && owner.err == nil {
+		owner = remoteOwnership{mode: defaultMode, known: true}
+	}
+	if err = applyRemoteOwnership(client, tmpPath, owner); err != nil {
+		if permanentRemoteMetadataError(err) {
+			if cleanupErr := client.Remove(tmpPath); cleanupErr != nil && !os.IsNotExist(cleanupErr) {
+				return fmt.Errorf("preserve remote file metadata; original preserved: %w (could not remove temporary upload: %v)", err, cleanupErr)
+			}
+		}
+		return fmt.Errorf("preserve remote file metadata; original preserved: %w", err)
+	}
 	if err = replaceRemoteTemp(client, tmpPath, remotePath, overwrite); err != nil {
 		return err
 	}
@@ -1247,7 +1258,7 @@ func (m *Manager) CopyRemoteFile(ctx context.Context, sourceSessionID, sourcePat
 	}
 
 	tmpPath := destinationPath + artifactMarker + "copy-" + randomSuffix() + partSuffix
-	destination, err := destinationClient.OpenFile(tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	destination, _, err := openPrivateRemoteFile(destinationClient, tmpPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
 	if err != nil {
 		return result, err
 	}
@@ -1573,19 +1584,29 @@ func (m *Manager) WriteRemoteFile(sessionID string, remotePath string, data []by
 	// config came back 0644 and a www-data-owned .env came back owned by the
 	// login user.
 	owner := captureRemoteOwnership(client, target)
+	if owner.err != nil {
+		return owner.err
+	}
 
 	// This is the remote editor's save path: write a sibling temp file and
 	// rename it over the target. An in-place O_TRUNC write would destroy the
 	// original if the connection drops mid-write.
 	tmpPath := target + ".gxshell-" + randomSuffix() + ".tmp"
-	if err := writeRemoteFileAt(client, tmpPath, data); err != nil {
+	defaultMode, err := writeRemoteFileAt(client, tmpPath, data)
+	if err != nil {
 		_ = client.Remove(tmpPath)
 		m.invalidateOnConnErr(sessionID, err)
 		return fmt.Errorf("write remote temporary file; original preserved: %w", err)
 	}
 	// Ownership first: chown clears the setuid and setgid bits, so the mode has
 	// to be applied after it or those bits are lost again.
-	applyRemoteOwnership(client, tmpPath, owner)
+	if !owner.known {
+		owner = remoteOwnership{mode: defaultMode, known: true}
+	}
+	if err := applyRemoteOwnership(client, tmpPath, owner); err != nil {
+		_ = client.Remove(tmpPath)
+		return fmt.Errorf("preserve remote file metadata; original preserved: %w", err)
+	}
 	if err := client.PosixRename(tmpPath, target); err != nil {
 		// posix-rename@openssh.com may be unsupported. Plain SFTP Rename is a
 		// safe fallback only when the server can complete it without deleting an
@@ -1651,12 +1672,13 @@ func resolveRemoteLinkTarget(client remoteFileOps, remotePath string) (string, e
 
 // remoteOwnership is what a replaced file should look like afterwards.
 type remoteOwnership struct {
-	mode os.FileMode
-	uid  int
-	gid  int
-	// known is false when the destination could not be inspected, in which case
-	// nothing is applied: inventing a mode would be worse than leaving the
-	// server's default.
+	mode   os.FileMode
+	uid    int
+	gid    int
+	hasIDs bool
+	err    error
+	// known distinguishes regular destinations from missing/non-regular ones.
+	// Inspection failures are carried in err and prevent promotion.
 	known bool
 }
 
@@ -1673,6 +1695,9 @@ type remoteOwnership struct {
 func captureRemoteOwnership(client remoteFileOps, remotePath string) remoteOwnership {
 	info, err := client.Lstat(remotePath)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			return remoteOwnership{err: fmt.Errorf("inspect remote file metadata: %w", err)}
+		}
 		return remoteOwnership{}
 	}
 	if !info.Mode().IsRegular() {
@@ -1686,41 +1711,96 @@ func captureRemoteOwnership(client remoteFileOps, remotePath string) remoteOwner
 	}
 	if stat, ok := info.Sys().(*sftp.FileStat); ok && stat != nil {
 		owner.uid, owner.gid = int(stat.UID), int(stat.GID)
+		owner.hasIDs = true
 	}
 	return owner
 }
 
 // applyRemoteOwnership copies a captured mode and owner onto a freshly written
-// file. Both calls are best-effort: chown needs root on most servers, and a
-// refused chown must not fail a transfer that otherwise succeeded.
-func applyRemoteOwnership(client remoteFileOps, remotePath string, owner remoteOwnership) {
+// file. If metadata cannot be restored, the caller must preserve the original.
+func applyRemoteOwnership(client remoteFileOps, remotePath string, owner remoteOwnership) error {
+	if owner.err != nil {
+		return owner.err
+	}
 	if !owner.known {
-		return
+		return nil
 	}
 	// chown first: it clears the setuid and setgid bits, so applying the mode
 	// before it would lose them again.
-	if owner.uid != 0 || owner.gid != 0 {
-		_ = client.Chown(remotePath, owner.uid, owner.gid)
+	if owner.hasIDs {
+		info, err := client.Lstat(remotePath)
+		if err != nil {
+			return fmt.Errorf("inspect temporary file ownership: %w", err)
+		}
+		stat, ok := info.Sys().(*sftp.FileStat)
+		if !ok || stat == nil || int(stat.UID) != owner.uid || int(stat.GID) != owner.gid {
+			if err := client.Chown(remotePath, owner.uid, owner.gid); err != nil {
+				return fmt.Errorf("restore remote file owner: %w", err)
+			}
+		}
 	}
-	if owner.mode != 0 {
-		_ = client.Chmod(remotePath, owner.mode)
+	if err := client.Chmod(remotePath, owner.mode); err != nil {
+		return fmt.Errorf("restore remote file permissions: %w", err)
 	}
+	return nil
 }
 
-func writeRemoteFileAt(client *sftp.Client, remotePath string, data []byte) error {
-	dst, err := client.OpenFile(remotePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC)
+// pkg/sftp's OpenFile cannot send creation attributes. Restrict the open
+// handle before any content is written, and fail closed if the server refuses.
+// Return its original mode so a new destination retains the server's defaults.
+func openPrivateRemoteFile(client *sftp.Client, remotePath string, flags int) (*sftp.File, os.FileMode, error) {
+	dst, err := client.OpenFile(remotePath, flags)
 	if err != nil {
-		return err
+		return nil, 0, err
+	}
+	mode, err := protectRemoteFileHandle(dst)
+	if err != nil {
+		_ = dst.Close()
+		return nil, 0, fmt.Errorf("protect remote temporary file: %w", err)
+	}
+	return dst, mode, nil
+}
+
+type privateRemoteFileHandle interface {
+	Stat() (os.FileInfo, error)
+	Chmod(os.FileMode) error
+}
+
+func protectRemoteFileHandle(dst privateRemoteFileHandle) (os.FileMode, error) {
+	info, err := dst.Stat()
+	if err != nil {
+		return 0, fmt.Errorf("cannot inspect open SFTP file (FSTAT required): %w", err)
+	}
+	// A restrictive server-side creation policy may already provide exactly
+	// the required protection, including on servers without FSETSTAT.
+	if info.Mode().Perm() != 0600 || info.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
+		if err := dst.Chmod(0600); err != nil {
+			return 0, fmt.Errorf("cannot secure open SFTP file (FSETSTAT required); no new content written: %w", err)
+		}
+	}
+	return info.Mode().Perm(), nil
+}
+
+func permanentRemoteMetadataError(err error) bool {
+	var status *sftp.StatusError
+	return errors.Is(err, os.ErrPermission) || errors.Is(err, sftp.ErrSSHFxPermissionDenied) || errors.Is(err, sftp.ErrSSHFxOpUnsupported) ||
+		(errors.As(err, &status) && (status.FxCode() == sftp.ErrSSHFxPermissionDenied || status.FxCode() == sftp.ErrSSHFxOpUnsupported))
+}
+
+func writeRemoteFileAt(client *sftp.Client, remotePath string, data []byte) (os.FileMode, error) {
+	dst, mode, err := openPrivateRemoteFile(client, remotePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	if err != nil {
+		return 0, err
 	}
 	_, writeErr := io.Copy(dst, bytes.NewReader(data))
 	closeErr := dst.Close()
 	if writeErr != nil {
-		return writeErr
+		return 0, writeErr
 	}
 	if closeErr != nil {
-		return closeErr
+		return 0, closeErr
 	}
-	return nil
+	return mode, nil
 }
 
 // promoteRemoteNoReplace installs a fully written sibling temp file without
@@ -2265,7 +2345,7 @@ func (m *Manager) downloadFileOnly(client *sftp.Client, job *transferJob, root *
 // tear down an SFTP subsystem that concurrent operations are still using and
 // force a pointless reconnect.
 func (m *Manager) invalidateOnConnErr(sessionID string, err error) {
-	if err == nil || os.IsNotExist(err) || os.IsPermission(err) {
+	if err == nil || errors.Is(err, os.ErrNotExist) || errors.Is(err, os.ErrPermission) || os.IsNotExist(err) || os.IsPermission(err) {
 		return
 	}
 	var status *sftp.StatusError

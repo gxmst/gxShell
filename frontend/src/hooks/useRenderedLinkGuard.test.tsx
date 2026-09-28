@@ -1,6 +1,7 @@
 import { render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { classifyRenderedLink, useRenderedLinkGuard } from './useRenderedLinkGuard';
+import { sanitizeRenderedHtml } from '../utils/sanitizeHtml';
 
 const runtimeMocks = vi.hoisted(() => ({ browserOpenURL: vi.fn() }));
 
@@ -64,14 +65,21 @@ describe('classifyRenderedLink', () => {
     expect(classifyRenderedLink(null)).toBeNull();
   });
 
-  it('ignores an anchor with no usable href', () => {
+  it('distinguishes an absent href from a blank href', () => {
     const host = mountHtml('<a id="bare">bare</a><a href="   " id="blank">blank</a>');
     expect(classifyRenderedLink(host.querySelector('#bare') as Element)).toBeNull();
-    expect(classifyRenderedLink(host.querySelector('#blank') as Element)).toBeNull();
+    expect(classifyRenderedLink(host.querySelector('#blank') as Element)).toEqual({ kind: 'blocked', href: '' });
   });
 });
 
 describe('useRenderedLinkGuard', () => {
+  it.each(['', '   '])('blocks sanitized links with href=%j', (href) => {
+    render(<Harness onBlocked={vi.fn()} />);
+    const host = mountHtml(sanitizeRenderedHtml(`<a href="${href}">continue</a>`));
+    expect(host.querySelector('a')?.hasAttribute('href')).toBe(true);
+    expect(click(host.querySelector('a') as Element)).toBe(false);
+    expect(runtimeMocks.browserOpenURL).not.toHaveBeenCalled();
+  });
   it('routes an external link to the system browser instead of navigating', () => {
     render(<Harness onBlocked={vi.fn()} />);
     const host = mountHtml('<a href="https://example.com/x">web</a>');

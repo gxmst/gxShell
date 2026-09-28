@@ -52,6 +52,27 @@ mean that the operation is read-only, harmless, or fully reviewed.
 
 ## Interpret fields instead of guessing
 
+Exec calls automatically carry a request ID. JSON responses expose `requestId`,
+`requestProtected` and `replayed`. When retrying the **same request**, pass its
+ID with `--request-id <id>`; the authenticated API accepts the corresponding
+`X-GxShell-Request-ID` header. Keep the alias, command/script, timeout, secret
+references and async mode unchanged. Reusing an ID with a different payload is
+rejected. Ordinary new calls get new IDs, even for identical commands.
+
+Protection lasts for 30 minutes after completion in the **same running GUI
+process**. It is not persisted across restarts. Do not infer that a timed-out
+remote action stopped, or retry automatically after restart/expiry. Duplicate
+pending calls wait for the original; cancelling a waiter does not cancel the
+original action. Response retention is bounded (4 MiB per result, 16 MiB total,
+4096 IDs); a retained ID whose response is unavailable refuses re-execution.
+An explicit retry ID requires a desktop app advertising this capability.
+
+`cancelRequested` acknowledges cancellation, not remote termination. Completed
+command/job results may include `remoteState`: `not_started` proves the exec did
+not start, `exited` means an SSH shell exit status was received, and `unknown`
+means the remote state must be checked. Shell exit does not prove detached child
+processes stopped. Existing `state` and `outcome` values remain compatible.
+
 Always request and inspect JSON. `outcome` is authoritative:
 
 - `succeeded`: the remote command exited successfully.

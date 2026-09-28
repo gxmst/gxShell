@@ -473,3 +473,68 @@ func TestInformationalCardStillFiresWithoutRenderer(t *testing.T) {
 		t.Fatalf("the informational card fired %d times, want a pending and a resolved event", cards)
 	}
 }
+
+func TestLiveRequestsContextAlreadyCancelled(t *testing.T) {
+	caller, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx, cleanup := liveRequestsContext([]context.Context{caller})
+	defer cleanup()
+	if ctx.Err() != context.Canceled {
+		t.Fatal("all callers cancelled but approval is still live")
+	}
+}
+
+func TestLiveRequestsContextCancellationDuringSnapshot(t *testing.T) {
+	base, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	caller := &cancelAfterCheckContext{Context: base, cancel: cancel}
+	ctx, cleanup := liveRequestsContext([]context.Context{caller})
+	defer cleanup()
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("caller cancelled between snapshot and watcher, but approval remained live")
+	}
+}
+
+func TestLiveRequestsContextWaitsForEveryCaller(t *testing.T) {
+	a, cancelA := context.WithCancel(context.Background())
+	b, cancelB := context.WithCancel(context.Background())
+	defer cancelA()
+	defer cancelB()
+	ctx, cleanup := liveRequestsContext([]context.Context{a, b})
+	defer cleanup()
+	cancelA()
+	if ctx.Err() != nil {
+		t.Fatal("one caller cancelled another caller's approval")
+	}
+	cancelB()
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("approval outlived every caller")
+	}
+}
+
+func TestLiveRequestsContextWithoutCallers(t *testing.T) {
+	ctx, cancel := liveRequestsContext(nil)
+	defer cancel()
+	if ctx.Err() != nil {
+		t.Fatal("context-free approval was denied")
+	}
+}
+
+func TestCancelledApprovalNeverEmitsPanel(t *testing.T) {
+	app := NewApp()
+	app.ctx.Set(context.Background())
+	h := newApprovalPanelHarness(app)
+	caller, cancel := context.WithCancel(context.Background())
+	cancel()
+	result, ok := app.requestCliApprovalPanel(caller, cliApprovalPanelRequest{Items: []cliApprovalItem{{ID: "cmd-0", Text: "uptime"}}})
+	if !ok || len(result.Approved) != 0 {
+		t.Fatal("cancelled approval was not denied")
+	}
+	if len(h.requests) != 0 || app.approvalPanel.len() != 0 || len(app.approvalGate) != 0 {
+		t.Fatal("cancelled approval left a panel or held the gate")
+	}
+}

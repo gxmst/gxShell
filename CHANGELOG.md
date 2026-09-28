@@ -5,6 +5,26 @@ from the version section in this file.
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-09-28
+
+### English
+
+- Refined all themes with layered shadows, clearer active surfaces and improved light-terminal contrast. Server hover actions retain dedicated space; long names, tabs and monitoring summaries are easier to read.
+- Added compact two-line remote file rows and a bounded, per-session directory cache with background refresh and invalidation after changes.
+- Remote writes protect temporary contents before writing and preserve destination ownership and permissions, including root IDs and mode 0000. Failed metadata restoration preserves the original; definitive upload metadata failures remove the temporary file without disconnecting healthy sessions. SFTP servers must support FSTAT and, unless files are already private, FSETSTAT.
+- CLI execution now reports request IDs, offers bounded in-process retry deduplication and distinguishes confirmed remote exit from an unconfirmed cancellation. Explicit retry IDs are limited to exec commands; no automatic retries are added.
+- Fixed cancellation during connection/channel setup, cancelled approval batches, stale panel callbacks and saved drafts surviving unmount. Newer edits remain intact when an older save finishes.
+- Included additional fixes for terminal WebGL lifetime, floating-panel and IME interactions, server-scoped notifications, command risk classification, SSH port detection and localized errors.
+
+### 中文
+
+- 重新调整各主题的分层阴影、活动区域及浅色终端对比度；服务器悬浮按钮保留独立空间，改善长名称、标签和监控摘要的可读性。
+- 远程文件浏览器增加窄面板双行布局，以及按会话隔离、有容量上限的目录缓存；后台刷新并在文件操作后失效。
+- 远程写入先保护临时文件，再恢复目标属主和权限，包括 root 属主及 0000 权限。恢复失败保留原文件，确定性元数据失败清理上传临时文件，并避免误断开健康连接。服务器需支持 FSTAT；文件尚非私有权限时还需支持 FSETSTAT。
+- CLI 执行返回请求编号，支持进程内限时重试去重，并区分已确认退出与未确认终止。显式重试编号仅适用于 exec 系列，不增加自动重试。
+- 修复连接／通道建立期间取消、整批审批取消、面板过期回调及卸载后已保存草稿未清理；旧保存完成不会覆盖后续编辑。
+- 合入终端 WebGL 生命周期、浮动面板与输入法交互、按服务器隔离通知、命令风险分类、SSH 端口探测及错误本地化等修复。
+
 ## [1.7.0] - 2026-09-12
 
 ### English

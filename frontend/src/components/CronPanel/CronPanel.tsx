@@ -61,7 +61,7 @@ export function CronPanel(props: {
 
   // The draft belongs to the host, so a second terminal on the same server - or
   // an auto-reconnect that hands the session a new id - no longer discards it.
-  const [draft, setDraft] = useProfileDraft<CronDraft | null>(
+  const [draft, setDraft, replaceDraftIfCurrent] = useProfileDraft<CronDraft | null>(
     "cron",
     props.active?.profileId || "",
     null,
@@ -135,17 +135,15 @@ export function CronPanel(props: {
 
   const save = async (): Promise<boolean> => {
     const ok = await persist(true);
-    if (!ok) return false;
+    if (!ok || !replaceDraftIfCurrent(draft, null)) return false;
     props.onNotify(t(lang, "cronSaved"), "success");
-    setDraft(null);
     await refresh();
     return true;
   };
 
   const saveFromPrompt = async (): Promise<boolean> => {
     const ok = await persist(false);
-    if (!ok) return false;
-    setDraft(null);
+    if (!ok || !replaceDraftIfCurrent(draft, null)) return false;
     await refresh();
     return true;
   };

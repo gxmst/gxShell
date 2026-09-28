@@ -201,3 +201,22 @@ describe("WebsitePanel discard prompt", () => {
     await settle();
   });
 });
+describe("WebsitePanel saves across remounts", () => {
+  it("preserves newer draft after an older panel finishes saving", async () => {
+    let finish!: () => void;
+    appMocks.saveWebsiteConfig.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const first = render(panel(tab("session-a")));
+    await openSite();
+    fireEvent.change(configBox()!, { target: { value: "saved snapshot" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Save$/ }));
+    first.unmount();
+    const second = render(panel(tab("session-b")));
+    await waitFor(() => expect(configBox()?.value).toBe("saved snapshot"));
+    fireEvent.change(configBox()!, { target: { value: "new unsaved work" } });
+    await act(async () => { finish(); });
+    second.unmount();
+    render(panel(tab("session-b")));
+    await settle();
+    expect(configBox()?.value).toBe("new unsaved work");
+  });
+});

@@ -71,12 +71,12 @@
   --font-mono: "Cascadia Code", "JetBrains Mono", "Fira Code", Consolas, ui-monospace, "SF Mono", monospace;
   --mono: var(--font-mono);
 
-  /* Elevation — single-layer, contained shadows. Mature desktop UIs cast one
-     soft shadow for depth, not a stacked halo. */
+  /* Elevation: a close contact shadow defines the edge; the softer downward
+     shadow establishes height. Each theme supplies its own neutral shadow. */
   --shadow-color: rgba(0, 3, 8, 0.55);
-  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--shadow-color) 60%, transparent);
-  --shadow-md: 0 4px 12px color-mix(in srgb, var(--shadow-color) 55%, transparent);
-  --shadow-lg: 0 10px 30px color-mix(in srgb, var(--shadow-color) 60%, transparent);
+  --shadow-sm: 0 1px 2px color-mix(in srgb, var(--shadow-color) 48%, transparent), 0 3px 8px color-mix(in srgb, var(--shadow-color) 22%, transparent);
+  --shadow-md: 0 1px 3px color-mix(in srgb, var(--shadow-color) 48%, transparent), 0 6px 16px -4px color-mix(in srgb, var(--shadow-color) 48%, transparent);
+  --shadow-lg: 0 2px 6px color-mix(in srgb, var(--shadow-color) 55%, transparent), 0 16px 40px -8px color-mix(in srgb, var(--shadow-color) 75%, transparent);
   /* Formerly a glow; now just a hairline border + normal elevation so raised
      surfaces read as edges, not light sources. */
   --shadow-glow: 0 0 0 1px var(--border-strong), var(--shadow-lg);
@@ -124,8 +124,8 @@
 /* Sakura Mist — elegant morning rose / sakura light theme */
 .app-shell[data-theme="Sakura Mist"] {
   --bg: #faf0f4;
-  --panel: #f6e6ee;
-  --panel-soft: #f0dde7;
+  --panel: #f7f1f4;
+  --panel-soft: #efe6eb;
   --panel-raised: #ffffff;
   --bg-secondary: #f6e6ee;
   --terminal: #fdf7fa;
@@ -135,7 +135,7 @@
   --text: #3b2533;
   --muted: #7d5a71;
   --muted-2: #a27e96;
-  --accent: #d44d7d;
+  --accent: #ad426b;
   --accent-soft: rgba(212, 77, 125, .12);
   --ok: #15803d;
   --warn: #c2870c;
@@ -157,8 +157,8 @@
 /* Matcha Green — fresh forest mint / matcha light theme */
 .app-shell[data-theme="Matcha Green"] {
   --bg: #edf6f0;
-  --panel: #e3efe7;
-  --panel-soft: #d8e8dd;
+  --panel: #f0f5f1;
+  --panel-soft: #e5ede7;
   --panel-raised: #ffffff;
   --bg-secondary: #e3efe7;
   --terminal: #f4faf6;
@@ -168,7 +168,7 @@
   --text: #192e21;
   --muted: #4e6b57;
   --muted-2: #72917c;
-  --accent: #16a34a;
+  --accent: #237a4b;
   --accent-soft: rgba(22, 163, 74, .12);
   --ok: #15803d;
   --warn: #c2870c;
@@ -190,8 +190,8 @@
 /* Yuzu Study — warm cream latte light theme */
 .app-shell[data-theme="Yuzu Study"] {
   --bg: #fcf7ed;
-  --panel: #f4ecdc;
-  --panel-soft: #efe4d0;
+  --panel: #f6f2e9;
+  --panel-soft: #eee8dc;
   --panel-raised: #ffffff;
   --bg-secondary: #f4ecdc;
   --terminal: #fffdf9;
@@ -234,7 +234,7 @@
   --text: #edf5ff;
   --muted: #8eb6de;
   --muted-2: #5f8ab8;
-  --accent: #5cbcff;
+  --accent: #73afe0;
   --accent-soft: rgba(92, 188, 255, .16);
   --ok: #34d399;
   --warn: #fbbf24;
@@ -262,7 +262,7 @@
   --text: #f2fce6;
   --muted: #a8c08e;
   --muted-2: #738664;
-  --accent: #a3e635;
+  --accent: #abc477;
   --accent-soft: rgba(163, 230, 53, .15);
   --ok: #a3e635;
   --warn: #facc15;
@@ -290,7 +290,7 @@
   --text: #fff6eb;
   --muted: #d4b89a;
   --muted-2: #a08468;
-  --accent: #ffb86b;
+  --accent: #d9aa76;
   --accent-soft: rgba(255, 184, 107, .16);
   --ok: #a3e635;
   --warn: #fbbf24;

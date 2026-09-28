@@ -7,7 +7,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { types } from "../../wailsjs/go/models";
 import { ResizeTerminal, WriteToTerminal, LogCommand } from "../../wailsjs/go/app/App";
 import { writeClipboardText } from "../utils/clipboard";
-import { getTerminalTheme } from "../utils/format";
+import { getTerminalContrastRatio, getTerminalTheme } from "../utils/format";
 import { MAX_FONT_SIZE, MIN_FONT_SIZE, normalizeFontSize, normalizeLineHeight, normalizeScrollbackLines } from "../utils/terminalSettings";
 import { findHighlightMatches, type HighlightLevel } from "../utils/highlight";
 import { createLinkProvider, type TerminalLinkAppHandlers } from "../utils/terminalLinks";
@@ -374,7 +374,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
           fontSize: runtimeFontSize.current[activeTab] ?? normalizeFontSize(s.terminal.fontSize),
           fontWeight: 400,
           lineHeight: normalizeLineHeight(s.terminal.lineHeight),
-          minimumContrastRatio: 1,
+          minimumContrastRatio: getTerminalContrastRatio(s),
           drawBoldTextInBrightColors: false,
           scrollback: normalizeScrollbackLines(s.terminal.scrollbackLines),
           smoothScrollDuration: 0,
@@ -815,6 +815,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
           delete runtimeFontSize.current[id];
         }
         term.options.theme = theme;
+        term.options.minimumContrastRatio = getTerminalContrastRatio({ ...settings, terminal });
         const host = terminalHosts.current[id];
         if (host) {
           host.style.setProperty("--terminal", theme?.background || "");
