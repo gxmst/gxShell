@@ -35,6 +35,8 @@ LICENSE     text eol=lf
 *.jpg       binary
 *.jpeg      binary
 *.gif       binary
+*.webp      binary
+*.mp4       binary
 *.ico       binary
 *.woff      binary
 *.woff2     binary

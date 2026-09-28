@@ -5,21 +5,22 @@
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 ![Windows](https://img.shields.io/badge/platform-Windows%20x64-0078d4.svg)
 
-gxShell is a Windows SSH workbench that combines terminal sessions, SFTP,
-monitoring, tunnels, AI tools, a local and remote document viewer/editor, and
-an optional CLI in one desktop app.
+gxShell is a compact SSH workbench for Windows, built with Go, Wails, and
+WebView2. It brings terminals, SFTP, monitoring, and remote file editing into
+one clean desktop interface.
 
-What it does that a conventional SSH client does not: local tools and AI agents
-can run commands on your servers *through* the running app, without ever
-receiving your SSH credentials. They address servers by alias only — never a
-hostname, user, port, or jump host — with native confirmations and an optional
-trust window for permitted operations. Trust can be granted for 1, 4, 8, or 24
-hours; there is no permanent switch. Sensitive and high-risk commands still
-require confirmation during a trust window.
+Use the built-in AI assistant with your own compatible model API, or let
+CLI-capable tools such as Claude Code and Codex work through your existing SSH
+connections. Agents address servers by alias, so you do not need to hand them
+SSH passwords or private keys. Approval controls and expiring trust govern
+remote operations; external CLI access is disabled by default.
 
-[中文说明](README.zh-CN.md)
+[Download](#download) · [Demo](#demo) · [Agent guide](docs/agent-guide.md) · [中文说明](README.zh-CN.md)
 
-![gxShell desktop SSH workbench](docs/assets/gxshell-overview.webp)
+[![gxShell's English interface with four SSH terminals and a server sidebar](docs/marketing/assets/readme/workspace.webp)](docs/marketing/assets/01-workspace.png)
+
+*The images and video below show the real interface with fictional servers,
+commands, metrics, and documents. No personal server data is used.*
 
 ## Download
 
@@ -40,7 +41,51 @@ release:
 Get-FileHash .\gxShell-v<version>-windows-amd64.zip -Algorithm SHA256
 ```
 
+## Demo
+
+[![Animated preview of terminals, remote documents, and command approval — open the full video](docs/marketing/assets/readme/demo-preview.gif)](docs/marketing/assets/gxshell-english-demo.mp4)
+
+**[Full 39-second demo (MP4, 1080p)](docs/marketing/assets/gxshell-english-demo.mp4)**
+· [English subtitles](docs/marketing/assets/gxshell-english-demo.srt)
+
+The short loop above previews three scenes. The full silent video follows a
+server check, a remote runbook and configuration file, and an external agent
+request where only the read-only checks are approved.
+
 ## Highlights
+
+### Built-in AI and access for external agents
+
+The in-app assistant works with terminal context and remote tools. The optional
+local CLI lets external agents reuse saved connections without copying SSH
+credentials into prompts or agent configuration. `secret://` references also
+keep named secret values out of prompts and command arguments.
+
+Review requested operations and approve only the items you choose. Trust can
+be granted for 1, 4, 8, or 24 hours; sensitive and high-risk operations still
+require confirmation. These controls reduce accidental exposure and are not
+a sandbox for untrusted commands. See the [security model](docs/security.md).
+
+[![Command review with a service restart deselected and two read-only checks selected](docs/marketing/assets/readme/agent-review.webp)](docs/marketing/assets/03-agent-review.png)
+
+### Files and documents alongside your terminals
+
+Browse a remote folder, read a Markdown runbook, and edit deployment files
+without leaving the workspace. Click either screenshot for the full-size view.
+
+| SFTP and terminal | Remote runbooks |
+| --- | --- |
+| [![Remote SFTP folder alongside an SSH terminal](docs/marketing/assets/readme/files.webp)](docs/marketing/assets/02-files.png) | [![Remote Markdown runbook with file navigation and an outline](docs/marketing/assets/readme/documents.webp)](docs/marketing/assets/02-documents.png) |
+
+<details>
+<summary>View the configuration editor</summary>
+
+[![A fictional YAML deployment configuration open in edit mode](docs/marketing/assets/readme/editor.webp)](docs/marketing/assets/02-editor.png)
+
+</details>
+
+<details>
+<summary>Full feature list</summary>
 
 - Local CLI and HTTP API that let scripts and AI agents work on your servers through the app, with alias-only targeting, native approvals, expiring trust, and `secret://` references that keep credentials out of prompts and process arguments.
 - Built-in AI assistant over any OpenAI-compatible API, with streaming replies, terminal context, and confirmation before any remote tool call.
@@ -52,6 +97,8 @@ Get-FileHash .\gxShell-v<version>-windows-amd64.zip -Algorithm SHA256
 - Encrypted configuration backups with import previews, conflict handling, optional credentials/private keys, and rollback on failed imports.
 - Session recording to asciinema `.cast` files with a built-in player, plus opt-in text logs and automatic cleanup by age and total size.
 - Windows tray integration, file associations, drag-and-drop opening, and update notifications.
+
+</details>
 
 ## Keyboard shortcuts
 

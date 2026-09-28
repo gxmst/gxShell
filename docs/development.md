@@ -55,6 +55,25 @@ security issue, or planned release. Dependabot version-update PRs are disabled
 to avoid a recurring upgrade queue. CI continues to run `npm audit` and
 `govulncheck` in the verification and release workflows.
 
+## README media
+
+The README screenshots use the actual English frontend with fictional data.
+With Playwright and Sharp available on `NODE_PATH`, an installed Edge browser,
+and FFmpeg on `PATH`, run from `frontend/`:
+
+```sh
+npm run marketing:capture
+npm run marketing:readme
+```
+
+The capture writes images, a silent MP4, and subtitles to `docs/marketing/assets/`;
+the second command writes compressed WebP images and a short GIF to its `readme/`
+subdirectory. The native app and personal application data are not used.
+Only reviewed media should be committed; ZIP packages, extracted media kits,
+capture reports, and posting drafts are local working material.
+GitHub strips ordinary HTML video tags from README content, so the README uses
+an animated preview linked to the full MP4.
+
 ## Project layout
 
 ```text

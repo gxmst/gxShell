@@ -1,0 +1,15 @@
+1
+00:00:00,000 --> 00:00:10,884
+Your servers. One workspace. SSH terminals, SFTP, monitoring and documents — together.
+
+2
+00:00:10,884 --> 00:00:22,658
+Keep your files in the workflow. Browse remote files. Read runbooks. Edit deployment configs.
+
+3
+00:00:22,658 --> 00:00:33,349
+Agent requests. Your approval. Review commands and approve only the operations you choose.
+
+4
+00:00:33,349 --> 00:00:39,183
+Try gxShell. Share feedback. If it helps you, give it a star on GitHub.

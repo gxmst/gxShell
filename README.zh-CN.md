@@ -5,17 +5,19 @@
 [![许可证](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 ![Windows](https://img.shields.io/badge/platform-Windows%20x64-0078d4.svg)
 
-gxShell 是一个 Windows SSH 工作台，把终端会话、SFTP、监控、隧道、AI
-工具、本地与远程文档查看/编辑器和可选 CLI 集成在一个桌面应用中。
+gxShell 是一个基于 Go、Wails 和 WebView2 构建的 Windows SSH 工作台，
+以小巧、简洁的桌面界面整合终端、SFTP、监控与远程文件编辑。
 
-与常规 SSH 客户端不同的地方：本地工具和 AI agent 可以**通过**正在运行的
-gxShell 在你的服务器上执行命令，全程拿不到 SSH 凭据。它们只能用 alias 指定目标
-——不给 hostname、用户名、端口和跳板机信息——操作由原生确认和可选的限时信任管控。
-信任可以按 1、4、8、24 小时授予，没有永久开关；敏感及高风险命令在信任期间仍需确认。
+你可以配置自己的兼容模型 API 使用内置 AI 助手，也可以让 Claude Code、Codex
+等能够调用 CLI 的工具复用已有 SSH 连接。Agent 用别名指定服务器，无需把 SSH
+密码或私钥交给它；远程操作受授权控制和限时信任管理，外部 CLI 接入默认关闭。
 
-[English](README.md)
+[下载](#下载) · [演示](#演示) · [Agent 使用规范](docs/agent-guide.md) · [English](README.md)
 
-![gxShell 桌面 SSH 工作台](docs/assets/gxshell-overview.webp)
+[![gxShell 英文界面：四个 SSH 终端与服务器侧栏](docs/marketing/assets/readme/workspace.webp)](docs/marketing/assets/01-workspace.png)
+
+*以下图片和视频均使用真实界面，服务器、命令、指标与文档都是虚构演示数据，
+不包含个人服务器信息。*
 
 ## 下载
 
@@ -34,7 +36,48 @@ gxShell 在你的服务器上执行命令，全程拿不到 SSH 凭据。它们�
 Get-FileHash .\gxShell-v<版本>-windows-amd64.zip -Algorithm SHA256
 ```
 
+## 演示
+
+[![终端、远程文档与命令授权的动态预览，点击打开完整视频](docs/marketing/assets/readme/demo-preview.gif)](docs/marketing/assets/gxshell-english-demo.mp4)
+
+**[完整 39 秒演示（MP4，1080p）](docs/marketing/assets/gxshell-english-demo.mp4)**
+· [英文字幕](docs/marketing/assets/gxshell-english-demo.srt)
+
+上方短动图展示三个场景。完整静音视频依次演示服务器检查、远程说明文档与配置文件，
+以及审阅外部 Agent 请求、只批准其中的只读检查。视频界面与说明为英文。
+
 ## 主要功能
+
+### 内置 AI，兼顾外部 Agent 调用
+
+内置助手可以使用终端上下文和远程工具；可选的本地 CLI 让外部 Agent 复用已保存
+的连接，无需把 SSH 凭据复制到提示词或 Agent 配置中。`secret://` 引用也能避免
+把命名密钥的值放进提示词和命令参数。
+
+逐项审阅操作，只批准需要执行的内容。信任可按 1、4、8、24 小时授予，敏感和高风险
+操作仍需确认。这些机制用于降低意外泄露风险，并不是运行不可信命令的沙箱。
+详见[安全模型](docs/security.md)。
+
+[![命令授权界面：取消服务重启，只选中两项只读检查](docs/marketing/assets/readme/agent-review.webp)](docs/marketing/assets/03-agent-review.png)
+
+### 在终端旁浏览文件与文档
+
+浏览远程目录、阅读 Markdown 运维说明、编辑部署配置，都可以在同一工作台完成。
+点击图片可查看大图。
+
+| SFTP 与终端 | 远程说明文档 |
+| --- | --- |
+| [![SSH 终端旁的远程 SFTP 目录](docs/marketing/assets/readme/files.webp)](docs/marketing/assets/02-files.png) | [![带文件导航和大纲的远程 Markdown 文档](docs/marketing/assets/readme/documents.webp)](docs/marketing/assets/02-documents.png) |
+
+<details>
+<summary>查看配置编辑器</summary>
+
+[![虚构的 YAML 部署配置处于编辑模式](docs/marketing/assets/readme/editor.webp)](docs/marketing/assets/02-editor.png)
+
+</details>
+
+<details>
+<summary>展开完整功能列表</summary>
 
 - 本地 CLI 和 HTTP API，让脚本和 AI agent 借助本应用操作服务器：只能用 alias 指定目标、原生确认、限时信任，以及 `secret://` 引用（凭据不进入模型提示词和进程参数）。
 - 内置 AI 助手，支持任意 OpenAI 兼容 API，流式回复、终端上下文，远程工具调用前必须确认。
@@ -46,6 +89,8 @@ Get-FileHash .\gxShell-v<版本>-windows-amd64.zip -Algorithm SHA256
 - 加密配置备份，支持导入预览、冲突处理、可选凭据／私钥，以及导入失败回滚。
 - 终端录制为 asciinema `.cast` 文件，内置播放器；另可启用文本日志，并按保留期和总量自动清理。
 - Windows 托盘、文件关联、拖放打开和更新提示。
+
+</details>
 
 ## 快捷键
 
