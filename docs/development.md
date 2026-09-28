@@ -48,6 +48,13 @@ Build the separate CLI with:
 go build -o gxshell-cli.exe .\cmd\gxshell-cli
 ```
 
+## Dependency maintenance
+
+Routine dependency upgrades are reviewed manually when needed for a bug fix,
+security issue, or planned release. Dependabot version-update PRs are disabled
+to avoid a recurring upgrade queue. CI continues to run `npm audit` and
+`govulncheck` in the verification and release workflows.
+
 ## Project layout
 
 ```text
