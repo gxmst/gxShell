@@ -43,9 +43,9 @@ Get-FileHash .\gxShell-v<version>-windows-amd64.zip -Algorithm SHA256
 
 ## Demo
 
-[![Animated preview of terminals, remote documents, and command approval — open the full video](docs/marketing/assets/readme/demo-preview.gif)](docs/marketing/assets/gxshell-english-demo.mp4)
+[![Animated preview of terminals, remote documents, and command approval — download the full video](docs/marketing/assets/readme/demo-preview.gif)](https://github.com/gxmst/gxShell/raw/refs/heads/main/docs/marketing/assets/gxshell-english-demo.mp4)
 
-**[Full 39-second demo (MP4, 1080p)](docs/marketing/assets/gxshell-english-demo.mp4)**
+**[Download full 39-second demo (MP4, 1080p)](https://github.com/gxmst/gxShell/raw/refs/heads/main/docs/marketing/assets/gxshell-english-demo.mp4)**
 · [English subtitles](docs/marketing/assets/gxshell-english-demo.srt)
 
 The short loop above previews three scenes. The full silent video follows a

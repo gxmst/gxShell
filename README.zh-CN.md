@@ -38,9 +38,9 @@ Get-FileHash .\gxShell-v<版本>-windows-amd64.zip -Algorithm SHA256
 
 ## 演示
 
-[![终端、远程文档与命令授权的动态预览，点击打开完整视频](docs/marketing/assets/readme/demo-preview.gif)](docs/marketing/assets/gxshell-english-demo.mp4)
+[![终端、远程文档与命令授权的动态预览，点击下载完整视频](docs/marketing/assets/readme/demo-preview.gif)](https://github.com/gxmst/gxShell/raw/refs/heads/main/docs/marketing/assets/gxshell-english-demo.mp4)
 
-**[完整 39 秒演示（MP4，1080p）](docs/marketing/assets/gxshell-english-demo.mp4)**
+**[下载完整 39 秒演示（MP4，1080p）](https://github.com/gxmst/gxShell/raw/refs/heads/main/docs/marketing/assets/gxshell-english-demo.mp4)**
 · [英文字幕](docs/marketing/assets/gxshell-english-demo.srt)
 
 上方短动图展示三个场景。完整静音视频依次演示服务器检查、远程说明文档与配置文件，
