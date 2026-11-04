@@ -246,6 +246,9 @@ func (a *App) planBackup(payload backupPayload, workspaces, policy string, resto
 		imported.SessionLogRetention = config.NormalizeSessionLogRetention(settings.SessionLogRetention)
 		imported.Terminal.LocalShell = settings.Terminal.LocalShell
 		imported.Terminal.LocalStartDirectory = settings.Terminal.LocalStartDirectory
+		// Proxy routing is machine-specific and must not be replaced by an
+		// imported address that could redirect this computer's credentials.
+		imported.Proxy = settings.Proxy
 		imported.Ai.APIKey = ""
 		for _, change := range []backupSettingChange{
 			{Field: "provider", Before: settings.Ai.Provider, After: imported.Ai.Provider},

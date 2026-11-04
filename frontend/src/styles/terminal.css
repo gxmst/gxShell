@@ -533,12 +533,12 @@
 }
 
 .tab-context-menu {
-  position: absolute;
-  top: calc(100% + 5px);
-  left: 4px;
+  position: fixed;
   z-index: 70;
   min-width: 150px;
-  overflow: hidden;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--panel-raised);
@@ -561,6 +561,9 @@
 .tab-context-menu button:hover {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
+
+.tab-context-menu button:disabled { opacity: 0.4; cursor: default; }
+.tab-context-divider { height: 1px; margin: 4px 2px; background: var(--border); }
 
 /* ── Terminal Stage ─────────────────────────────────── */
 

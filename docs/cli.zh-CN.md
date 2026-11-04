@@ -1,5 +1,8 @@
 # gxShell CLI 使用说明
 
+同一个授权开关也支持 MCP stdio 和 Streamable HTTP。Claude Code、Codex 的
+接入方法见 [MCP 中文指南](mcp.zh-CN.md)。
+
 `gxshell-cli.exe` 是可选的本机自动化工具。它让脚本或 AI Agent 通过正在运行的
 gxShell 桌面应用，对用户明确授权的服务器执行命令；它不会直接读取已保存的 SSH
 密码、私钥口令或真实主机信息。

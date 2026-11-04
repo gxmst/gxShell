@@ -7,6 +7,7 @@ package app
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"gxShell/backend/logger"
@@ -36,7 +37,18 @@ func (a *App) CheckForUpdate() version.CheckResult {
 // checkForUpdate performs the lookup. manual distinguishes a user-initiated
 // check (which reports regardless of the setting) from the startup one.
 func (a *App) checkForUpdate(ctx context.Context, manual bool) version.CheckResult {
-	result := version.NewChecker().Check(ctx)
+	if !manual {
+		settings, err := a.store.GetSettings()
+		if err != nil || !settings.UpdateCheckEnabled || ctx.Err() != nil {
+			return version.CheckResult{Current: version.Version}
+		}
+	}
+	checker := version.NewChecker()
+	checker.Client = &http.Client{Timeout: 10 * time.Second}
+	if a.networkProxy != nil {
+		checker.Client.Transport = a.networkProxy
+	}
+	result := checker.Check(ctx)
 
 	if result.Error != "" {
 		if a.log != nil {
@@ -86,12 +98,20 @@ func (a *App) startUpdateCheck() {
 	}
 
 	go func() {
-		// Give the app time to finish starting. A short sleep rather than a
-		// timer so shutdown does not have to track one more resource; the
-		// goroutine holds nothing but this delay.
-		time.Sleep(updateCheckStartupDelay)
-
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		// Give startup time to finish, while allowing shutdown to cancel the
+		// delay before any network request starts.
+		appCtx := a.ctx.Get()
+		if appCtx == nil {
+			return
+		}
+		timer := time.NewTimer(updateCheckStartupDelay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-appCtx.Done():
+			return
+		}
+		ctx, cancel := context.WithTimeout(appCtx, 20*time.Second)
 		defer cancel()
 
 		result := a.checkForUpdate(ctx, false)

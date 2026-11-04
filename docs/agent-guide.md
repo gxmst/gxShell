@@ -2,6 +2,10 @@
 
 This is the shared contract for Claude Code, Codex, DeepSeek, and other automation clients that use `gxshell-cli`. Correctness does not depend on a model-specific file: the CLI also enforces the important input rules and returns structured outcomes.
 
+The same execution contract applies to the [MCP server](mcp.md) over stdio and
+Streamable HTTP. Use `gxshell_execute_script` for multiline scripts and heredocs;
+inspect structured MCP results and retain `requestId` for deliberate retries.
+
 ## Choose the correct execution mode
 
 Use `exec` only for one ordinary shell command with no literal newline or heredoc:

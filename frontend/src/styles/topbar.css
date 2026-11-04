@@ -45,6 +45,8 @@
 .topbar .tab-action,
 .topbar .tab-actions button,
 .topbar .tab-action-dropdown,
+.topbar .tab-context-menu,
+.topbar .tab-scroll-button,
 .topbar .window-controls button {
   --wails-draggable: no-drag;
 }
@@ -152,9 +154,7 @@
   gap: 2px;
 }
 
-/* Tabs size to their content (with a sensible floor and ceiling) so a short
-   title never renders as a wide empty slab — the leftover width belongs to the
-   drag surface, not the tab. */
+/* Keep positions stable while selecting tabs or updating status badges. */
 .topbar .tabs-scroll {
   flex: 1 1 auto;
   align-items: center;
@@ -164,9 +164,10 @@
 .topbar .tab {
   height: 29px;
   align-self: center;
-  flex: 0 0 auto;
-  min-width: 120px;
-  max-width: min(220px, 100cqi);
+  flex: 0 0 min(150px, 100cqi);
+  width: min(150px, 100cqi);
+  min-width: 0;
+  max-width: 150px;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
   padding: 0 4px 0 10px;
@@ -182,7 +183,6 @@
 }
 
 .topbar .tab-active {
-  max-width: min(260px, 100cqi);
   border-color: var(--border-strong);
   background: var(--panel-raised);
   box-shadow: var(--shadow-sm);
@@ -204,15 +204,13 @@
   padding: 0 2px;
 }
 
-@media (max-width: 1150px) {
-  .topbar .tab {
-    min-width: 90px;
-  }
-}
+/* Keep terminal numbers and the close-button slot available when titles
+   truncate, including while switching between active and inactive tabs. */
+.tab-number { flex: 0 0 auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.topbar .tab .tab-close { display: inline-flex; }
 
 @media (max-width: 960px) {
   .topbar .tab {
-    min-width: 72px;
     padding: 0 2px 0 6px;
   }
   .topbar .window-controls button {
@@ -225,4 +223,31 @@
   .topbar-brand-version {
     display: none;
   }
+  .tab-list-label { display: none; }
 }
+
+.tabs-regions { display: flex; min-width: 0; flex: 1 1 0; align-items: stretch; gap: 3px; }
+.tabs-region { display: flex; min-width: 0; flex: 1 1 0; align-items: center; }
+.tabs-pinned-region { flex: 0 1 auto; max-width: 40%; padding-right: 3px; border-right: 1px solid var(--border); }
+.tabs-pinned-only { flex: 1 1 auto; max-width: 100%; border-right: 0; }
+.tab-scroll-button { display: inline-flex; flex: 0 0 22px; width: 22px; height: 28px; align-items: center; justify-content: center; color: var(--muted); border-radius: var(--radius-sm); }
+.tab-scroll-button:hover:not(:disabled) { color: var(--accent); background: var(--accent-soft); }
+.tab-scroll-button:disabled { opacity: 0.3; }
+.tab-list-toggle { width: auto; gap: 5px; padding: 0 6px; }
+.tab-list-label { white-space: nowrap; font-size: 10px; }
+.tab-count { font-size: 10px; font-variant-numeric: tabular-nums; color: var(--muted); background: var(--panel-soft); padding: 0 3px; border-radius: 4px; line-height: 18px; }
+.tab-overflow-group + .tab-overflow-group { margin-top: 8px; }
+.tabs-pinned-compact { display: none; flex: 0 0 auto; align-items: center; border-right: 1px solid var(--border); padding-right: 3px; --wails-draggable: no-drag; }
+.tabs-pinned-compact .tab-action { width: 36px; gap: 2px; }
+.tabs-pinned-compact.active .tab-action { color: var(--accent); background: var(--accent-soft); }
+@media (max-width: 640px) {
+  .tabs-pinned-region:not(.tabs-pinned-only) { display: none; }
+  .tabs-pinned-compact { display: flex; }
+  .topbar-brand-title { display: none; }
+  .topbar .window-controls button { width: 32px; }
+  .topbar .tab-main { gap: 4px; }
+}
+.tab-overflow-group-heading { display: flex; gap: 8px; align-items: baseline; padding: 5px 7px; color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--border); }
+.tab-overflow-group-heading strong { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.tab-overflow-group-heading span { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.tab-kind { display: inline-block; margin-right: 6px; padding: 0 4px; border-radius: 3px; background: var(--panel-soft); font-family: var(--font-ui); }

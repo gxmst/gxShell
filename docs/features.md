@@ -16,7 +16,7 @@ terminal window.
 
 - Encrypted configuration backups cover server profiles, commands, global settings, highlight rules, named workspaces and trusted host keys.
 - Credentials and private keys are optional exports requiring native confirmation. Import previews show conflicts and AI configuration changes before applying them, with rollback on operation failures.
-- External files and live sessions are not included. Local CLI/update opt-ins, document grants and log-cleanup preferences stay on the destination computer. See [backup and migration](development/backup-migration.md).
+- External files and live sessions are not included. Local CLI/update opt-ins, proxy routing, document grants and log-cleanup preferences stay on the destination computer. See [backup and migration](development/backup-migration.md).
 
 ## Files and documents
 
@@ -25,7 +25,7 @@ terminal window.
 - Local and remote PDF viewing through authorized, range-capable document streams, plus JSON/JSONC/JSONL editing with validation and token-preserving formatting. JSONC formatting retains comments and trailing commas; NDJSON uses the JSON Lines workflow.
 - Documents have a separate navigation entry with the current folder, file filter, refresh, reveal-current action and recent documents. Large folders show 200 files per page; filtering searches the entire listing and reveal-current selects the right page. Switching to an existing or restored document selects this panel; returning to a terminal restores its previous tool. Settings and AI remain available across tab switches.
 - Terminal and document panels share the same width. A narrower window temporarily clamps it without losing the saved preference. Sidebar toggles change terminal geometry once, with a short panel fade instead of animating every intermediate width.
-- Tabs keep readable widths and scroll horizontally. The active tab stays visible after window resizing, and the searchable all-tabs picker shows full names and host/path details, supports arrow-key navigation and respects Chinese input composition.
+- Tabs use stable widths with overflow arrows and a visible count. Pinned tabs stay in an independent area, with a compact picker in narrow windows. The searchable all-tabs list groups terminals by server and documents separately, shows stable per-server terminal numbers and full host/path details, supports keyboard navigation and respects Chinese input composition. Context menus close other/right-hand tabs through serialized confirmations, preserving pinned tabs and stopping on cancellation. See [tab management](development/tab-management.md).
 - JSON/JSONC/JSONL operations above 256 K UTF-16 code units run in a worker. Saving still validates the snapshot being written; formatting never replaces edits made while processing, and closing a document cancels pending parsing.
 - Large text previews render only visible lines in a read-only source view, with full-document search and copying. SSH reconnects during JSON validation use the replacement connection for saving.
 - Editable documents must contain UTF-8 text. Binary data and unsupported encodings are rejected before preview and before overwriting an existing local or remote file. Local document links and special files are excluded; directory authorization is rechecked at IO time.
@@ -51,8 +51,10 @@ Office documents and standalone images are not document-tab formats.
 
 - OpenAI-compatible AI providers with streaming, model listing, usage, terminal context, and native confirmation before remote tools run.
 - `gxshell-cli` and its local HTTP API for approved commands, jobs, file transfers, remote copies, and temporary loopback tunnels.
+- Standard MCP server over stdio and Streamable HTTP for server discovery, command/script execution and background jobs, with the same native approval policy. See [mcp.md](mcp.md).
 - Named `secret://` references keep credentials out of prompts, argv, confirmations, and command audits.
 
 ## Windows integration
 
 - Tray menu, file associations, optional context-menu registration, drag-and-drop opening, and public-release update checks.
+- [Application proxy](proxy.md) with system, direct and manual HTTP/HTTPS/SOCKS5 modes for AI/update requests and optional SSH first-hop proxying. Windows system mode supports static proxies, PAC and WPAD; local services always remain direct.

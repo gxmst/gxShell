@@ -9,8 +9,8 @@ gxShell 是一个基于 Go、Wails 和 WebView2 构建的 Windows SSH 工作台�
 以小巧、简洁的桌面界面整合终端、SFTP、监控与远程文件编辑。
 
 你可以配置自己的兼容模型 API 使用内置 AI 助手，也可以让 Claude Code、Codex
-等能够调用 CLI 的工具复用已有 SSH 连接。Agent 用别名指定服务器，无需把 SSH
-密码或私钥交给它；远程操作受授权控制和限时信任管理，外部 CLI 接入默认关闭。
+等支持 CLI 或 MCP 的工具复用已有 SSH 连接。Agent 用别名指定服务器，无需把 SSH
+密码或私钥交给它；远程操作受授权控制和限时信任管理，外部 CLI / MCP 接入默认关闭。
 
 [下载](#下载) · [演示](#演示) · [Agent 使用规范](docs/agent-guide.md) · [English](README.md)
 
@@ -23,7 +23,7 @@ gxShell 是一个基于 Go、Wails 和 WebView2 构建的 Windows SSH 工作台�
 
 前往 [Windows x64 最新版](https://github.com/gxmst/gxShell/releases/latest)。
 推荐下载 zip；桌面应用位于压缩包根目录，可选 CLI、中英文使用说明和 Agent 安全
-规范统一放在 `CLI/` 子目录，另附许可证和构建清单。CLI 服务默认关闭，必须在设置
+规范统一放在 `CLI/` 子目录，另附许可证和构建清单。CLI / MCP 服务默认关闭，必须在设置
 中明确开启。
 
 运行要求：Windows 10/11 x64，以及 Microsoft WebView2 Runtime。未签名版本
@@ -35,6 +35,25 @@ gxShell 是一个基于 Go、Wails 和 WebView2 构建的 Windows SSH 工作台�
 ```powershell
 Get-FileHash .\gxShell-v<版本>-windows-amd64.zip -Algorithm SHA256
 ```
+
+## 接入 AI 客户端
+
+在设置中开启「CLI / MCP 服务」并重启 gxShell，再给需要开放的服务器启用访问
+并设置别名。使用期间保持 gxShell 运行。
+
+MCP 在 AI 客户端的全局或项目设置中注册一次即可，同一范围的新对话无需重复配置。
+从解压后的发布目录生成 stdio 配置片段：
+
+```powershell
+.\CLI\gxshell-cli.exe mcp config --client claude --transport stdio
+.\CLI\gxshell-cli.exe mcp config --client codex --transport stdio
+```
+
+将对应片段合入客户端设置；这两个命令只输出配置，不会自动注册。stdio 自动
+读取本机令牌，无需将令牌写进配置；也可使用需要令牌认证的 Streamable HTTP
+入口 `http://127.0.0.1:56789/mcp`。详见 [MCP 接入指南](docs/mcp.zh-CN.md)。
+能够执行本机命令的客户端仍可使用 [CLI 和 Agent 规范](docs/agent-guide.md)，
+两种入口共用审批和 SSH 会话。
 
 ## 演示
 
@@ -80,8 +99,10 @@ Get-FileHash .\gxShell-v<版本>-windows-amd64.zip -Algorithm SHA256
 <summary>展开完整功能列表</summary>
 
 - 本地 CLI 和 HTTP API，让脚本和 AI agent 借助本应用操作服务器：只能用 alias 指定目标、原生确认、限时信任，以及 `secret://` 引用（凭据不进入模型提示词和进程参数）。
+- [MCP 服务](docs/mcp.zh-CN.md)：同时支持 stdio 和 Streamable HTTP，供 Claude Code、Codex 等客户端接入，复用现有授权和 SSH 连接。
+- [应用代理](docs/proxy.zh-CN.md)：AI 和更新请求支持跟随系统、直连或手动 HTTP/HTTPS/SOCKS5，可单独开启 SSH 第一跳代理。
 - 内置 AI 助手，支持任意 OpenAI 兼容 API，流式回复、终端上下文，远程工具调用前必须确认。
-- 多会话 SSH 终端，同一服务器可开多个独立终端，支持二／四分屏、命名工作区、重连、同步广播输入和标签搜索。
+- 多会话 SSH 终端，同一服务器可开多个独立终端，支持二／四分屏、命名工作区、重连和同步广播输入。标签宽度稳定，固定区独立，支持溢出箭头、按服务器分组搜索、稳定终端编号，以及经过确认的批量关闭。
 - 按服务器保存终端外观、SSH 字符编码、TERM 类型及退格／删除键配置。
 - SFTP 浏览、上传、下载、断点续传，以及本地/远程文档工作流。
 - 通过 SSH 提供 Linux 监控、Docker、隧道、服务、防火墙、Cron 和网站工具。
@@ -120,6 +141,9 @@ Get-FileHash .\gxShell-v<版本>-windows-amd64.zip -Algorithm SHA256
 | 加密备份与迁移 | [docs/development/backup-migration.md](docs/development/backup-migration.md) |
 | 会话日志清理 | [docs/development/session-log-retention.md](docs/development/session-log-retention.md) |
 | CLI 和本地 API | [docs/cli.md](docs/cli.md) |
+| MCP 接入 | [docs/mcp.zh-CN.md](docs/mcp.zh-CN.md) |
+| 应用代理 | [docs/proxy.zh-CN.md](docs/proxy.zh-CN.md) |
+| 标签管理 | [docs/development/tab-management.md](docs/development/tab-management.md) |
 | Agent 执行规范 | [docs/agent-guide.md](docs/agent-guide.md) |
 | 架构说明 | [docs/architecture.md](docs/architecture.md) |
 | 开发 | [docs/development.md](docs/development.md) |

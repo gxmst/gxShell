@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Activity, Database, Download, FileText, HardDrive, Palette, RefreshCw, Save, Search, Settings2, ShieldCheck, TerminalSquare, X } from "lucide-react";
+import { Activity, Database, Download, FileText, Globe, HardDrive, Palette, RefreshCw, Save, Search, Settings2, ShieldCheck, TerminalSquare, X } from "lucide-react";
 import { CheckForUpdate, ExportHistory, GetVersion, IsTextContextMenuRegistered, RegisterTextContextMenu, UnregisterTextContextMenu } from "../../../wailsjs/go/app/App";
 import { BrowserOpenURL } from "../../../wailsjs/runtime/runtime";
 import { types, version as versionModel } from "../../../wailsjs/go/models";
@@ -339,10 +339,32 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
             hint={t(lang, "settingsRestoreWorkspaceHint")}
           />
           <SettingsToggle checked={draft.cliServerEnabled ?? false} onChange={(checked) => update({ cliServerEnabled: checked })} label={t(lang, "cliServerEnabled")} hint={t(lang, "cliServerEnabledHint")} />
+          {draft.cliServerEnabled && <p className="settings-field-hint">{t(lang, "mcpConnectionHint")}</p>}
         </SettingsSection>
 
         <SettingsSection icon={<ShieldCheck size={15} />} title={t(lang, "settingsSystemIntegration")} description={t(lang, "settingsSystemIntegrationHint")}>
           <SettingsToggle checked={mdMenu} onChange={toggleMdMenu} label={t(lang, "mdContextMenu")} hint={t(lang, "mdContextMenuHint")} />
+        </SettingsSection>
+
+        <SettingsSection icon={<Globe size={15} />} title={t(lang, "settingsProxy")} description={t(lang, "settingsProxyHint")}>
+          <div className="settings-grid">
+            <SettingsField label={t(lang, "proxyMode")}>
+              <select className="input compact-input" value={draft.proxy.mode} onChange={(event) => update({ proxy: new types.ProxySettings({ ...draft.proxy, mode: event.target.value }) })}>
+                <option value="system">{t(lang, "proxySystem")}</option>
+                <option value="direct">{t(lang, "proxyDirect")}</option>
+                <option value="manual">{t(lang, "proxyManual")}</option>
+              </select>
+            </SettingsField>
+            {draft.proxy.mode === "manual" && <>
+              <SettingsField label={t(lang, "proxyAddress")} hint={t(lang, "proxyAddressHint")} wide>
+                <input className="input compact-input" value={draft.proxy.url} placeholder="http://127.0.0.1:7890" onChange={(event) => update({ proxy: new types.ProxySettings({ ...draft.proxy, url: event.target.value }) })} />
+              </SettingsField>
+              <SettingsField label={t(lang, "proxyBypass")} hint={t(lang, "proxyBypassHint")} wide>
+                <input className="input compact-input" value={draft.proxy.bypass} placeholder="*.example.com,10.0.0.0/8,<local>" onChange={(event) => update({ proxy: new types.ProxySettings({ ...draft.proxy, bypass: event.target.value }) })} />
+              </SettingsField>
+            </>}
+          </div>
+          <SettingsToggle checked={draft.proxy.ssh} onChange={(ssh) => update({ proxy: new types.ProxySettings({ ...draft.proxy, ssh }) })} label={t(lang, "proxySSH")} hint={t(lang, "proxySSHHint")} />
         </SettingsSection>
 
         <SettingsSection icon={<Download size={15} />} title={t(lang, "updateSection")} description={t(lang, "updateSectionDesc")}>

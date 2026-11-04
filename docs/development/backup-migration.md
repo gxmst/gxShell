@@ -38,7 +38,7 @@ export. The completed export dialog lists omissions in the selected language,
 and the encrypted backup retains these warnings for its import preview.
 
 Global settings can be restored separately. Existing CLI-server and update-check
-opt-ins stay local; CLI automation trust and local file grants are not migrated.
+opt-ins and proxy routing stay local; CLI automation trust and local file grants are not migrated.
 The preview compares changed AI provider, endpoint and model values before
 settings are applied. API keys never enter that comparison. Restoring AI settings
 without an included API key clears the prior AI credential and reports that it

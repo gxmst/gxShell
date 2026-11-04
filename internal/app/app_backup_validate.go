@@ -12,6 +12,7 @@ import (
 	"unicode/utf16"
 
 	"gxShell/backend/config"
+	"gxShell/backend/networkproxy"
 	"gxShell/backend/types"
 
 	"golang.org/x/crypto/ssh"
@@ -126,6 +127,9 @@ func validateBackup(payload *backupPayload) error {
 		}
 	}
 	if err := config.ValidateHighlightRules(payload.Settings.HighlightRules); err != nil {
+		return err
+	}
+	if err := networkproxy.Validate(payload.Settings.Proxy); err != nil {
 		return err
 	}
 	if payload.Settings.ConnectionTimeout < 0 || payload.Settings.ConnectionTimeout > 3600 || payload.Settings.MonitorIntervalSec < 0 || payload.Settings.MonitorIntervalSec > 86400 {

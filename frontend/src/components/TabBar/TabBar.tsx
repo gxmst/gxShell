@@ -1,5 +1,5 @@
 import clsx from "clsx";
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Circle, Columns2, CopyPlus, FileText, List, Pin, PinOff, Plus, Radio, RefreshCw, Rows2, Search, Server, Terminal, X } from "lucide-react";
 import type { AutomationIndicator, SplitDirection, Tab } from "../../types";
 import { Grid2X2 } from "lucide-react";
@@ -7,21 +7,28 @@ import { stateClass } from "../../utils/format";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
 import { isImeComposing } from "../../utils/ime";
+import { TabStrip } from "./TabStrip";
+import { closeTabTargets, orderTabs, TerminalLabels } from "./tabLayout";
 
 function tabContext(tab: Tab, profile?: types.Profile) {
-  if (tab.type === "markdown") return tab.remotePath || tab.filePath || "";
+  if (tab.type === "markdown") return [tab.markdownSource === "remote" && profile?.host ? `${profile.username || ""}@${profile.host}:${profile.port || 22}` : "", tab.remotePath || tab.filePath].filter(Boolean).join(" · ");
   return profile?.host ? `${profile.username || ""}@${profile.host}:${profile.port || 22}` : "";
 }
 
 // The tab strip. It is mounted inside AppTopBar, so it owns no window chrome
 // and no sidebar affordance: the activity rail is always visible and carries
 // the only panel toggle.
-export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconnect, onTearOff, onReorder, onSplitToggle, onNewConnection, onNewLocal, onNewTerminal, onOpenMarkdown, onRename, onTogglePin, rightAccessory, broadcastInput, broadcastAvailable, onToggleBroadcast, recording, onToggleRecording, automationActivity, dirtyTabIds, language }: { tabs: Tab[]; activeTab: string; profiles: types.Profile[]; onActive: (id: string, options?: { keepFocus?: boolean }) => void; onClose: (id: string) => void; onReconnect: (tab: Tab) => void; onTearOff?: (tab: Tab) => void; onReorder?: (draggedId: string, targetId: string) => void; onSplitToggle?: (tabId: string, direction: SplitDirection) => void; onNewConnection?: () => void; onNewLocal?: () => void; onNewTerminal?: (tab: Tab) => void; onOpenMarkdown?: () => void; onRename?: (tab: Tab) => void; onTogglePin?: (tab: Tab) => void; rightAccessory?: ReactNode; broadcastInput?: boolean; broadcastAvailable?: boolean; onToggleBroadcast?: () => void; recording?: boolean; onToggleRecording?: (id: string) => void; automationActivity?: Record<string, AutomationIndicator>; dirtyTabIds?: string[]; language?: string }) {
-  const active = tabs.find((tab) => tab.id === activeTab);
+export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onCloseMany, closingTabs, onReconnect, onTearOff, onReorder, onSplitToggle, onNewConnection, onNewLocal, onNewTerminal, onOpenMarkdown, onRename, onTogglePin, rightAccessory, broadcastInput, broadcastAvailable, onToggleBroadcast, recording, onToggleRecording, automationActivity, dirtyTabIds, language }: { tabs: Tab[]; activeTab: string; profiles: types.Profile[]; onActive: (id: string, options?: { keepFocus?: boolean }) => void; onClose: (id: string) => void; onCloseMany?: (ids: string[]) => void | Promise<unknown>; closingTabs?: boolean; onReconnect: (tab: Tab) => void; onTearOff?: (tab: Tab) => void; onReorder?: (draggedId: string, targetId: string) => void; onSplitToggle?: (tabId: string, direction: SplitDirection) => void; onNewConnection?: () => void; onNewLocal?: () => void; onNewTerminal?: (tab: Tab) => void; onOpenMarkdown?: () => void; onRename?: (tab: Tab) => void; onTogglePin?: (tab: Tab) => void; rightAccessory?: ReactNode; broadcastInput?: boolean; broadcastAvailable?: boolean; onToggleBroadcast?: () => void; recording?: boolean; onToggleRecording?: (id: string) => void; automationActivity?: Record<string, AutomationIndicator>; dirtyTabIds?: string[]; language?: string }) {
+  const orderedTabs = useMemo(() => orderTabs(tabs), [tabs]);
+  const active = orderedTabs.find((tab) => tab.id === activeTab);
+  const labelsRef = useRef(new TerminalLabels());
+  const labels = useMemo(() => labelsRef.current.labels(tabs), [tabs]);
+  const pinnedTabs = orderedTabs.filter((tab) => tab.pinned);
+  const regularTabs = orderedTabs.filter((tab) => !tab.pinned);
   const lang = language || "en";
   const dragRef = useRef<{ tabId: string; startX: number; startY: number; active: boolean } | null>(null);
-  const tabsRef = useRef(tabs);
-  tabsRef.current = tabs;
+  const tabsRef = useRef(orderedTabs);
+  tabsRef.current = orderedTabs;
   const onTearOffRef = useRef(onTearOff);
   onTearOffRef.current = onTearOff;
   const onReorderRef = useRef(onReorder);
@@ -33,23 +40,60 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
   const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [tabsMenuOpen, setTabsMenuOpen] = useState(false);
   const [tabsQuery, setTabsQuery] = useState("");
+  const [pinnedMenuOnly, setPinnedMenuOnly] = useState(false);
   const [tabsMenuPosition, setTabsMenuPosition] = useState({ left: 12, top: 40, maxHeight: 480 });
   const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
   const [contextTabId, setContextTabId] = useState("");
+  const [contextPosition, setContextPosition] = useState({ left: 0, top: 0 });
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<HTMLDivElement>(null);
   const newMenuButtonRef = useRef<HTMLButtonElement>(null);
   const tabsMenuButtonRef = useRef<HTMLButtonElement>(null);
   const toolsMenuButtonRef = useRef<HTMLButtonElement>(null);
-  const tabsScrollRef = useRef<HTMLDivElement>(null);
+  const tabsListRef = useRef<HTMLDivElement>(null);
   const profileByID = useMemo(() => new Map(profiles.map((profile) => [profile.id, profile])), [profiles]);
   const dirtySet = useMemo(() => new Set(dirtyTabIds || []), [dirtyTabIds]);
   const filteredTabs = useMemo(() => {
     const query = tabsQuery.trim().toLocaleLowerCase();
-    return tabs.filter((tab) => {
+    return orderedTabs.filter((tab) => {
+      if (pinnedMenuOnly && !tab.pinned) return false;
       const profile = profileByID.get(tab.profileId);
-      return [tab.title, tabContext(tab, profile), profile?.name, profile?.group].join(" ").toLocaleLowerCase().includes(query);
+      return [labels.get(tab.id), tab.title, tabContext(tab, profile), profile?.name, profile?.host, profile?.username, profile?.group].join(" ").toLocaleLowerCase().includes(query);
     });
-  }, [tabs, tabsQuery, profileByID]);
+  }, [orderedTabs, tabsQuery, profileByID, labels, pinnedMenuOnly]);
+  const tabGroups = useMemo(() => {
+    const groups = new Map<string, { title: string; context: string; tabs: Tab[] }>();
+    for (const tab of filteredTabs) {
+      const profile = profileByID.get(tab.profileId);
+      const key = tab.type === "markdown" ? "documents" : tab.local ? "local" : `server:${tab.profileId || tab.id}`;
+      if (!groups.has(key)) groups.set(key, { title: tab.type === "markdown" ? t(lang, "documentsNav") : tab.local ? t(lang, "localTerminal") : profile?.name || tab.title, context: tab.type === "markdown" || tab.local ? "" : tabContext(tab, profile), tabs: [] });
+      groups.get(key)!.tabs.push(tab);
+    }
+    return [...groups.values()];
+  }, [filteredTabs, profileByID, lang]);
+  const menuTabs = tabGroups.flatMap((group) => group.tabs);
+  const contextTab = orderedTabs.find((tab) => tab.id === contextTabId);
+
+  const toggleTabsMenu = (event: React.MouseEvent<HTMLButtonElement>, pinnedOnly = false) => {
+    event.stopPropagation();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const width = Math.min(440, window.innerWidth - 24);
+    const top = bounds.bottom + 7;
+    setTabsMenuPosition({ left: Math.max(12, Math.min(bounds.right - width, window.innerWidth - width - 12)), top, maxHeight: Math.max(0, window.innerHeight - top - 12) });
+    setNewMenuOpen(false); setToolsMenuOpen(false); setContextTabId(""); setTabsQuery("");
+    setTabsMenuOpen((value) => !value || pinnedMenuOnly !== pinnedOnly);
+    setPinnedMenuOnly(pinnedOnly);
+  };
+
+  useLayoutEffect(() => {
+    const menu = contextMenuRef.current;
+    if (!menu) return;
+    const rect = menu.getBoundingClientRect();
+    setContextPosition((position) => {
+      const next = { left: Math.max(8, Math.min(position.left, window.innerWidth - rect.width - 8)), top: Math.max(8, Math.min(position.top, window.innerHeight - rect.height - 8)) };
+      return next.left === position.left && next.top === position.top ? position : next;
+    });
+  }, [contextTabId]);
 
   useEffect(() => {
     if (!newMenuOpen && !tabsMenuOpen && !toolsMenuOpen && !contextTabId) return;
@@ -83,9 +127,9 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
     if (isImeComposing(event)) return;
     const target = event.target as HTMLElement;
     const input = target instanceof HTMLInputElement;
-    if (input && event.key === "Enter" && filteredTabs[0]) {
+    if (input && event.key === "Enter" && menuTabs[0]) {
       event.preventDefault();
-      onActive(filteredTabs[0].id);
+      onActive(menuTabs[0].id);
       setTabsMenuOpen(false);
       return;
     }
@@ -105,58 +149,25 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
   };
 
   useEffect(() => {
-    const host = tabsScrollRef.current;
-    if (!host || !activeTab) return;
-    const activeElement = Array.from(host.querySelectorAll<HTMLElement>(".tab[data-tab-id]"))
-      .find((element) => element.dataset.tabId === activeTab);
-    if (!activeElement) return;
-    const reveal = () => {
-      const bounds = host.getBoundingClientRect();
-      const tab = activeElement.getBoundingClientRect();
-      if (tab.left < bounds.left) host.scrollLeft += tab.left - bounds.left;
-      else if (tab.right > bounds.right) host.scrollLeft += tab.right - bounds.right;
-    };
-    reveal();
-    const observer = new ResizeObserver(reveal);
-    observer.observe(host);
-    observer.observe(activeElement);
-    return () => observer.disconnect();
-  }, [activeTab, tabs.length]);
-
-  useEffect(() => {
-    const close = () => setTabsMenuOpen(false);
+    const close = () => { setTabsMenuOpen(false); setContextTabId(""); };
     window.addEventListener("resize", close);
     return () => window.removeEventListener("resize", close);
   }, []);
 
-  useEffect(() => {
-    const host = tabsScrollRef.current;
-    if (!host) return;
-    const onWheel = (e: WheelEvent) => {
-      if (Math.abs(e.deltaY) > Math.abs(e.deltaX) && host.scrollWidth > host.clientWidth) {
-        e.preventDefault();
-        host.scrollLeft += e.deltaY;
-      }
-    };
-    host.addEventListener("wheel", onWheel, { passive: false });
-    return () => {
-      host.removeEventListener("wheel", onWheel);
-    };
-  }, []);
-
   const activateTabByIndex = useCallback((index: number) => {
-    const tab = tabs[index];
+    const tab = orderedTabs[index];
     if (!tab) return;
     // The strip keeps the focus it is navigating with, so the caller must not
     // move it into the terminal. The focus move is synchronous: the button for
     // every tab is already rendered, and deferring it to an animation frame is
     // what let the terminal's own focus timer win the race.
     onActive(tab.id, { keepFocus: true });
-    const host = tabsScrollRef.current;
+    const host = tabsListRef.current;
     const target = Array.from(host?.querySelectorAll<HTMLButtonElement>(".tab-main") || [])
       .find((element) => element.closest<HTMLElement>(".tab")?.dataset.tabId === tab.id);
-    target?.focus();
-  }, [onActive, tabs]);
+    if (target?.offsetParent === null && tab.pinned) host?.querySelector<HTMLButtonElement>(".tabs-pinned-compact button")?.focus();
+    else target?.focus();
+  }, [onActive, orderedTabs]);
 
   const onTabKeyDown = useCallback((event: React.KeyboardEvent, index: number) => {
     if (isImeComposing(event)) return;
@@ -179,7 +190,10 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
     const tabAtPoint = (x: number, y: number): string | null => {
       const el = document.elementFromPoint(x, y);
       const tabEl = el?.closest<HTMLElement>(".tab[data-tab-id]");
-      return tabEl?.dataset.tabId ?? null;
+      const id = tabEl?.dataset.tabId;
+      const dragging = tabsRef.current.find((tab) => tab.id === dragRef.current?.tabId);
+      const target = tabsRef.current.find((tab) => tab.id === id);
+      return target && !!target.pinned === !!dragging?.pinned ? target.id : null;
     };
 
     const onMove = (e: MouseEvent) => {
@@ -229,86 +243,89 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
     };
   }, []);
 
+  const renderTab = (tab: Tab) => {
+    const index = orderedTabs.findIndex((item) => item.id === tab.id);
+    const profile = profileByID.get(tab.profileId);
+    const automation = automationActivity?.[tab.id];
+    const hostInfo = tabContext(tab, profile);
+    const label = labels.get(tab.id) || tab.title;
+    const numberSuffix = label === tab.title ? "" : label.slice(tab.title.length).trim();
+    const full = [label, tab.type !== "markdown" && profile?.name !== tab.title ? profile?.name : "", hostInfo].filter(Boolean).join("\n");
+    const tooltip = tab.error ? `${full}\n${tab.error}` : full;
+    const isDragging = dragState?.draggedId === tab.id;
+    const isDragOver = dragState?.overId === tab.id;
+    return (
+      <div
+        key={tab.id}
+        data-tab-id={tab.id}
+        title={tooltip}
+        className={clsx("tab", activeTab === tab.id && "tab-active", tab.unread && activeTab !== tab.id && "tab-unread", tab.pinned && "tab-pinned", automation && "tab-automation", isDragging && "tab-dragging", isDragOver && "tab-drag-over")}
+        onMouseDown={(e) => {
+          if (e.button === 1) {
+            e.preventDefault();
+            onClose(tab.id);
+            return;
+          }
+          onTabMouseDown(e, tab);
+        }}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setNewMenuOpen(false);
+          setTabsMenuOpen(false);
+          setToolsMenuOpen(false);
+          setContextPosition({ left: event.clientX, top: event.clientY });
+          setContextTabId(tab.id);
+        }}
+      >
+        <button className="tab-main" role="tab" aria-selected={activeTab === tab.id} aria-label={label} tabIndex={activeTab === tab.id ? 0 : -1} onClick={() => onActive(tab.id)} onKeyDown={(event) => onTabKeyDown(event, index)}>
+          {tab.type === "markdown" ? <FileText size={13} className="text-accent shrink-0" /> : tab.local ? <Terminal size={13} className="text-accent shrink-0" /> : <span className="tab-server-icon" title={t(lang, tab.state === "connected" ? "serverStatusConnected" : tab.state === "error" ? "serverStatusError" : tab.state === "disconnected" ? "serverStatusDisconnected" : "terminalStateConnecting")}><Server size={13} /><span className={clsx("status-dot", stateClass(tab.state))} /></span>}
+          <span className="tab-title">{tab.title}</span>
+          {numberSuffix && <span className="tab-number">{numberSuffix}</span>}
+          {tab.pinned && <Pin size={10} className="tab-pin-mark" aria-label={t(lang, "tabPinned")} />}
+          {tab.unread && activeTab !== tab.id && <span className="tab-unread-dot" title={t(lang, "tabNewOutput")} />}
+          {dirtySet.has(tab.id) && <span className="tab-dirty-dot" title={t(lang, "tabUnsaved")} />}
+          {automation && <span className={clsx("automation-badge tab-automation-badge", `automation-${automation.source}`, automation.phase === "started" && "automation-running", automation.phase === "failed" && "automation-failed")}>{automation.source.toUpperCase()}</span>}
+        </button>
+        <button className="tab-close" tabIndex={activeTab === tab.id ? 0 : -1} aria-label={`${t(lang, "close")} ${label}`} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onClose(tab.id); }}><X size={13} /></button>
+
+      </div>
+    );
+  };
+
   return (
     <div className="tabbar" data-dragging={dragState ? "true" : "false"}>
-      <div className="tabs-scroll" ref={tabsScrollRef} role="tablist" aria-label={t(lang, "openTabs")}>
-        {tabs.map((tab, index) => {
-          const profile = profileByID.get(tab.profileId);
-          const automation = automationActivity?.[tab.id];
-          const hostInfo = tabContext(tab, profile);
-          const full = [tab.title, tab.type !== "markdown" && profile?.name !== tab.title ? profile?.name : "", hostInfo].filter(Boolean).join("\n");
-          const tooltip = tab.error ? `${full}\n${tab.error}` : full;
-          const isDragging = dragState?.draggedId === tab.id;
-          const isDragOver = dragState?.overId === tab.id;
-          return (
-            <div
-              key={tab.id}
-              data-tab-id={tab.id}
-              title={tooltip}
-              className={clsx("tab", activeTab === tab.id && "tab-active", tab.unread && activeTab !== tab.id && "tab-unread", tab.pinned && "tab-pinned", automation && "tab-automation", isDragging && "tab-dragging", isDragOver && "tab-drag-over")}
-              onMouseDown={(e) => {
-                if (e.button === 1) {
-                  e.preventDefault();
-                  onClose(tab.id);
-                  return;
-                }
-                onTabMouseDown(e, tab);
-              }}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                setNewMenuOpen(false);
-                setTabsMenuOpen(false);
-                setToolsMenuOpen(false);
-                setContextTabId(tab.id);
-              }}
-            >
-              <button className="tab-main" role="tab" aria-selected={activeTab === tab.id} aria-label={tab.title} tabIndex={activeTab === tab.id ? 0 : -1} onClick={() => onActive(tab.id)} onKeyDown={(event) => onTabKeyDown(event, index)}>
-                {tab.type === "markdown" ? <FileText size={13} className="text-accent shrink-0" /> : tab.local ? <Terminal size={13} className="text-accent shrink-0" /> : <span className="tab-server-icon" title={t(lang, tab.state === "connected" ? "serverStatusConnected" : tab.state === "error" ? "serverStatusError" : tab.state === "disconnected" ? "serverStatusDisconnected" : "terminalStateConnecting")}><Server size={13} /><span className={clsx("status-dot", stateClass(tab.state))} /></span>}
-                <span className="tab-title">{tab.title}</span>
-                {tab.pinned && <Pin size={10} className="tab-pin-mark" aria-label={t(lang, "tabPinned")} />}
-                {tab.unread && activeTab !== tab.id && <span className="tab-unread-dot" title={t(lang, "tabNewOutput")} />}
-                {dirtySet.has(tab.id) && <span className="tab-dirty-dot" title={t(lang, "tabUnsaved")} />}
-                {automation && <span className={clsx("automation-badge tab-automation-badge", `automation-${automation.source}`, automation.phase === "started" && "automation-running", automation.phase === "failed" && "automation-failed")}>{automation.source.toUpperCase()}</span>}
-              </button>
-              <button className="tab-close" tabIndex={activeTab === tab.id ? 0 : -1} aria-label={`${t(lang, "close")} ${tab.title}`} onMouseDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onClose(tab.id); }}><X size={13} /></button>
-              {contextTabId === tab.id && <div className="tab-context-menu" role="menu" onClick={(event) => event.stopPropagation()}>
-                {onNewTerminal && tab.type !== "markdown" && profileByID.has(tab.profileId) && <button role="menuitem" onClick={() => { setContextTabId(""); onNewTerminal(tab); }}><CopyPlus size={12} />{t(lang, "openInNewTerminal")}</button>}
-                {onRename && <button role="menuitem" onClick={() => { setContextTabId(""); onRename(tab); }}>{t(lang, "renameTab")}</button>}
-                {onTogglePin && <button role="menuitem" onClick={() => { setContextTabId(""); onTogglePin(tab); }}>{tab.pinned ? <PinOff size={12} /> : <Pin size={12} />}{tab.pinned ? t(lang, "unpinTab") : t(lang, "pinTab")}</button>}
-                <button role="menuitem" onClick={() => { setContextTabId(""); onClose(tab.id); }}><X size={12} />{t(lang, "close")}</button>
-              </div>}
-            </div>
-          );
-        })}
+      <div className="tabs-regions" ref={tabsListRef} role="tablist" aria-label={t(lang, "openTabs")}>
+        {pinnedTabs.length > 0 && regularTabs.length > 0 && <div className={clsx("tabs-pinned-compact", active?.pinned && "active")}>
+          <button className="tab-action" aria-label={t(lang, "pinnedTabs")} title={active?.pinned ? labels.get(active.id) : t(lang, "pinnedTabs")} aria-haspopup="dialog" aria-expanded={tabsMenuOpen && pinnedMenuOnly} onClick={(event) => toggleTabsMenu(event, true)} onKeyDown={(event) => onTabKeyDown(event, orderedTabs.findIndex((tab) => tab.id === activeTab))}><Pin size={13} /><span className="tab-count">{pinnedTabs.length}</span></button>
+        </div>}
+        {pinnedTabs.length > 0 && <TabStrip pinned onlyPinned={!regularTabs.length} activeTab={activeTab} orderKey={pinnedTabs.map((tab) => tab.id).join("|")} leftLabel={t(lang, "scrollPinnedTabsLeft")} rightLabel={t(lang, "scrollPinnedTabsRight")}>{pinnedTabs.map(renderTab)}</TabStrip>}
+        {regularTabs.length > 0 && <TabStrip activeTab={activeTab} orderKey={regularTabs.map((tab) => tab.id).join("|")} leftLabel={t(lang, "scrollTabsLeft")} rightLabel={t(lang, "scrollTabsRight")}>{regularTabs.map(renderTab)}</TabStrip>}
       </div>
       <div className="tab-actions" ref={actionsRef}>
         {tabs.length > 0 && <div className="relative">
-          <button ref={tabsMenuButtonRef} className="tab-action" aria-label={t(lang, "allTabs")} aria-haspopup="dialog" aria-expanded={tabsMenuOpen} onClick={(event) => {
-            event.stopPropagation();
-            const bounds = event.currentTarget.getBoundingClientRect();
-            const width = Math.min(440, window.innerWidth - 24);
-            const top = bounds.bottom + 7;
-            setTabsMenuPosition({ left: Math.max(12, Math.min(bounds.right - width, window.innerWidth - width - 12)), top, maxHeight: Math.max(0, window.innerHeight - top - 12) });
-            setNewMenuOpen(false); setToolsMenuOpen(false); setTabsQuery(""); setTabsMenuOpen((value) => !value);
-          }} title={t(lang, "allTabs")}>
-            <List size={14} />
+          <button ref={tabsMenuButtonRef} className="tab-action tab-list-toggle" aria-label={t(lang, "allTabs")} aria-haspopup="dialog" aria-expanded={tabsMenuOpen} onClick={(event) => toggleTabsMenu(event)} title={t(lang, "allTabs")}>
+            <List size={14} /><span className="tab-list-label">{t(lang, "allTabs")}</span><span className="tab-count">{tabs.length}</span>
           </button>
           {tabsMenuOpen && <div className="tab-action-dropdown tab-overflow-dropdown" role="dialog" aria-label={t(lang, "allTabs")} style={tabsMenuPosition} onClick={(event) => event.stopPropagation()} onKeyDown={onTabsMenuKeyDown}>
-            <div className="tab-overflow-heading">{t(lang, "tabsCount", { count: String(tabs.length) })}</div>
+            <div className="tab-overflow-heading">{pinnedMenuOnly ? `${t(lang, "pinnedTabs")} · ${pinnedTabs.length}` : t(lang, "tabsCount", { count: String(tabs.length) })}</div>
             <label className="tab-overflow-filter"><Search size={13} /><input autoFocus value={tabsQuery} onChange={(event) => setTabsQuery(event.target.value)} aria-label={t(lang, "filterTabs")} placeholder={t(lang, "filterTabs")} /></label>
             <div className="tab-overflow-list">
-              {filteredTabs.map((tab) => (
+              {tabGroups.map((group, index) => <div className="tab-overflow-group" key={index}>
+                <div className="tab-overflow-group-heading"><strong>{group.title}</strong><span>{group.tabs.length}</span></div>
+                {group.tabs.map((tab) => (
                 <div key={tab.id} className={clsx("tab-overflow-row", activeTab === tab.id && "active")}>
-                  <button className="tab-overflow-main" aria-label={tab.title} title={[tab.title, tabContext(tab, profileByID.get(tab.profileId))].filter(Boolean).join("\n")} onClick={() => { onActive(tab.id); setTabsMenuOpen(false); }}>
+                  <button className="tab-overflow-main" aria-label={labels.get(tab.id) || tab.title} title={[labels.get(tab.id) || tab.title, tabContext(tab, profileByID.get(tab.profileId))].filter(Boolean).join("\n")} onClick={() => { onActive(tab.id); setTabsMenuOpen(false); }}>
                     {tab.type === "markdown" ? <FileText size={12} /> : tab.local ? <Terminal size={12} /> : <span className={clsx("status-dot", stateClass(tab.state))} />}
-                    <span className="tab-overflow-text"><strong>{tab.title}</strong><small>{tabContext(tab, profileByID.get(tab.profileId))}</small></span>
+                    <span className="tab-overflow-text"><strong>{labels.get(tab.id) || tab.title}</strong><small><span className="tab-kind">{t(lang, tab.type === "markdown" ? "tabKindDocument" : "tabKindTerminal")}</span>{tabContext(tab, profileByID.get(tab.profileId))}</small></span>
+                    {tab.pinned && <Pin size={10} aria-label={t(lang, "tabPinned")} />}
                     {tab.unread && activeTab !== tab.id && <span className="tab-unread-dot" />}
                     {dirtySet.has(tab.id) && <span className="tab-dirty-dot" />}
                   </button>
-                  <button className="tab-overflow-close" aria-label={`${t(lang, "close")} ${tab.title}`} onClick={() => onClose(tab.id)}><X size={12} /></button>
+                  <button className="tab-overflow-close" aria-label={`${t(lang, "close")} ${labels.get(tab.id) || tab.title}`} onClick={() => onClose(tab.id)}><X size={12} /></button>
                 </div>
               ))}
+              </div>)}
               {!filteredTabs.length && <div className="tab-overflow-empty" role="status">{t(lang, "noMatchingTabs")}</div>}
             </div>
           </div>}
@@ -419,6 +436,17 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onReconne
         </div>
         {rightAccessory}
       </div>
+      {contextTab && <div className="tab-context-menu" ref={contextMenuRef} role="menu" style={contextPosition} onClick={(event) => event.stopPropagation()}>
+        {onNewTerminal && contextTab.type !== "markdown" && profileByID.has(contextTab.profileId) && <button role="menuitem" onClick={() => { setContextTabId(""); onNewTerminal(contextTab); }}><CopyPlus size={12} />{t(lang, "openInNewTerminal")}</button>}
+        {onRename && <button role="menuitem" onClick={() => { setContextTabId(""); onRename(contextTab); }}>{t(lang, "renameTab")}</button>}
+        {onTogglePin && <button role="menuitem" onClick={() => { setContextTabId(""); onTogglePin(contextTab); }}>{contextTab.pinned ? <PinOff size={12} /> : <Pin size={12} />}{t(lang, contextTab.pinned ? "unpinTab" : "pinTab")}</button>}
+        <button role="menuitem" onClick={() => { setContextTabId(""); onClose(contextTab.id); }}><X size={12} />{t(lang, "close")}</button>
+        {onCloseMany && <>
+          <div className="tab-context-divider" />
+          <button role="menuitem" disabled={closingTabs || !closeTabTargets(orderedTabs, contextTab.id, "others").length} onClick={() => { setContextTabId(""); void onCloseMany(closeTabTargets(orderedTabs, contextTab.id, "others")); }}>{t(lang, "closeOtherTabs")}</button>
+          <button role="menuitem" disabled={closingTabs || !closeTabTargets(orderedTabs, contextTab.id, "right").length} onClick={() => { setContextTabId(""); void onCloseMany(closeTabTargets(orderedTabs, contextTab.id, "right")); }}>{t(lang, "closeTabsToRight")}</button>
+        </>}
+      </div>}
     </div>
   );
 }

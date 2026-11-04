@@ -731,6 +731,56 @@ describe("CLI session replacement", () => {
 });
 
 describe("closeTab outcome", () => {
+  it.each(["queued", "confirming"])("preserves a tab pinned while its batch close is %s", async (phase) => {
+    const approvals: ((value: boolean) => void)[] = [];
+    const beforeCloseTab = vi.fn(() => new Promise<boolean>((resolve) => approvals.push(resolve)));
+    const { result } = renderHook(() => useSessions({ profiles: [], notify: vi.fn(), reload: vi.fn(async () => undefined), disposeTerminal: vi.fn(), beforeCloseTab }));
+    act(() => result.current.setTabs(["a", "b"].map((id) => ({ id, title: id, profileId: "", type: "markdown", state: "connected" }))));
+    let first: Promise<boolean> | undefined, batch!: Promise<boolean>;
+    act(() => {
+      if (phase === "queued") first = result.current.closeTab("a");
+      batch = result.current.closeTabs(["b"]);
+    });
+    expect(beforeCloseTab).toHaveBeenCalledTimes(1);
+    act(() => result.current.setTabs((items) => items.map((tab) => tab.id === "b" ? { ...tab, pinned: true } : tab)));
+    await act(async () => { approvals[0](true); await first; expect(await batch).toBe(true); });
+    expect(result.current.tabs.find((tab) => tab.id === "b")?.pinned).toBe(true);
+    expect(beforeCloseTab).toHaveBeenCalledTimes(1);
+    expect(result.current.closingTabs).toBe(false);
+    await act(async () => { await result.current.closeTab("b", true); });
+    expect(result.current.tabs.some((tab) => tab.id === "b")).toBe(false);
+  });
+
+  it("stops a batch on cancellation, preserves pinned/new tabs and serializes confirmations", async () => {
+    const approvals: { id: string; resolve: (value: boolean) => void }[] = [];
+    const beforeCloseTab = vi.fn((tab) => new Promise<boolean>((resolve) => approvals.push({ id: tab.id, resolve })));
+    const { result } = renderHook(() => useSessions({ profiles: [], notify: vi.fn(), reload: vi.fn(async () => undefined), disposeTerminal: vi.fn(), beforeCloseTab }));
+    act(() => result.current.setTabs(["a", "b", "c", "p"].map((id) => ({ id, title: id, profileId: "", type: "markdown", state: "connected", pinned: id === "p" }))));
+    let batch!: Promise<boolean>;
+    act(() => { batch = result.current.closeTabs(["a", "b", "c", "p"]); });
+    expect(approvals.map((item) => item.id)).toEqual(["a"]);
+    act(() => result.current.setTabs((items) => [...items, { id: "new", title: "new", profileId: "", type: "markdown", state: "connected" }]));
+    await act(async () => { approvals[0].resolve(true); });
+    await waitFor(() => expect(approvals.map((item) => item.id)).toEqual(["a", "b"]));
+    await act(async () => { approvals[1].resolve(false); expect(await batch).toBe(false); });
+    expect(result.current.tabs.map((tab) => tab.id)).toEqual(["b", "c", "p", "new"]);
+    expect(result.current.closingTabs).toBe(false);
+  });
+
+  it("queues individual close requests instead of replacing the pending confirmation", async () => {
+    const approvals: ((value: boolean) => void)[] = [];
+    const beforeCloseTab = vi.fn(() => new Promise<boolean>((resolve) => approvals.push(resolve)));
+    const { result } = renderHook(() => useSessions({ profiles: [], notify: vi.fn(), reload: vi.fn(async () => undefined), disposeTerminal: vi.fn(), beforeCloseTab }));
+    act(() => result.current.setTabs(["a", "b"].map((id) => ({ id, title: id, profileId: "", type: "markdown", state: "connected" }))));
+    let first!: Promise<boolean>, second!: Promise<boolean>;
+    act(() => { first = result.current.closeTab("a"); second = result.current.closeTab("b"); });
+    expect(beforeCloseTab).toHaveBeenCalledTimes(1);
+    await act(async () => { approvals[0](false); expect(await first).toBe(false); });
+    await waitFor(() => expect(approvals).toHaveLength(2));
+    await act(async () => { approvals[1](true); expect(await second).toBe(true); });
+    expect(result.current.tabs.map((tab) => tab.id)).toEqual(["a"]);
+  });
+
   it("reports a cancelled close so the caller keeps a live tab in place", async () => {
     const profile = makeProfile("one");
     const beforeCloseTab = vi.fn(() => false);

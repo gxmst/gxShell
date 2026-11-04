@@ -12,6 +12,48 @@ const tabs: Tab[] = Array.from({ length: 12 }, (_, index) => ({
 }));
 
 describe("TabBar overflow", () => {
+  it("opens a scoped pinned picker and switches back to the complete list", () => {
+    render(<TabBar tabs={[{ ...tabs[0], pinned: true }, tabs[1], tabs[2]]} activeTab={tabs[0].id} profiles={[]} onActive={vi.fn()} onClose={vi.fn()} onReconnect={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Pinned tabs" }));
+    expect(screen.getByRole("dialog").querySelectorAll('.tab-overflow-main')).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: "All tabs" }));
+    expect(screen.getByRole("dialog").querySelectorAll('.tab-overflow-main')).toHaveLength(3);
+  });
+
+  it("separates pinned tabs and groups numbered terminals alongside documents", () => {
+    const items: Tab[] = [
+      { ...tabs[0], title: "Database", profileId: "db" },
+      { ...tabs[1], title: "Database", profileId: "db", pinned: true },
+      { ...tabs[2], title: "notes.md", type: "markdown", filePath: "/notes.md" },
+    ];
+    render(<TabBar tabs={items} activeTab={items[0].id} profiles={[{ id: "db", name: "Database", host: "db.test" } as any]} onActive={vi.fn()} onClose={vi.fn()} onReconnect={vi.fn()} />);
+    expect(document.querySelector('.tabs-pinned-region [data-tab-id="tab-2"]')).not.toBeNull();
+    expect(document.querySelector('.tabs-scroll[data-pinned="false"] [data-tab-id="tab-1"]')).not.toBeNull();
+    expect(screen.getByRole("tab", { name: "Database · 1" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Database · 2" })).toBeInTheDocument();
+    expect(document.querySelector('.tab-list-toggle .tab-count')).toHaveTextContent("3");
+    expect(screen.getByRole("tab", { name: "Database · 1" }).querySelector('.tab-number')).toHaveTextContent("· 1");
+    fireEvent.click(screen.getByRole("button", { name: "All tabs" }));
+    const menu = screen.getByRole("dialog");
+    expect(menu.querySelectorAll('.tab-overflow-group')).toHaveLength(2);
+    expect(menu.querySelectorAll('.tab-kind')).toHaveLength(3);
+    fireEvent.change(within(menu).getByRole("textbox"), { target: { value: "db.test" } });
+    expect(menu.querySelectorAll('.tab-overflow-main')).toHaveLength(2);
+  });
+
+  it("sends bulk close targets in visual order while preserving pinned tabs", () => {
+    const onCloseMany = vi.fn();
+    const items = [tabs[0], { ...tabs[1], pinned: true }, tabs[2], tabs[3]];
+    render(<TabBar tabs={items} activeTab={items[0].id} profiles={[]} onActive={vi.fn()} onClose={vi.fn()} onCloseMany={onCloseMany} onReconnect={vi.fn()} />);
+    const anchor = screen.getByRole("tab", { name: "Server 3" }).closest(".tab")!;
+    fireEvent.contextMenu(anchor);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Close tabs to the right" }));
+    expect(onCloseMany).toHaveBeenLastCalledWith(["tab-4"]);
+    fireEvent.contextMenu(anchor);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Close other tabs" }));
+    expect(onCloseMany).toHaveBeenLastCalledWith(["tab-1", "tab-4"]);
+  });
+
   it("keeps custom names and full host details available for a single long tab", () => {
     const title = "Production / Shanghai / primary database / maintenance terminal";
     const profile = { id: "profile-1", name: "Database server", host: "db.example.test", username: "ops", port: 2222 } as any;

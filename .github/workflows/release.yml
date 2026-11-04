@@ -106,6 +106,8 @@ jobs:
           Copy-Item docs/cli.md (Join-Path $cliStage 'CLI-README.md')
           Copy-Item docs/cli.zh-CN.md (Join-Path $cliStage 'CLI-README.zh-CN.md')
           Copy-Item docs/agent-guide.md (Join-Path $cliStage 'agent-guide.md')
+          Copy-Item docs/mcp.md (Join-Path $cliStage 'mcp.md')
+          Copy-Item docs/mcp.zh-CN.md (Join-Path $cliStage 'mcp.zh-CN.md')
           Copy-Item LICENSE (Join-Path $stage 'LICENSE')
           $manifest = @(
             'gxShell release build manifest',
@@ -119,6 +121,8 @@ jobs:
             '  CLI/CLI-README.md',
             '  CLI/CLI-README.zh-CN.md',
             '  CLI/agent-guide.md',
+            '  CLI/mcp.md',
+            '  CLI/mcp.zh-CN.md',
             '  LICENSE',
             '  BUILD-MANIFEST.txt'
           )
@@ -178,7 +182,7 @@ jobs:
           $body = @(
             '## Download',
             '',
-            "Download ${tick}gxShell-v$version-windows-amd64.zip${tick}. The desktop app is at the archive root; the optional CLI, English and Chinese CLI documentation, and agent safety guide are grouped under ${tick}CLI/${tick}. The CLI server is disabled by default.",
+            "Download ${tick}gxShell-v$version-windows-amd64.zip${tick}. The desktop app is at the archive root; the optional CLI, bilingual CLI/MCP setup documentation, and agent safety guide are grouped under ${tick}CLI/${tick}. The CLI / MCP server is disabled by default.",
             '',
             '## Changes',
             '',

@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -22,14 +23,58 @@ type Manager struct {
 }
 
 type forward struct {
-	rule     types.TunnelRule
-	listener net.Listener
-	done     chan struct{}
+	mu          sync.Mutex
+	closed      bool
+	connections map[net.Conn]struct{}
+	ctx         context.Context
+	cancel      context.CancelFunc
+	rule        types.TunnelRule
+	listener    net.Listener
+	done        chan struct{}
 	// dead flips when serve exits on its own (listener broken, SSH client
 	// gone) so ListStatus stops reporting a forward that no longer accepts
 	// connections as active. Atomic because serve cannot take m.mu: StopTunnels
 	// holds it while waiting on done.
 	dead atomic.Bool
+}
+
+func newForward(rule types.TunnelRule, listener net.Listener) *forward {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &forward{rule: rule, listener: listener, ctx: ctx, cancel: cancel, connections: map[net.Conn]struct{}{}}
+}
+
+func (f *forward) track(conn net.Conn) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed {
+		_ = conn.Close()
+		return false
+	}
+	f.connections[conn] = struct{}{}
+	return true
+}
+func (f *forward) untrack(conn net.Conn) { f.mu.Lock(); delete(f.connections, conn); f.mu.Unlock() }
+func (f *forward) stop() {
+	f.mu.Lock()
+	if f.closed {
+		f.mu.Unlock()
+		return
+	}
+	f.closed = true
+	connections := make([]net.Conn, 0, len(f.connections))
+	for conn := range f.connections {
+		connections = append(connections, conn)
+	}
+	f.mu.Unlock()
+	if f.cancel != nil {
+		f.cancel()
+	}
+	if f.listener != nil {
+		_ = f.listener.Close()
+	}
+	for _, conn := range connections {
+		_ = conn.Close()
+	}
 }
 
 func NewManager(emit func(event string, data any)) *Manager {
@@ -74,7 +119,7 @@ func (m *Manager) startOne(client *ssh.Client, rule types.TunnelRule) (*forward,
 			return nil, fmt.Errorf("local listen failed: %w", err)
 		}
 		rule.Local = ln.Addr().String()
-		return &forward{rule: rule, listener: ln}, nil
+		return newForward(rule, ln), nil
 
 	case types.TunnelRemote:
 		// Default to loopback on the remote host. Binding 0.0.0.0 would expose the
@@ -86,7 +131,7 @@ func (m *Manager) startOne(client *ssh.Client, rule types.TunnelRule) (*forward,
 			return nil, fmt.Errorf("remote listen failed: %w", err)
 		}
 		rule.Remote = ln.Addr().String()
-		return &forward{rule: rule, listener: ln}, nil
+		return newForward(rule, ln), nil
 
 	case types.TunnelDynamic:
 		addr := resolveAddr(rule.Local, rule.BindHost, "127.0.0.1")
@@ -95,7 +140,7 @@ func (m *Manager) startOne(client *ssh.Client, rule types.TunnelRule) (*forward,
 			return nil, fmt.Errorf("dynamic listen failed: %w", err)
 		}
 		rule.Local = ln.Addr().String()
-		return &forward{rule: rule, listener: ln}, nil
+		return newForward(rule, ln), nil
 
 	default:
 		return nil, fmt.Errorf("unknown tunnel type: %s", rule.Type)
@@ -123,37 +168,49 @@ func resolveDialAddr(addr, defaultHost string) string {
 func (m *Manager) serve(sessionID string, fwd *forward, client *ssh.Client) {
 	defer close(fwd.done)
 	defer fwd.dead.Store(true)
+	defer fwd.stop()
 	for {
 		conn, err := fwd.listener.Accept()
 		if err != nil {
 			return
 		}
-		go m.handleConn(sessionID, fwd, client, conn)
+		if fwd.track(conn) {
+			go m.handleConn(sessionID, fwd, client, conn)
+		}
 	}
 }
 
 func (m *Manager) handleConn(sessionID string, fwd *forward, client *ssh.Client, localConn net.Conn) {
 	defer localConn.Close()
+	defer fwd.untrack(localConn)
 
 	switch fwd.rule.Type {
 	case types.TunnelLocal:
 		remoteAddr := resolveDialAddr(fwd.rule.Remote, "127.0.0.1")
-		remoteConn, err := client.Dial("tcp", remoteAddr)
+		remoteConn, err := client.DialContext(fwd.ctx, "tcp", remoteAddr)
 		if err != nil {
 			m.emit("tunnel:error", map[string]any{"sessionId": sessionID, "ruleId": fwd.rule.ID, "error": err.Error()})
 			return
 		}
 		defer remoteConn.Close()
+		if !fwd.track(remoteConn) {
+			return
+		}
+		defer fwd.untrack(remoteConn)
 		relay(localConn, remoteConn)
 
 	case types.TunnelRemote:
 		remoteAddr := resolveDialAddr(fwd.rule.Local, "127.0.0.1")
-		remoteConn, err := net.Dial("tcp", remoteAddr)
+		remoteConn, err := (&net.Dialer{}).DialContext(fwd.ctx, "tcp", remoteAddr)
 		if err != nil {
 			m.emit("tunnel:error", map[string]any{"sessionId": sessionID, "ruleId": fwd.rule.ID, "error": err.Error()})
 			return
 		}
 		defer remoteConn.Close()
+		if !fwd.track(remoteConn) {
+			return
+		}
+		defer fwd.untrack(remoteConn)
 		relay(localConn, remoteConn)
 
 	case types.TunnelDynamic:
@@ -169,12 +226,16 @@ func (m *Manager) handleSOCKS(sessionID string, fwd *forward, client *ssh.Client
 		return
 	}
 
-	remoteConn, err := client.Dial("tcp", target)
+	remoteConn, err := client.DialContext(fwd.ctx, "tcp", target)
 	if err != nil {
 		_, _ = conn.Write([]byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
 	}
 	defer remoteConn.Close()
+	if !fwd.track(remoteConn) {
+		return
+	}
+	defer fwd.untrack(remoteConn)
 
 	if _, err := conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0}); err != nil {
 		return
@@ -199,13 +260,23 @@ func negotiateSOCKS(conn net.Conn) (string, bool) {
 	if _, err := io.ReadFull(conn, methods); err != nil {
 		return "", false
 	}
+	noAuth := false
+	for _, method := range methods {
+		if method == 0 {
+			noAuth = true
+		}
+	}
+	if !noAuth {
+		_, _ = conn.Write([]byte{0x05, 0xff})
+		return "", false
+	}
 	if _, err := conn.Write([]byte{0x05, 0x00}); err != nil {
 		return "", false
 	}
 
 	// Request: VER CMD RSV ATYP DST.ADDR DST.PORT
 	req := make([]byte, 4)
-	if _, err := io.ReadFull(conn, req); err != nil || req[0] != 0x05 {
+	if _, err := io.ReadFull(conn, req); err != nil || req[0] != 0x05 || req[2] != 0 {
 		return "", false
 	}
 	if req[1] != 0x01 { // only CONNECT
@@ -226,11 +297,17 @@ func negotiateSOCKS(conn net.Conn) (string, bool) {
 		if _, err := io.ReadFull(conn, lenByte); err != nil {
 			return "", false
 		}
+		if lenByte[0] == 0 {
+			return "", false
+		}
 		name := make([]byte, int(lenByte[0]))
 		if _, err := io.ReadFull(conn, name); err != nil {
 			return "", false
 		}
 		host = string(name)
+		if strings.ContainsAny(host, "\x00\r\n") {
+			return "", false
+		}
 	case 0x04: // IPv6
 		addr := make([]byte, 16)
 		if _, err := io.ReadFull(conn, addr); err != nil {
@@ -247,6 +324,9 @@ func negotiateSOCKS(conn net.Conn) (string, bool) {
 		return "", false
 	}
 	port := binary.BigEndian.Uint16(portBytes)
+	if port == 0 {
+		return "", false
+	}
 
 	// Handshake complete; the relay itself has no deadline.
 	_ = conn.SetReadDeadline(time.Time{})
@@ -299,9 +379,7 @@ func (m *Manager) StopTunnels(sessionID string) {
 func (m *Manager) stopAllLocked(sessionID string) {
 	fwds := m.active[sessionID]
 	for _, fwd := range fwds {
-		if fwd.listener != nil {
-			_ = fwd.listener.Close()
-		}
+		fwd.stop()
 		if fwd.done != nil {
 			<-fwd.done
 		}
@@ -353,9 +431,7 @@ func (m *Manager) RemoveTunnel(sessionID string, ruleID string) {
 	fwds := m.active[sessionID]
 	for i, fwd := range fwds {
 		if fwd.rule.ID == ruleID {
-			if fwd.listener != nil {
-				_ = fwd.listener.Close()
-			}
+			fwd.stop()
 			if fwd.done != nil {
 				<-fwd.done
 			}

@@ -4,6 +4,7 @@ The CLI integration is implemented as a local authenticated proxy:
 
 - `app_cli.go` starts a localhost HTTP server inside the GUI process.
 - `cmd/gxshell-cli/main.go` is a small client that reads the local token and calls the GUI.
+- `/mcp` serves token-authenticated Streamable HTTP on the same listener; `gxshell-cli mcp` serves stdio. `backend/mcpserver` registers the shared tool catalog using the official MCP Go SDK. HTTP tool calls dispatch in process through the existing authenticated CLI handlers; stdio calls the same API over loopback. Both paths preserve exec request protection and native approval. HTTP uses stateless JSON responses, a 2 MiB input limit, cross-origin checks and SDK localhost protection. See [../mcp.md](../mcp.md).
 - `types.Profile` includes `cliEnabled` and `cliAlias` so access is explicit per profile. (Older profiles written under the `aiEnabled`/`aiAlias` keys are migrated to these on startup.)
 - A global `AppSettings.cliServerEnabled` flag gates whether the localhost server starts at all; when false the listener is never opened. It defaults to false. A versioned, one-time consent migration also disables the server for settings written before this safer default, after which explicit user opt-ins are preserved.
 - The server reuses an existing connected SSH session for the selected profile when possible and reports `reusedConnection` in structured exec responses.

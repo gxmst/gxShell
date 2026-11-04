@@ -1,6 +1,7 @@
 package tunnel
 
 import (
+	"gxShell/backend/types"
 	"io"
 	"net"
 	"testing"
@@ -31,6 +32,90 @@ func runNegotiate(t *testing.T, script func(c net.Conn)) (string, bool) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("negotiateSOCKS did not return")
 		return "", false
+	}
+}
+
+func TestNegotiateSOCKSRejectsUnavailableAuthMethod(t *testing.T) {
+	_, ok := runNegotiate(t, func(conn net.Conn) {
+		conn.Write([]byte{5, 1, 2}) // Only username/password; server cannot provide it.
+		reply := mustRead(t, conn, 2)
+		if reply[1] != 0xff {
+			t.Fatalf("server chose unoffered authentication: %v", reply)
+		}
+	})
+	if ok {
+		t.Fatal("authentication-only greeting accepted")
+	}
+}
+
+func TestNegotiateSOCKSRejectsInvalidRequestFields(t *testing.T) {
+	for _, request := range [][]byte{{5, 1, 1, 1}, {5, 1, 0, 3, 0}, {5, 1, 0, 1, 127, 0, 0, 1, 0, 0}} {
+		_, ok := runNegotiate(t, func(conn net.Conn) { conn.Write([]byte{5, 1, 0}); mustRead(t, conn, 2); conn.Write(request) })
+		if ok {
+			t.Fatalf("invalid request accepted: %v", request)
+		}
+	}
+}
+
+func TestRemoveTunnelClosesAcceptedConnections(t *testing.T) {
+	manager := NewManager(func(string, any) {})
+	status := manager.AddTunnel("session", nil, types.TunnelRule{ID: "temporary", Type: types.TunnelDynamic, Local: "127.0.0.1:0"})
+	if !status.Active {
+		t.Fatal(status.Error)
+	}
+	defer manager.StopTunnels("session")
+	manager.mu.Lock()
+	fwd := manager.active["session"][0]
+	manager.mu.Unlock()
+	conn, err := net.Dial("tcp", status.Rule.Local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	deadline := time.Now().Add(time.Second)
+	for {
+		fwd.mu.Lock()
+		count := len(fwd.connections)
+		fwd.mu.Unlock()
+		if count == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("connection not accepted")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	manager.RemoveTunnel("session", "temporary")
+	conn.SetReadDeadline(time.Now().Add(time.Second))
+	_, err = conn.Read(make([]byte, 1))
+	if err == nil {
+		t.Fatal("removed tunnel still connected")
+	}
+	if timeout, ok := err.(net.Error); ok && timeout.Timeout() {
+		t.Fatal("accepted connection survived tunnel removal")
+	}
+}
+
+func TestForwardStopClosesBothSidesAndCancelsDial(t *testing.T) {
+	fwd := newForward(types.TunnelRule{}, nil)
+	a, peerA := net.Pipe()
+	b, peerB := net.Pipe()
+	defer peerA.Close()
+	defer peerB.Close()
+	fwd.track(a)
+	fwd.track(b)
+	fwd.stop()
+	select {
+	case <-fwd.ctx.Done():
+	default:
+		t.Fatal("dial context not cancelled")
+	}
+	for _, peer := range []net.Conn{peerA, peerB} {
+		peer.SetReadDeadline(time.Now().Add(time.Second))
+		_, err := peer.Read(make([]byte, 1))
+		if err != io.EOF {
+			t.Fatalf("connection not closed: %v", err)
+		}
 	}
 }
 

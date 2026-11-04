@@ -18,6 +18,7 @@ import (
 	"gxShell/backend/logger"
 	"gxShell/backend/monitor"
 	"gxShell/backend/network"
+	"gxShell/backend/networkproxy"
 	"gxShell/backend/scheduler"
 	"gxShell/backend/secrets"
 	"gxShell/backend/services"
@@ -74,9 +75,10 @@ type secretStore interface {
 
 // App is the main application struct that coordinates all managers.
 type App struct {
-	ctx   appContext
-	store *config.Store
-	log   *logger.Logger
+	networkProxy *networkproxy.Manager
+	ctx          appContext
+	store        *config.Store
+	log          *logger.Logger
 	// The close gate. beforeClose turns every close path (top-bar button,
 	// Alt+F4, taskbar) into an app:close-requested event so the renderer can
 	// confirm unsaved work; CloseWindow is the one path that already passed
@@ -229,6 +231,7 @@ type authorizedAIToolCall struct {
 // NewApp creates a new App instance.
 func NewApp() *App {
 	a := &App{
+		networkProxy:         networkproxy.New(),
 		rateLimiter:          newConnectionRateLimiter(),
 		allowedFiles:         newAllowedFileSet(),
 		kiRequests:           newKiRegistry(),
@@ -302,6 +305,13 @@ func (a *App) startup(ctx context.Context) {
 	}
 
 	a.ssh = sshmanager.NewManager(filepath.Join(a.store.DataDir(), "known_hosts"), emit, confirm)
+	if settings, err := a.store.GetSettings(); err == nil {
+		if err := a.networkProxy.Apply(settings.Proxy); err != nil {
+			a.log.Error("Invalid saved proxy settings; outbound connections disabled until corrected")
+			a.networkProxy.Block("invalid saved proxy settings; correct the proxy settings before connecting")
+		}
+	}
+	a.ssh.SetDialContext(a.networkProxy.DialContext)
 	a.sessionLogs = sessionlog.NewManager(filepath.Join(a.store.DataDir(), "session-logs"), func(err error) {
 		a.log.ErrorFields("Session log retention failed", logger.LogFields{"error": err.Error()})
 		emit("session-log:error", map[string]any{"error": err.Error()})
@@ -340,7 +350,7 @@ func (a *App) startup(ctx context.Context) {
 		a.log.Info(fmt.Sprintf(format, args...))
 	})
 	a.tunnels = tunnel.NewManager(emit)
-	a.ai = ai.NewManager()
+	a.ai = ai.NewManagerWithTransport(a.networkProxy)
 	a.docker = docker.NewManager(a.ssh)
 	a.docker.SetEmit(emit)
 	// Like docker, service/firewall log streams need no disconnect cleanup in
@@ -508,6 +518,9 @@ func (a *App) GetStartupFile() string {
 
 // shutdown cleans up resources before application exit.
 func (a *App) shutdown(ctx context.Context) {
+	if a.networkProxy != nil {
+		a.networkProxy.CloseIdleConnections()
+	}
 	if srv := a.cliServer.Load(); srv != nil {
 		shutdownCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		_ = srv.Shutdown(shutdownCtx)

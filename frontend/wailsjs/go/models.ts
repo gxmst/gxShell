@@ -250,7 +250,22 @@ export namespace types {
 	export type SessionLogRetentionSettings = {
 	    enabled: boolean; maxAgeDays: number; maxTotalMb: number;
 	};
+	export class ProxySettings {
+	    ssh: boolean;
+	    mode: string;
+	    url: string;
+	    bypass: string;
+	    static createFrom(source: any = {}) { return new ProxySettings(source); }
+	    constructor(source: any = {}) {
+	        if (typeof source === 'string') source = JSON.parse(source);
+	        this.mode = source["mode"] || "system";
+	        this.ssh = source["ssh"] === true;
+	        this.url = source["url"] || "";
+	        this.bypass = source["bypass"] || "";
+	    }
+	}
 	export class AppSettings {
+	    proxy: ProxySettings;
 	    themeName: string;
 	    language: string;
 	    terminal: TerminalSettings;
@@ -281,6 +296,7 @@ export namespace types {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.themeName = source["themeName"];
+	        this.proxy = new ProxySettings(source["proxy"] || {});
 	        this.language = source["language"];
 	        this.terminal = this.convertValues(source["terminal"], TerminalSettings);
 	        this.monitorEnabled = source["monitorEnabled"];

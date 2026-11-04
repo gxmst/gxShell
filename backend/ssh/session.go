@@ -25,6 +25,7 @@ import (
 )
 
 type Manager struct {
+	dialContext      func(context.Context, string, string) (net.Conn, error)
 	outputLogFactory func(types.Profile) (OutputLog, error)
 	mu               sync.RWMutex
 	sessions         map[string]*Session
@@ -89,6 +90,29 @@ type OutputLog interface {
 // SetOutputLogFactory must be configured before connections can start.
 func (m *Manager) SetOutputLogFactory(factory func(types.Profile) (OutputLog, error)) {
 	m.outputLogFactory = factory
+}
+
+// SetDialContext is configured before connections start. Only the first hop
+// uses it; connections from a jump host still use the SSH client's dialer.
+func (m *Manager) SetDialContext(dial func(context.Context, string, string) (net.Conn, error)) {
+	m.dialContext = dial
+}
+
+func (m *Manager) dialFirstHop(session *Session, address string, timeout time.Duration) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	go func() {
+		select {
+		case <-session.done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	dial := m.dialContext
+	if dial == nil {
+		dial = (&net.Dialer{}).DialContext
+	}
+	return dial(ctx, "tcp", address)
 }
 
 func NewManager(knownHostsPath string, emit func(event string, data any), confirm func(host, fingerprint string) bool) *Manager {
@@ -236,7 +260,7 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 			return info, err
 		}
 		jumpAddr := sshAddress(jumpProfile.Host, jumpProfile.Port)
-		jumpConn, err := net.DialTimeout("tcp", jumpAddr, time.Duration(timeoutSec)*time.Second)
+		jumpConn, err := m.dialFirstHop(session, jumpAddr, time.Duration(timeoutSec)*time.Second)
 		if err != nil {
 			m.failConnect(id, fmt.Errorf("jump host connection failed: %w", err), nil, nil, nil)
 			return info, err
@@ -309,7 +333,7 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 		client = ssh.NewClient(targetClientConn, chans, reqs)
 	} else {
 		addr := sshAddress(profile.Host, profile.Port)
-		conn, err := net.DialTimeout("tcp", addr, time.Duration(timeoutSec)*time.Second)
+		conn, err := m.dialFirstHop(session, addr, time.Duration(timeoutSec)*time.Second)
 		if err != nil {
 			m.failConnect(id, err, nil, nil, nil)
 			return info, err

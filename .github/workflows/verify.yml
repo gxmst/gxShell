@@ -140,6 +140,8 @@ jobs:
           cp docs/cli.md "release/${PACKAGE}/CLI/CLI-README.md"
           cp docs/cli.zh-CN.md "release/${PACKAGE}/CLI/CLI-README.zh-CN.md"
           cp docs/agent-guide.md "release/${PACKAGE}/CLI/agent-guide.md"
+          cp docs/mcp.md "release/${PACKAGE}/CLI/mcp.md"
+          cp docs/mcp.zh-CN.md "release/${PACKAGE}/CLI/mcp.zh-CN.md"
           cp LICENSE "release/${PACKAGE}/LICENSE"
           tar -C release -czf "release/${PACKAGE}.tar.gz" "${PACKAGE}"
           (cd release && sha256sum "${PACKAGE}.tar.gz" > "${PACKAGE}.tar.gz.sha256")
@@ -198,6 +200,8 @@ jobs:
           cp docs/cli.md "release/${PACKAGE}/CLI/CLI-README.md"
           cp docs/cli.zh-CN.md "release/${PACKAGE}/CLI/CLI-README.zh-CN.md"
           cp docs/agent-guide.md "release/${PACKAGE}/CLI/agent-guide.md"
+          cp docs/mcp.md "release/${PACKAGE}/CLI/mcp.md"
+          cp docs/mcp.zh-CN.md "release/${PACKAGE}/CLI/mcp.zh-CN.md"
           cp LICENSE "release/${PACKAGE}/LICENSE"
           ditto -c -k --sequesterRsrc --keepParent "release/${PACKAGE}" "release/${PACKAGE}.zip"
           (cd release && shasum -a 256 "${PACKAGE}.zip" > "${PACKAGE}.zip.sha256")

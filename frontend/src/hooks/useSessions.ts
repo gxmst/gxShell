@@ -160,6 +160,11 @@ export function useSessions(options: UseSessionsOptions) {
   const runtimeGenerations = useRef<Map<string, number>>(new Map());
   const closedTabs = useRef<ClosedTabRecord[]>([]);
   const [closedTabCount, setClosedTabCount] = useState(0);
+  const closeQueue = useRef<Promise<boolean> | null>(null);
+  const bulkClosing = useRef(false);
+  const [closingTabs, setClosingTabs] = useState(false);
+  const beforeCloseTabRef = useRef(options.beforeCloseTab);
+  beforeCloseTabRef.current = options.beforeCloseTab;
   const pendingRestoreMetadata = useRef<Map<string, PendingRestoreMetadata>>(new Map());
 
   const active = useMemo(() => tabs.find((tab) => tab.id === activeTab), [tabs, activeTab]);
@@ -910,50 +915,91 @@ export function useSessions(options: UseSessionsOptions) {
     });
   }, []);
 
-  const beforeCloseTab = options.beforeCloseTab;
-  const closeTab = useCallback(async (id: string, skipConfirm = false): Promise<boolean> => {
-    const tab = tabs.find((item) => item.id === id);
-    const isMarkdown = tab?.type === "markdown";
-    if (!skipConfirm && tab && beforeCloseTab && !(await beforeCloseTab(tab))) {
-      // The user cancelled the confirmation. Report that nothing was closed so
-      // callers do not run their own post-close cleanup for a live tab.
-      return false;
-    }
-    if (tab && tab.type !== "markdown") {
-      const quickProfile = tab.profileId ? quickProfiles.current.get(tab.profileId) : undefined;
-      closedTabs.current = [{ tab: { ...tab }, quickProfile: quickProfile ? new types.Profile(quickProfile) : undefined }, ...closedTabs.current].slice(0, 20);
-      setClosedTabCount(closedTabs.current.length);
-    }
-    // Mark this id as intentionally closing so the resulting
-    // terminal:disconnected event does not schedule an auto-reconnect, and
-    // cancel any reconnect already pending for it.
-    userClosing.current.add(id);
-    const pending = autoReconnect.current[id];
-    if (pending) {
-      pending.cancelledByClose = true;
-      window.clearTimeout(pending.timer);
-      delete autoReconnect.current[id];
-    }
-    if (!isMarkdown) {
-      await StopMonitor(id).catch(() => undefined);
-      await Disconnect(id).catch(() => undefined);
-      disposeTerminalRef.current(id);
-    }
-    if (tab?.profileId && quickProfiles.current.has(tab.profileId)) {
-      const otherQuickTab = tabsRef.current.some((item) => item.id !== id && item.profileId === tab.profileId);
-      if (!otherQuickTab) quickProfiles.current.delete(tab.profileId);
-    }
-    setTabs((items) => {
-      const closingIndex = items.findIndex((tab) => tab.id === id);
-      const next = items.filter((tab) => tab.id !== id);
-      if (activeTabRef.current === id) {
-        const neighborIndex = Math.max(0, Math.min(closingIndex, next.length - 1));
-        setActiveTab(next[neighborIndex]?.id || "");
+  const closeTab = useCallback((id: string, skipConfirm = false, closeOptions?: { preservePinned?: boolean }): Promise<boolean> => {
+    const requested = tabsRef.current.find((item) => item.id === id);
+    const findRequested = () => tabsRef.current.find((item) => item.id === id || (requested?.type !== "markdown" && requested?.runtimeId && item.type !== "markdown" && item.runtimeId === requested.runtimeId));
+    const close = async () => {
+      let tab = findRequested();
+      if (!tab || (closeOptions?.preservePinned && tab.pinned)) return true;
+      const isMarkdown = tab?.type === "markdown";
+      const beforeCloseTab = beforeCloseTabRef.current;
+      if (!skipConfirm && tab && beforeCloseTab && !(await beforeCloseTab(tab))) {
+        // The user cancelled the confirmation. Report that nothing was closed so
+        // callers do not run their own post-close cleanup for a live tab.
+        return false;
       }
-      return next;
+      tab = findRequested();
+      if (!tab || (closeOptions?.preservePinned && tab.pinned)) return true;
+      id = tab.id;
+      if (tab && tab.type !== "markdown") {
+        const quickProfile = tab.profileId ? quickProfiles.current.get(tab.profileId) : undefined;
+        closedTabs.current = [{ tab: { ...tab }, quickProfile: quickProfile ? new types.Profile(quickProfile) : undefined }, ...closedTabs.current].slice(0, 20);
+        setClosedTabCount(closedTabs.current.length);
+      }
+      // Mark this id as intentionally closing so the resulting
+      // terminal:disconnected event does not schedule an auto-reconnect, and
+      // cancel any reconnect already pending for it.
+      userClosing.current.add(id);
+      const pending = autoReconnect.current[id];
+      if (pending) {
+        pending.cancelledByClose = true;
+        window.clearTimeout(pending.timer);
+        delete autoReconnect.current[id];
+      }
+      if (!isMarkdown) {
+        await StopMonitor(id).catch(() => undefined);
+        await Disconnect(id).catch(() => undefined);
+        disposeTerminalRef.current(id);
+      }
+      if (tab?.profileId && quickProfiles.current.has(tab.profileId)) {
+        const otherQuickTab = tabsRef.current.some((item) => item.id !== id && item.profileId === tab.profileId);
+        if (!otherQuickTab) quickProfiles.current.delete(tab.profileId);
+      }
+      setTabs((items) => {
+        const closingIndex = items.findIndex((tab) => tab.id === id);
+        const next = items.filter((tab) => tab.id !== id);
+        if (activeTabRef.current === id) {
+          const neighborIndex = Math.max(0, Math.min(closingIndex, next.length - 1));
+          setActiveTab(next[neighborIndex]?.id || "");
+        }
+        return next;
+      });
+      return true;
+    };
+    // The app has one confirmation slot. Serialize all closes, including
+    // individual clicks during a batch, so a later dialog cannot replace it.
+    const request = closeQueue.current ? closeQueue.current.then(close, close) : close();
+    const result = request.then((value) => {
+      if (closeQueue.current === result) closeQueue.current = null;
+      return value;
+    }, (error) => {
+      if (closeQueue.current === result) closeQueue.current = null;
+      throw error;
     });
-    return true;
-  }, [beforeCloseTab, tabs, setActiveTab]);
+    closeQueue.current = result;
+    return result;
+  }, [setActiveTab]);
+
+  const closeTabs = useCallback(async (ids: string[]): Promise<boolean> => {
+    if (bulkClosing.current) return false;
+    bulkClosing.current = true;
+    setClosingTabs(true);
+    try {
+      // Snapshot targets at invocation; never include tabs opened mid-batch.
+      for (const id of [...new Set(ids)]) {
+        const tab = tabsRef.current.find((item) => item.id === id);
+        if (!tab || tab.pinned) continue;
+        if (!(await closeTab(id, false, { preservePinned: true }))) return false;
+      }
+      return true;
+    } catch (error) {
+      notifyRef.current(String(error), "error");
+      return false;
+    } finally {
+      bulkClosing.current = false;
+      setClosingTabs(false);
+    }
+  }, [closeTab]);
 
   return {
     tabs,
@@ -977,6 +1023,8 @@ export function useSessions(options: UseSessionsOptions) {
     reorderTabs,
     submitSecret,
     closeTab,
+    closeTabs,
+    closingTabs,
     isCurrentRuntimeEvent: acceptRuntimeEvent,
     reopenClosedTab,
     closedTabCount,

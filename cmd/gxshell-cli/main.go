@@ -116,6 +116,15 @@ func main() {
 		handleJobCommand(args[1:], opts)
 	case "tunnel":
 		handleTunnelCommand(args[1:], opts)
+	case "mcp":
+		if opts.json || opts.requestID != "" || opts.timeout != 0 || opts.shell != "" || opts.follow || opts.detach || len(opts.secrets) != 0 {
+			fmt.Fprintln(os.Stderr, "mcp does not accept global CLI flags; use gxshell-cli mcp --help")
+			os.Exit(1)
+		}
+		if err := runMCPCommand(args[1:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "gxShell MCP:", err)
+			os.Exit(1)
+		}
 	case "list":
 		nextOpts, err := parseNoArgCommand(args[1:], opts, "list")
 		if err != nil {
@@ -1481,6 +1490,9 @@ COMMANDS:
   status                       Show active CLI SSH connections
   ping                         Check if gxShell is running
   doctor                       Show local CLI diagnostics
+  mcp [--transport stdio]      Serve MCP over stdin/stdout (GUI must be running)
+  mcp config --client <name> --transport <stdio|http>
+                               Print Claude Code or Codex MCP configuration
   help                         Show this help message
   version                      Show version information
 

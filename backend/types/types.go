@@ -73,6 +73,7 @@ type Profile struct {
 }
 
 type AppSettings struct {
+	Proxy               ProxySettings               `json:"proxy"`
 	ThemeName           string                      `json:"themeName"`
 	Language            string                      `json:"language"`
 	Terminal            TerminalSettings            `json:"terminal"`
@@ -113,6 +114,16 @@ type AppSettings struct {
 	// on every startup.
 	ConsentDefaultsVersion int      `json:"consentDefaultsVersion"`
 	Ai                     AiConfig `json:"ai"`
+}
+
+// ProxySettings applies to HTTP traffic and optionally to new first-hop SSH
+// connections (SSH is off by default).
+// Proxy URLs must not carry credentials; local endpoints always bypass it.
+type ProxySettings struct {
+	SSH    bool   `json:"ssh"`
+	Mode   string `json:"mode"`
+	URL    string `json:"url"`
+	Bypass string `json:"bypass"`
 }
 
 type HighlightRule struct {

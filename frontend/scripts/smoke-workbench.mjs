@@ -256,11 +256,12 @@ try {
     await page.locator('.document-panel').waitFor();
     await page.waitForTimeout(120);
     const documentSidebar = await measureSidebar();
-    assert(await page.locator('.tabs-scroll').evaluate((host) => {
+    const tabBounds = await page.locator('.tabs-scroll').evaluate((host) => {
       const active = host.querySelector('.tab-active').getBoundingClientRect();
       const bounds = host.getBoundingClientRect();
-      return active.left >= bounds.left - 1 && active.right <= bounds.right + 1;
-    }), 'Active document tab disappeared after resizing the window');
+      return { activeLeft: active.left, activeRight: active.right, left: bounds.left, right: bounds.right, scrollLeft: host.scrollLeft, clientWidth: host.clientWidth, scrollWidth: host.scrollWidth };
+    });
+    assert(tabBounds.activeLeft >= tabBounds.left - 1 && tabBounds.activeRight <= tabBounds.right + 1, `Active document tab disappeared at ${width}px: ${JSON.stringify(tabBounds)}`);
     assert.equal(documentSidebar.nav, 48, 'Activity rail width changed');
     assert(Math.abs(documentSidebar.gap - 1) <= 1, `Document panel disagrees with sidebar width: ${JSON.stringify(documentSidebar)}`);
     await page.getByRole('textbox', { name: '筛选文件…' }).fill('Docker');
@@ -431,12 +432,23 @@ try {
     });
   }), 'Highlight controls are clipped by the sidebar');
   await page.screenshot({ path: join(out, 'settings.png') });
+  const applicationProxy = page.locator('.settings-card').filter({ has: page.getByText('应用代理', { exact: true }) });
+  assert.equal(await applicationProxy.locator('select').inputValue(), 'system', 'Older settings must default to the system proxy');
+  assert.equal(await applicationProxy.locator('input[type="checkbox"]').isChecked(), false, 'SSH proxying must require opt-in');
+  await applicationProxy.locator('select').selectOption('direct');
+  await applicationProxy.locator('select').selectOption('manual');
+  await applicationProxy.getByPlaceholder('http://127.0.0.1:7890', { exact: true }).fill('socks5://127.0.0.1:1080');
+  await applicationProxy.getByPlaceholder('*.example.com,10.0.0.0/8,<local>', { exact: true }).fill('10.0.0.0/8,<local>');
+  await applicationProxy.locator('input[type="checkbox"]').check();
   const retention = page.getByLabel('自动清理历史会话日志（所有服务器）', { exact: true });
   assert.equal(await retention.isChecked(), false, 'Log retention must require an explicit opt-in');
   await retention.check();
   await page.getByLabel('保留天数', { exact: true }).fill('14');
   await page.getByLabel('日志总容量上限 (MB)', { exact: true }).fill('512');
   await page.setViewportSize({ width: 540, height: 720 });
+  await applicationProxy.scrollIntoViewIfNeeded();
+  assert(await applicationProxy.evaluate((section) => section.scrollWidth <= section.clientWidth + 1), 'Proxy controls overflow on a narrow screen');
+  await page.screenshot({ path: join(out, 'proxy-narrow.png'), animations: 'disabled' });
   await retention.scrollIntoViewIfNeeded();
   assert(await retention.evaluate((input) => {
     const group = input.closest('.workbench-fields');
@@ -445,6 +457,7 @@ try {
   await page.screenshot({ path: join(out, 'log-retention-narrow.png'), animations: 'disabled' });
   await page.locator('.settings-save').click();
   assert.deepEqual(await page.evaluate(async () => (await window.go.app.App.GetSettings()).sessionLogRetention), { enabled: true, maxAgeDays: 14, maxTotalMb: 512 });
+  assert.deepEqual(await page.evaluate(async () => (await window.go.app.App.GetSettings()).proxy), { mode: 'manual', url: 'socks5://127.0.0.1:1080', ssh: true, bypass: '10.0.0.0/8,<local>' });
   await page.getByRole('button', { name: '导出加密备份', exact: true }).click();
   let backupDialog = page.getByRole('dialog', { name: '导出加密备份', exact: true });
   await backupDialog.getByLabel('备份口令', { exact: true }).fill('smoke passphrase');

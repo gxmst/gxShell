@@ -29,6 +29,8 @@ try {
         'docs/cli.md' = 'CLI/CLI-README.md'
         'docs/cli.zh-CN.md' = 'CLI/CLI-README.zh-CN.md'
         'docs/agent-guide.md' = 'CLI/agent-guide.md'
+        'docs/mcp.md' = 'CLI/mcp.md'
+        'docs/mcp.zh-CN.md' = 'CLI/mcp.zh-CN.md'
     }
     foreach ($item in $files.GetEnumerator()) {
         $destination = Join-Path $archive $item.Value

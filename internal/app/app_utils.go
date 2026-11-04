@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"gxShell/backend/config"
+	"gxShell/backend/networkproxy"
 	"gxShell/backend/scheduler"
 	"gxShell/backend/types"
 	"gxShell/backend/version"
@@ -167,6 +168,9 @@ func (a *App) newSchedulerManager() *scheduler.Manager {
 
 // UpdateSettings updates application settings.
 func (a *App) UpdateSettings(settings types.AppSettings) (types.AppSettings, error) {
+	if err := networkproxy.Validate(settings.Proxy); err != nil {
+		return settings, err
+	}
 	if err := config.ValidateHighlightRules(settings.HighlightRules); err != nil {
 		return settings, err
 	}
@@ -204,6 +208,11 @@ func (a *App) UpdateSettings(settings types.AppSettings) (types.AppSettings, err
 	settings.Ai.APIKey = ""
 	if err := a.store.SaveSettings(settings); err != nil {
 		return settings, err
+	}
+	if a.networkProxy != nil {
+		if err := a.networkProxy.Apply(settings.Proxy); err != nil {
+			return settings, err
+		}
 	}
 	if a.sessionLogs != nil {
 		if err := a.sessionLogs.UpdateRetention(settings.SessionLogRetention); err != nil {

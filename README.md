@@ -10,10 +10,10 @@ WebView2. It brings terminals, SFTP, monitoring, and remote file editing into
 one clean desktop interface.
 
 Use the built-in AI assistant with your own compatible model API, or let
-CLI-capable tools such as Claude Code and Codex work through your existing SSH
+CLI- or MCP-capable tools such as Claude Code and Codex work through your existing SSH
 connections. Agents address servers by alias, so you do not need to hand them
 SSH passwords or private keys. Approval controls and expiring trust govern
-remote operations; external CLI access is disabled by default.
+remote operations; external CLI / MCP access is disabled by default.
 
 [Download](#download) · [Demo](#demo) · [Agent guide](docs/agent-guide.md) · [中文说明](README.zh-CN.md)
 
@@ -27,7 +27,7 @@ commands, metrics, and documents. No personal server data is used.*
 Download the latest [Windows x64 release](https://github.com/gxmst/gxShell/releases/latest).
 The recommended zip keeps the desktop app at its root. The optional CLI,
 English and Chinese usage guides, and agent-safety guide are grouped under
-`CLI/`; the license and build manifest are also included. The CLI server is
+`CLI/`; the license and build manifest are also included. The CLI / MCP server is
 disabled by default and must be explicitly enabled in Settings.
 
 Requirements: Windows 10/11 x64 and the Microsoft WebView2 Runtime. The
@@ -40,6 +40,27 @@ release:
 ```powershell
 Get-FileHash .\gxShell-v<version>-windows-amd64.zip -Algorithm SHA256
 ```
+
+## Connect AI clients
+
+Enable **CLI / MCP server** in Settings, restart gxShell, and enable access with
+an alias on each server you want to expose. Keep gxShell running while using it.
+
+Register the MCP service once in your AI client's global or project settings.
+New conversations in that scope can use its tools without repeating setup.
+For stdio, generate a configuration fragment from the extracted release folder:
+
+```powershell
+.\CLI\gxshell-cli.exe mcp config --client claude --transport stdio
+.\CLI\gxshell-cli.exe mcp config --client codex --transport stdio
+```
+
+Merge the appropriate fragment into the client settings; these commands print
+configuration and do not register it automatically. stdio reads the local token
+without putting it in the configuration. Streamable HTTP is also available at
+`http://127.0.0.1:56789/mcp` with token authentication. See [MCP setup](docs/mcp.md).
+The [CLI and agent guide](docs/agent-guide.md) remain available for clients that
+execute local commands; both entrances use the same approvals and SSH sessions.
 
 ## Demo
 
@@ -88,8 +109,10 @@ without leaving the workspace. Click either screenshot for the full-size view.
 <summary>Full feature list</summary>
 
 - Local CLI and HTTP API that let scripts and AI agents work on your servers through the app, with alias-only targeting, native approvals, expiring trust, and `secret://` references that keep credentials out of prompts and process arguments.
+- [MCP server](docs/mcp.md) over stdio and Streamable HTTP for Claude Code, Codex and compatible clients, sharing the CLI's authorization and SSH connections.
+- [Application proxy](docs/proxy.md): follow system, connect directly or use a manual HTTP/HTTPS/SOCKS5 proxy for AI and updates, with optional SSH first-hop proxying.
 - Built-in AI assistant over any OpenAI-compatible API, with streaming replies, terminal context, and confirmation before any remote tool call.
-- Multi-session SSH terminal with independent terminals for the same server, two- or four-pane layouts, named workspaces, reconnect, broadcast input, and searchable tabs.
+- Multi-session SSH terminal with independent terminals for the same server, two- or four-pane layouts, named workspaces, reconnect and broadcast input. Tabs have stable widths, a separate pinned area, overflow arrows, server grouping and search, stable terminal numbers, and confirmed bulk closing.
 - Per-server terminal appearance, SSH character encoding, TERM, and Backspace/Delete preferences.
 - SFTP browsing, uploads, downloads, resumable transfers, and local/remote document workflows.
 - Linux monitoring, Docker operations, SSH tunnels, services, firewall, cron, and website helpers over SSH.
@@ -128,6 +151,9 @@ Read the full [security model](docs/security.md).
 | Encrypted backup and migration | [docs/development/backup-migration.md](docs/development/backup-migration.md) |
 | Session log retention | [docs/development/session-log-retention.md](docs/development/session-log-retention.md) |
 | CLI and local API | [docs/cli.md](docs/cli.md) |
+| MCP client setup | [docs/mcp.md](docs/mcp.md) |
+| Application proxy | [docs/proxy.md](docs/proxy.md) |
+| Tab management | [docs/development/tab-management.md](docs/development/tab-management.md) |
 | Agent execution contract | [docs/agent-guide.md](docs/agent-guide.md) |
 | Architecture notes | [docs/architecture.md](docs/architecture.md) |
 | Development | [docs/development.md](docs/development.md) |

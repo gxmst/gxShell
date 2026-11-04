@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"gxShell/backend/logger"
+	"gxShell/backend/mcpserver"
 	sshmanager "gxShell/backend/ssh"
 	"gxShell/backend/types"
 
@@ -58,16 +59,7 @@ func (a *App) startCliServer() {
 		return
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/cli/exec", a.requireCliAuth(token, a.deduplicateCliExec(a.handleCliExec)))
-	mux.HandleFunc("/cli/secrets", a.requireCliAuth(token, a.handleCliSecrets))
-	mux.HandleFunc("/cli/jobs", a.requireCliAuth(token, a.handleCliJobs))
-	mux.HandleFunc("/cli/copy", a.requireCliAuth(token, a.handleCliCopy))
-	mux.HandleFunc("/cli/transfer", a.requireCliAuth(token, a.handleCliTransfer))
-	mux.HandleFunc("/cli/tunnels", a.requireCliAuth(token, a.handleCliTunnels))
-	mux.HandleFunc("/cli/list", a.requireCliAuth(token, a.handleCliList))
-	mux.HandleFunc("/cli/status", a.requireCliAuth(token, a.handleCliStatus))
-	mux.HandleFunc("/cli/ping", a.handleCliPing)
+	mux := a.newCliHandler(token)
 
 	server := &http.Server{
 		Addr:              cliAddress,
@@ -79,11 +71,27 @@ func (a *App) startCliServer() {
 	}
 	a.cliServer.Store(server)
 
-	a.log.Info("CLI server listening on " + cliAddress)
+	a.log.Info("CLI / MCP server listening on " + cliAddress)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		a.log.ErrorFields("CLI server failed", logger.LogFields{"error": err.Error()})
 		a.emitCliServerError(err.Error())
 	}
+}
+
+func (a *App) newCliHandler(token string) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cli/exec", a.requireCliAuth(token, a.deduplicateCliExec(a.handleCliExec)))
+	mux.HandleFunc("/cli/secrets", a.requireCliAuth(token, a.handleCliSecrets))
+	mux.HandleFunc("/cli/jobs", a.requireCliAuth(token, a.handleCliJobs))
+	mux.HandleFunc("/cli/copy", a.requireCliAuth(token, a.handleCliCopy))
+	mux.HandleFunc("/cli/transfer", a.requireCliAuth(token, a.handleCliTransfer))
+	mux.HandleFunc("/cli/tunnels", a.requireCliAuth(token, a.handleCliTunnels))
+	mux.HandleFunc("/cli/list", a.requireCliAuth(token, a.handleCliList))
+	mux.HandleFunc("/cli/status", a.requireCliAuth(token, a.handleCliStatus))
+	mux.HandleFunc("/cli/ping", a.handleCliPing)
+	mcpHandler := mcpserver.HTTPHandler(mcpserver.HandlerCaller(mux, token))
+	mux.HandleFunc("/mcp", a.requireCliAuth(token, mcpHandler.ServeHTTP))
+	return mux
 }
 
 // emitCliServerError notifies the frontend that the local CLI HTTP server is

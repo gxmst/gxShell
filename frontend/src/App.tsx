@@ -19,6 +19,7 @@ import { useRenderedLinkGuard } from "./hooks/useRenderedLinkGuard";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { AppTopBar } from "./components/AppTopBar/AppTopBar";
 import { TabBar } from "./components/TabBar/TabBar";
+import { orderTabs } from "./components/TabBar/tabLayout";
 import { TerminalArea } from "./components/TerminalArea/TerminalArea";
 import { FloatingTerminal } from "./components/FloatingTerminal/FloatingTerminal";
 import { ProfileModal } from "./components/modals/ProfileModal";
@@ -807,7 +808,7 @@ function App() {
   }, [focusTerminal, sessions.setActiveTab, sessions.setTabs]);
 
   const activateTabByOffset = useCallback((offset: number) => {
-    const visible = sessions.tabs.filter((tab) => !floatingTabIds.includes(tab.id));
+    const visible = orderTabs(sessions.tabs.filter((tab) => !floatingTabIds.includes(tab.id)));
     if (visible.length < 2) return;
     const current = visible.findIndex((tab) => tab.id === sessions.activeTab);
     // Wrap around; from an unknown/floating active tab, step in from the edge.
@@ -819,7 +820,7 @@ function App() {
   }, [activateTab, sessions.tabs, sessions.activeTab, floatingTabIds]);
 
   const activateTabByIndex = useCallback((index: number) => {
-    const visible = sessions.tabs.filter((tab) => !floatingTabIds.includes(tab.id));
+    const visible = orderTabs(sessions.tabs.filter((tab) => !floatingTabIds.includes(tab.id)));
     const target = visible[index];
     if (!target) return;
     activateTab(target.id);
@@ -835,7 +836,7 @@ function App() {
   // Torn-off terminals live in their own windows, so the strip and every action
   // that walks it must see the same membership.
   const visibleTabs = useMemo(
-    () => sessions.tabs.filter((tab) => !floatingTabIds.includes(tab.id)),
+    () => orderTabs(sessions.tabs.filter((tab) => !floatingTabIds.includes(tab.id))),
     [floatingTabIds, sessions.tabs],
   );
   const namedWorkspaces = useNamedWorkspaces({
@@ -1530,6 +1531,8 @@ function App() {
           profiles={profileState.profiles}
           onActive={activateTab}
           onClose={sessions.closeTab}
+          onCloseMany={sessions.closeTabs}
+          closingTabs={sessions.closingTabs}
           onReconnect={sessions.reconnectTab}
           onNewTerminal={(tab) => { const profile = profileState.profiles.find((p) => p.id === tab.profileId); if (profile) void sessions.connectProfile(profile, { instanceId: crypto.randomUUID() }); }}
           onTearOff={handleTearOff}

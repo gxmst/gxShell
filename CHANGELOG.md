@@ -3,7 +3,23 @@
 All notable gxShell changes are documented here. Release notes are generated
 from the version section in this file.
 
-## [Unreleased]
+## [1.8.1] - 2026-11-04
+
+### English
+
+- Stabilized tab widths, separated pinned tabs from the scrolling strip, and added overflow arrows and a visible tab count. The searchable list groups terminals by server and documents separately, with stable terminal numbers. Context menus can close other/right-hand tabs while preserving pinned tabs and serializing unsaved-change confirmations; narrow windows provide a compact pinned picker. Tabs pinned while a batch waits for confirmation remain open.
+- Added an MCP server using the official Go SDK, with stdio and token-authenticated Streamable HTTP transports. Shared tools expose authorized server aliases, command/script execution and background jobs through the existing CLI policy and request protection. Added Claude Code/Codex configuration generators and bilingual setup guides.
+- Added application proxy settings with system, direct and manual HTTP/HTTPS/SOCKS5 modes for AI and update requests, plus optional SSH first-hop proxying. Settings apply to new requests without restarting; loopback traffic remains direct and backup restoration preserves local routing.
+- Fixed tunnel removal leaving accepted connections alive, SOCKS5 negotiation selecting an unoffered authentication method, and startup update checks ignoring an opt-out during the startup delay.
+- Updated the Go toolchain/network libraries and frontend dependencies to address current security advisories. Added targeted KaTeX and minimatch overrides while retaining the Mermaid and ESLint major versions; dependency audits are clear.
+
+### 中文
+
+- 标签栏统一宽度，固定标签独立于普通滚动区，增加溢出箭头及标签数量；搜索列表按服务器和文档分组，同服务器终端使用稳定编号。右键支持关闭其他／右侧标签，保留固定标签并串行处理未保存确认；窄窗口提供固定标签收纳列表。批量关闭等待确认期间新固定的标签也会保留。
+- 使用官方 Go SDK 增加 MCP 服务，同时支持 stdio 和令牌认证的 Streamable HTTP。共用工具支持已授权服务器别名、命令／脚本执行和后台任务，沿用 CLI 审批及请求去重；新增 Claude Code／Codex 配置生成命令与中英文接入指南。
+- 增加应用代理设置，支持跟随系统、直连、手动 HTTP/HTTPS/SOCKS5，覆盖 AI 和更新请求，并可单独开启 SSH 第一跳代理。新请求无需重启即可生效；回环流量直连，备份恢复保留本机代理策略。
+- 修复移除隧道后已有连接仍继续、SOCKS5 选择客户端未提供的认证方式，以及启动等待期间关闭更新检查仍会联网的问题。
+- 更新 Go 工具链／网络库及前端依赖以修复当前安全公告；保留 Mermaid、ESLint 主版本，定向更新 KaTeX 和 minimatch，依赖审计已清零。
 
 ## [1.8.0] - 2026-09-28
 

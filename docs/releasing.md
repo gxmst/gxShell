@@ -11,7 +11,8 @@ SHA256SUMS.txt
 
 The zip keeps `gxShell.exe`, `LICENSE`, and `BUILD-MANIFEST.txt` at its root.
 The optional CLI is grouped under `CLI/` with `gxshell-cli.exe`,
-`CLI-README.md`, `CLI-README.zh-CN.md`, and `agent-guide.md`. This keeps the
+`CLI-README.md`, `CLI-README.zh-CN.md`, `agent-guide.md`, `mcp.md`, and
+`mcp.zh-CN.md`. This keeps the
 desktop entry point unambiguous while making the CLI, its Chinese quick-start,
 and its automation safety contract discoverable together. The release body is
 extracted from the matching section in the root `CHANGELOG.md`; there is no

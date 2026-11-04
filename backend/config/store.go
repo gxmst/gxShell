@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"gxShell/backend/networkproxy"
 	"gxShell/backend/types"
 )
 
@@ -220,6 +221,9 @@ func (s *Store) GetSettings() (types.AppSettings, error) {
 }
 
 func (s *Store) SaveSettings(settings types.AppSettings) error {
+	if err := networkproxy.Validate(settings.Proxy); err != nil {
+		return err
+	}
 	return s.writeJSON("settings.json", NormalizeSettings(settings))
 }
 
@@ -238,6 +242,7 @@ const (
 // heights and cursor styles, while an extreme scrollback value can make a new
 // terminal unusable or consume excessive memory.
 func NormalizeSettings(settings types.AppSettings) types.AppSettings {
+	settings.Proxy = networkproxy.Normalize(settings.Proxy)
 	settings.Terminal = NormalizeTerminalSettings(settings.Terminal)
 	settings.SessionLog = NormalizeSessionLog(settings.SessionLog)
 	settings.SessionLogRetention = NormalizeSessionLogRetention(settings.SessionLogRetention)
@@ -385,6 +390,7 @@ func (s *Store) SaveCommands(commands []types.CommandTemplate) error {
 
 func DefaultSettings() types.AppSettings {
 	return types.AppSettings{
+		Proxy:                  types.ProxySettings{Mode: "system"},
 		ThemeName:              "Light",
 		MonitorEnabled:         true,
 		MonitorIntervalSec:     5,

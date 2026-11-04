@@ -84,11 +84,17 @@ type Manager struct {
 }
 
 func NewManager() *Manager {
+	return NewManagerWithTransport(nil)
+}
+
+// NewManagerWithTransport keeps one immutable client while the application's
+// transport can update its routing policy without interrupting active streams.
+func NewManagerWithTransport(transport http.RoundTripper) *Manager {
 	// No client-level Timeout: streaming chat relies on a per-request context
 	// (ChatWithContext) and a hard client timeout would truncate long streams.
 	// Non-streaming calls (ListModels) attach their own context deadline instead.
 	return &Manager{
-		client: &http.Client{},
+		client: &http.Client{Transport: transport},
 	}
 }
 
