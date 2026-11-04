@@ -24,7 +24,7 @@ separate release-notes source.
 2. Add the release section to `CHANGELOG.md` using `## [x.y.z] - YYYY-MM-DD`.
 3. Run the checks in [development.md](development.md).
 4. Review the staged file names and make sure local staging directories, credentials, and build caches are excluded.
-5. Push the commit and wait for all `verify` jobs on that exact commit to pass.
+5. Push the commit and wait for Windows `verify` on that exact commit to pass.
 6. Create and push the version tag from the verified commit, for example:
 
 ```powershell
@@ -48,5 +48,7 @@ It does not publish, tag, prune caches, or overwrite previous archives. A dirty
 candidate is for local review; official publication still requires the exact
 committed source to pass CI as described above.
 
-Windows x64 is the supported downloadable target. Linux and macOS desktop jobs
-remain compile-only CI artifacts until they receive runtime testing.
+Windows x64 is the supported downloadable target. Ordinary pushes and pull
+requests run Windows verification only. For optional Linux and macOS checks,
+manually run `verify` with `cross_platform` enabled; those desktop builds remain
+compile-only CI artifacts until they receive runtime testing.

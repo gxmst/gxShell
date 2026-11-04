@@ -3,6 +3,12 @@ name: verify
 on:
   push:
   pull_request:
+  workflow_dispatch:
+    inputs:
+      cross_platform:
+        description: 'Also build experimental Linux and macOS targets'
+        type: boolean
+        default: false
 
 jobs:
   verify:
@@ -67,6 +73,7 @@ jobs:
   # and CLI packages carry *_other.go variants that nothing compiled until now.
   # Building them on Linux keeps those files from silently rotting.
   verify-linux:
+    if: github.event_name == 'workflow_dispatch' && inputs.cross_platform
     runs-on: ubuntu-latest
 
     steps:
@@ -88,6 +95,7 @@ jobs:
   # Compile-only desktop targets. Windows remains the supported release
   # platform until the native integrations below receive runtime testing.
   build-linux-desktop-experimental:
+    if: github.event_name == 'workflow_dispatch' && inputs.cross_platform
     runs-on: ubuntu-latest
 
     steps:
@@ -157,6 +165,7 @@ jobs:
           retention-days: 7
 
   build-macos-desktop-experimental:
+    if: github.event_name == 'workflow_dispatch' && inputs.cross_platform
     runs-on: macos-14
 
     steps:
