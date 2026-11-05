@@ -43,9 +43,13 @@ export function InspectionPanel({ locale, tabs, activeTabId, onNotify }: {
   notify.current = onNotify;
   const targets = tabs.filter(isRemoteSession);
   const selectedTarget = targets.find((tab) => tab.id === targetId);
-  const run = runs.find((item) => item.id === selectedRun) || runs[0];
+  // Reports and history follow the selected server; a quick-connect tab has no
+  // profile, so it matches by session instead.
+  const forTarget = (item: InspectionRun) => !!selectedTarget && (selectedTarget.profileId ? item.profileId === selectedTarget.profileId : item.sessionId === selectedTarget.id);
+  const targetRuns = selectedTarget ? runs.filter(forTarget) : runs;
+  const run = targetRuns.find((item) => item.id === selectedRun) || targetRuns[0];
   const running = !!run && !terminalStates.has(run.state);
-  const busyTarget = runs.some((item) => item.sessionId === targetId && !terminalStates.has(item.state));
+  const busyTarget = targetRuns.some((item) => !terminalStates.has(item.state));
   const validDiagnosis = /^[A-Za-z0-9][A-Za-z0-9_.@-]{0,127}$/.test(service.trim()) && /^\d+$/.test(port) && Number(port) >= 1 && Number(port) <= 65535;
   const stateLabel = (state: string) => t(locale, stateLabels[state as keyof typeof stateLabels] || "inspectionPartial");
   const checkLabel = (check: string) => inspectionCheckLabel(locale, check);
@@ -171,8 +175,8 @@ export function InspectionPanel({ locale, tabs, activeTabId, onNotify }: {
       </details>}
       <InspectionEvaluation locale={locale} onError={(message) => onNotify(message, "error")} />
     </div>
-    {runs.length > 0 && <select className="input compact-input" aria-label={t(locale, "inspectionHistory")} value={run?.id || ""} onChange={(event) => setSelectedRun(event.target.value)}>
-      {runs.map((item) => <option key={item.id} value={item.id}>{item.target} · {new Date(item.createdAt).toLocaleString(locale)} · {stateLabel(item.state)}</option>)}
+    {targetRuns.length > 0 && <select className="input compact-input" aria-label={t(locale, "inspectionHistory")} value={run?.id || ""} onChange={(event) => setSelectedRun(event.target.value)}>
+      {targetRuns.map((item) => <option key={item.id} value={item.id}>{item.target} · {new Date(item.createdAt).toLocaleString(locale)} · {stateLabel(item.state)}</option>)}
     </select>}
     {!run ? <div className="ai-inspection-empty">{t(locale, "inspectionEmpty")}</div> : <>
       <div className="ai-inspection-status" role="status">

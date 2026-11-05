@@ -155,7 +155,12 @@ func TestActionPlanIsConsumedOnceAndRecoversUnknown(t *testing.T) {
 	run.Service = "nginx.service"
 	run.Port = 80
 	run.Evidence = append(run.Evidence, Evidence{ID: "E8", Query: Query{Check: "service", Service: run.Service, View: "status"}, Status: "collected", Output: "LoadState=loaded\nActiveState=inactive"})
+	run.Evidence[0].Output = "Linux 6.8.0 x86_64\nGXSHELL_UID=1000"
 	m.runs[run.ID] = &run
+	if _, err := m.PreparePlan(run.ID, "restart_service"); err == nil || !strings.Contains(err.Error(), "root") {
+		t.Fatalf("plan offered to a non-root account: %v", err)
+	}
+	run.Evidence[0].Output = "Linux 6.8.0 x86_64\nGXSHELL_UID=0"
 	prepared, err := m.PreparePlan(run.ID, "restart_service")
 	if err != nil {
 		t.Fatal(err)

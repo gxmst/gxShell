@@ -68,7 +68,9 @@ possible explanations and uncertainty. These are public diagnostic explanations,
 not the model's private reasoning stream. Unsupported causes cannot become
 confirmed findings merely because the model proposes them.
 The backend validates check identifiers and evidence references before accepting
-conclusions. Missing/truncated evidence stays unconfirmed. A successful empty
+conclusions. An item with a wrong citation, status or field is replaced with its
+evidence-derived reading or dropped, instead of discarding the whole report.
+Missing/truncated evidence stays unconfirmed. A successful empty
 failed-unit query explicitly means no failed systemd units were reported.
 Disk usage, memory and load measurements are extracted from collected output,
 separately from model interpretation.
@@ -80,9 +82,11 @@ writes the complete report including evidence; Copy Report copies the same
 Markdown. Default filenames contain the host, timestamp and report ID.
 
 New reports use the interface language captured when the task starts. Chinese
-prose is validated before acceptance. A malformed or wrong-language answer gets
-one formatting-only retry with tools disabled, within the existing task deadline.
-If that fails, the partial structured report preserves the evidence. Commands,
+prose is validated before acceptance. An answer with problems gets one repair
+turn with tools disabled that lists each problem, within the existing task
+deadline. The answer with fewer problems is kept, with bad items already
+replaced. Only an unreadable answer fails the task, and the partial structured
+report preserves the evidence. Commands,
 service names and raw logs retain their original text. Historical Markdown
 reports remain readable and exportable without automatic translation.
 
@@ -179,7 +183,8 @@ Two backend-owned plans are available when their required evidence is complete:
   This permanently removes those archived logs. Active journals are excluded.
 
 Generate a plan, review its exact command and impact, then choose Review and
-Execute. A native dialog confirms the original SSH target, command, impact and
+Execute. Both commands need root and plans never elevate, so they are offered
+only when the system query reports that the SSH account is root. A native dialog confirms the original SSH target, command, impact and
 model used for the new diagnosis. Plans use current account permissions without
 elevation; models and the renderer cannot supply arbitrary commands. An action
 and another inspection/action cannot run concurrently on the same server.
@@ -209,8 +214,10 @@ evidence. Inspection is a desktop feature; it requires gxShell to be running.
 
 Reports record query/model/validation steps with their reason, evidence IDs,
 duration, outcome, error and model token usage. Interrupted steps are marked
-explicitly. Raw evidence remains available through its links; private model
-reasoning and full credential-bearing request payloads are not stored as trace.
+explicitly. When a report answer is corrected or rejected, its redacted raw
+text is kept on that validation step. Raw evidence remains available through
+its links; private model reasoning and full credential-bearing request payloads
+are not stored as trace.
 The trace and feedback are also included in MD export.
 
 Diagnostic Feedback supports Correct Assessment, False Alarm and Missed Issue.

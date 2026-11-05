@@ -11,8 +11,12 @@ export function InspectionPlanControls({ run, locale, onUpdated, onError, onSele
   const pending = plans.some((p) => p.status === "proposed" || p.status === "running");
   const service = run.evidence.find((e) => e.query.check === "service" && e.query.view === "status");
   const journal = run.evidence.find((e) => e.query.check === "journal");
-  const available = run.workflow === "service_diagnosis" && service?.status === "collected" && !service.truncated && service.output.includes("LoadState=loaded")
+  const system = [...run.evidence].reverse().find((e) => e.query.check === "system");
+  // Mirrors the backend gate: plans never elevate, and both actions need root.
+  const root = system?.status === "collected" && system.output.trim().split("\n").pop()?.trim() === "GXSHELL_UID=0";
+  const candidate = run.workflow === "service_diagnosis" && service?.status === "collected" && !service.truncated && service.output.includes("LoadState=loaded")
     ? "restart_service" : run.workflow === "disk_diagnosis" && journal?.status === "collected" && !journal.truncated ? "vacuum_journal_7d" : "";
+  const available = root ? candidate : "";
   const act = async (action: "prepare" | "execute" | "dismiss", id = "") => {
     if (busy) return;
     setBusy(true);
@@ -24,10 +28,11 @@ export function InspectionPlanControls({ run, locale, onUpdated, onError, onSele
     proposed: "inspectionPlanProposed", running: "inspectionPlanRunning", completed: "inspectionPlanSucceeded",
     failed: "inspectionPlanFailed", dismissed: "inspectionPlanDismissed",
   } as const)[status as "proposed"] || "inspectionPlanUnknown");
-  if (!available && plans.length === 0) return null;
+  if (!candidate && plans.length === 0) return null;
   return <section className="inspection-plan-section">
     <h3>{t(locale, "inspectionPlans")}</h3>
     <p className="inspection-report-empty">{t(locale, "inspectionPlanExplanation")}</p>
+    {candidate && !root && plans.length === 0 && <p className="inspection-report-empty">{t(locale, "inspectionPlanNeedsRoot")}</p>}
     {available && !pending && <button className="btn-secondary" onClick={() => act("prepare")} disabled={busy}>{t(locale, available === "restart_service" ? "inspectionPrepareRestart" : "inspectionPrepareJournalCleanup")}</button>}
     {plans.map((p) => <div className="inspection-plan-card" key={p.id}>
       <h4>{p.title} · {state(p.status)}</h4><p>{p.impact}</p><pre>{p.command}</pre>

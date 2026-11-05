@@ -59,6 +59,87 @@ func TestReportValidatesLanguageReferencesAndUnknownChecks(t *testing.T) {
 	}
 }
 
+// One wrong citation or finding used to discard the whole report. It is now
+// replaced or dropped and reported, while evidence rules still apply.
+func TestReportNormalizesBadItemsInsteadOfFailing(t *testing.T) {
+	run := reportRun("zh-CN")
+	run.ReportSchemaVersion = 2
+	run.Evidence[2].Output = "/dev/vda1 100 98 2 98% /"
+	run.Evidence[6].Status, run.Evidence[6].Error = "unavailable", "permission denied"
+	var doc ReportDocument
+	_ = json.Unmarshal([]byte(testReportJSON("zh-CN", Checks)), &doc)
+	doc.Checks[0].EvidenceIDs = []string{"E999"}
+	doc.Checks = doc.Checks[:6] // containers omitted
+	doc.Findings = []Finding{{Severity: "critical", Title: "编造的故障", Detail: "没有证据", Recommendation: "重启", EvidenceIDs: []string{"E42"}}}
+	data, _ := json.Marshal(doc)
+	text := "以下是报告：\n```json\n" + string(data) + "\n```"
+	result, issues, err := normalizeReport(text, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(issues) != 3 {
+		t.Fatalf("issues = %q", issues)
+	}
+	if len(result.Checks) != len(Checks) || result.Checks[0].EvidenceIDs[0] != "E1" || result.Checks[6].Status != "unknown" {
+		t.Fatalf("checks were not rebuilt from evidence: %#v", result.Checks)
+	}
+	if result.Checks[2].Status != "critical" || result.Verdict != "attention" || len(result.Findings) != 1 || result.Findings[0].Title == "编造的故障" {
+		t.Fatalf("measured disk pressure or finding filter lost: %#v", result.Findings)
+	}
+	if _, err := decodeReport(text, run); err == nil {
+		t.Fatal("strict decoding accepted a corrected report")
+	}
+	if _, _, err := normalizeReport("我无法生成报告。", run); err == nil {
+		t.Fatal("unreadable answer accepted")
+	}
+}
+
+// A report that still has problems after one repair is accepted with its bad
+// items replaced, and both raw answers stay in the trace.
+func TestInspectionKeepsCorrectedReportAndRawAnswer(t *testing.T) {
+	calls := 0
+	var repairPrompt string
+	manager, err := NewManager(t.TempDir(), func(context.Context, string, Query) Evidence {
+		return Evidence{Status: "collected", Output: "example"}
+	}, func(_ context.Context, _ ai.Config, req ai.ChatRequest, onChunk func(ai.ChatResponse)) error {
+		var doc ReportDocument
+		_ = json.Unmarshal([]byte(testReportJSON("en", Checks)), &doc)
+		doc.Checks[3].EvidenceIDs = []string{"E77"}
+		data, _ := json.Marshal(doc)
+		if calls > 0 {
+			repairPrompt = req.Messages[len(req.Messages)-1].Content
+		}
+		calls++
+		onChunk(ai.ChatResponse{Content: string(data)})
+		onChunk(ai.ChatResponse{Finish: true})
+		return nil
+	}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	started, err := manager.Start(context.Background(), "session", "profile", "Host", "English", ai.Config{Model: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := awaitRun(t, manager, started.ID)
+	if run.State != "completed" || calls != 2 || run.Document == nil || run.Document.Checks[3].EvidenceIDs[0] != "E4" {
+		t.Fatalf("corrected report not accepted: state %s, calls %d", run.State, calls)
+	}
+	if !strings.Contains(repairPrompt, "checks[3] (memory)") {
+		t.Fatalf("repair prompt did not name the problem: %q", repairPrompt)
+	}
+	corrected := 0
+	for _, step := range run.Trace {
+		if step.Kind == "report_validation" && step.State == "corrected" && strings.Contains(step.Output, "E77") {
+			corrected++
+		}
+	}
+	if corrected != 2 {
+		t.Fatalf("raw answers missing from trace: %#v", run.Trace)
+	}
+}
+
 func TestReportMarkdownEscapesRemoteDataAndSafeFilename(t *testing.T) {
 	run := reportRun("en")
 	run.Target = "../bad:host|name"

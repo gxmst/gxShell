@@ -49,7 +49,12 @@ type TraceStep struct {
 	PromptTokens     int       `json:"promptTokens,omitempty"`
 	CompletionTokens int       `json:"completionTokens,omitempty"`
 	Error            string    `json:"error,omitempty"`
+	// Output is the redacted raw model answer of a corrected or failed report.
+	Output string `json:"output,omitempty"`
 }
+
+const maxTraceOutput = 16000
+
 type ReportFeedback struct {
 	Outcome  string    `json:"outcome"`
 	Note     string    `json:"note"`

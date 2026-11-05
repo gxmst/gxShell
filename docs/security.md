@@ -36,7 +36,8 @@ credentials away from ordinary profile data and terminal input.
   Host background is editable expectation with revision/source/reviewer history;
   it never overrides current measurements. Each task sends its captured
   background to the selected model after disclosing this in confirmation.
-  Diagnostic trace stores reasons, metadata and evidence references, not private
+  Diagnostic trace stores reasons, metadata, evidence references and the
+  redacted raw text of corrected or rejected report answers, not private
   model reasoning. Feedback is an audit overlay. Model evaluation sends fixed
   simulated evidence to the saved provider with tools disabled and never uses
   SSH; raw judgments are scored before deterministic rules correct them.

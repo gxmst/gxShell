@@ -145,16 +145,62 @@ func TestNativeStreamsDoNotReleaseIncompleteTools(t *testing.T) {
 	}
 }
 
+// Gemini and Ollama can omit call IDs. Generated IDs must differ between
+// rounds, or round 2's result overwrites round 1's in the renderer.
+func TestNativeLocalToolCallIDsAreUniqueAcrossResponses(t *testing.T) {
+	streams := map[Provider]string{
+		ProviderGemini: "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"read_file\",\"args\":{}}}]},\"finishReason\":\"STOP\"}]}\n\n",
+		ProviderOllama: "{\"message\":{\"tool_calls\":[{\"function\":{\"name\":\"read_file\",\"arguments\":{}}}]},\"done\":true,\"done_reason\":\"stop\"}\n",
+	}
+	for provider, stream := range streams {
+		seen := map[string]bool{}
+		for round := 0; round < 2; round++ {
+			var calls []ToolCall
+			if err := (&Manager{}).parseNativeStream(provider, strings.NewReader(stream), func(chunk ChatResponse) {
+				if chunk.Finish {
+					calls = chunk.ToolCalls
+				}
+			}); err != nil {
+				t.Fatalf("%s: %v", provider, err)
+			}
+			if len(calls) != 1 || seen[calls[0].ID] {
+				t.Fatalf("%s round %d: calls %#v, seen %v", provider, round, calls, seen)
+			}
+			seen[calls[0].ID] = true
+		}
+	}
+}
+
 func TestOpenAIStreamRejectsTruncatedToolJSON(t *testing.T) {
 	for _, stream := range []string{
 		"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\"}}]}}]}\n\n",
 		"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n",
+		// A "stop" finish is only accepted with the [DONE] terminator.
+		"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"stop\"}]}\n\n",
+		"data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"length\"}]}\n\ndata: [DONE]\n\n",
 	} {
 		released := false
 		err := (&Manager{}).parseSSE(strings.NewReader(stream), func(chunk ChatResponse) { released = released || chunk.Finish })
 		if err == nil || released {
 			t.Fatalf("incomplete tools released: %v, %v", err, released)
 		}
+	}
+}
+
+// Relays such as LiteLLM and Gemini's OpenAI endpoint finish tool turns with
+// "stop" instead of "tool_calls".
+func TestOpenAIStreamAcceptsStopFinishedToolCalls(t *testing.T) {
+	stream := "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\\\"/etc/hosts\\\"}\"}}]},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+	var calls []ToolCall
+	if err := (&Manager{}).parseSSE(strings.NewReader(stream), func(chunk ChatResponse) {
+		if chunk.Finish {
+			calls = chunk.ToolCalls
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 1 || calls[0].ID != "call" || calls[0].Function.Name != "read_file" {
+		t.Fatalf("tool calls = %#v", calls)
 	}
 }
 

@@ -166,30 +166,70 @@ func hasHan(text string) bool {
 	return false
 }
 
-// Validate structure and references before accepting any model conclusions.
-// Unknown/missing/truncated evidence cannot be promoted to a healthy check.
+// decodeReport is the strict form used by model evaluation and tests: any
+// item the model got wrong is an error.
 func decodeReport(text string, run Run) (*ReportDocument, error) {
+	doc, issues, err := normalizeReport(text, run)
+	if err != nil {
+		return nil, err
+	}
+	if len(issues) > 0 {
+		return nil, fmt.Errorf("%s", strings.Join(issues, "; "))
+	}
+	return doc, nil
+}
+
+// extractReportJSON tolerates a Markdown fence or prose around the object.
+func extractReportJSON(text string) string {
 	text = strings.TrimSpace(text)
 	if strings.HasPrefix(text, "```") {
-		first := strings.IndexByte(text, '\n')
-		if first >= 0 && strings.HasSuffix(text, "```") {
-			text = strings.TrimSpace(text[first+1 : len(text)-3])
+		if first := strings.IndexByte(text, '\n'); first >= 0 {
+			text = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(text[first+1:]), "```"))
 		}
 	}
+	start, end := strings.IndexByte(text, '{'), strings.LastIndexByte(text, '}')
+	if start > 0 && end > start {
+		text = text[start : end+1]
+	}
+	return text
+}
+
+// normalizeReport fails only when the answer is unreadable. A wrong item is
+// dropped or replaced with its evidence-derived fallback and reported as an
+// issue, so one bad citation no longer discards the whole report.
+// Unknown/missing/truncated evidence can never be promoted to a healthy check.
+func normalizeReport(text string, run Run) (*ReportDocument, []string, error) {
 	var doc ReportDocument
-	decoder := json.NewDecoder(strings.NewReader(text))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&doc); err != nil || !json.Valid([]byte(text)) {
-		return nil, fmt.Errorf("invalid report JSON")
+	if err := json.Unmarshal([]byte(extractReportJSON(text)), &doc); err != nil {
+		return nil, nil, fmt.Errorf("invalid report JSON: %v", err)
 	}
-	if (doc.Version != 1 && doc.Version != 2) || strings.TrimSpace(doc.Summary) == "" || len(doc.Summary) > 2000 || len(doc.Checks) != len(RunChecks(run)) || doc.Findings == nil || doc.Unknowns == nil || len(doc.Findings) > 12 || len(doc.Unknowns) > 16 {
-		return nil, fmt.Errorf("invalid report fields")
+	if strings.TrimSpace(doc.Summary) == "" && len(doc.Checks) == 0 && doc.Analysis == nil {
+		return nil, nil, fmt.Errorf("report JSON has no summary, checks or analysis")
 	}
-	if run.ReportSchemaVersion >= 2 && (doc.Version != 2 || doc.Analysis == nil) {
-		return nil, fmt.Errorf("AI analysis is required for new reports")
+	issues := []string{}
+	zh := NormalizeLanguage(run.Language) == "zh-CN"
+	wrongLanguage := func(field, value string) {
+		if zh && strings.TrimSpace(value) != "" && !hasHan(value) {
+			issues = append(issues, field+" must use Simplified Chinese")
+		}
 	}
-	if NormalizeLanguage(run.Language) == "zh-CN" && !hasHan(doc.Summary) {
-		return nil, fmt.Errorf("report must use Simplified Chinese")
+	fallback := fallbackDocument(run)
+	if doc.Version != 1 && doc.Version != 2 {
+		issues = append(issues, "version must be 1 or 2")
+		doc.Version = 1
+	}
+	if run.ReportSchemaVersion >= 2 {
+		doc.Version = 2
+	}
+	doc.Summary = strings.TrimSpace(doc.Summary)
+	if doc.Summary == "" || len(doc.Summary) > 2000 {
+		issues = append(issues, "summary is missing or longer than 2000 bytes")
+		doc.Summary = fallback.Summary
+	} else {
+		wrongLanguage("summary", doc.Summary)
+	}
+	if doc.Findings == nil || doc.Unknowns == nil {
+		issues = append(issues, "findings and unknowns must be arrays")
 	}
 	refs := map[string]Evidence{}
 	for _, e := range run.Evidence {
@@ -213,114 +253,136 @@ func decodeReport(text string, run Run) (*ReportDocument, error) {
 	}
 	if doc.Analysis != nil {
 		a := doc.Analysis
-		if len(a.Assessment) == 0 || len(a.Assessment) > 2000 || len(a.Insights) < 1 || len(a.Insights) > 4 || len(a.NextSteps) < 1 || len(a.NextSteps) > 4 || len(a.Caveats) > 1500 {
-			return nil, fmt.Errorf("invalid AI analysis")
+		if len(a.Caveats) > 1500 {
+			issues = append(issues, "analysis.caveats is longer than 1500 bytes")
+			a.Caveats = ""
 		}
-		prose := []string{a.Assessment, a.Caveats}
-		for _, insight := range a.Insights {
-			if len(insight.Title) == 0 || len(insight.Title) > 200 || len(insight.Opinion) == 0 || len(insight.Opinion) > 2000 || len(insight.NextCheck) == 0 || len(insight.NextCheck) > 800 || !containsCheck([]string{"supported", "hypothesis", "uncertain"}, insight.Confidence) || !validRefs(insight.EvidenceIDs) {
-				return nil, fmt.Errorf("invalid AI insight or evidence references")
+		wrongLanguage("analysis.caveats", a.Caveats)
+		insights := []AiInsight{}
+		for i, insight := range a.Insights {
+			field := fmt.Sprintf("analysis.insights[%d]", i)
+			if len(insights) == 4 || insight.Title == "" || len(insight.Title) > 200 || insight.Opinion == "" || len(insight.Opinion) > 2000 || insight.NextCheck == "" || len(insight.NextCheck) > 800 ||
+				!containsCheck([]string{"supported", "hypothesis", "uncertain"}, insight.Confidence) || !validRefs(insight.EvidenceIDs) {
+				issues = append(issues, field+" was dropped: it needs title, opinion, nextCheck, a valid confidence and existing evidence IDs (at most 4 insights)")
+				continue
 			}
 			for _, id := range insight.EvidenceIDs {
 				if insight.Confidence == "supported" && (refs[id].Status != "collected" || refs[id].Truncated) {
-					return nil, fmt.Errorf("unavailable evidence cannot support a confirmed AI insight")
+					issues = append(issues, field+" cites unavailable or truncated evidence and cannot be supported")
+					insight.Confidence = "uncertain"
+					break
 				}
 			}
-			prose = append(prose, insight.Title, insight.Opinion, insight.NextCheck)
-		}
-		for _, step := range a.NextSteps {
-			if strings.TrimSpace(step) == "" || len(step) > 800 {
-				return nil, fmt.Errorf("invalid AI next step")
+			for _, p := range []string{insight.Title, insight.Opinion, insight.NextCheck} {
+				wrongLanguage(field, p)
 			}
-			prose = append(prose, step)
+			insights = append(insights, insight)
 		}
-		if NormalizeLanguage(run.Language) == "zh-CN" {
-			for _, p := range prose {
-				if p != "" && !hasHan(p) {
-					return nil, fmt.Errorf("AI analysis must use Simplified Chinese")
-				}
+		steps := []string{}
+		for i, step := range a.NextSteps {
+			if strings.TrimSpace(step) == "" || len(step) > 800 || len(steps) == 4 {
+				issues = append(issues, fmt.Sprintf("analysis.nextSteps[%d] was dropped: empty, longer than 800 bytes, or beyond 4 steps", i))
+				continue
 			}
+			wrongLanguage(fmt.Sprintf("analysis.nextSteps[%d]", i), step)
+			steps = append(steps, step)
 		}
+		a.Insights, a.NextSteps = insights, steps
+		if strings.TrimSpace(a.Assessment) == "" || len(a.Assessment) > 2000 || len(insights) == 0 || len(steps) == 0 {
+			issues = append(issues, "analysis needs an assessment of at most 2000 bytes, 1-4 insights and 1-4 next steps")
+		}
+		wrongLanguage("analysis.assessment", a.Assessment)
+		if len(a.Assessment) > 2000 {
+			a.Assessment = strings.ToValidUTF8(a.Assessment[:2000], "")
+		}
+		if strings.TrimSpace(a.Assessment) == "" {
+			doc.Analysis = nil
+		}
+	}
+	if run.ReportSchemaVersion >= 2 && doc.Analysis == nil {
+		issues = append(issues, "analysis is required")
 	}
 	latest := map[Query]string{}
 	for _, e := range run.Evidence {
 		latest[e.Query] = e.ID
 	}
+	fallbackChecks := map[string]ReportCheck{}
+	for _, c := range fallback.Checks {
+		fallbackChecks[c.Check] = c
+	}
 	seen := map[string]bool{}
 	measured := []Finding{}
-	for i := range doc.Checks {
-		item := &doc.Checks[i]
-		if seen[item.Check] || !containsCheck(RunChecks(run), item.Check) || !validRefs(item.EvidenceIDs) || len(item.Reading) == 0 || len(item.Reading) > 2000 || !containsCheck([]string{"normal", "warning", "critical", "unknown"}, item.Status) {
-			return nil, fmt.Errorf("invalid check or evidence references")
+	checks := []ReportCheck{}
+	for i, item := range doc.Checks {
+		field := fmt.Sprintf("checks[%d] (%s)", i, item.Check)
+		base, known := fallbackChecks[item.Check]
+		if !known || seen[item.Check] {
+			issues = append(issues, field+" is not a check of this workflow or is repeated")
+			continue
 		}
 		seen[item.Check] = true
-		if NormalizeLanguage(run.Language) == "zh-CN" && !hasHan(item.Reading) {
-			return nil, fmt.Errorf("reading must use Simplified Chinese")
+		if !containsCheck([]string{"normal", "warning", "critical", "unknown"}, item.Status) {
+			issues = append(issues, field+" status must be normal, warning, critical or unknown")
+			item.Status = "unknown"
 		}
+		if strings.TrimSpace(item.Reading) == "" || len(item.Reading) > 2000 {
+			issues = append(issues, field+" reading is empty or longer than 2000 bytes")
+			item.Reading = base.Reading
+		} else {
+			wrongLanguage(field+" reading", item.Reading)
+		}
+		cited := validRefs(item.EvidenceIDs)
 		for _, id := range item.EvidenceIDs {
-			e := refs[id]
-			if latest[e.Query] != e.ID {
-				return nil, fmt.Errorf("check must cite the latest query evidence")
+			if e := refs[id]; cited && (latest[e.Query] != id || e.Query.Check != item.Check) {
+				cited = false
 			}
-			if status, reading := measuredConclusion(run, e); status != "" {
-				measured = append(measured, Finding{Severity: status, Title: CheckLabel(run.Language, item.Check), Detail: reading, Impact: tr(run.Language, "具体影响需结合业务和采集证据核实。", "Verify the impact against the workload and evidence."), Recommendation: tr(run.Language, "先核实原因，再审核具体处理计划。", "Verify the cause before reviewing a concrete action plan."), EvidenceIDs: []string{id}})
-			}
-			// Values displayed as measurements always come from collected output.
-			item.Observed = ""
-			if observed := observedValues(e, run.Language); observed != "" {
-				item.Observed = observed
-			}
-			if e.Query.Check != item.Check {
-				return nil, fmt.Errorf("evidence belongs to a different check")
-			}
-			if e.Status != "collected" || e.Truncated {
-				item.Status = "unknown"
-				item.Reading = baselineReading(run, e)
-			}
-			if item.Check == "services" && baselineReading(run, e) == tr(run.Language, "未报告失败的 systemd 服务单元", "No failed systemd units were reported") {
-				item.Status = "normal"
-				item.Reading = baselineReading(run, e)
-			}
-			if item.Check == "connectivity" && e.Status == "collected" && !e.Truncated && strings.Contains(e.Output, "GXSHELL_TCP=unreachable") {
-				item.Status = "critical"
-				item.Reading = tr(run.Language, "服务器本机 TCP 连接未成功，外网连通性仍未确认。", "The local TCP connection did not succeed; public reachability remains unconfirmed.")
-			}
-			if item.Check == "service" && e.Status == "collected" && !e.Truncated && e.Query.View == "status" && (strings.Contains(e.Output, "LoadState=not-found") || strings.Contains(e.Output, "ActiveState=failed")) {
-				item.Status = "critical"
-				item.Reading = tr(run.Language, "所选服务不存在或处于失败状态，请核对服务名及运行状态。", "The selected service is missing or failed; verify its name and state.")
-			}
-			if status, reading := measuredConclusion(run, e); status != "" {
-				item.Status = status
-				item.Reading = reading
-			}
+		}
+		if !cited {
+			issues = append(issues, fmt.Sprintf("%s must cite the latest evidence of this check: %v", field, base.EvidenceIDs))
+			item.EvidenceIDs = base.EvidenceIDs
+		}
+		measured = append(measured, reconcileCheck(run, &item, refs)...)
+		checks = append(checks, item)
+	}
+	for _, check := range RunChecks(run) {
+		if !seen[check] {
+			issues = append(issues, "checks is missing "+check)
+			item := fallbackChecks[check]
+			measured = append(measured, reconcileCheck(run, &item, refs)...)
+			checks = append(checks, item)
 		}
 	}
-	for _, item := range doc.Findings {
-		if !containsCheck([]string{"warning", "critical"}, item.Severity) || !validRefs(item.EvidenceIDs) || item.Title == "" || item.Detail == "" || item.Recommendation == "" ||
-			len(item.Title) > 200 || len(item.Detail)+len(item.Impact)+len(item.Recommendation) > 6000 {
-			return nil, fmt.Errorf("invalid finding")
-		}
-		if NormalizeLanguage(run.Language) == "zh-CN" && (!hasHan(item.Title) || !hasHan(item.Detail) || !hasHan(item.Recommendation) || (item.Impact != "" && !hasHan(item.Impact))) {
-			return nil, fmt.Errorf("finding must use Simplified Chinese")
-		}
+	doc.Checks = checks
+	findings := []Finding{}
+	for i, item := range doc.Findings {
+		field := fmt.Sprintf("findings[%d]", i)
 		available := false
 		for _, id := range item.EvidenceIDs {
 			if refs[id].Status == "collected" {
 				available = true
 			}
 		}
-		if !available {
-			return nil, fmt.Errorf("an unavailable check is not an observed fault")
+		if len(findings) == 12 || !containsCheck([]string{"warning", "critical"}, item.Severity) || !validRefs(item.EvidenceIDs) || item.Title == "" || item.Detail == "" || item.Recommendation == "" ||
+			len(item.Title) > 200 || len(item.Detail)+len(item.Impact)+len(item.Recommendation) > 6000 || !available {
+			issues = append(issues, field+" was dropped: it needs warning/critical severity, title, detail, recommendation and collected evidence IDs (at most 12)")
+			continue
 		}
+		for _, p := range []string{item.Title, item.Detail, item.Impact, item.Recommendation} {
+			wrongLanguage(field, p)
+		}
+		findings = append(findings, item)
 	}
-	for _, item := range doc.Unknowns {
-		if item.Title == "" || item.Detail == "" || len(item.Title)+len(item.Detail) > 3000 || !validRefs(item.EvidenceIDs) {
-			return nil, fmt.Errorf("invalid uncertainty")
+	doc.Findings = findings
+	unknowns := []Uncertainty{}
+	for i, item := range doc.Unknowns {
+		if len(unknowns) == 16 || item.Title == "" || item.Detail == "" || len(item.Title)+len(item.Detail) > 3000 || !validRefs(item.EvidenceIDs) {
+			issues = append(issues, fmt.Sprintf("unknowns[%d] was dropped: it needs title, detail and existing evidence IDs (at most 16)", i))
+			continue
 		}
-		if NormalizeLanguage(run.Language) == "zh-CN" && (!hasHan(item.Title) || !hasHan(item.Detail)) {
-			return nil, fmt.Errorf("uncertainty must use Simplified Chinese")
-		}
+		wrongLanguage(fmt.Sprintf("unknowns[%d]", i), item.Title+item.Detail)
+		unknowns = append(unknowns, item)
 	}
+	doc.Unknowns = unknowns
 	for _, finding := range measured {
 		found := false
 		for _, old := range doc.Findings {
@@ -393,9 +455,50 @@ func decodeReport(text string, run Run) (*ReportDocument, error) {
 	}
 	sort.Slice(doc.Checks, func(i, j int) bool { return order[doc.Checks[i].Check] < order[doc.Checks[j].Check] })
 	ensureUnknownIDs(&doc)
-	return &doc, nil
+	unique := []string{}
+	for _, issue := range issues {
+		if !containsCheck(unique, issue) {
+			unique = append(unique, issue)
+		}
+	}
+	return &doc, unique, nil
 }
 
+// reconcileCheck applies the evidence-derived rules that override any model
+// status, and returns findings for measured thresholds.
+func reconcileCheck(run Run, item *ReportCheck, refs map[string]Evidence) []Finding {
+	measured := []Finding{}
+	// Values displayed as measurements always come from collected output.
+	item.Observed = ""
+	for _, id := range item.EvidenceIDs {
+		e := refs[id]
+		if observed := observedValues(e, run.Language); observed != "" {
+			item.Observed = observed
+		}
+		if e.Status != "collected" || e.Truncated {
+			item.Status = "unknown"
+			item.Reading = baselineReading(run, e)
+		}
+		if item.Check == "services" && baselineReading(run, e) == tr(run.Language, "未报告失败的 systemd 服务单元", "No failed systemd units were reported") {
+			item.Status = "normal"
+			item.Reading = baselineReading(run, e)
+		}
+		if item.Check == "connectivity" && e.Status == "collected" && !e.Truncated && strings.Contains(e.Output, "GXSHELL_TCP=unreachable") {
+			item.Status = "critical"
+			item.Reading = tr(run.Language, "服务器本机 TCP 连接未成功，外网连通性仍未确认。", "The local TCP connection did not succeed; public reachability remains unconfirmed.")
+		}
+		if item.Check == "service" && e.Status == "collected" && !e.Truncated && e.Query.View == "status" && (strings.Contains(e.Output, "LoadState=not-found") || strings.Contains(e.Output, "ActiveState=failed")) {
+			item.Status = "critical"
+			item.Reading = tr(run.Language, "所选服务不存在或处于失败状态，请核对服务名及运行状态。", "The selected service is missing or failed; verify its name and state.")
+		}
+		if status, reading := measuredConclusion(run, e); status != "" {
+			item.Status = status
+			item.Reading = reading
+			measured = append(measured, Finding{Severity: status, Title: CheckLabel(run.Language, item.Check), Detail: reading, Impact: tr(run.Language, "具体影响需结合业务和采集证据核实。", "Verify the impact against the workload and evidence."), Recommendation: tr(run.Language, "先核实原因，再审核具体处理计划。", "Verify the cause before reviewing a concrete action plan."), EvidenceIDs: []string{id}})
+		}
+	}
+	return measured
+}
 func containsCheck(values []string, value string) bool {
 	for _, v := range values {
 		if v == value {

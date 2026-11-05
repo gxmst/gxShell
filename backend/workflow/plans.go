@@ -29,6 +29,13 @@ type ActionPlan struct {
 
 func PlanTemplate(run Run, kind string) (ActionPlan, error) {
 	p := ActionPlan{Kind: kind, Status: "proposed", CreatedAt: time.Now()}
+	// Both commands need root, and plans never elevate. Offering them to a
+	// non-root account only produces a permission failure after confirmation.
+	if kind == "restart_service" || kind == "vacuum_journal_7d" {
+		if !rootAccount(evidenceFor(run, "system")) {
+			return p, fmt.Errorf("%s", tr(run.Language, "当前 SSH 账号不是 root，执行计划不会提权，无法重启服务或清理系统日志。", "The SSH account is not root. Plans never elevate, so they cannot restart services or vacuum system journals."))
+		}
+	}
 	switch kind {
 	case "restart_service":
 		e := evidenceFor(run, "service")
@@ -111,7 +118,11 @@ func (m *Manager) BeginPlan(parent context.Context, id, planID string) (ActionPl
 	}
 	// Commands are re-derived from backend templates at execution time.
 	template, err := PlanTemplate(copy, copy.Plans[index].Kind)
-	if err != nil || template.Command != copy.Plans[index].Command {
+	if err != nil {
+		m.mu.Unlock()
+		return ActionPlan{}, nil, err
+	}
+	if template.Command != copy.Plans[index].Command {
 		m.mu.Unlock()
 		return ActionPlan{}, nil, fmt.Errorf("action plan changed")
 	}
@@ -229,6 +240,13 @@ func sameRunServer(a, b Run) bool {
 		return a.ProfileID == b.ProfileID
 	}
 	return a.SessionID == b.SessionID
+}
+
+// rootAccount reads the marker the system query prints last, so remote file
+// content such as /etc/os-release cannot supply it.
+func rootAccount(e Evidence) bool {
+	lines := strings.Split(strings.TrimSpace(e.Output), "\n")
+	return e.Status == "collected" && strings.TrimSpace(lines[len(lines)-1]) == "GXSHELL_UID=0"
 }
 
 func PlanStatusLabel(language, status string) string {

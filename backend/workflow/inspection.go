@@ -576,37 +576,13 @@ func (m *Manager) run(ctx context.Context, id string, cfg ai.Config) {
 				abort(fmt.Errorf("model returned an empty report"))
 				return
 			}
-			current, _ := m.Get(id)
-			doc, reportErr := decodeReport(text, current)
-			validationState, validationError := "completed", ""
-			if reportErr != nil {
-				validationState, validationError = "failed", reportErr.Error()
-			}
-			if err := m.recordTrace(id, "report_validation", tr(run.Language, "校验报告结构、语言、观点和证据引用。", "Validate report structure, language, assessment and evidence references."), validationState, validationError, nil); err != nil {
-				abort(err)
-				return
-			}
+			doc, reportErr := m.acceptReport(ctx, id, cfg, messages, text, instructions)
 			if reportErr != nil {
 				if ctx.Err() != nil {
 					abort(ctx.Err())
 					return
 				}
-				doc, reportErr = m.repairReport(ctx, id, cfg, messages, text, instructions, current)
-				validationState, validationError = "completed", ""
-				if reportErr != nil {
-					validationState, validationError = "failed", reportErr.Error()
-				}
-				if err := m.recordTrace(id, "report_validation", tr(run.Language, "校验修正后的报告。", "Validate the repaired report."), validationState, validationError, nil); err != nil {
-					abort(err)
-					return
-				}
-			}
-			if reportErr != nil {
-				if ctx.Err() != nil {
-					abort(ctx.Err())
-					return
-				}
-				abort(fmt.Errorf("%s", tr(run.Language, "模型未返回有效的中文结构化报告，已保留证据。", "The model did not return a valid structured report; evidence was preserved.")))
+				abort(reportErr)
 				return
 			}
 			if err := m.update(id, func(r *Run) { r.Document = doc }); err != nil {

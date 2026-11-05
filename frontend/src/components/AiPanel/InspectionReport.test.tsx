@@ -79,9 +79,13 @@ describe("human review and follow-up", () => {
     const run = report(), callbacks = props();
     run.workflow = "service_diagnosis"; run.service = "nginx.service"; run.port = 80;
     run.evidence.push({ id: "E8", query: { check: "service", view: "status", service: "nginx.service" }, status: "collected", output: "LoadState=loaded\nActiveState=inactive", exitCode: 0, remoteState: "exited", truncated: false });
+    const view = render(<InspectionReport run={run} {...callbacks} />);
+    expect(screen.queryByRole("button", { name: "生成服务重启计划" })).not.toBeInTheDocument();
+    expect(screen.getByText(/不是 root/)).toBeInTheDocument();
+    run.evidence.push({ id: "E9", query: { check: "system" }, status: "collected", output: "Linux\nGXSHELL_UID=0", exitCode: 0, remoteState: "exited", truncated: false });
     const prepared: InspectionRun = { ...run, plans: [{ id: "plan-a", kind: "restart_service", command: "systemctl restart -- 'nginx.service'", title: "重启所选服务", impact: "服务会短暂中断。", status: "proposed", exitCode: 0, createdAt: "", startedAt: "", finishedAt: "" }] };
     vi.mocked(PrepareAiInspectionPlan).mockResolvedValue(prepared);
-    const view = render(<InspectionReport run={run} {...callbacks} />);
+    view.rerender(<InspectionReport run={{ ...run }} {...callbacks} />);
     fireEvent.click(screen.getByRole("button", { name: "生成服务重启计划" }));
     await waitFor(() => expect(PrepareAiInspectionPlan).toHaveBeenCalledWith("report-a", "restart_service"));
     view.rerender(<InspectionReport run={prepared} {...callbacks} />);

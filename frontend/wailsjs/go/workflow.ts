@@ -69,7 +69,7 @@ export interface InspectionRun {
 export interface DossierInput { revision: number; purpose: string; environment: string; services: string[]; ports: number[]; containerRuntime: string; notes: string; sourceRunId?: string; sourceUnknownId?: string; }
 export interface DossierRevision extends DossierInput { updatedAt: string; reviewer: string; deleted?: boolean; }
 export interface HostDossier extends DossierRevision { profileId: string; history?: DossierRevision[]; }
-export interface InspectionTrace { id: string; kind: string; reason: string; state: string; query?: InspectionEvidence["query"]; evidenceIds?: string[]; startedAt: string; finishedAt: string; durationMs: number; promptTokens?: number; completionTokens?: number; error?: string; }
+export interface InspectionTrace { id: string; kind: string; reason: string; state: string; query?: InspectionEvidence["query"]; evidenceIds?: string[]; startedAt: string; finishedAt: string; durationMs: number; promptTokens?: number; completionTokens?: number; error?: string; output?: string; }
 export interface InspectionFeedback { outcome: "correct" | "false_alarm" | "missed_issue"; note: string; reviewer: string; at: string; }
 export interface InspectionEvaluationCase { id: string; title: string; description: string; }
 export interface InspectionEvaluationResult { caseId: string; title: string; passed: boolean; schemaValid: boolean; correctChecks: number; totalChecks: number; analysisPresent: boolean; expected: Record<string, string>; actual: Record<string, string>; error?: string; durationMs: number; promptTokens: number; completionTokens: number; rawReport?: string; }

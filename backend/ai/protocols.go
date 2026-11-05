@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -306,6 +308,13 @@ func (m *Manager) parseNativeStream(provider Provider, body io.Reader, onChunk f
 	prompt, completion := 0, 0
 	done := false
 	stop := ""
+	// Gemini and Ollama may omit call IDs. Local IDs must stay unique across
+	// rounds: the renderer and the approval registry both key results by ID.
+	var nonce [4]byte
+	_, _ = rand.Read(nonce[:])
+	localID := func(prefix string) string {
+		return prefix + hex.EncodeToString(nonce[:]) + "-" + strconv.Itoa(len(calls))
+	}
 	for scanner.Scan() {
 		line := scanner.Text()
 		if provider != ProviderOllama {
@@ -404,7 +413,7 @@ func (m *Manager) parseNativeStream(provider Provider, body io.Reader, onChunk f
 					}
 					id, _ := fn["id"].(string)
 					if id == "" {
-						id = "gemini-local-" + strconv.Itoa(len(calls))
+						id = localID("gemini-local-")
 					}
 					name, _ := fn["name"].(string)
 					signature, _ := part["thoughtSignature"].(string)
@@ -444,7 +453,7 @@ func (m *Manager) parseNativeStream(provider Provider, body io.Reader, onChunk f
 				name, _ := fn["name"].(string)
 				id, _ := tool["id"].(string)
 				if id == "" {
-					id = "ollama-local-" + strconv.Itoa(len(calls))
+					id = localID("ollama-local-")
 				}
 				args := fn["arguments"]
 				if args == nil {

@@ -25,6 +25,7 @@ type ToolResultData = {
   content: string;
   executing: boolean;
   executed: boolean;
+  rejected?: boolean;
 };
 
 type ChatMsg = {
@@ -70,6 +71,20 @@ type BufferedAiEvent = {
 
 let sessionCounter = 0;
 
+// A reload while a tool runs used to leave it "executing" forever, which kept
+// the input disabled for that chat. The result is unknown, so it is recorded as
+// such and not auto-sent: the next user message carries it to the model.
+function recoverInterruptedTools(message: ChatMsg): ChatMsg {
+  if (!message.toolResults?.some((result) => result.executing && !result.executed)) return message;
+  const toolResults = message.toolResults.map((result) => result.executing && !result.executed ? {
+    ...result,
+    content: "INTERRUPTED: the app stopped while this tool was running. Whether it ran on the server is unknown; check before retrying.",
+    executing: false,
+    executed: true,
+  } : result);
+  return { ...message, toolResults, toolContinued: toolResults.every((result) => result.executed) || message.toolContinued };
+}
+
 function requestId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
   return `ai-req-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -113,15 +128,18 @@ function toApiMessages(messages: ChatMsg[]): types.AiMessage[] {
   return result;
 }
 
-function ToolCallBlock({ tc, result, onApprove, lang, disabled, disabledHint, targetLabel }: {
+function ToolCallBlock({ tc, result, onApprove, onReject, lang, disabled, disabledHint, targetLabel }: {
   tc: ToolCallData;
   result?: ToolResultData;
   onApprove: () => void;
+  onReject: (reason: string) => void;
   lang: string;
   disabled: boolean;
   disabledHint: string;
   targetLabel: string;
 }) {
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState("");
   let args: any = {};
   try { args = JSON.parse(tc.function.arguments); } catch {}
 
@@ -137,8 +155,9 @@ function ToolCallBlock({ tc, result, onApprove, lang, disabled, disabledHint, ta
         <span className="ai-tool-target" title={targetLabel}>@ {targetLabel}</span>
       </div>
       <code className="ai-tool-call-cmd">{cmdText}</code>
-      {result?.executed && (
-        <pre className="ai-tool-call-result">{result.content.length > 2000 ? result.content.slice(0, 2000) + "\n... (truncated)" : result.content}</pre>
+      {result?.executed && (result.rejected
+        ? <div className="ai-tool-call-status">{t(lang, "aiToolRejected")}</div>
+        : <pre className="ai-tool-call-result">{result.content.length > 2000 ? result.content.slice(0, 2000) + "\n... (truncated)" : result.content}</pre>
       )}
       {result?.executing && <div className="ai-tool-call-status">{t(lang, "aiToolRunning")}</div>}
       {!result?.executed && !result?.executing && (
@@ -146,7 +165,15 @@ function ToolCallBlock({ tc, result, onApprove, lang, disabled, disabledHint, ta
           <button className="ai-tool-approve-btn" onClick={onApprove} disabled={disabled} title={disabled ? disabledHint : undefined}>
             <Check size={10} /> {t(lang, "aiRunTool")}
           </button>
+          {/* Rejecting never touches the server, so it stays available while disconnected. */}
+          <button className="mini-btn" onClick={() => setRejecting((value) => !value)}><X size={10} /> {t(lang, "aiRejectTool")}</button>
           {disabled && <span className="ai-tool-disabled-hint">{disabledHint}</span>}
+        </div>
+      )}
+      {rejecting && !result?.executed && !result?.executing && (
+        <div className="ai-tool-call-actions">
+          <input className="input compact-input" value={reason} maxLength={300} placeholder={t(lang, "aiRejectReason")} aria-label={t(lang, "aiRejectReason")} onChange={(event) => setReason(event.target.value)} />
+          <button className="mini-btn" onClick={() => onReject(reason.trim())}>{t(lang, "aiConfirmReject")}</button>
         </div>
       )}
     </div>
@@ -167,7 +194,7 @@ export function AiPanel(props: {
       if (stored) {
         const parsed = JSON.parse(stored) as ChatSession[];
         return parsed.map((session) => {
-          const messages = [...(session.messages || [])];
+          const messages = [...(session.messages || [])].map(recoverInterruptedTools);
           const last = messages[messages.length - 1];
           if (last?.role === "assistant" && !last.content && !last.toolCalls?.length) messages.pop();
           return { ...session, messages };
@@ -432,6 +459,21 @@ export function AiPanel(props: {
     }
   }, [lang]);
 
+  // A rejection is sent back as the tool result so the model can change course
+  // instead of the chat staying blocked on a call the user will not run.
+  const rejectTools = useCallback((chatId: string, toolCallIds: string[], reason: string) => {
+    if (toolCallIds.length === 0) return;
+    const content = "REJECTED: the user declined to run this tool call." + (reason ? " Reason: " + reason : "") + " Do not retry the same call; ask or choose another approach.";
+    setSessions((previous) => previous.map((item) => item.id !== chatId ? item : {
+      ...item,
+      messages: item.messages.map((message) => !message.toolResults?.some((result) => toolCallIds.includes(result.toolCallId)) ? message : {
+        ...message,
+        toolResults: message.toolResults.map((result) => toolCallIds.includes(result.toolCallId) && !result.executed && !result.executing
+          ? { ...result, content, executing: false, executed: true, rejected: true } : result),
+      }),
+    }));
+  }, []);
+
   useEffect(() => {
     for (const session of sessions) {
       if (activeRequestsRef.current[session.id]) continue;
@@ -670,10 +712,12 @@ export function AiPanel(props: {
           </span>
         </div>
         <div className="panel-page-actions">
-          <button className="panel-page-action" onClick={() => { setMode("chat"); newSession(); }} title={t(lang, "aiNewChat")}><MessageSquarePlus size={11} /></button>
-          <button className={`panel-page-action ${showSessionList ? "active" : ""}`} onClick={() => { setMode("chat"); setShowSessionList((value) => !value); }} title={t(lang, "aiChatHistory")}><History size={11} /></button>
+          {mode === "chat" && <>
+            <button className="panel-page-action" onClick={newSession} title={t(lang, "aiNewChat")}><MessageSquarePlus size={11} /></button>
+            <button className={`panel-page-action ${showSessionList ? "active" : ""}`} onClick={() => setShowSessionList((value) => !value)} title={t(lang, "aiChatHistory")}><History size={11} /></button>
+          </>}
           <button className={`panel-page-action ${showSettings ? "active" : ""}`} onClick={() => { setShowSettings((value) => !value); if (!showSettings) loadSettings(); }} title={t(lang, "aiSettings")}><Settings2 size={11} /></button>
-          <button className="panel-page-action panel-page-action-primary" onClick={() => { setMode("chat"); diagnose(); }} disabled={activeStreaming} title={t(lang, "aiDiagnose")}><Stethoscope size={11} /></button>
+          {mode === "chat" && <button className="panel-page-action panel-page-action-primary" onClick={diagnose} disabled={activeStreaming} title={t(lang, "aiDiagnose")}><Stethoscope size={11} /></button>}
         </div>
       </div>
 
@@ -685,7 +729,7 @@ export function AiPanel(props: {
         </button>
       </div>}
 
-      {showSessionList && (
+      {mode === "chat" && showSessionList && (
         <div className="ai-settings-popup">
           <div className="ai-settings-popup-header">
             <span className="text-[11px] font-semibold text-accent">{t(lang, "aiChatHistory")}</span>
@@ -790,6 +834,9 @@ export function AiPanel(props: {
                           <button className="ai-tool-approve-btn" disabled={!targetConnected} title={!targetConnected ? t(lang, "aiTargetDisconnected") : undefined} onClick={() => activeSession && executeToolsAndContinue(activeSession.id, pending)}>
                             <ListChecks size={10} /> {t(lang, "aiRunAllTools")} ({pending.length})
                           </button>
+                          <button className="mini-btn" onClick={() => activeSession && rejectTools(activeSession.id, pending.map((toolCall) => toolCall.id), "")}>
+                            <X size={10} /> {t(lang, "aiRejectAllTools")}
+                          </button>
                         </div>
                       )}
                       {message.toolCalls.map((toolCall, toolIndex) => (
@@ -798,6 +845,7 @@ export function AiPanel(props: {
                           tc={toolCall}
                           result={message.toolResults?.find((item) => item.toolCallId === toolCall.id)}
                           onApprove={() => activeSession && executeToolsAndContinue(activeSession.id, [toolCall])}
+                          onReject={(reason) => activeSession && rejectTools(activeSession.id, [toolCall.id], reason)}
                           lang={lang}
                           disabled={!targetConnected}
                           disabledHint={t(lang, "aiTargetDisconnected")}

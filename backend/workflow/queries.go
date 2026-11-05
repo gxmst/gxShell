@@ -50,7 +50,8 @@ func Command(query Query) (string, error) {
 	}
 	switch query.Check {
 	case "system":
-		return "uname -srm && getconf _NPROCESSORS_ONLN && cat /etc/os-release", nil
+		// GXSHELL_UID tells the action-plan gate whether the account is root.
+		return "uname -srm && getconf _NPROCESSORS_ONLN && cat /etc/os-release; echo \"GXSHELL_UID=$(id -u)\"", nil
 	case "load":
 		return "uptime", nil
 	case "disk":

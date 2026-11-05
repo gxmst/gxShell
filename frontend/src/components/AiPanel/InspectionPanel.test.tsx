@@ -116,6 +116,16 @@ describe("inspection tasks", () => {
     expect(screen.getAllByText("Unavailable").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Not checked").length).toBeGreaterThan(0);
   });
+  it("shows only the selected server's reports and history", async () => {
+    const completed = { ...run("report-a", "completed"), report: "Report for server A" };
+    vi.mocked(ListAiInspections).mockResolvedValue([completed]);
+    render(<InspectionPanel locale="en" tabs={tabs} activeTabId="ssh-a" onNotify={vi.fn()} />);
+    await screen.findByText("Report for server A");
+    fireEvent.change(screen.getByRole("combobox", { name: "Inspection server" }), { target: { value: "ssh-b" } });
+    expect(screen.queryByText("Report for server A")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Inspection history" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start inspection" })).not.toBeDisabled();
+  });
   it("does not overwrite progress arriving before the start reply", async () => {
     let resolveStart: (run: InspectionRun) => void = () => undefined;
     vi.mocked(StartAiInspection).mockReturnValue(new Promise((resolve) => { resolveStart = resolve; }));

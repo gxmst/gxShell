@@ -505,6 +505,9 @@ func (m *Manager) parseSSE(body io.Reader, onChunk func(ChatResponse)) error {
 	var prompt, completion int
 	slots := map[int]*ToolCall{}
 	complete := false
+	// done records the [DONE] terminator itself, which finish_reason alone
+	// does not prove: a cut-off stream can still carry a finish_reason.
+	done := false
 	reason := ""
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -514,6 +517,7 @@ func (m *Manager) parseSSE(body io.Reader, onChunk func(ChatResponse)) error {
 		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
 			complete = true
+			done = true
 			break
 		}
 		if data == "" {
@@ -586,7 +590,10 @@ func (m *Manager) parseSSE(body io.Reader, onChunk func(ChatResponse)) error {
 		return fmt.Errorf("response did not complete (%s)", reason)
 	}
 	calls := []ToolCall{}
-	if len(slots) > 0 && reason != "tool_calls" {
+	// Gemini's OpenAI endpoint, LiteLLM and other relays end tool turns with
+	// "stop". Accept that only after [DONE]; every call is still checked for an
+	// ID, a name and complete JSON below.
+	if len(slots) > 0 && reason != "tool_calls" && !(done && (reason == "stop" || reason == "")) {
 		return fmt.Errorf("tool calls without tool completion")
 	}
 	for index := 0; index < maxStreamToolCalls; index++ {
