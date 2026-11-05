@@ -98,9 +98,15 @@ type aiChatEvent struct {
 
 // SaveAiConfig saves AI provider configuration and API key.
 func (a *App) SaveAiConfig(provider, apiKey, endpoint, model string) error {
+	if err := ai.ValidateConfig(ai.Config{Provider: ai.Provider(provider), Endpoint: endpoint}); err != nil {
+		return err
+	}
 	// Detect masked API key and preserve existing key
 	if strings.Contains(apiKey, "****") {
 		existing := a.ai.GetConfig()
+		if !sameAiEndpoint(existing, provider, endpoint) {
+			return fmt.Errorf("enter an API key for the new protocol or API address")
+		}
 		apiKey = existing.APIKey
 	}
 
@@ -330,6 +336,7 @@ func toAiChatRequest(req types.AiChatRequest) ai.ChatRequest {
 					Name:      toolCall.Function.Name,
 					Arguments: toolCall.Function.Arguments,
 				},
+				ThoughtSignature: toolCall.ThoughtSignature,
 			})
 		}
 	}
@@ -340,8 +347,9 @@ func serializeAiToolCalls(toolCalls []ai.ToolCall) []map[string]any {
 	result := make([]map[string]any, len(toolCalls))
 	for i, toolCall := range toolCalls {
 		result[i] = map[string]any{
-			"id":   toolCall.ID,
-			"type": toolCall.Type,
+			"id":               toolCall.ID,
+			"type":             toolCall.Type,
+			"thoughtSignature": toolCall.ThoughtSignature,
 			"function": map[string]any{
 				"name":      toolCall.Function.Name,
 				"arguments": toolCall.Function.Arguments,
@@ -590,13 +598,27 @@ func (a *App) ResetAiUsage() {
 // ListAiModels fetches available models from the AI provider.
 func (a *App) ListAiModels(provider, apiKey, endpoint string) ([]string, error) {
 	if strings.Contains(apiKey, "****") {
-		apiKey = a.ai.GetConfig().APIKey
+		existing := a.ai.GetConfig()
+		if !sameAiEndpoint(existing, provider, endpoint) {
+			return nil, fmt.Errorf("enter an API key for the new protocol or API address")
+		}
+		apiKey = existing.APIKey
 	}
 	return a.ai.ListModels(ai.Config{
 		Provider: ai.Provider(provider),
 		APIKey:   apiKey,
 		Endpoint: endpoint,
 	})
+}
+
+func sameAiEndpoint(existing ai.Config, provider, endpoint string) bool {
+	normalize := func(p string) string {
+		if p == "" || p == "custom" {
+			return "openai"
+		}
+		return p
+	}
+	return normalize(string(existing.Provider)) == normalize(provider) && strings.TrimRight(existing.Endpoint, "/") == strings.TrimRight(endpoint, "/")
 }
 
 // registerAuthorizedAiToolCalls records the tool calls the model requested this

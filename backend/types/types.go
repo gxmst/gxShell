@@ -420,9 +420,10 @@ type AiFunctionCall struct {
 }
 
 type AiToolCall struct {
-	ID       string         `json:"id"`
-	Type     string         `json:"type"`
-	Function AiFunctionCall `json:"function"`
+	ID               string         `json:"id"`
+	Type             string         `json:"type"`
+	Function         AiFunctionCall `json:"function"`
+	ThoughtSignature string         `json:"thoughtSignature,omitempty"`
 }
 
 type AiMessage struct {

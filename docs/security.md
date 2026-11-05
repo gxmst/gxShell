@@ -12,6 +12,35 @@ credentials away from ordinary profile data and terminal input.
 
 ## AI and CLI controls
 
+- Built-in host inspections, service diagnoses and disk diagnoses require one native confirmation for a fixed,
+  read-only query catalog. Their backend runner pins the target and model and
+  cannot accept model-supplied shell commands. Inspection history contains
+  redacted evidence and reports in the local data directory; incomplete tasks
+  are marked interrupted on restart without automatic remote execution.
+  Service diagnoses accept validated service names and ports; TCP probes are
+  fixed to the server's loopback address. Report-format repairs have tools
+  disabled and do not repeat remote queries. Markdown exports include the
+  redacted evidence and are written only to the native save dialog's destination.
+  Disk scans use fixed directories, a 12-second timeout and lower priority.
+  Human confirmations are an independently stored overlay with local OS
+  account and time; they cannot overwrite AI conclusions or remote evidence.
+  Two separate action templates (selected-service restart and archived-journal
+  vacuum older than seven days) require a fresh native confirmation showing the
+  exact command, impact and target. Journal vacuum permanently deletes archived
+  logs. Commands use current account permissions without elevation. Stored plan
+  IDs are consumed once; uncertain/interrupted results never automatically
+  replay. Execution is followed by an independently recorded read-only diagnosis.
+  Report follow-ups retain the original report, explicitly label inherited
+  evidence and refresh selected queries within the same restricted catalog.
+  They require native confirmation and cannot move to a replaced SSH target.
+  Host background is editable expectation with revision/source/reviewer history;
+  it never overrides current measurements. Each task sends its captured
+  background to the selected model after disclosing this in confirmation.
+  Diagnostic trace stores reasons, metadata and evidence references, not private
+  model reasoning. Feedback is an audit overlay. Model evaluation sends fixed
+  simulated evidence to the saved provider with tools disabled and never uses
+  SSH; raw judgments are scored before deterministic rules correct them.
+
 - CLI access is globally disabled by default and is additionally opt-in per profile.
 - Requests stay on `127.0.0.1` and require a local bearer token.
 - The CLI exposes aliases rather than hostnames, usernames, ports, profile IDs, or jump-host details.

@@ -1,3 +1,34 @@
+.inspection-dossier-editor, .inspection-followup-form, .inspection-feedback, .inspection-evaluation {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+.inspection-dossier-editor fieldset {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.inspection-dossier-editor label, .inspection-followup-form label { display: grid; gap: 5px; }
+.inspection-review-controls > .inspection-dossier-editor { flex-basis: 100%; width: 100%; }
+.inspection-dossier-editor textarea, .inspection-followup-form textarea, .inspection-feedback textarea { resize: vertical; min-height: 54px; width: 100%; }
+.inspection-dossier-editor .input, .inspection-followup-form .input, .inspection-feedback .input, .inspection-evaluation .input { min-width: 0; width: 100%; }
+.inspection-ai-analysis { border-left: 3px solid var(--accent); padding-left: 16px; }
+.inspection-ai-insight { margin: 16px 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+.inspection-ai-assessment { font-size: 14px; line-height: 1.7; }
+.inspection-host-background, .inspection-host-snapshot, .inspection-trace, .inspection-evaluation { margin: 12px 0; }
+.inspection-trace li { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.inspection-trace .btn-secondary { margin: 4px; }
+.inspection-evaluation-cases { display: grid; gap: 8px; }
+.inspection-evaluation-cases label { display: flex; align-items: center; gap: 8px; }
+.inspection-evaluation pre { max-height: 240px; overflow: auto; white-space: pre-wrap; }
+.inspection-evaluation table { border-collapse: collapse; width: 100%; text-align: left; }
+.inspection-evaluation th, .inspection-evaluation td { padding: 7px 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.inspection-evaluation thead { color: var(--muted); background: color-mix(in srgb, var(--border) 25%, transparent); }
+@media (max-width: 600px) { .inspection-dossier-editor fieldset { grid-template-columns: 1fr; } }
+
 .ai-panel {
   display: flex;
   flex-direction: column;
@@ -14,7 +45,105 @@
   justify-content: space-between;
   gap: 8px;
   padding: 4px 2px 8px;
+  flex-wrap: wrap;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.ai-mode-tabs { display: flex; width: 100%; gap: 4px; }
+.ai-mode-tabs button { flex: 1; padding: 6px; color: var(--muted); font-size: 11px; border-radius: var(--radius-sm); }
+.ai-mode-tabs button[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+.ai-inspection-panel { min-height: 0; overflow: auto; flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 12px 4px; font-size: 11px; }
+.ai-inspection-intro { display: flex; flex-direction: column; gap: 8px; }
+.ai-inspection-intro p { color: var(--muted); line-height: 1.6; margin: 0; }
+.ai-inspection-controls { display: flex; gap: 6px; align-items: center; }
+.ai-inspection-controls select { min-width: 0; flex: 1; }
+.ai-inspection-controls button { flex-shrink: 0; }
+.ai-inspection-empty { color: var(--muted); padding: 22px 6px; text-align: center; }
+.ai-inspection-status { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.ai-inspection-meta { font-size: 9px; color: var(--muted); overflow-wrap: anywhere; }
+.ai-inspection-checks { display: flex; flex-direction: column; gap: 6px; }
+.ai-inspection-check { display: flex; align-items: center; gap: 7px; padding: 5px; border-bottom: 1px solid var(--border); }
+.ai-inspection-check > span:first-child, .ai-inspection-check > svg { width: 12px; flex-shrink: 0; color: var(--accent); }
+.ai-inspection-check small { margin-left: auto; color: var(--muted); }
+.ai-inspection-error { color: var(--danger); overflow-wrap: anywhere; line-height: 1.5; }
+.ai-inspection-evidence summary { cursor: pointer; padding: 6px 0; }
+.ai-inspection-evidence details { padding-left: 8px; }
+.ai-inspection-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; padding: 8px; background: color-mix(in srgb, var(--border) 20%, transparent); }
+.ai-inspection-report { border-top: 1px solid var(--border); padding-top: 8px; }
+
+.inspection-diagnosis-fields { display: grid; grid-template-columns: minmax(0, 1fr) 80px; gap: 8px; }
+.inspection-diagnosis-fields label { display: flex; flex-direction: column; gap: 5px; color: var(--muted); }
+.inspection-diagnosis-fields input { min-width: 0; width: 100%; }
+.inspection-diagnosis-fields small { grid-column: 1 / -1; line-height: 1.6; color: var(--muted); }
+.inspection-progress-reason { display: flex; align-items: flex-start; gap: 7px; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); line-height: 1.6; color: var(--muted); }
+.inspection-progress-reason svg { flex-shrink: 0; margin-top: 3px; color: var(--accent); }
+.inspection-collection-details summary { cursor: pointer; padding: 6px 0; color: var(--muted); }
+.inspection-report-sheet { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 28px 32px; line-height: 1.7; font-size: 13px; overflow-wrap: anywhere; }
+.inspection-report-heading { border-bottom: 2px solid var(--accent); padding-bottom: 18px; }
+.inspection-report-heading > span { font-size: 10px; color: var(--muted); letter-spacing: 1px; }
+.inspection-report-heading h2 { font-size: 23px; margin: 8px 0 10px; font-weight: 600; }
+.inspection-report-heading > strong { font-size: 14px; }
+.inspection-report-metadata { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 28px; margin: 20px 0; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+.inspection-report-metadata > div { min-width: 0; }
+.inspection-report-metadata dt { color: var(--muted); font-size: 11px; }
+.inspection-report-metadata dd { margin: 3px 0 0; font-variant-numeric: tabular-nums; }
+.inspection-report-summary { padding: 15px; border: 1px solid var(--border); background: color-mix(in srgb, var(--accent) 4%, transparent); border-radius: var(--radius-sm); }
+.inspection-report-summary p { margin: 10px 0; }
+.inspection-report-badge { display: inline-block; font-size: 11px; font-weight: 500; line-height: 1.5; padding: 3px 7px; border-radius: 4px; white-space: nowrap; background: color-mix(in srgb, var(--muted) 10%, transparent); color: var(--muted); }
+.inspection-report-normal { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.inspection-report-reviewed { color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.inspection-ai-verdict { color: var(--muted); margin-left: 10px; font-size: 10px; }
+.inspection-review-controls { display: grid; grid-template-columns: auto minmax(100px, 1fr) auto; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); margin-top: 10px; }
+.inspection-review-check { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.inspection-review-controls > input { grid-column: 1 / 3; min-width: 0; }
+.inspection-review-controls > button { grid-column: 3; grid-row: 2; font-size: 11px; }
+.inspection-review-controls > small { grid-column: 1 / -1; color: var(--muted); }
+.inspection-review-audit summary { cursor: pointer; color: var(--muted); }
+.inspection-review-audit p { font-size: 11px; color: var(--muted); }
+.inspection-comparison-controls { display: flex; gap: 8px; }
+.inspection-comparison, .inspection-plan-section { min-width: 0; }
+.inspection-comparison-controls select { flex: 1; min-width: 0; }
+.inspection-plan-card { margin: 12px 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.inspection-plan-card h4 { margin: 0 0 8px; }
+.inspection-plan-card pre { white-space: pre-wrap; overflow-wrap: anywhere; background: color-mix(in srgb, var(--border) 20%, transparent); padding: 10px; max-height: 220px; overflow: auto; }
+.inspection-report-warning, .inspection-report-attention { color: #c08a27; background: color-mix(in srgb, #c08a27 12%, transparent); }
+.inspection-report-critical { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.inspection-report-counts { display: flex; gap: 18px; flex-wrap: wrap; color: var(--muted); font-size: 11px; }
+.inspection-report-counts b { color: var(--text); margin-left: 4px; }
+.inspection-report-sheet section > h3 { font-size: 14px; font-weight: 600; border-bottom: 1px solid var(--border); padding-bottom: 8px; margin: 26px 0 12px; }
+.inspection-report-table-wrap { overflow-x: auto; }
+.inspection-report-sheet table { border-collapse: collapse; width: 100%; font-size: 12px; text-align: left; }
+.inspection-report-sheet th, .inspection-report-sheet td { border-bottom: 1px solid var(--border); padding: 10px 12px; vertical-align: top; }
+.inspection-report-sheet thead { background: color-mix(in srgb, var(--border) 25%, transparent); color: var(--muted); }
+.inspection-report-sheet tbody th { min-width: 100px; font-weight: 500; }
+.inspection-report-sheet td:nth-child(2) { width: 85px; }
+.inspection-report-sheet td:last-child { width: 95px; }
+.inspection-report-refs { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.inspection-report-measurement { display: block; margin-bottom: 4px; font-variant-numeric: tabular-nums; }
+.inspection-report-refs button { color: var(--accent); font-size: 11px; text-decoration: underline; text-underline-offset: 3px; }
+.inspection-report-finding, .inspection-report-uncertainty { border-left: 2px solid var(--border); padding: 4px 14px; margin: 14px 0; }
+.inspection-report-finding h4, .inspection-report-uncertainty h4 { font-size: 13px; margin: 4px 0; }
+.inspection-report-finding p, .inspection-report-uncertainty p { margin: 8px 0; }
+.inspection-report-empty, .inspection-report-note { color: var(--muted); font-size: 11px; }
+.inspection-report-note { border-top: 1px solid var(--border); margin-top: 24px; padding-top: 14px; }
+.inspection-report-compact { padding: 14px; font-size: 11px; }
+.inspection-report-compact .inspection-report-heading { padding-bottom: 10px; }
+.inspection-report-compact .inspection-report-heading h2 { font-size: 16px; }
+.inspection-report-compact .inspection-report-metadata { grid-template-columns: 1fr; gap: 6px; margin: 12px 0; padding-bottom: 12px; font-size: 10px; }
+.inspection-report-compact .inspection-report-summary { padding: 10px; }
+.inspection-report-compact .inspection-report-counts { gap: 10px; font-size: 10px; }
+.inspection-report-preview { padding-top: 8px; }
+.inspection-report-open { width: 100%; margin-top: 12px; justify-content: center; }
+.inspection-report-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.inspection-report-actions button { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+.modal.inspection-report-modal { width: min(980px, calc(100vw - 48px)); max-width: 980px; max-height: calc(100vh - 48px); padding: 0; display: flex; flex-direction: column; gap: 0; }
+.inspection-report-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.inspection-report-scroll { overflow: auto; min-height: 0; padding: 18px; background: color-mix(in srgb, var(--border) 15%, transparent); }
+.inspection-report-modal > .inspection-report-actions { padding: 12px 18px; border-top: 1px solid var(--border); justify-content: flex-end; flex-shrink: 0; }
+@media (max-width: 600px) {
+  .inspection-report-sheet { padding: 18px 14px; }
+  .inspection-report-metadata { grid-template-columns: 1fr; }
+  .inspection-report-scroll { padding: 8px; }
 }
 
 .ai-header-heading {

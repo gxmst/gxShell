@@ -53,6 +53,7 @@ export namespace types {
 	    id: string;
 	    type: string;
 	    function: AiFunctionCall;
+	    thoughtSignature?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AiToolCall(source);
@@ -63,6 +64,7 @@ export namespace types {
 	        this.id = source["id"];
 	        this.type = source["type"];
 	        this.function = this.convertValues(source["function"], AiFunctionCall);
+	        this.thoughtSignature = source["thoughtSignature"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

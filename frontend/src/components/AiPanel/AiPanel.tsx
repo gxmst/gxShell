@@ -1,13 +1,14 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Bot, Check, Copy, History, Link2, ListChecks, MessageSquarePlus, Play, RefreshCw, Send, Server, Settings2, Square, Stethoscope, X } from "lucide-react";
-import { marked } from "marked";
 import { types } from "../../../wailsjs/go/models";
 import { AiChat, AiContinueChat, AiExecuteTools, CancelAiChat, GetAiConfig, GetAiUsage, ListAiModels, ResetAiUsage, SaveAiConfig } from "../../../wailsjs/go/app/App";
 import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import { t } from "../../i18n";
 import type { Tab, Toast } from "../../types";
 import { writeClipboardText } from "../../utils/clipboard";
-import { sanitizeRenderedHtml } from "../../utils/sanitizeHtml";
+import { MarkdownContent } from "./AiMarkdown";
+import { InspectionPanel } from "./InspectionPanel";
+export { MarkdownContent } from "./AiMarkdown";
 import { isRemoteSession } from "../../utils/sessionIdentity";
 import { Label } from "../modals/ModalShell";
 import { isImeComposing } from "../../utils/ime";
@@ -16,6 +17,7 @@ type ToolCallData = {
   id: string;
   type: string;
   function: { name: string; arguments: string };
+  thoughtSignature?: string;
 };
 
 type ToolResultData = {
@@ -68,21 +70,6 @@ type BufferedAiEvent = {
 
 let sessionCounter = 0;
 
-marked.setOptions({ breaks: true, gfm: true });
-
-// Exported so the sanitizing can be tested on its own: rendering the whole
-// panel would need every Wails binding stubbed out.
-export const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
-  // A reply is not trusted input: the assistant reads command output and file
-  // contents, so anything it read can steer what it writes back. Rendering that
-  // with DOMPurify's defaults left the same vectors open as the document
-  // preview once had — a stylesheet or an overlay could hide the approval panel
-  // while the user was reading, and a link could navigate the window away. Both
-  // are closed by the shared policy.
-  const html = useMemo(() => sanitizeRenderedHtml(marked.parse(content) as string), [content]);
-  return <div className="ai-markdown" dangerouslySetInnerHTML={{ __html: html }} />;
-});
-
 function requestId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
   return `ai-req-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -104,6 +91,7 @@ function toApiMessages(messages: ChatMsg[]): types.AiMessage[] {
       apiMessage.toolCalls = message.toolCalls.map((toolCall) => new types.AiToolCall({
         id: toolCall.id,
         type: toolCall.type,
+        thoughtSignature: toolCall.thoughtSignature,
         function: new types.AiFunctionCall({
           name: toolCall.function.name,
           arguments: toolCall.function.arguments,
@@ -195,6 +183,8 @@ export function AiPanel(props: {
   const [streamingByChat, setStreamingByChat] = useState<Record<string, string>>({});
   const [usage, setUsage] = useState<types.AiTokenUsage | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [mode, setMode] = useState<"chat" | "inspection">("chat");
+  const [provider, setProvider] = useState("openai");
   const [apiKey, setApiKey] = useState("");
   const [endpoint, setEndpoint] = useState("");
   const [model, setModel] = useState("");
@@ -256,6 +246,7 @@ export function AiPanel(props: {
 
   useEffect(() => {
     GetAiConfig().then((cfg: any) => {
+      setProvider(cfg.provider || "openai");
       setApiKey(cfg.apiKey || "");
       setEndpoint(cfg.endpoint || "");
       setModel(cfg.model || "");
@@ -264,6 +255,7 @@ export function AiPanel(props: {
 
   const loadSettings = useCallback(() => {
     GetAiConfig().then((cfg: any) => {
+      setProvider(cfg.provider || "openai");
       setApiKey(cfg.apiKey || "");
       setEndpoint(cfg.endpoint || "");
       setModel(cfg.model || "");
@@ -535,18 +527,18 @@ export function AiPanel(props: {
 
   const saveSettings = useCallback(async () => {
     try {
-      await SaveAiConfig("openai", apiKey, endpoint, model);
+      await SaveAiConfig(provider, apiKey, endpoint, model);
       setShowSettings(false);
       onNotifyRef.current(t(lang, "aiSettingsSaved"), "success");
     } catch (error) {
       onNotifyRef.current("Save failed: " + String(error), "error");
     }
-  }, [apiKey, endpoint, model, lang]);
+  }, [provider, apiKey, endpoint, model, lang]);
 
   const fetchModels = useCallback(async () => {
     setFetchingModels(true);
     try {
-      const models = await ListAiModels("openai", apiKey, endpoint);
+      const models = await ListAiModels(provider, apiKey, endpoint);
       setModelList(models || []);
       if (!models || models.length === 0) onNotifyRef.current(t(lang, "aiNoModels"), "info");
     } catch (error) {
@@ -554,7 +546,7 @@ export function AiPanel(props: {
     } finally {
       setFetchingModels(false);
     }
-  }, [apiKey, endpoint, lang]);
+  }, [provider, apiKey, endpoint, lang]);
 
   const sendChat = useCallback((userText: string, explicitContext?: string) => {
     const text = userText.trim();
@@ -655,9 +647,9 @@ export function AiPanel(props: {
     try { terminalContextReady = !!props.getTerminalLines(boundTerminalSessionId, 1); } catch {}
   }
   const assistantStatus = model
-    ? `${model} · ${apiKey ? (terminalContextReady ? t(lang, "aiContextReady") : t(lang, "aiNoContext")) : t(lang, "aiNoApiKey")}`
+    ? `${model} · ${(apiKey || provider === "ollama") ? (terminalContextReady ? t(lang, "aiContextReady") : t(lang, "aiNoContext")) : t(lang, "aiNoApiKey")}`
     : t(lang, "aiNotConfigured");
-  const assistantReady = !!model && !!apiKey;
+  const assistantReady = !!model && (!!apiKey || provider === "ollama");
   const targetLabel = boundTerminal?.title || activeSession?.terminalTitle || boundTerminalSessionId || t(lang, "aiNoTarget");
   const targetState = targetConnected ? t(lang, "aiTargetConnected") : boundTerminalSessionId ? t(lang, "aiTargetDisconnected") : t(lang, "aiNoTarget");
   const targetLocked = activeStreaming || activeHasExecutingTools;
@@ -666,28 +658,32 @@ export function AiPanel(props: {
   return (
     <div className="ai-panel" style={{ position: "relative" }}>
       <div className="ai-header">
+        <div className="ai-mode-tabs" role="tablist" aria-label={t(lang, "aiAssistant")}>
+          <button role="tab" aria-selected={mode === "chat"} onClick={() => setMode("chat")}>{t(lang, "aiChatMode")}</button>
+          <button role="tab" aria-selected={mode === "inspection"} onClick={() => setMode("inspection")}>{t(lang, "aiInspectionMode")}</button>
+        </div>
         <div className="ai-header-heading">
           <span className={`ai-header-state ${assistantReady ? "ready" : ""}`} />
           <span className="ai-header-copy">
-            <strong>{activeSession?.title || t(lang, "aiAssistant")}</strong>
+            <strong>{mode === "inspection" ? t(lang, "inspectionTitle") : activeSession?.title || t(lang, "aiAssistant")}</strong>
             <small>{assistantStatus}</small>
           </span>
         </div>
         <div className="panel-page-actions">
-          <button className="panel-page-action" onClick={newSession} title={t(lang, "aiNewChat")}><MessageSquarePlus size={11} /></button>
-          <button className={`panel-page-action ${showSessionList ? "active" : ""}`} onClick={() => setShowSessionList((value) => !value)} title={t(lang, "aiChatHistory")}><History size={11} /></button>
+          <button className="panel-page-action" onClick={() => { setMode("chat"); newSession(); }} title={t(lang, "aiNewChat")}><MessageSquarePlus size={11} /></button>
+          <button className={`panel-page-action ${showSessionList ? "active" : ""}`} onClick={() => { setMode("chat"); setShowSessionList((value) => !value); }} title={t(lang, "aiChatHistory")}><History size={11} /></button>
           <button className={`panel-page-action ${showSettings ? "active" : ""}`} onClick={() => { setShowSettings((value) => !value); if (!showSettings) loadSettings(); }} title={t(lang, "aiSettings")}><Settings2 size={11} /></button>
-          <button className="panel-page-action panel-page-action-primary" onClick={diagnose} disabled={activeStreaming} title={t(lang, "aiDiagnose")}><Stethoscope size={11} /></button>
+          <button className="panel-page-action panel-page-action-primary" onClick={() => { setMode("chat"); diagnose(); }} disabled={activeStreaming} title={t(lang, "aiDiagnose")}><Stethoscope size={11} /></button>
         </div>
       </div>
 
-      <div className={`ai-target-bar ${targetConnected ? "connected" : "disconnected"}`}>
+      {mode === "chat" && <div className={`ai-target-bar ${targetConnected ? "connected" : "disconnected"}`}>
         <Server size={11} />
         <span className="ai-target-copy" title={targetLabel}>{t(lang, "aiTarget")}: <strong>{targetLabel}</strong> · {targetState}</span>
         <button className="mini-btn" onClick={rebindTarget} disabled={!canRebindTarget} title={targetLocked ? t(lang, "aiTargetLocked") : t(lang, "aiBindActiveTarget")}>
           <Link2 size={10} />
         </button>
-      </div>
+      </div>}
 
       {showSessionList && (
         <div className="ai-settings-popup">
@@ -714,6 +710,17 @@ export function AiPanel(props: {
             <button className="mini-btn" onClick={() => setShowSettings(false)}><X size={10} /></button>
           </div>
           <div className="ai-settings-popup-body">
+            <Label text={t(lang, "aiProtocol")}>
+              <select className="input compact-input" value={provider === "custom" ? "openai" : provider} onChange={(event) => {
+                setProvider(event.target.value); setApiKey(""); setEndpoint(""); setModel(""); setModelList([]);
+              }}>
+                <option value="openai">{t(lang, "aiOpenAICompatible")}</option>
+                <option value="anthropic">Anthropic / Claude</option>
+                <option value="gemini">Google Gemini</option>
+                <option value="ollama">Ollama</option>
+              </select>
+            </Label>
+            {(provider === "openai" || provider === "custom") && <>
             <Label text={t(lang, "aiPreset")}>
               <select className="input compact-input" value={endpoint === "https://api.deepseek.com/v1" ? "deepseek" : "custom"} onChange={(event) => {
                 if (event.target.value === "deepseek") {
@@ -724,13 +731,15 @@ export function AiPanel(props: {
                   setModel("");
                 }
                 setModelList([]);
+                setApiKey("");
               }}>
                 <option value="custom">{t(lang, "aiOpenAICompatible")}</option>
                 <option value="deepseek">DeepSeek</option>
               </select>
             </Label>
+            </>}
             <Label text={t(lang, "aiApiKey")}><input className="input compact-input" type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="sk-..." /></Label>
-            <Label text={t(lang, "aiEndpoint")}><input className="input compact-input" value={endpoint} onChange={(event) => { setEndpoint(event.target.value); setModelList([]); }} placeholder="https://api.openai.com/v1" /></Label>
+            <Label text={t(lang, "aiEndpoint")}><input className="input compact-input" value={endpoint} onChange={(event) => { setEndpoint(event.target.value); setModelList([]); }} placeholder={provider === "anthropic" ? "https://api.anthropic.com/v1" : provider === "gemini" ? "https://generativelanguage.googleapis.com/v1beta" : provider === "ollama" ? "http://localhost:11434" : "https://api.openai.com/v1"} /></Label>
             <Label text={t(lang, "aiModel")}>
               <div className="flex gap-1 items-center">
                 {modelList.length > 0 ? (
@@ -739,7 +748,7 @@ export function AiPanel(props: {
                     {modelList.map((item) => <option key={item} value={item}>{item}</option>)}
                   </select>
                 ) : (
-                  <input className="input compact-input flex-1" value={model} onChange={(event) => setModel(event.target.value)} placeholder="gpt-4o / deepseek-chat" />
+                  <input className="input compact-input flex-1" value={model} onChange={(event) => setModel(event.target.value)} placeholder={t(lang, "aiModelNameHint")} />
                 )}
                 <button className={`mini-btn ${fetchingModels ? "animate-spin" : ""}`} onClick={fetchModels} disabled={fetchingModels} title={t(lang, "aiFetchModels")}><RefreshCw size={10} /></button>
               </div>
@@ -749,6 +758,7 @@ export function AiPanel(props: {
         </div>
       )}
 
+      {mode === "inspection" ? <InspectionPanel locale={lang} tabs={props.tabs} activeTabId={props.activeTabId} onNotify={props.onNotify} /> : <>
       <div className="ai-messages" ref={scrollRef}>
         {messages.length === 0 && (
           <div className="ai-empty">
@@ -843,6 +853,7 @@ export function AiPanel(props: {
           <button className="ai-send-btn" onClick={send} disabled={activeHasUncontinuedTools || !input.trim()}><Send size={14} /></button>
         )}
       </div>
+      </>}
     </div>
   );
 }

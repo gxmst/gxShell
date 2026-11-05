@@ -3,6 +3,31 @@
 import {types} from '../models';
 import {version} from '../models';
 import {sshmanager} from '../models';
+import type {InspectionRun} from '../workflow';
+import type {HostDossier,DossierInput,InspectionEvaluationCase,InspectionEvaluationRun} from '../workflow';
+
+export function StartAiInspectionFollowup(id:string,question:string,focusEvidenceID:string):Promise<InspectionRun>;
+export function GetAiHostDossier(profileID:string):Promise<HostDossier>;
+export function SaveAiHostDossier(profileID:string,input:DossierInput):Promise<HostDossier>;
+export function DeleteAiHostDossier(profileID:string,revision:number):Promise<HostDossier>;
+export function FeedbackAiInspection(id:string,outcome:string,note:string):Promise<InspectionRun>;
+export function ListAiInspectionEvaluationCases():Promise<InspectionEvaluationCase[]>;
+export function ListAiInspectionEvaluations():Promise<InspectionEvaluationRun[]>;
+export function StartAiInspectionEvaluation(caseIDs:string[]):Promise<InspectionEvaluationRun>;
+export function CancelAiInspectionEvaluation(id:string):Promise<boolean>;
+
+export function StartAiInspection(sessionID:string):Promise<InspectionRun>;
+export function StartAiServiceDiagnosis(sessionID:string,service:string,port:number):Promise<InspectionRun>;
+export function StartAiDiskDiagnosis(sessionID:string):Promise<InspectionRun>;
+export function ReviewAiInspectionUnknown(id:string,unknownID:string,outcome:string,note:string):Promise<InspectionRun>;
+export function CompareAiInspections(currentID:string,baselineID:string):Promise<InspectionRun>;
+export function PrepareAiInspectionPlan(id:string,kind:string):Promise<InspectionRun>;
+export function ExecuteAiInspectionPlan(id:string,planID:string):Promise<InspectionRun>;
+export function DismissAiInspectionPlan(id:string,planID:string):Promise<InspectionRun>;
+export function ExportAiInspection(id:string):Promise<string>;
+export function ListAiInspections():Promise<InspectionRun[]>;
+export function GetAiInspection(id:string):Promise<InspectionRun>;
+export function CancelAiInspection(id:string):Promise<boolean>;
 
 export function AddFirewallRule(arg1:string,arg2:string,arg3:string,arg4:string,arg5:string,arg6:boolean):Promise<types.FirewallActionResult>;
 

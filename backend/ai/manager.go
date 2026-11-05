@@ -17,9 +17,11 @@ import (
 type Provider string
 
 const (
-	ProviderOpenAI Provider = "openai"
-	ProviderOllama Provider = "ollama"
-	ProviderCustom Provider = "custom"
+	ProviderOpenAI    Provider = "openai"
+	ProviderOllama    Provider = "ollama"
+	ProviderCustom    Provider = "custom"
+	ProviderAnthropic Provider = "anthropic"
+	ProviderGemini    Provider = "gemini"
 )
 
 type Config struct {
@@ -38,9 +40,10 @@ type Message struct {
 }
 
 type ToolCall struct {
-	ID       string       `json:"id"`
-	Type     string       `json:"type"`
-	Function FunctionCall `json:"function"`
+	ID               string       `json:"id"`
+	Type             string       `json:"type"`
+	Function         FunctionCall `json:"function"`
+	ThoughtSignature string       `json:"thoughtSignature,omitempty"`
 }
 
 type FunctionCall struct {
@@ -59,6 +62,9 @@ type ChatRequest struct {
 	Stream      bool         `json:"stream"`
 	ToolResults []ToolResult `json:"tool_results,omitempty"`
 	EnableTools bool         `json:"enable_tools,omitempty"`
+	// Instructions and Tools are backend-owned overrides for built-in workflows.
+	Instructions string           `json:"-"`
+	Tools        []map[string]any `json:"-"`
 }
 
 type ChatResponse struct {
@@ -94,7 +100,18 @@ func NewManagerWithTransport(transport http.RoundTripper) *Manager {
 	// (ChatWithContext) and a hard client timeout would truncate long streams.
 	// Non-streaming calls (ListModels) attach their own context deadline instead.
 	return &Manager{
-		client: &http.Client{Transport: transport},
+		client: &http.Client{Transport: transport, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			// Go does not strip native x-api-key / x-goog-api-key headers when
+			// redirecting. Never forward credentials to a different API origin.
+			origin := via[0].URL
+			if !strings.EqualFold(req.URL.Scheme, origin.Scheme) || !strings.EqualFold(req.URL.Host, origin.Host) {
+				return http.ErrUseLastResponse
+			}
+			if len(via) >= 10 {
+				return fmt.Errorf("too many API redirects")
+			}
+			return nil
+		}},
 	}
 }
 
@@ -148,6 +165,12 @@ func readLimited(body io.Reader, limit int64) ([]byte, error) {
 }
 
 func (m *Manager) ListModels(cfg Config) ([]string, error) {
+	if err := ValidateConfig(cfg); err != nil {
+		return nil, err
+	}
+	if cfg.Provider == ProviderAnthropic || cfg.Provider == ProviderGemini {
+		return m.listNativeModels(cfg)
+	}
 	var url string
 	var headers map[string]string
 
@@ -160,7 +183,7 @@ func (m *Manager) ListModels(cfg Config) ([]string, error) {
 		}
 	default:
 		if cfg.Endpoint != "" {
-			url = strings.TrimRight(cfg.Endpoint, "/") + "/models"
+			url = openAIBase(cfg.Endpoint) + "/models"
 		} else {
 			url = "https://api.openai.com/v1/models"
 		}
@@ -294,6 +317,17 @@ func (m *Manager) ChatWithContext(ctx context.Context, req ChatRequest, onChunk 
 	m.mu.RLock()
 	cfg := m.config
 	m.mu.RUnlock()
+	return m.ChatWithConfig(ctx, cfg, req, onChunk)
+}
+
+// ChatWithConfig pins the provider/model for all turns of a running task.
+func (m *Manager) ChatWithConfig(ctx context.Context, cfg Config, req ChatRequest, onChunk func(ChatResponse)) error {
+	if err := ValidateConfig(cfg); err != nil {
+		return err
+	}
+	if cfg.Provider == ProviderAnthropic || cfg.Provider == ProviderGemini || cfg.Provider == ProviderOllama {
+		return m.chatNative(ctx, cfg, req, onChunk)
+	}
 
 	if cfg.Model == "" {
 		return fmt.Errorf("AI model not configured")
@@ -304,7 +338,11 @@ func (m *Manager) ChatWithContext(ctx context.Context, req ChatRequest, onChunk 
 		return fmt.Errorf("AI endpoint not configured")
 	}
 
-	systemMsg := Message{Role: "system", Content: m.buildSystemPrompt(req.Context, req.EnableTools)}
+	system := m.buildSystemPrompt(req.Context, req.EnableTools)
+	if req.Instructions != "" {
+		system = req.Instructions
+	}
+	systemMsg := Message{Role: "system", Content: system}
 	messages := append([]Message{systemMsg}, req.Messages...)
 
 	apiMessages := make([]map[string]any, len(messages))
@@ -349,6 +387,12 @@ func (m *Manager) ChatWithContext(ctx context.Context, req ChatRequest, onChunk 
 	}
 	if req.EnableTools {
 		body["tools"] = getToolsDefinition()
+		if req.Tools != nil {
+			body["tools"] = req.Tools
+		}
+	}
+	if cfg.Provider == ProviderOpenAI {
+		body["stream_options"] = map[string]any{"include_usage": true}
 	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
@@ -388,14 +432,11 @@ func (m *Manager) ChatWithContext(ctx context.Context, req ChatRequest, onChunk 
 				toolCallMsgs++
 			}
 		}
-		return fmt.Errorf("API error (%d): %s (messages=%d roles=%v toolCallMsgs=%d)",
-			resp.StatusCode, string(respBody), len(apiMessages), roleCounts, toolCallMsgs)
+		return providerError(fmt.Errorf("API error (%d): %s (messages=%d roles=%v toolCallMsgs=%d)",
+			resp.StatusCode, string(respBody), len(apiMessages), roleCounts, toolCallMsgs), cfg)
 	}
 
-	if cfg.Provider == ProviderOllama {
-		return m.parseOllamaStream(resp.Body, onChunk)
-	}
-	return m.parseSSE(resp.Body, onChunk)
+	return providerError(m.parseSSE(resp.Body, onChunk), cfg)
 }
 
 func (m *Manager) resolveEndpoint(cfg Config) string {
@@ -406,7 +447,7 @@ func (m *Manager) resolveEndpoint(cfg Config) string {
 		return "http://localhost:11434/api/chat"
 	}
 	if cfg.Endpoint != "" {
-		return strings.TrimRight(cfg.Endpoint, "/") + "/chat/completions"
+		return openAIBase(cfg.Endpoint) + "/chat/completions"
 	}
 	return "https://api.openai.com/v1/chat/completions"
 }
@@ -448,66 +489,6 @@ No connected remote target is available for tool execution. Do not claim that yo
 	return base
 }
 
-func (m *Manager) parseOllamaStream(body io.Reader, onChunk func(ChatResponse)) error {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	var promptTk, completeTk int
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			continue
-		}
-
-		var chunk map[string]any
-		if err := json.Unmarshal([]byte(line), &chunk); err != nil {
-			continue
-		}
-
-		// Usage arrives on the final chunk — the one that also carries
-		// done=true — so extract it before acting on done, or the counts are
-		// always lost.
-		if evalCount, ok := chunk["eval_count"].(float64); ok {
-			completeTk = int(evalCount)
-		}
-		if promptEvalCount, ok := chunk["prompt_eval_count"].(float64); ok {
-			promptTk = int(promptEvalCount)
-		}
-
-		if done, ok := chunk["done"].(bool); ok && done {
-			break
-		}
-
-		if msg, ok := chunk["message"].(map[string]any); ok {
-			if content, ok := msg["content"].(string); ok && content != "" {
-				onChunk(ChatResponse{Content: content, Finish: false})
-			}
-		}
-	}
-
-	// A transport error mid-stream must not masquerade as a normal completion:
-	// without this check a dropped connection delivers a silently truncated
-	// answer with Finish=true.
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("stream interrupted: %w", err)
-	}
-
-	onChunk(ChatResponse{
-		Content:    "",
-		Finish:     true,
-		PromptTk:   promptTk,
-		CompleteTk: completeTk,
-	})
-
-	m.mu.Lock()
-	m.usage.PromptTokens += int64(promptTk)
-	m.usage.CompletionTokens += int64(completeTk)
-	m.usage.TotalTokens += int64(promptTk + completeTk)
-	m.mu.Unlock()
-
-	return nil
-}
-
 // maxStreamToolCalls bounds how many tool calls one streamed response may
 // declare.
 //
@@ -520,142 +501,112 @@ const maxStreamToolCalls = 128
 
 func (m *Manager) parseSSE(body io.Reader, onChunk func(ChatResponse)) error {
 	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	var contentBuf strings.Builder
-	var reasoningBuf strings.Builder
-	var promptTk, completeTk int
-	var toolCalls []ToolCall
-	var hasToolCalls bool
-	var finishSent bool
-
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	var prompt, completion int
+	slots := map[int]*ToolCall{}
+	complete := false
+	reason := ""
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") {
+		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
-		data := strings.TrimPrefix(line, "data: ")
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
+			complete = true
 			break
 		}
-
+		if data == "" {
+			continue
+		}
 		var chunk map[string]any
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			continue
+			return fmt.Errorf("invalid streaming JSON: %w", err)
 		}
-
+		if apiErr, ok := chunk["error"]; ok {
+			return fmt.Errorf("provider stream error: %v", apiErr)
+		}
 		if usage, ok := chunk["usage"].(map[string]any); ok {
-			if pt, ok := usage["prompt_tokens"].(float64); ok {
-				promptTk = int(pt)
-			}
-			if ct, ok := usage["completion_tokens"].(float64); ok {
-				completeTk = int(ct)
-			}
+			prompt = intNumber(usage["prompt_tokens"])
+			completion = intNumber(usage["completion_tokens"])
 		}
-
-		choices, ok := chunk["choices"].([]any)
-		if !ok || len(choices) == 0 {
+		choices, _ := chunk["choices"].([]any)
+		if len(choices) == 0 {
 			continue
 		}
-		choice, ok := choices[0].(map[string]any)
-		if !ok {
-			continue
+		choice, _ := choices[0].(map[string]any)
+		if value, _ := choice["finish_reason"].(string); value != "" {
+			reason = value
+			complete = true
 		}
-
-		finishReason, _ := choice["finish_reason"].(string)
-
-		delta, ok := choice["delta"].(map[string]any)
-		if !ok {
-			continue
+		delta, _ := choice["delta"].(map[string]any)
+		if value, _ := delta["content"].(string); value != "" {
+			onChunk(ChatResponse{Content: value})
 		}
-
-		if c, ok := delta["content"].(string); ok && c != "" {
-			contentBuf.WriteString(c)
-			onChunk(ChatResponse{Content: c, Finish: false})
+		if value, _ := delta["reasoning_content"].(string); value != "" {
+			onChunk(ChatResponse{ReasoningContent: value})
 		}
-
-		if rc, ok := delta["reasoning_content"].(string); ok && rc != "" {
-			reasoningBuf.WriteString(rc)
-			onChunk(ChatResponse{ReasoningContent: rc, Finish: false})
-		}
-
-		if tcList, ok := delta["tool_calls"].([]any); ok {
-			hasToolCalls = true
-			for _, tcRaw := range tcList {
-				tcMap, ok := tcRaw.(map[string]any)
-				if !ok {
+		list, _ := delta["tool_calls"].([]any)
+		for _, raw := range list {
+			item, _ := raw.(map[string]any)
+			index := 0
+			if n, ok := item["index"].(float64); ok {
+				if math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n >= maxStreamToolCalls || n != math.Trunc(n) {
 					continue
 				}
-				idx := 0
-				if idxFloat, ok := tcMap["index"].(float64); ok {
-					// NaN and infinities convert unpredictably, and the value is
-					// only ever a small slot number in a well-formed stream.
-					if math.IsNaN(idxFloat) || math.IsInf(idxFloat, 0) || idxFloat < 0 || idxFloat >= maxStreamToolCalls {
-						continue
-					}
-					idx = int(idxFloat)
-				}
-				for len(toolCalls) <= idx {
-					toolCalls = append(toolCalls, ToolCall{})
-				}
-				if id, ok := tcMap["id"].(string); ok && id != "" {
-					toolCalls[idx].ID = id
-				}
-				if typ, ok := tcMap["type"].(string); ok && typ != "" {
-					toolCalls[idx].Type = typ
-				}
-				if fn, ok := tcMap["function"].(map[string]any); ok {
-					if name, ok := fn["name"].(string); ok && name != "" {
-						toolCalls[idx].Function.Name = name
-					}
-					if args, ok := fn["arguments"].(string); ok {
-						toolCalls[idx].Function.Arguments += args
-					}
-				}
+				index = int(n)
 			}
-		}
-
-		if finishReason == "tool_calls" {
-			if hasToolCalls && len(toolCalls) > 0 {
-				finishSent = true
-				onChunk(ChatResponse{
-					Finish:     true,
-					PromptTk:   promptTk,
-					CompleteTk: completeTk,
-					ToolCalls:  toolCalls,
-				})
+			call := slots[index]
+			if call == nil {
+				call = &ToolCall{Type: "function"}
+				slots[index] = call
+			}
+			if id, _ := item["id"].(string); id != "" {
+				call.ID = id
+			}
+			fn, _ := item["function"].(map[string]any)
+			if name, _ := fn["name"].(string); name != "" {
+				call.Function.Name = name
+			}
+			if args, _ := fn["arguments"].(string); args != "" {
+				call.Function.Arguments += args
+			}
+			if len(call.Function.Arguments) > 256*1024 {
+				return fmt.Errorf("tool arguments exceed limit")
 			}
 		}
 	}
-
-	// See parseOllamaStream: a mid-stream transport error must surface as an
-	// error, not as a normal-looking truncated completion.
-	if err := scanner.Err(); err != nil && !finishSent {
+	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("stream interrupted: %w", err)
 	}
-
-	if !finishSent {
-		if hasToolCalls && len(toolCalls) > 0 {
-			onChunk(ChatResponse{
-				Finish:     true,
-				PromptTk:   promptTk,
-				CompleteTk: completeTk,
-				ToolCalls:  toolCalls,
-			})
-		} else {
-			onChunk(ChatResponse{
-				Content:    "",
-				Finish:     true,
-				PromptTk:   promptTk,
-				CompleteTk: completeTk,
-			})
-		}
+	if !complete {
+		return fmt.Errorf("stream ended before completion")
 	}
-
+	if reason != "" && reason != "stop" && reason != "tool_calls" {
+		return fmt.Errorf("response did not complete (%s)", reason)
+	}
+	calls := []ToolCall{}
+	if len(slots) > 0 && reason != "tool_calls" {
+		return fmt.Errorf("tool calls without tool completion")
+	}
+	for index := 0; index < maxStreamToolCalls; index++ {
+		call := slots[index]
+		if call == nil {
+			continue
+		}
+		if call.ID == "" || call.Function.Name == "" {
+			return fmt.Errorf("incomplete tool call")
+		}
+		if _, err := toolInput(call.Function.Arguments); err != nil {
+			return err
+		}
+		calls = append(calls, *call)
+	}
 	m.mu.Lock()
-	m.usage.PromptTokens += int64(promptTk)
-	m.usage.CompletionTokens += int64(completeTk)
-	m.usage.TotalTokens += int64(promptTk + completeTk)
+	m.usage.PromptTokens += int64(prompt)
+	m.usage.CompletionTokens += int64(completion)
+	m.usage.TotalTokens += int64(prompt + completion)
 	m.mu.Unlock()
-
+	onChunk(ChatResponse{Finish: true, ToolCalls: calls, PromptTk: prompt, CompleteTk: completion})
 	return nil
 }

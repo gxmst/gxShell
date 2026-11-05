@@ -28,6 +28,7 @@ import (
 	"gxShell/backend/tunnel"
 	"gxShell/backend/types"
 	"gxShell/backend/websites"
+	"gxShell/backend/workflow"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -93,6 +94,7 @@ type App struct {
 	net           *network.Manager
 	tunnels       *tunnel.Manager
 	ai            *ai.Manager
+	inspections   *workflow.Manager
 	docker        *docker.Manager
 	// services/firewall manage remote systemd units and the remote firewall
 	// over the same SSH exec channel as docker (no remote agent).
@@ -351,6 +353,10 @@ func (a *App) startup(ctx context.Context) {
 	})
 	a.tunnels = tunnel.NewManager(emit)
 	a.ai = ai.NewManagerWithTransport(a.networkProxy)
+	a.inspections, err = workflow.NewManager(filepath.Join(a.store.DataDir(), "inspections"), a.executeInspectionQuery, a.ai.ChatWithConfig, func(run workflow.Run) { emit("ai:inspection", run) }, a.redactInspection)
+	if err != nil {
+		a.log.ErrorFields("Inspection history unavailable", LogFields{"error": err.Error()})
+	}
 	a.docker = docker.NewManager(a.ssh)
 	a.docker.SetEmit(emit)
 	// Like docker, service/firewall log streams need no disconnect cleanup in
@@ -518,6 +524,9 @@ func (a *App) GetStartupFile() string {
 
 // shutdown cleans up resources before application exit.
 func (a *App) shutdown(ctx context.Context) {
+	if a.inspections != nil {
+		a.inspections.Close()
+	}
 	if a.networkProxy != nil {
 		a.networkProxy.CloseIdleConnections()
 	}
