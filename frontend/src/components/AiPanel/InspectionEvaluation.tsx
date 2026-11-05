@@ -39,8 +39,7 @@ export function InspectionEvaluation({ locale, onError }: { locale: string; onEr
     try { const value = await StartAiInspectionEvaluation(selected); updateVersion.current++; setEvaluations((previous) => [value, ...previous.filter((e) => e.id !== value.id)]); setSelectedId(value.id); }
     catch (error) { onError(String(error)); } finally { setBusy(false); }
   };
-  return <details className="inspection-evaluation">
-    <summary>{t(locale, "inspectionEvaluation")}</summary>
+  return <section className="inspection-evaluation">
     <p>{t(locale, "inspectionEvaluationNote")}</p>
     <div className="inspection-evaluation-cases">{cases.map((value) => <label key={value.id} title={value.description}>
       <input type="checkbox" checked={selected.includes(value.id)} disabled={busy || running} onChange={(e) => setSelected((previous) => e.target.checked ? [...previous, value.id] : previous.filter((id) => id !== value.id))} />{value.title}
@@ -65,5 +64,5 @@ export function InspectionEvaluation({ locale, onError }: { locale: string; onEr
       </details>)}
     </>}
     <p className="inspection-report-empty">{t(locale, "inspectionEvaluationLimits")}</p>
-  </details>;
+  </section>;
 }

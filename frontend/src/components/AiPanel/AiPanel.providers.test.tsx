@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { AiPanel } from "./AiPanel";
-import { GetAiConfig, GetAiUsage, ListAiModels, SaveAiConfig } from "../../../wailsjs/go/app/App";
+import { GetAiConfig, GetAiUsage, ListAiInspectionEvaluationCases, ListAiInspectionEvaluations, ListAiModels, SaveAiConfig } from "../../../wailsjs/go/app/App";
 import { types } from "../../../wailsjs/go/models";
 
 vi.mock("../../../wailsjs/runtime/runtime", () => ({ EventsOn: vi.fn(() => () => undefined) }));
@@ -21,6 +21,16 @@ beforeEach(() => {
   vi.mocked(GetAiUsage).mockResolvedValue(new types.AiTokenUsage({ promptTokens: 0, completionTokens: 0, totalTokens: 0 }));
   vi.mocked(ListAiModels).mockResolvedValue([]);
   vi.mocked(SaveAiConfig).mockResolvedValue();
+});
+it("opens model evaluation from AI settings instead of the inspection panel", async () => {
+  vi.mocked(ListAiInspectionEvaluationCases).mockResolvedValue([{ id: "healthy_host", title: "Healthy host", description: "" }]);
+  vi.mocked(ListAiInspectionEvaluations).mockResolvedValue([]);
+  render(<AiPanel locale="en" onNotify={vi.fn()} getTerminalLines={() => ""} activeTabId="" tabs={[]} />);
+  expect(ListAiInspectionEvaluations).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByTitle("AI Settings"));
+  fireEvent.click(await screen.findByRole("button", { name: "Model diagnostic evaluation" }));
+  expect(await screen.findByRole("dialog", { name: "Model diagnostic evaluation" })).toBeInTheDocument();
+  await screen.findByRole("checkbox", { name: "Healthy host" });
 });
 it("restores the native protocol and uses it when fetching models", async () => {
   render(<AiPanel locale="en" onNotify={vi.fn()} getTerminalLines={() => ""} activeTabId="" tabs={[]} />);

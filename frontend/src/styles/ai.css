@@ -99,6 +99,10 @@
 .inspection-review-controls > button { grid-column: 3; grid-row: 2; font-size: 11px; }
 .inspection-review-controls > small { grid-column: 1 / -1; color: var(--muted); }
 .inspection-review-audit summary { cursor: pointer; color: var(--muted); }
+.inspection-review-toggle { margin-top: 6px; }
+.inspection-review-toggle > summary, .inspection-report-more > summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.inspection-report-more { margin: 16px 0; padding-top: 10px; border-top: 1px solid var(--border); }
+.inspection-trace pre { max-height: 240px; overflow: auto; white-space: pre-wrap; }
 .inspection-review-audit p { font-size: 11px; color: var(--muted); }
 .inspection-comparison-controls { display: flex; gap: 8px; }
 .inspection-comparison, .inspection-plan-section { min-width: 0; }

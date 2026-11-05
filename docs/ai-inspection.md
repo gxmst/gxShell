@@ -28,7 +28,10 @@ API origin are rejected to avoid forwarding credentials.
 ## Host inspection
 
 1. Connect one remote SSH server and select it in the Inspection view.
-2. Start inspection and confirm its target and data access in the native dialog.
+2. Start inspection and allow its target and data access in the in-app approval
+   panel. A read-only workflow is asked once per saved server, workflow, model
+   and host background revision while the app runs; changing any of them asks
+   again. Quick-connect sessions are always asked.
 3. The built-in workflow reads system/CPU information, load, disk, memory,
    failed systemd units or OpenRC status, listening TCP ports, and containers.
 4. The model analyzes that evidence and may make at most three follow-up rounds,
@@ -144,8 +147,9 @@ within the existing three-round budget. A repeated query runs at most once in
 the new task. New samples supersede historical samples for current check
 conclusions, while the old output remains inspectable.
 
-The native dialog confirms the original SSH connection, model, question and
-data access. A disconnected/replaced connection requires a fresh report.
+The approval panel confirms the original SSH connection, model, question and
+data access, and shares the remembered read-only confirmation of the workflow
+it continues. A disconnected/replaced connection requires a fresh report.
 The original report, review state and action plans are preserved. Follow-ups
 have their own review/feedback state. No arbitrary shell commands, paths or
 probe addresses are accepted. Listener queries include process attribution
@@ -184,7 +188,7 @@ Two backend-owned plans are available when their required evidence is complete:
 
 Generate a plan, review its exact command and impact, then choose Review and
 Execute. Both commands need root and plans never elevate, so they are offered
-only when the system query reports that the SSH account is root. A native dialog confirms the original SSH target, command, impact and
+only when the system query reports that the SSH account is root. The approval panel confirms the original SSH target, command, impact and
 model used for the new diagnosis. Plans use current account permissions without
 elevation; models and the renderer cannot supply arbitrary commands. An action
 and another inspection/action cannot run concurrently on the same server.
@@ -224,7 +228,7 @@ Diagnostic Feedback supports Correct Assessment, False Alarm and Missed Issue.
 False alarms/missed issues require a description. Feedback is independently
 audited under the report without overwriting AI opinions or measurements.
 
-Model Diagnostic Evaluation uses the currently saved model with four selectable
+Model Diagnostic Evaluation is opened from AI Settings. It uses the currently saved model with four selectable
 fixed fixtures: a healthy host, 98% disk usage, an inactive service/unreachable
 local port, and missing Docker. It executes no SSH commands or tools.
 Each case makes one bounded model call with simulated evidence and saves the

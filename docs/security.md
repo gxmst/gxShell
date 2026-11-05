@@ -12,7 +12,7 @@ credentials away from ordinary profile data and terminal input.
 
 ## AI and CLI controls
 
-- Built-in host inspections, service diagnoses and disk diagnoses require one native confirmation for a fixed,
+- Built-in host inspections, service diagnoses and disk diagnoses require an in-app approval for a fixed,
   read-only query catalog. Their backend runner pins the target and model and
   cannot accept model-supplied shell commands. Inspection history contains
   redacted evidence and reports in the local data directory; incomplete tasks
@@ -25,14 +25,17 @@ credentials away from ordinary profile data and terminal input.
   Human confirmations are an independently stored overlay with local OS
   account and time; they cannot overwrite AI conclusions or remote evidence.
   Two separate action templates (selected-service restart and archived-journal
-  vacuum older than seven days) require a fresh native confirmation showing the
+  vacuum older than seven days) require a fresh approval every time, showing the
   exact command, impact and target. Journal vacuum permanently deletes archived
   logs. Commands use current account permissions without elevation. Stored plan
   IDs are consumed once; uncertain/interrupted results never automatically
   replay. Execution is followed by an independently recorded read-only diagnosis.
   Report follow-ups retain the original report, explicitly label inherited
   evidence and refresh selected queries within the same restricted catalog.
-  They require native confirmation and cannot move to a replaced SSH target.
+  They require approval and cannot move to a replaced SSH target. A read-only
+  approval is remembered for the app run per saved server, workflow, provider,
+  model, endpoint and host background revision; action plans are never
+  remembered. Before the renderer registers, the native dialog is the fallback.
   Host background is editable expectation with revision/source/reviewer history;
   it never overrides current measurements. Each task sends its captured
   background to the selected model after disclosing this in confirmation.

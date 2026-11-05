@@ -230,6 +230,8 @@
   color: var(--text);
   font-size: 12px;
   line-height: 1.5;
+  /* Inspection summaries carry paragraphs; one-line CLI summaries are unaffected. */
+  white-space: pre-line;
 }
 
 .cli-panel-critical-hint {

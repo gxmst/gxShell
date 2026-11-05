@@ -248,6 +248,74 @@ func TestInspectionFaultScenariosOverRealSSH(t *testing.T) {
 	}
 }
 
+// Read-only inspection is confirmed once per server, model and background
+// revision through the in-app panel; a changed model asks again.
+func TestInspectionConsentIsRememberedPerModel(t *testing.T) {
+	profile, known := inspectionSSHFixture(t)
+	app := NewApp()
+	app.ctx.Set(context.Background())
+	app.automationEventFn = func(terminalAutomationEvent) {}
+	app.ssh = sshmanager.NewManager(known, func(string, any) {}, nil)
+	info, err := app.ssh.Connect(profile, 5, 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = app.ssh.Disconnect(info.ID) })
+	app.ai = ai.NewManager()
+	app.ai.UpdateConfig(ai.Config{Provider: "openai", Model: "fixture-a"})
+	model := func(context.Context, ai.Config, ai.ChatRequest, func(ai.ChatResponse)) error {
+		return fmt.Errorf("fixture model unavailable")
+	}
+	app.inspections, err = workflow.NewManager(t.TempDir(), app.executeInspectionQuery, model, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.inspections.Close()
+	panels := newApprovalPanelHarness(app)
+	start := func(approve bool) (workflow.Run, error, bool) {
+		type result struct {
+			run workflow.Run
+			err error
+		}
+		done := make(chan result, 1)
+		go func() { run, err := app.StartAiDiskDiagnosis(info.ID); done <- result{run, err} }()
+		select {
+		case req := <-panels.requests:
+			if req.Source != "ai" || len(req.Items) != 1 || req.Items[0].RiskTier != "T0" {
+				t.Fatalf("unexpected panel: %+v", req)
+			}
+			approved := []string{}
+			if approve {
+				approved = []string{req.Items[0].ID}
+			}
+			if err := app.ResolveCliApproval(req.ID, approved); err != nil {
+				t.Fatal(err)
+			}
+			r := <-done
+			return r.run, r.err, true
+		case r := <-done:
+			return r.run, r.err, false
+		case <-time.After(5 * time.Second):
+			t.Fatal("inspection neither asked nor started")
+			return workflow.Run{}, nil, false
+		}
+	}
+	first, err, asked := start(true)
+	if err != nil || !asked {
+		t.Fatalf("first run: asked=%v err=%v", asked, err)
+	}
+	waitInspectionFixture(t, app.inspections, first.ID)
+	second, err, asked := start(true)
+	if err != nil || asked {
+		t.Fatalf("remembered consent asked again: asked=%v err=%v", asked, err)
+	}
+	waitInspectionFixture(t, app.inspections, second.ID)
+	app.ai.UpdateConfig(ai.Config{Provider: "openai", Model: "fixture-b"})
+	if _, err, asked := start(false); err == nil || !asked {
+		t.Fatalf("a new model was not confirmed: asked=%v err=%v", asked, err)
+	}
+}
+
 func waitInspectionFixture(t *testing.T, manager *workflow.Manager, id string) workflow.Run {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

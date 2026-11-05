@@ -8,6 +8,8 @@ import type { Tab, Toast } from "../../types";
 import { writeClipboardText } from "../../utils/clipboard";
 import { MarkdownContent } from "./AiMarkdown";
 import { InspectionPanel } from "./InspectionPanel";
+import { InspectionEvaluation } from "./InspectionEvaluation";
+import { ModalShell } from "../modals/ModalShell";
 export { MarkdownContent } from "./AiMarkdown";
 import { isRemoteSession } from "../../utils/sessionIdentity";
 import { Label } from "../modals/ModalShell";
@@ -211,6 +213,7 @@ export function AiPanel(props: {
   const [usage, setUsage] = useState<types.AiTokenUsage | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [mode, setMode] = useState<"chat" | "inspection">("chat");
+  const [evaluationOpen, setEvaluationOpen] = useState(false);
   const [provider, setProvider] = useState("openai");
   const [apiKey, setApiKey] = useState("");
   const [endpoint, setEndpoint] = useState("");
@@ -798,9 +801,16 @@ export function AiPanel(props: {
               </div>
             </Label>
             <button className="btn-primary w-full text-[10px] mt-1" onClick={saveSettings}>{t(lang, "save")}</button>
+            {/* Evaluation tests the saved model, not a server, so it lives here. */}
+            <button className="btn-secondary w-full text-[10px]" onClick={() => { setShowSettings(false); setEvaluationOpen(true); }}>{t(lang, "inspectionEvaluation")}</button>
           </div>
         </div>
       )}
+
+      {evaluationOpen && <ModalShell ariaLabel={t(lang, "inspectionEvaluation")} className="inspection-report-modal" onClose={() => setEvaluationOpen(false)}>
+        <div className="inspection-report-toolbar"><strong>{t(lang, "inspectionEvaluation")}</strong><button className="mini-btn" aria-label={t(lang, "close")} onClick={() => setEvaluationOpen(false)}><X size={16} /></button></div>
+        <div className="inspection-report-scroll"><InspectionEvaluation locale={lang} onError={(message) => onNotifyRef.current(message, "error")} /></div>
+      </ModalShell>}
 
       {mode === "inspection" ? <InspectionPanel locale={lang} tabs={props.tabs} activeTabId={props.activeTabId} onNotify={props.onNotify} /> : <>
       <div className="ai-messages" ref={scrollRef}>

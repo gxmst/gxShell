@@ -9,8 +9,6 @@ import (
 	"gxShell/backend/i18n"
 	"gxShell/backend/types"
 	"gxShell/backend/workflow"
-
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 func localInspectionReviewer() string {
@@ -88,14 +86,18 @@ func (a *App) StartAiInspectionFollowup(id, question, focusEvidenceID string) (w
 		return workflow.Run{}, fmt.Errorf("configure an AI model")
 	}
 	message := fmt.Sprintf(i18n.Text(language, "主机：%s\n\n将原报告证据、您的追问及主机背景发送给模型 %s。模型最多可进行三轮预定义的只读补查；历史证据会标注采集时间，原报告保留。\n\n追问：%s\n\n是否继续？", "Host: %s\n\nSend the original evidence, your question and host background to model %s. It may request up to three rounds of predefined read-only queries. Historical evidence retains its timestamp and the original report is preserved.\n\nQuestion: %s\n\nContinue?"), source.Target, cfg.Model, a.redactInspection(source.ProfileID, question))
-	a.nativeDialogMu.Lock()
-	answer, err := runtime.MessageDialog(a.ctx.Get(), runtime.MessageDialogOptions{Type: runtime.QuestionDialog, Title: i18n.Text(language, "继续分析报告", "Continue report analysis"), Message: message, DefaultButton: "No"})
-	a.nativeDialogMu.Unlock()
-	if err != nil {
-		return workflow.Run{}, err
-	}
-	if answer != "Yes" {
-		return workflow.Run{}, fmt.Errorf("%s", i18n.Text(language, "已取消追问。", "Follow-up cancelled."))
+	// A follow-up sends the same class of data as the read-only diagnosis it
+	// continues, so it shares that diagnosis's remembered confirmation.
+	consent := a.inspectionConsentKey(source.ProfileID, source.Workflow, cfg)
+	if !a.inspectionConsented(consent) {
+		approved := a.confirmInspection(i18n.Text(language, "继续分析报告", "Continue report analysis"), message, cliApprovalPanelRequest{
+			Source: "ai", Server: source.Target, Summary: message,
+			Items: []cliApprovalItem{{ID: "followup", Kind: "inspection", Text: a.redactInspection(source.ProfileID, question), RiskTier: "T0"}},
+		})
+		if !approved {
+			return workflow.Run{}, fmt.Errorf("%s", i18n.Text(language, "已取消追问。", "Follow-up cancelled."))
+		}
+		a.rememberInspectionConsent(consent)
 	}
 	current, err := a.ssh.Get(source.SessionID)
 	if err != nil || current.State != types.SessionConnected || current.ProfileID != info.ProfileID || current.Generation != info.Generation {

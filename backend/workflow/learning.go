@@ -141,6 +141,17 @@ func (m *Manager) loadLearningData() error {
 	}
 	return nil
 }
+
+// DossierRevision is the background revision a new task would capture, or 0.
+func (m *Manager) DossierRevision(profileID string) uint64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if dossier, ok := m.dossiers[profileID]; ok && !dossier.Deleted {
+		return dossier.Revision
+	}
+	return 0
+}
+
 func (m *Manager) GetDossier(profileID string) (HostDossier, error) {
 	if profileID == "" {
 		return HostDossier{}, fmt.Errorf("saved server profile required")

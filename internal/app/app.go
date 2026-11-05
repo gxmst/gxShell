@@ -150,6 +150,10 @@ type App struct {
 	// recovery without requiring a live Wails event context.
 	cliSessionReplacementEventFn func(string, types.SessionInfo)
 	nativeDialogMu               sync.Mutex
+	// inspectionConsent remembers read-only inspection confirmations for this
+	// run of the app, keyed by server, workflow, model and host background
+	// revision. See inspectionConsentKey.
+	inspectionConsent sync.Map
 	// aiTools is the trust ledger of backend-authorized AI tool calls awaiting a
 	// native confirmation + execution. See aiToolRegistry.
 	aiTools       *aiToolRegistry

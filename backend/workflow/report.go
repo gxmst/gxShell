@@ -692,11 +692,11 @@ func ReportMarkdown(run Run) string {
 		out.WriteString("\n")
 	}
 	if len(run.Plans) > 0 {
-		out.WriteString(tr(l, "巡检采集为只读；附加操作以执行记录为准。人工确认是独立核实记录，采集成功不等于健康。", "Inspection collection is read-only; additional actions are documented above. Human confirmation is a separate review record; collected output does not imply health.") + "\n")
+		out.WriteString(tr(l, "采集是只读的，执行过的操作记录在上面。", "Collection is read-only; any action taken is recorded above.") + "\n")
 	} else if run.ParentID != "" {
-		out.WriteString(tr(l, "本次结合历史证据继续分析；如有补查，其采集时间单独列出。历史证据不能代表当前状态，未确认项仍需核实。", "This follow-up analyzes historical evidence; any new queries have their own collection times. Historical evidence does not prove current state, and unconfirmed items still require verification.") + "\n")
+		out.WriteString(tr(l, "部分证据来自之前的报告，注意看采集时间。", "Part of the evidence comes from the earlier report; check its collection time.") + "\n")
 	} else {
-		out.WriteString(tr(l, "本次仅执行查询；采集成功不等于健康，未确认项需要进一步核实。", "This task performed queries only; collected output does not imply health. Unconfirmed items require verification.") + "\n")
+		out.WriteString(tr(l, "本次只做了查询，未确认项还需要核实。", "Read-only. Unconfirmed items still need checking.") + "\n")
 	}
 	return out.String()
 }

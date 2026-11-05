@@ -11,7 +11,6 @@ import { InspectionReport, InspectionEvidence } from "./InspectionReport";
 import { inspectionCheckLabel } from "./inspectionLabels";
 import { ModalShell } from "../modals/ModalShell";
 import { HostDossierEditor } from "./HostDossierEditor";
-import { InspectionEvaluation } from "./InspectionEvaluation";
 
 const terminalStates = new Set(["completed", "partial", "failed", "cancelled", "interrupted"]);
 const checkLabels = {
@@ -173,7 +172,6 @@ export function InspectionPanel({ locale, tabs, activeTabId, onNotify }: {
       {selectedTarget?.profileId && <details className="inspection-host-background" onToggle={(e) => setDossierOpen(e.currentTarget.open)}><summary>{t(locale, "inspectionHostDossier")} · {selectedTarget.title}</summary>
         {dossierOpen && <HostDossierEditor profileId={selectedTarget.profileId} locale={locale} onError={(message) => onNotify(message, "error")} />}
       </details>}
-      <InspectionEvaluation locale={locale} onError={(message) => onNotify(message, "error")} />
     </div>
     {targetRuns.length > 0 && <select className="input compact-input" aria-label={t(locale, "inspectionHistory")} value={run?.id || ""} onChange={(event) => setSelectedRun(event.target.value)}>
       {targetRuns.map((item) => <option key={item.id} value={item.id}>{item.target} · {new Date(item.createdAt).toLocaleString(locale)} · {stateLabel(item.state)}</option>)}

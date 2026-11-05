@@ -93,13 +93,17 @@ func (a *App) ExecuteAiInspectionPlan(id, planID string) (workflow.Run, error) {
 	l := workflow.NormalizeLanguage(a.uiLanguage())
 	message := fmt.Sprintf(i18n.Text(l, "主机：%s\n操作：%s\n\n命令：\n%s\n\n影响：%s\n\n执行结果将保存在报告中，随后重新诊断，并发送采集结果给模型 %s。是否执行？", "Host: %s\nAction: %s\n\nCommand:\n%s\n\nImpact: %s\n\nThe result is recorded, followed by a new diagnosis whose evidence is sent to model %s. Execute?"), run.Target, p.Title, p.Command, p.Impact, cfg.Model)
 	message += i18n.Text(l, "\n\n若已保存主机档案，复查也会将用途、运行预期和背景说明发送给模型，并记录使用的档案版本。", "\n\nIf host background is saved, verification also sends its purpose, operational expectations and notes to the model and records the background version used.")
-	a.nativeDialogMu.Lock()
-	answer, dialogErr := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{Type: runtime.QuestionDialog, Title: i18n.Text(l, "确认执行计划", "Confirm action plan"), Message: message, DefaultButton: "No"})
-	a.nativeDialogMu.Unlock()
-	if dialogErr != nil {
-		return run, dialogErr
+	// Changes are confirmed every time; only read-only diagnoses are remembered.
+	tier := "T2"
+	if selected.Kind == "vacuum_journal_7d" {
+		tier = "T3"
 	}
-	if answer != "Yes" {
+	approved := a.confirmInspection(i18n.Text(l, "确认执行计划", "Confirm action plan"), message, cliApprovalPanelRequest{
+		Source: "ai", Server: run.Target, Summary: p.Title, Critical: tier == "T3",
+		Items: []cliApprovalItem{{ID: "plan", Kind: "command", Text: p.Command, RiskTier: tier, RiskLabel: p.Title,
+			RiskLines: []string{p.Impact, fmt.Sprintf(i18n.Text(l, "执行后用模型 %s 重新诊断。", "A fresh diagnosis follows with model %s."), cfg.Model)}}},
+	})
+	if !approved {
 		return run, nil
 	}
 	current, err := a.ssh.Get(run.SessionID)
@@ -200,14 +204,30 @@ func (a *App) startAiInspection(sessionID, kind, service string, port int) (work
 		message = fmt.Sprintf(i18n.Text(language, "诊断 %s 的磁盘空间？\n\n读取分区、inode、目录、系统日志和容器存储占用。目录扫描仅覆盖预定义路径，限时 12 秒并降低优先级；不清理文件、不提权。\n\n采集内容将发送给模型 %s 并保存在本机。最多三轮补查。", "Diagnose disk space on %s?\n\nRead partitions, inodes, fixed directory scopes, system journals and container storage. Directory scans stop after 12 seconds and use lower priority. No cleanup or elevation.\n\nEvidence is sent to model %s and saved locally. At most three follow-up rounds."), info.Name, cfg.Model)
 	}
 	message += i18n.Text(language, "\n\n若已保存主机档案，用途、运行预期和背景说明会一并发送给模型，并在报告中记录使用的档案版本。", "\n\nIf host background is saved, its purpose, operational expectations and notes are also sent to the model. The report records the background version used.")
-	a.nativeDialogMu.Lock()
-	answer, dialogErr := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{Type: runtime.QuestionDialog, Title: title, Message: message, DefaultButton: "No"})
-	a.nativeDialogMu.Unlock()
-	if dialogErr != nil {
-		return workflow.Run{}, dialogErr
+	workflowKind := kind
+	if workflowKind == "" {
+		workflowKind = "host_inspection"
 	}
-	if answer != "Yes" {
-		return workflow.Run{}, messageError("已取消开始巡检。", "Inspection cancelled before execution.")
+	// Read-only workflows are confirmed once per server, model and host
+	// background revision for this app run; changing any of them asks again.
+	consent := a.inspectionConsentKey(info.ProfileID, workflowKind, cfg)
+	if !a.inspectionConsented(consent) {
+		scope := i18n.Text(language, "只读查询：系统、负载、磁盘、内存、服务、监听端口、容器", "Read-only queries: system, load, disk, memory, services, listening ports, containers")
+		if kind == "service_diagnosis" {
+			scope = fmt.Sprintf(i18n.Text(language, "只读查询：%s 的状态与近期日志，监听端口；本机测试 127.0.0.1:%d", "Read-only queries: %s status and recent logs, listeners; local probe of 127.0.0.1:%d"), service, port)
+		} else if kind == "disk_diagnosis" {
+			scope = i18n.Text(language, "只读查询：分区、inode、固定目录占用、系统日志、容器存储", "Read-only queries: partitions, inodes, fixed directory usage, journals, container storage")
+		}
+		// The read-only group starts collapsed, so the remembered-consent note
+		// goes in the always-visible summary rather than on the item.
+		summary := message + i18n.Text(language, "\n\n允许后，本次运行期间同一服务器、模型和主机档案版本的只读诊断不再询问。", "\n\nOnce allowed, read-only diagnoses with the same server, model and host background are not asked again while the app runs.")
+		approved := a.confirmInspection(title, message, cliApprovalPanelRequest{Source: "ai", Server: info.Name, Summary: summary, Items: []cliApprovalItem{{
+			ID: "inspection", Kind: "inspection", Text: scope, RiskTier: "T0",
+		}}})
+		if !approved {
+			return workflow.Run{}, messageError("已取消开始巡检。", "Inspection cancelled before execution.")
+		}
+		a.rememberInspectionConsent(consent)
 	}
 	// Recheck after the confirmation dialog; never move to a replacement target.
 	current, err := a.ssh.Get(sessionID)

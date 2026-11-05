@@ -37,6 +37,14 @@ it("shows AI interpretation separately from check measurements", () => {
   expect(screen.getByText("可能原因")).toBeInTheDocument();
   expect(screen.getByRole("table")).toHaveTextContent("端口 8080 存在监听。");
 });
+it("pre-fills the single follow-up box from an insight instead of nesting forms", () => {
+  render(<InspectionReport run={run()} locale="zh-CN" onUpdated={vi.fn()} onFollowupCreated={vi.fn()} />);
+  expect(screen.getAllByRole("textbox", { name: "追问内容" })).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "追问这一项" }));
+  const question = screen.getByRole("textbox", { name: "追问内容" }) as HTMLTextAreaElement;
+  expect(question.value).toContain("请继续核实这一项");
+  expect(question.value).toContain("核实进程归属");
+});
 it("starts a linked follow-up for the exact original report and focused evidence", async () => {
   const original = run(), created = { ...run(), id: "child", parentId: "original-report", state: "queued" };
   vi.mocked(StartAiInspectionFollowup).mockResolvedValue(created);
@@ -93,7 +101,6 @@ it("evaluates selected fixed cases with the saved model and shows raw scores", a
     ],
   });
   render(<InspectionEvaluation locale="zh-CN" onError={vi.fn()} />);
-  fireEvent.click(screen.getByText("模型诊断评测"));
   await screen.findByRole("checkbox", { name: "磁盘接近满" });
   fireEvent.click(screen.getByRole("button", { name: "开始评测所选案例" }));
   await waitFor(() => expect(StartAiInspectionEvaluation).toHaveBeenCalledWith(["disk_pressure"]));
@@ -109,7 +116,6 @@ it("keeps a started evaluation when an older history request completes later", a
   vi.mocked(ListAiInspectionEvaluationCases).mockResolvedValue([{ id: "healthy_host", title: "正常主机", description: "正常" }]);
   vi.mocked(StartAiInspectionEvaluation).mockResolvedValue({ id: "new-evaluation", provider: "openai", model: "current-model", language: "zh-CN", state: "running", caseVersion: 1, caseIds: ["healthy_host"], createdAt: "2026-11-06T02:00:00Z", finishedAt: "", results: [] });
   render(<InspectionEvaluation locale="zh-CN" onError={vi.fn()} />);
-  fireEvent.click(screen.getByText("模型诊断评测"));
   await screen.findByRole("checkbox", { name: "正常主机" });
   fireEvent.click(screen.getByRole("button", { name: "开始评测所选案例" }));
   await screen.findByRole("combobox", { name: "评测历史" });
