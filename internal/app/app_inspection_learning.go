@@ -56,6 +56,12 @@ func (a *App) ListAiInspectionEvaluations() []workflow.EvaluationRun {
 	}
 	return a.inspections.ListEvaluations()
 }
+func (a *App) GetAiInspectionStats() []workflow.ModelStats {
+	if a.inspections == nil {
+		return []workflow.ModelStats{}
+	}
+	return a.inspections.Stats()
+}
 func (a *App) StartAiInspectionEvaluation(caseIDs []string) (workflow.EvaluationRun, error) {
 	if a.inspections == nil || a.ai == nil || a.ctx.Get() == nil {
 		return workflow.EvaluationRun{}, fmt.Errorf("inspection service unavailable")

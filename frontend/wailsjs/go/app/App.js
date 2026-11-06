@@ -9,6 +9,7 @@ export function DeleteAiHostDossier(profileID, revision) { return window['go']['
 export function FeedbackAiInspection(id, outcome, note) { return window['go']['app']['App']['FeedbackAiInspection'](id, outcome, note); }
 export function ListAiInspectionEvaluationCases() { return window['go']['app']['App']['ListAiInspectionEvaluationCases'](); }
 export function ListAiInspectionEvaluations() { return window['go']['app']['App']['ListAiInspectionEvaluations'](); }
+export function GetAiInspectionStats() { return window['go']['app']['App']['GetAiInspectionStats'](); }
 export function StartAiInspectionEvaluation(caseIDs) { return window['go']['app']['App']['StartAiInspectionEvaluation'](caseIDs); }
 export function CancelAiInspectionEvaluation(id) { return window['go']['app']['App']['CancelAiInspectionEvaluation'](id); }
 

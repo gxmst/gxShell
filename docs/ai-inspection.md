@@ -245,6 +245,16 @@ Evaluation history survives restart; unfinished runs are marked interrupted
 and are not automatically retried. The fixture data is sent to the selected API,
 and normal provider token charges may apply.
 
+The same dialog shows Real-Run Statistics for saved diagnoses on your own
+servers, grouped by provider and model. Each finished run is classified from
+its report validation steps: accepted on the first answer, auto-corrected
+(item fixes or a successful repair turn), report failed (no answer was
+accepted), or no report (the task ended before the model produced one).
+Cancelled and interrupted runs are counted but excluded from the percentages,
+average tokens and average duration. False alarm and missed issue counts use
+the latest feedback on each run. Statistics are computed locally from saved
+history; nothing is sent to the model.
+
 ## Validation
 
 Local tests exercise native request schemas, authentication headers, model-list

@@ -4,7 +4,7 @@ import {types} from '../models';
 import {version} from '../models';
 import {sshmanager} from '../models';
 import type {InspectionRun} from '../workflow';
-import type {HostDossier,DossierInput,InspectionEvaluationCase,InspectionEvaluationRun} from '../workflow';
+import type {HostDossier,DossierInput,InspectionEvaluationCase,InspectionEvaluationRun,InspectionModelStats} from '../workflow';
 
 export function StartAiInspectionFollowup(id:string,question:string,focusEvidenceID:string):Promise<InspectionRun>;
 export function GetAiHostDossier(profileID:string):Promise<HostDossier>;
@@ -13,6 +13,7 @@ export function DeleteAiHostDossier(profileID:string,revision:number):Promise<Ho
 export function FeedbackAiInspection(id:string,outcome:string,note:string):Promise<InspectionRun>;
 export function ListAiInspectionEvaluationCases():Promise<InspectionEvaluationCase[]>;
 export function ListAiInspectionEvaluations():Promise<InspectionEvaluationRun[]>;
+export function GetAiInspectionStats():Promise<InspectionModelStats[]>;
 export function StartAiInspectionEvaluation(caseIDs:string[]):Promise<InspectionEvaluationRun>;
 export function CancelAiInspectionEvaluation(id:string):Promise<boolean>;
 

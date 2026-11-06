@@ -9,6 +9,7 @@ import { writeClipboardText } from "../../utils/clipboard";
 import { MarkdownContent } from "./AiMarkdown";
 import { InspectionPanel } from "./InspectionPanel";
 import { InspectionEvaluation } from "./InspectionEvaluation";
+import { InspectionStats } from "./InspectionStats";
 import { ModalShell } from "../modals/ModalShell";
 export { MarkdownContent } from "./AiMarkdown";
 import { isRemoteSession } from "../../utils/sessionIdentity";
@@ -809,7 +810,7 @@ export function AiPanel(props: {
 
       {evaluationOpen && <ModalShell ariaLabel={t(lang, "inspectionEvaluation")} className="inspection-report-modal" onClose={() => setEvaluationOpen(false)}>
         <div className="inspection-report-toolbar"><strong>{t(lang, "inspectionEvaluation")}</strong><button className="mini-btn" aria-label={t(lang, "close")} onClick={() => setEvaluationOpen(false)}><X size={16} /></button></div>
-        <div className="inspection-report-scroll"><InspectionEvaluation locale={lang} onError={(message) => onNotifyRef.current(message, "error")} /></div>
+        <div className="inspection-report-scroll"><InspectionStats locale={lang} onError={(message) => onNotifyRef.current(message, "error")} /><InspectionEvaluation locale={lang} onError={(message) => onNotifyRef.current(message, "error")} /></div>
       </ModalShell>}
 
       {mode === "inspection" ? <InspectionPanel locale={lang} tabs={props.tabs} activeTabId={props.activeTabId} onNotify={props.onNotify} /> : <>
