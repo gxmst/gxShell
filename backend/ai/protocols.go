@@ -232,6 +232,8 @@ func (m *Manager) nativeRequest(cfg Config, req ChatRequest) (string, map[string
 				declarations = append(declarations, map[string]any{"name": fn["name"], "description": fn["description"], "parametersJsonSchema": fn["parameters"]})
 			}
 			body["tools"] = []any{map[string]any{"functionDeclarations": declarations}}
+		} else if req.JSONObject {
+			body["generationConfig"] = map[string]any{"responseMimeType": "application/json"}
 		}
 		model := strings.TrimPrefix(cfg.Model, "models/")
 		return base + "/models/" + url.PathEscape(model) + ":streamGenerateContent?alt=sse", body, nil
@@ -263,6 +265,8 @@ func (m *Manager) nativeRequest(cfg Config, req ChatRequest) (string, map[string
 		body := map[string]any{"model": cfg.Model, "messages": messages, "stream": true}
 		if tools := requestTools(req); len(tools) > 0 {
 			body["tools"] = tools
+		} else if req.JSONObject {
+			body["format"] = "json"
 		}
 		return base + "/api/chat", body, nil
 	}
@@ -276,18 +280,34 @@ func (m *Manager) chatNative(ctx context.Context, cfg Config, req ChatRequest, o
 	if err != nil {
 		return err
 	}
-	data, err := json.Marshal(body)
+	send := func() (*http.Response, error) {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(data))
+		if err != nil {
+			return nil, err
+		}
+		setProviderHeaders(httpReq, cfg)
+		resp, err := m.client.Do(httpReq)
+		if err != nil {
+			return nil, fmt.Errorf("request failed: %w", err)
+		}
+		return resp, nil
+	}
+	resp, err := send()
 	if err != nil {
 		return err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	setProviderHeaders(httpReq, cfg)
-	resp, err := m.client.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+	// The JSON constraint is optional; a gateway that rejects it is asked again
+	// without it before anything was streamed.
+	if constraint := jsonConstraintKey(body); constraint != "" && rejectedJSONMode(resp) {
+		resp.Body.Close()
+		delete(body, constraint)
+		if resp, err = send(); err != nil {
+			return err
+		}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {

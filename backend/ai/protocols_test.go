@@ -267,3 +267,77 @@ func TestProviderRedirectDoesNotForwardCredentials(t *testing.T) {
 		})
 	}
 }
+
+// Report-only turns ask for a JSON object where the protocol supports it. A
+// gateway that rejects the constraint is asked once more without it.
+func TestJSONObjectConstraintAndRejectedRetry(t *testing.T) {
+	wants := map[Provider]string{ProviderOpenAI: "response_format", ProviderGemini: "generationConfig", ProviderOllama: "format", ProviderAnthropic: ""}
+	streams := map[Provider]string{
+		ProviderOpenAI:    "data: {\"choices\":[{\"delta\":{\"content\":\"{}\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+		ProviderGemini:    "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"{}\"}]},\"finishReason\":\"STOP\"}]}\n\n",
+		ProviderOllama:    "{\"message\":{\"content\":\"{}\"},\"done\":true,\"done_reason\":\"stop\"}\n",
+		ProviderAnthropic: "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"{}\"}}\n\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}\n\ndata: {\"type\":\"message_stop\"}\n\n",
+	}
+	for provider, key := range wants {
+		for _, reject := range []bool{false, true} {
+			var requests []map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var body map[string]any
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				requests = append(requests, body)
+				if _, constrained := body[key]; constrained && reject {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":{"message":"unsupported parameter: response_format / generationConfig / \"format\""}}`))
+					return
+				}
+				_, _ = w.Write([]byte(streams[provider]))
+			}))
+			out := ""
+			err := NewManager().ChatWithConfig(context.Background(), Config{Provider: provider, APIKey: "k", Endpoint: server.URL, Model: "m"},
+				ChatRequest{Messages: []Message{{Role: "user", Content: "json"}}, Instructions: "x", JSONObject: true}, func(c ChatResponse) { out += c.Content })
+			server.Close()
+			if err != nil || out != "{}" {
+				t.Fatalf("%s reject=%v: %q %v", provider, reject, out, err)
+			}
+			_, sent := requests[0][key]
+			if key != "" && !sent {
+				t.Fatalf("%s did not request JSON output: %v", provider, requests[0])
+			}
+			want := 1
+			if reject && key != "" {
+				want = 2
+				if _, still := requests[1][key]; still {
+					t.Fatalf("%s retried with the rejected constraint", provider)
+				}
+			}
+			if len(requests) != want {
+				t.Fatalf("%s reject=%v: %d requests, want %d", provider, reject, len(requests), want)
+			}
+		}
+	}
+	// Tools and JSON mode are mutually exclusive; tool turns stay unconstrained.
+	var body map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
+	}))
+	defer server.Close()
+	_ = NewManager().ChatWithConfig(context.Background(), Config{Provider: ProviderOpenAI, Endpoint: server.URL, Model: "m"}, ChatRequest{Messages: []Message{{Role: "user", Content: "x"}}, EnableTools: true, JSONObject: true}, func(ChatResponse) {})
+	if _, ok := body["response_format"]; ok {
+		t.Fatal("JSON mode was combined with tools")
+	}
+}
+
+func TestOtherBadRequestsAreNotRetried(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"message":"context length exceeded"}}`))
+	}))
+	defer server.Close()
+	err := NewManager().ChatWithConfig(context.Background(), Config{Provider: ProviderOpenAI, Endpoint: server.URL, Model: "m"}, ChatRequest{Messages: []Message{{Role: "user", Content: "x"}}, JSONObject: true}, func(ChatResponse) {})
+	if err == nil || calls != 1 || !strings.Contains(err.Error(), "context length exceeded") {
+		t.Fatalf("calls=%d err=%v", calls, err)
+	}
+}

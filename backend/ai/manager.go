@@ -65,6 +65,10 @@ type ChatRequest struct {
 	// Instructions and Tools are backend-owned overrides for built-in workflows.
 	Instructions string           `json:"-"`
 	Tools        []map[string]any `json:"-"`
+	// JSONObject asks the provider to constrain a tool-less answer to one JSON
+	// object where the protocol supports it. Endpoints that reject the
+	// parameter are retried once without it.
+	JSONObject bool `json:"-"`
 }
 
 type ChatResponse struct {
@@ -162,6 +166,33 @@ func readLimited(body io.Reader, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("response exceeded %d bytes", limit)
 	}
 	return data, nil
+}
+
+// rejectedJSONMode reports whether a 400/422 response complains about the
+// optional response_format constraint. Any other response is left readable.
+func rejectedJSONMode(resp *http.Response) bool {
+	if resp.StatusCode != http.StatusBadRequest && resp.StatusCode != http.StatusUnprocessableEntity {
+		return false
+	}
+	data, _ := readLimited(resp.Body, maxErrorBodyBytes)
+	resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(data))
+	text := strings.ToLower(string(data))
+	for _, marker := range []string{"response_format", "json_object", "json mode", "responsemimetype", "response_mime_type", "generationconfig", "\"format\""} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func jsonConstraintKey(body map[string]any) string {
+	for _, key := range []string{"response_format", "generationConfig", "format"} {
+		if _, ok := body[key]; ok {
+			return key
+		}
+	}
+	return ""
 }
 
 func (m *Manager) ListModels(cfg Config) ([]string, error) {
@@ -394,23 +425,41 @@ func (m *Manager) ChatWithConfig(ctx context.Context, cfg Config, req ChatReques
 	if cfg.Provider == ProviderOpenAI {
 		body["stream_options"] = map[string]any{"include_usage": true}
 	}
-	bodyBytes, err := json.Marshal(body)
-	if err != nil {
-		return fmt.Errorf("failed to marshal request: %w", err)
+	if req.JSONObject && !req.EnableTools {
+		body["response_format"] = map[string]any{"type": "json_object"}
+	}
+	send := func() (*http.Response, error) {
+		bodyBytes, err := json.Marshal(body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal request: %w", err)
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		if cfg.APIKey != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+		}
+		resp, err := m.client.Do(httpReq)
+		if err != nil {
+			return nil, fmt.Errorf("request failed: %w", err)
+		}
+		return resp, nil
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", endpoint, bytes.NewReader(bodyBytes))
+	resp, err := send()
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return err
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if cfg.APIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+cfg.APIKey)
-	}
-
-	resp, err := m.client.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+	if jsonConstraintKey(body) != "" && rejectedJSONMode(resp) {
+		// Nothing was streamed yet, so dropping the optional constraint and
+		// asking again cannot duplicate output.
+		resp.Body.Close()
+		delete(body, "response_format")
+		if resp, err = send(); err != nil {
+			return err
+		}
 	}
 	defer resp.Body.Close()
 

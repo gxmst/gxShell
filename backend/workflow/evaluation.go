@@ -68,7 +68,7 @@ func evaluationFixture(id, language string) (Run, map[string]string) {
 		"load":       "10:00:00 up 3 days, 1 user, load average: 0.05, 0.08, 0.04",
 		"disk":       "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/vda1 1000000 380000 620000 38% /",
 		"memory":     "              total used free shared buff/cache available\nMem: 2048 400 1000 10 648 1500\nSwap: 1024 0 1024",
-		"services":   "GXSHELL_SERVICE_MANAGER=systemd\n",
+		"services":   "GXSHELL_SERVICE_MANAGER=systemd\nGXSHELL_FAILED_UNITS=0\n",
 		"ports":      "State Recv-Q Send-Q Local Address:Port Peer Address:Port\nLISTEN 0 128 0.0.0.0:22 0.0.0.0:*\n",
 		"containers": "web\tUp 3 days\t127.0.0.1:8080->80/tcp",
 	}
@@ -134,7 +134,7 @@ func (m *Manager) StartEvaluation(parent context.Context, cfg ai.Config, languag
 	if _, err := rand.Read(bytes[:]); err != nil {
 		return EvaluationRun{}, err
 	}
-	evaluation := EvaluationRun{ID: hex.EncodeToString(bytes[:]), Provider: string(cfg.Provider), Model: cfg.Model, Language: NormalizeLanguage(language), CaseVersion: 1, PromptVersion: "assessment-v2", CaseIDs: append([]string{}, caseIDs...), State: "running", CreatedAt: time.Now(), Results: []EvaluationResult{}}
+	evaluation := EvaluationRun{ID: hex.EncodeToString(bytes[:]), Provider: string(cfg.Provider), Model: cfg.Model, Language: NormalizeLanguage(language), CaseVersion: 2, PromptVersion: "assessment-v3", CaseIDs: append([]string{}, caseIDs...), State: "running", CreatedAt: time.Now(), Results: []EvaluationResult{}}
 	// Each case is bounded to 40 seconds; leave room for all of them.
 	ctx, cancel := context.WithTimeout(parent, time.Duration(len(caseIDs))*45*time.Second)
 	m.mu.Lock()
@@ -203,7 +203,7 @@ func (m *Manager) evaluateCase(parent context.Context, cfg ai.Config, language, 
 	raw, _ := json.Marshal(map[string]any{"evidence": fixture.Evidence, "observations": fallbackDocument(fixture).Checks})
 	var content strings.Builder
 	var response ai.ChatResponse
-	err := m.chat(ctx, cfg, ai.ChatRequest{Instructions: inspectionInstructions(fixture.Language) + diagnosisInstructions(fixture) + reportContract(fixture) + contextInstructions(fixture), Messages: []ai.Message{{Role: "user", Content: tr(language, "根据模拟证据生成诊断报告。本次不连接服务器，不调用工具。", "Diagnose this simulated evidence. No server connection or tools.") + string(raw)}}, EnableTools: false}, func(chunk ai.ChatResponse) {
+	err := m.chat(ctx, cfg, ai.ChatRequest{Instructions: inspectionInstructions(fixture.Language) + diagnosisInstructions(fixture) + reportContract(fixture) + contextInstructions(fixture), Messages: []ai.Message{{Role: "user", Content: tr(language, "根据模拟证据生成诊断报告。本次不连接服务器，不调用工具。", "Diagnose this simulated evidence. No server connection or tools.") + string(raw) + reportReminder(fixture)}}, EnableTools: false, JSONObject: true}, func(chunk ai.ChatResponse) {
 		if content.Len() < maxReport {
 			content.WriteString(chunk.Content)
 		}

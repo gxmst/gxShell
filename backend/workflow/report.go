@@ -116,11 +116,23 @@ func baselineReading(run Run, e Evidence) string {
 	if e.Truncated {
 		return tr(run.Language, "输出已截断，结果未确认", "Output truncated; result unconfirmed")
 	}
-	if e.Query.Check == "services" && strings.Contains(e.Output, "GXSHELL_SERVICE_MANAGER=systemd") &&
-		strings.TrimSpace(strings.ReplaceAll(e.Output, "GXSHELL_SERVICE_MANAGER=systemd", "")) == "" {
+	if noFailedUnits(e) {
 		return tr(run.Language, "未报告失败的 systemd 服务单元", "No failed systemd units were reported")
 	}
 	return tr(run.Language, "已取得输出，尚未形成健康结论", "Output collected; health has not been assessed")
+}
+
+// noFailedUnits reads the systemd services check: the explicit
+// GXSHELL_FAILED_UNITS=0 line, or (older history) a bare marker with no units.
+func noFailedUnits(e Evidence) bool {
+	if e.Query.Check != "services" || !strings.Contains(e.Output, "GXSHELL_SERVICE_MANAGER=systemd") {
+		return false
+	}
+	rest := strings.TrimSpace(strings.ReplaceAll(e.Output, "GXSHELL_SERVICE_MANAGER=systemd", ""))
+	if count, found := strings.CutPrefix(rest, "GXSHELL_FAILED_UNITS="); found {
+		return strings.TrimSpace(count) == "0"
+	}
+	return rest == ""
 }
 
 func fallbackDocument(run Run) *ReportDocument {
@@ -343,6 +355,13 @@ func normalizeReport(text string, run Run) (*ReportDocument, []string, error) {
 		}
 		measured = append(measured, reconcileCheck(run, &item, refs)...)
 		checks = append(checks, item)
+	}
+	// Without a single recognizable check the answer used some other schema;
+	// filling every check from fallbacks would pass off an empty report as a
+	// corrected one.
+	if len(checks) == 0 {
+		names, _ := json.Marshal(RunChecks(run))
+		return nil, nil, fmt.Errorf("report does not use the required schema: checks must contain one item per check identifier %s", names)
 	}
 	for _, check := range RunChecks(run) {
 		if !seen[check] {
@@ -598,6 +617,12 @@ func ReportMarkdown(run Run) string {
 		fmt.Fprintf(&out, tr(l, "人工核实已完成：%d 项正常，%d 项确认存在问题，%d 项不适用。\n\n", "Human review complete: %d normal, %d confirmed issues, %d not applicable.\n\n"), normal, issues, notApplicable)
 	}
 	writeAnalysisMarkdown(&out, run)
+	if run.UnverifiedAnswer != "" {
+		fence := strings.Repeat("`", 3)
+		fmt.Fprintf(&out, "## %s\n\n> %s\n\n%stext\n%s\n%s\n\n", tr(l, "AI 原文（未通过格式校验）", "AI answer (failed format validation)"),
+			tr(l, "模型没有按要求的格式返回，以下是它的原文，结论没有经过程序核对。", "The model ignored the required format. Its text is shown as-is; nothing in it was checked by the program."),
+			fence, strings.ReplaceAll(run.UnverifiedAnswer, fence, "'''"), fence)
+	}
 	fmt.Fprintf(&out, "## %s\n\n", tr(l, "检查总览", "Check overview"))
 	fmt.Fprintf(&out, "| %s | %s | %s | %s |\n| --- | --- | --- | --- |\n", tr(l, "检查项", "Check"), tr(l, "结论", "Result"), tr(l, "关键读数", "Reading"), tr(l, "证据", "Evidence"))
 	linkRefs := markdownEvidenceRefs

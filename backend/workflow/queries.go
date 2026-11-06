@@ -65,7 +65,8 @@ func Command(query Query) (string, error) {
 	case "memory":
 		return "if command -v free >/dev/null 2>&1; then free -m; else cat /proc/meminfo; fi", nil
 	case "services":
-		return "if command -v systemctl >/dev/null 2>&1; then echo 'GXSHELL_SERVICE_MANAGER=systemd'; systemctl --failed --no-legend --no-pager; elif command -v rc-status >/dev/null 2>&1; then echo 'GXSHELL_SERVICE_MANAGER=openrc'; rc-status -a; else echo 'No supported service manager'; exit 127; fi", nil
+		// The explicit count keeps "no failed units" distinguishable from "not listed".
+		return "if command -v systemctl >/dev/null 2>&1; then echo 'GXSHELL_SERVICE_MANAGER=systemd'; failed=$(systemctl --failed --no-legend --no-pager); status=$?; echo \"GXSHELL_FAILED_UNITS=$(printf '%s\\n' \"$failed\" | grep -c .)\"; [ -z \"$failed\" ] || printf '%s\\n' \"$failed\"; exit \"$status\"; elif command -v rc-status >/dev/null 2>&1; then echo 'GXSHELL_SERVICE_MANAGER=openrc'; rc-status -a; else echo 'No supported service manager'; exit 127; fi", nil
 	case "ports":
 		return "if command -v ss >/dev/null 2>&1; then ss -lntp; else netstat -lntp; fi", nil
 	case "containers":

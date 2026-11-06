@@ -18,6 +18,7 @@
 .inspection-ai-analysis { border-left: 3px solid var(--accent); padding-left: 16px; }
 .inspection-ai-insight { margin: 16px 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
 .inspection-ai-assessment { font-size: 14px; line-height: 1.7; }
+.inspection-unverified { border: 1px dashed var(--border); border-radius: 8px; padding: 10px 12px; }
 .inspection-host-background, .inspection-host-snapshot, .inspection-trace, .inspection-evaluation { margin: 12px 0; }
 .inspection-trace li { padding: 8px 0; border-bottom: 1px solid var(--border); }
 .inspection-trace .btn-secondary { margin: 4px; }

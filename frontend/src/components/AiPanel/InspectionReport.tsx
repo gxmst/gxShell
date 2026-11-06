@@ -104,13 +104,17 @@ export function InspectionReport({ run, locale, compact = false, onOpen, history
     </section>
     {compact ? <>
       {doc.analysis && <p className="inspection-report-preview"><strong>{t(locale, "inspectionAiAssessment")}</strong><br />{doc.analysis.assessment}</p>}
+      {!doc.analysis && run.unverifiedAnswer && <p className="inspection-report-preview"><strong>{t(locale, "inspectionUnverifiedTitle")}</strong><br />{t(locale, "inspectionUnverifiedPreview")}</p>}
       {doc.findings.slice(0, 2).map((f, i) => <p key={i} className="inspection-report-preview"><strong>{f.title}</strong><br />{f.detail}</p>)}
       <button className="btn-secondary inspection-report-open" onClick={onOpen}>{t(locale, "inspectionViewReport")}</button>
     </> : <>
       {run.parentId && <p>{t(locale, "inspectionFollowupOriginal")} · <button className="btn-secondary" onClick={() => onSelectRun?.(run.parentId!)}>{run.parentId.slice(0, 8)}</button><br />{run.question}</p>}
       <section className="inspection-ai-analysis">
         <h3>{t(locale, "inspectionAiAssessment")}</h3>
-        {!doc.analysis ? <p className="inspection-report-empty">{t(locale, "inspectionAiMissing")}</p> : <>
+        {!doc.analysis ? run.unverifiedAnswer ? <div className="inspection-unverified">
+          <p className="inspection-report-empty"><strong>{t(locale, "inspectionUnverifiedTitle")}</strong> · {t(locale, "inspectionUnverifiedNote")}</p>
+          <MarkdownContent content={run.unverifiedAnswer} />
+        </div> : <p className="inspection-report-empty">{t(locale, "inspectionAiMissing")}</p> : <>
           <p className="inspection-ai-assessment">{doc.analysis.assessment}</p>
           {doc.analysis.insights.map((insight, index) => <div className="inspection-ai-insight" key={index}>
             <h4>{insight.title} · <small>{t(locale, insight.confidence === "supported" ? "inspectionAiSupported" : insight.confidence === "hypothesis" ? "inspectionAiHypothesis" : "inspectionAiUncertain")}</small></h4>

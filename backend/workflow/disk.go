@@ -22,8 +22,10 @@ func diskUsageCommand(scope string) (string, error) {
 		paths = "'" + scope + "'"
 	}
 	// Traversal may still read a large directory tree. Limit time and priority,
-	// stay on each filesystem, and never elevate privileges.
-	return "if ! command -v timeout >/dev/null 2>&1; then echo 'Bounded directory scan requires timeout'; exit 127; fi; if command -v ionice >/dev/null 2>&1 && command -v nice >/dev/null 2>&1; then timeout 12 ionice -c 3 nice -n 19 du -x -k -d 1 " + paths + "; elif command -v nice >/dev/null 2>&1; then timeout 12 nice -n 19 du -x -k -d 1 " + paths + "; else timeout 12 du -x -k -d 1 " + paths + "; fi", nil
+	// stay on each filesystem, and never elevate privileges. Directories that
+	// do not exist on this host (no Docker, no /home) are reported rather than
+	// handed to du, whose error would otherwise fail the whole scan.
+	return "if ! command -v timeout >/dev/null 2>&1; then echo 'Bounded directory scan requires timeout'; exit 127; fi; set --; for p in " + paths + "; do if [ -d \"$p\" ]; then set -- \"$@\" \"$p\"; else echo \"GXSHELL_ABSENT=$p\"; fi; done; [ \"$#\" -gt 0 ] || exit 0; if command -v ionice >/dev/null 2>&1 && command -v nice >/dev/null 2>&1; then timeout 12 ionice -c 3 nice -n 19 du -x -k -d 1 \"$@\"; elif command -v nice >/dev/null 2>&1; then timeout 12 nice -n 19 du -x -k -d 1 \"$@\"; else timeout 12 du -x -k -d 1 \"$@\"; fi", nil
 }
 
 func inspectionToolsFor(run Run) []map[string]any {

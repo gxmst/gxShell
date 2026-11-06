@@ -83,8 +83,9 @@ confirmed findings merely because the model proposes them.
 The backend validates check identifiers and evidence references before accepting
 conclusions. An item with a wrong citation, status or field is replaced with its
 evidence-derived reading or dropped, instead of discarding the whole report.
-Missing/truncated evidence stays unconfirmed. A successful empty
-failed-unit query explicitly means no failed systemd units were reported.
+Missing/truncated evidence stays unconfirmed. The services check prints
+`GXSHELL_FAILED_UNITS=<count>` before any failed units, so `0` explicitly means
+systemd reported no failed units rather than "nothing was listed".
 Disk usage, memory and load measurements are extracted from collected output,
 separately from model interpretation.
 
@@ -95,11 +96,23 @@ writes the complete report including evidence; Copy Report copies the same
 Markdown. Default filenames contain the host, timestamp and report ID.
 
 New reports use the interface language captured when the task starts. Chinese
-prose is validated before acceptance. An answer with problems gets one repair
-turn with tools disabled that lists each problem, within the existing task
-deadline. The answer with fewer problems is kept, with bad items already
-replaced. Only an unreadable answer fails the task, and the partial structured
-report preserves the evidence. Commands,
+prose is validated before acceptance. The evidence message ends with a reminder
+that the final answer must be one JSON object with one item per check, and the
+report-only last turn asks the provider for JSON output where the protocol has
+such a mode (OpenAI-compatible `response_format`, Gemini `responseMimeType`,
+Ollama `format`); an endpoint that rejects the parameter is asked once more
+without it. Anthropic has no such mode and relies on the prompt.
+
+An answer with problems gets one repair turn with tools disabled and JSON
+output requested, within the existing task deadline. The repair prompt names
+the kind of mistake ("Markdown instead of JSON", or the invented field names),
+lists the item problems, and includes a skeleton with this run's check
+identifiers and evidence IDs to fill in. The answer with fewer problems is kept,
+with bad items already replaced. An answer that contains none of the required
+check identifiers does not count as a report. When neither answer is usable the
+task fails, the measured readings stay in the report, and the model's own text
+is shown in the AI analysis section and in MD export, labelled as failing
+format validation and not checked against evidence. Commands,
 service names and raw logs retain their original text. Historical Markdown
 reports remain readable and exportable without automatic translation.
 
@@ -124,7 +137,9 @@ sizes, journal size and Docker storage. Directory scans are limited to
 /var/log, /var/cache, /var/lib/docker, /home and /tmp, stay on each filesystem,
 and stop after 12 seconds. They use idle I/O priority and niceness when available;
 without timeout the scan is unavailable. Scanning a large tree still performs
-I/O. Missing directories, permissions and partial scans remain unconfirmed.
+I/O. A scope that does not exist on the host (for example /var/lib/docker
+without Docker) is reported as `GXSHELL_ABSENT=<path>` and skipped instead of
+failing the whole scan. Permissions and partial scans remain unconfirmed.
 No files are removed by diagnosis.
 
 Measured disk/inode usage at 90% is flagged for attention and at 95% as critical.
@@ -245,6 +260,13 @@ Each case makes one bounded model call with simulated evidence and saves the
 raw answer, expected/actual check states, format/reference validation, analysis
 presence, tokens and duration. Results record model/protocol, case version and
 prompt version, allowing comparisons after changing models or prompts.
+Case version 2 / prompt version assessment-v3 added the explicit failed-unit
+count and the JSON reminder and output mode; compare scores only within one
+version.
+
+Each case is a single tool-less turn, so it does not reproduce a model that
+drifts into Markdown after several tool rounds. Real-run statistics are the
+measure for that.
 
 Check accuracy is calculated from the original model answer BEFORE deterministic
 report rules correct it. A model that misses disk pressure therefore loses the

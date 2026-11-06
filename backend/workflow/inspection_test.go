@@ -156,13 +156,13 @@ func TestInspectionRoundBudgetAndModelFailure(t *testing.T) {
 						return fmt.Errorf("model connection interrupted")
 					}
 					if turn < MaxRounds {
-						if !req.EnableTools {
-							t.Error("query rounds disabled early")
+						if !req.EnableTools || req.JSONObject {
+							t.Error("query rounds must keep tools and stay unconstrained")
 						}
 						output(ai.ChatResponse{Finish: true, ToolCalls: []ai.ToolCall{{ID: fmt.Sprint(turn), Function: ai.FunctionCall{Name: "inspect_service", Arguments: fmt.Sprintf("{\"service\":\"service%d\",\"view\":\"status\"}", turn)}}}})
 					} else {
-						if req.EnableTools {
-							t.Error("tools available after budget exhaustion")
+						if req.EnableTools || !req.JSONObject {
+							t.Error("the report-only turn must disable tools and ask for JSON")
 						}
 						output(ai.ChatResponse{Content: testReportJSON("en", Checks)})
 						output(ai.ChatResponse{Finish: true})

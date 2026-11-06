@@ -162,3 +162,14 @@ it("lists saved cases unselected and deletes one only after confirmation", async
   await waitFor(() => expect(screen.queryByRole("checkbox", { name: /调试端口漏报/ })).not.toBeInTheDocument());
   expect(saved).not.toBeChecked();
 });
+it("shows a model answer that failed format validation as unverified, sanitized text", () => {
+  const failed = { ...run(), state: "partial", error: "模型没有按要求的格式返回报告", unverifiedAnswer: "## 诊断报告\n\n**microsocks** 监听在 `0.0.0.0:8080`<img src=x onerror=alert(1)>",
+    document: { ...run().document!, analysis: undefined } };
+  const { container } = render(<InspectionReport run={failed} locale="zh-CN" />);
+  const section = screen.getByRole("heading", { name: "AI 分析意见" }).closest("section") as HTMLElement;
+  expect(within(section).getByText("AI 原文（未通过格式校验）")).toBeInTheDocument();
+  expect(within(section).getByRole("heading", { name: "诊断报告" })).toBeInTheDocument();
+  expect(within(section).getByText("microsocks")).toBeInTheDocument();
+  expect(container.querySelector("img[onerror]")).toBeNull();
+  expect(screen.getByRole("table")).toHaveTextContent("端口 8080 存在监听。");
+});

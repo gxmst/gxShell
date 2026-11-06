@@ -178,7 +178,7 @@ func TestInspectionFaultScenariosOverRealSSH(t *testing.T) {
 					Evidence []workflow.Evidence `json:"evidence"`
 				}
 				start := strings.Index(message.Content, "{")
-				if start >= 0 && json.Unmarshal([]byte(message.Content[start:]), &value) == nil && len(value.Evidence) > 0 {
+				if start >= 0 && json.NewDecoder(strings.NewReader(message.Content[start:])).Decode(&value) == nil && len(value.Evidence) > 0 {
 					run.Evidence = value.Evidence
 					for _, e := range value.Evidence {
 						if e.Query.Check == "disk_usage" {

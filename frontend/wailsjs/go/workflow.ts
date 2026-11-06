@@ -64,6 +64,7 @@ export interface InspectionRun {
   trace?: InspectionTrace[];
   feedback?: InspectionFeedback[];
   reportSchemaVersion?: number;
+  unverifiedAnswer?: string;
 }
 
 export interface DossierInput { revision: number; purpose: string; environment: string; services: string[]; ports: number[]; containerRuntime: string; notes: string; sourceRunId?: string; sourceUnknownId?: string; }

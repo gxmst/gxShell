@@ -66,7 +66,7 @@ func (m *Manager) StartDiagnosis(parentContext context.Context, sessionID, profi
 
 func diagnosisInstructions(run Run) string {
 	if run.Workflow == "disk_diagnosis" {
-		return "Investigate disk space pressure using partition usage, inode usage, the fixed directory scan, journal size and Docker storage summary. Directory scans are bounded to 12 seconds and fixed scopes; partial/permission-denied scans are unknown. Distinguish filesystem fullness, inode exhaustion, journal growth and Docker storage; never recommend deleting unknown data, active logs or volumes. No cleanup is performed in diagnosis. Use inspect_disk only for the fixed scope enum. "
+		return "Investigate disk space pressure using partition usage, inode usage, the fixed directory scan, journal size and Docker storage summary. Directory scans are bounded to 12 seconds and fixed scopes; GXSHELL_ABSENT=<path> means that directory does not exist on this host and was skipped, which is not a fault; partial/permission-denied scans are unknown. Distinguish filesystem fullness, inode exhaustion, journal growth and Docker storage; never recommend deleting unknown data, active logs or volumes. No cleanup is performed in diagnosis. Use inspect_disk only for the fixed scope enum. "
 	}
 	if run.Workflow != "service_diagnosis" {
 		return ""

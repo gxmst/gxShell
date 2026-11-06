@@ -82,7 +82,8 @@ func TestFollowupPinsBackgroundAndKeepsParentEvidence(t *testing.T) {
 			Evidence []Evidence `json:"evidence"`
 		}
 		text := request.Messages[0].Content
-		_ = json.Unmarshal([]byte(text[strings.Index(text, "{"):]), &input)
+		// Decode only the evidence object; the format reminder follows it.
+		_ = json.NewDecoder(strings.NewReader(text[strings.Index(text, "{"):])).Decode(&input)
 		doc := ReportDocument{Version: 2, Verdict: "unknown", Summary: "已核对端口归属。", Analysis: testAnalysis("zh-CN"), Checks: []ReportCheck{}, Findings: []Finding{}, Unknowns: []Uncertainty{}}
 		for _, check := range Checks {
 			for _, e := range currentEvidence(Run{Evidence: input.Evidence}) {
