@@ -169,7 +169,7 @@ func TestInspectionRepairsWrongLanguageWithoutMoreQueries(t *testing.T) {
 			if calls == 0 {
 				onChunk(ai.ChatResponse{Content: testReportJSON("en", Checks)})
 			} else {
-				if req.EnableTools {
+				if !onlyReportTool(req) {
 					t.Error("repair can execute tools")
 				}
 				onChunk(ai.ChatResponse{Content: testReportJSON("zh-CN", Checks)})

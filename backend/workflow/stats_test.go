@@ -39,7 +39,7 @@ func TestStatsClassifiesReportOutcomesPerModel(t *testing.T) {
 		t.Fatalf("groups: %+v", stats)
 	}
 	got := stats[0]
-	want := ModelStats{Provider: "openai", Model: "flash", Runs: 6, Stopped: 1, Clean: 1, Corrected: 2, Failed: 1, NoReport: 1, FalseAlarms: 1, MissedIssues: 1, AvgTokens: 1000, AvgDurationMs: 2000}
+	want := ModelStats{Provider: "openai", Model: "flash", Completed: 3, Runs: 6, Stopped: 1, Clean: 1, Corrected: 2, Failed: 1, NoReport: 1, FalseAlarms: 1, MissedIssues: 1, AvgTokens: 1000, AvgDurationMs: 2000}
 	if got != want {
 		t.Fatalf("flash stats\n got %+v\nwant %+v", got, want)
 	}

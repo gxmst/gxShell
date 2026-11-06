@@ -31,6 +31,8 @@ export interface InspectionReview { unknownId: string; outcome: "normal" | "issu
 export interface InspectionComparison { baselineId: string; baselineAt: string; comparedAt: string; changes: { metric: string; subject: string; before: string; after: string; delta: string; state: string }[]; }
 export interface InspectionActionPlan { id: string; kind: string; title: string; command: string; impact: string; status: string; output?: string; error?: string; exitCode: number; remoteState?: string; verificationId?: string; verificationError?: string; createdAt: string; startedAt: string; finishedAt: string; }
 export interface InspectionRun {
+	workflowVersion?: string; promptVersion?: string; endpointId?: string; reportMode?: string;
+	batchId?: string; batchConcurrency?: number; startedAt?: string; sessionGeneration?: number;
   id: string;
   workflow: string;
   sessionId: string;
@@ -72,8 +74,9 @@ export interface DossierRevision extends DossierInput { updatedAt: string; revie
 export interface HostDossier extends DossierRevision { profileId: string; history?: DossierRevision[]; }
 export interface InspectionTrace { id: string; kind: string; reason: string; state: string; query?: InspectionEvidence["query"]; evidenceIds?: string[]; startedAt: string; finishedAt: string; durationMs: number; promptTokens?: number; completionTokens?: number; error?: string; output?: string; }
 export interface InspectionFeedback { outcome: "correct" | "false_alarm" | "missed_issue"; note: string; reviewer: string; at: string; }
-export interface InspectionEvaluationCase { id: string; title: string; description: string; saved?: boolean; target?: string; createdAt?: string; }
+export interface InspectionEvaluationCase { id: string; title: string; description: string; saved?: boolean; target?: string; createdAt?: string; multiRound?: boolean; }
 export interface InspectionSavedCase { id: string; title: string; sourceRunId: string; target: string; workflow: string; service?: string; port?: number; evidence: InspectionEvidence[]; expected: Record<string, string>; feedback: InspectionFeedback; reviewer: string; createdAt: string; }
-export interface InspectionEvaluationResult { caseId: string; title: string; passed: boolean; schemaValid: boolean; correctChecks: number; totalChecks: number; analysisPresent: boolean; expected: Record<string, string>; actual: Record<string, string>; error?: string; durationMs: number; promptTokens: number; completionTokens: number; rawReport?: string; }
-export interface InspectionModelStats { provider: string; model: string; runs: number; stopped: number; clean: number; corrected: number; failed: number; noReport: number; falseAlarms: number; missedIssues: number; avgTokens: number; avgDurationMs: number; }
-export interface InspectionEvaluationRun { id: string; provider: string; model: string; language: string; state: string; caseVersion: number; promptVersion?: string; caseIds: string[]; createdAt: string; finishedAt: string; results: InspectionEvaluationResult[]; error?: string; }
+export interface InspectionEvaluationResult { caseId: string; title: string; passed: boolean; schemaValid: boolean; correctChecks: number; totalChecks: number; analysisPresent: boolean; expected: Record<string, string>; actual: Record<string, string>; error?: string; durationMs: number; promptTokens: number; completionTokens: number; rawReport?: string; reportMode?: string; toolRounds?: number; modelCalls?: number; workflowCompleted?: boolean; }
+export interface InspectionModelStats { provider: string; model: string; runs: number; stopped: number; clean: number; corrected: number; failed: number; noReport: number; falseAlarms: number; missedIssues: number; avgTokens: number; avgDurationMs: number; workflowVersion?: string; promptVersion?: string; endpointId?: string; reportMode?: string; language?: string; workflow?: string; batchId?: string; completed?: number; }
+export interface InspectionEvaluationRun { id: string; provider: string; model: string; language: string; state: string; caseVersion: number; promptVersion?: string; workflowVersion?: string; endpointId?: string; caseIds: string[]; createdAt: string; finishedAt: string; results: InspectionEvaluationResult[]; error?: string; }
+export interface InspectionBatch { id: string; state: string; concurrency: number; createdAt: string; runs: InspectionRun[]; completed: number; unfinished: number; promptTokens: number; completionTokens: number; }

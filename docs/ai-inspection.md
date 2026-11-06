@@ -45,7 +45,8 @@ input tokens the provider reported for the active chat's latest request.
 3. The built-in workflow reads system/CPU information, load, disk, memory,
    failed systemd units or OpenRC status, listening TCP ports, and containers.
 4. The model analyzes that evidence and may make at most three follow-up rounds,
-   each with at most three queries. The final model turn is report-only.
+   each with at most three queries. The final model turn exposes only the
+   data-only `submit_report` tool.
 5. View the report, expand evidence, or copy the report. Previous reports remain
    available in local history.
 
@@ -62,6 +63,30 @@ There is one active inspection per server, a five-minute task deadline, a
 20-second query deadline, and bounded evidence/report output. Stop propagates
 cancellation to the model request and SSH exec channel; channel closure does not
 prove the remote command or detached children stopped.
+
+### Parallel hosts
+
+The Inspection view has Single Host and Parallel Hosts modes. Select 2–12
+connected SSH hosts and concurrency 1–3 (default 2). A batch asks for all
+selected hosts in one approval panel; unchecking any prevents the whole batch
+from starting. The backend reserves all hosts before any execution. Only one
+batch runs at a time, and queued hosts also block competing inspections/actions.
+Each instance has independent evidence, model messages, background snapshot,
+report and review records. Queued time does not consume its five-minute
+execution deadline. Connection generations are checked before each batch query;
+a replaced session is not used to collect evidence.
+
+Stop This Host also cancels a queued instance; Stop Entire Batch cancels all
+remaining instances. One failure does not stop the other hosts. Progress and
+Token usage are shown per host and for the batch. Results prioritize active,
+unfinished and flagged hosts, with each report retaining its own human review,
+evidence, follow-ups and export. Export Summary MD records host-scoped summaries,
+report IDs and pending reviews; detailed evidence stays in each host report.
+Batch history is reconstructed from persisted host runs. Restart marks unfinished
+members interrupted and never automatically resumes them. These are parallel
+agent instances with the same inspection role. A Go coordinator schedules their
+independent tool loops and aggregates host-scoped results; models do not exchange
+messages or infer cross-host causes.
 
 Collected means output was obtained, not that a service or resource is healthy.
 Missing utilities, denied access, transport failures and truncated output remain
@@ -96,15 +121,33 @@ writes the complete report including evidence; Copy Report copies the same
 Markdown. Default filenames contain the host, timestamp and report ID.
 
 New reports use the interface language captured when the task starts. Chinese
-prose is validated before acceptance. The evidence message ends with a reminder
-that the final answer must be one JSON object with one item per check, and the
-report-only last turn asks the provider for JSON output where the protocol has
-such a mode (OpenAI-compatible `response_format`, Gemini `responseMimeType`,
-Ollama `format`); an endpoint that rejects the parameter is asked once more
-without it. Anthropic has no such mode and relies on the prompt.
+prose is validated before acceptance. Each query round also offers
+`submit_report`, allowing early submission. The last turn offers only this tool,
+with a native named tool choice for OpenAI-compatible, Anthropic and Gemini
+requests. Ollama offers the same single tool with a prompt constraint, since
+the current native adapter has no forced-choice parameter.
 
-An answer with problems gets one repair turn with tools disabled and JSON
-output requested, within the existing task deadline. The repair prompt names
+The backend reads report arguments only after the stream completes. Mixed
+report/query responses, multiple submissions, incomplete streams and oversized
+arguments cannot execute host commands or become accepted reports. An endpoint
+that explicitly rejects tool choice is retried without that constraint; an
+endpoint that explicitly rejects tools falls back to tool-less JSON output
+where supported. JSON-constraint rejection allows one further unconstrained
+retry. These adapter retries never replay a response after streaming starts or retry authentication/transport
+failures. The current Anthropic adapter's tool-less fallback relies on the
+prompt's JSON contract. The actual accepted submission method is recorded.
+
+An answer with problems gets one repair turn with only `submit_report` allowed,
+within the existing task deadline. This includes tool arguments that are not a
+JSON object when the provider stream has fully completed. The adapter rejects
+every call in that response, including otherwise valid queries, and passes the
+rejected arguments only to the built-in report repair path. Ordinary chat never
+receives executable calls from that response. Interrupted streams, token-limit
+finishes and authentication/transport failures do not enter this repair path.
+Completed but rejected responses retain their provider token usage and a
+redacted trace of the rejected calls; repair tokens are counted once. If repair
+also fails, the run remains partial and the batch card shows its failure reason.
+The repair prompt names
 the kind of mistake ("Markdown instead of JSON", or the invented field names),
 lists the item problems, and includes a skeleton with this run's check
 identifiers and evidence IDs to fill in. The answer with fewer problems is kept,
@@ -228,6 +271,9 @@ recorded explicitly. On app restart an unfinished action becomes Unknown.
 
 Tasks and redacted evidence are written atomically under the gxShell data
 directory's inspections folder, one JSON file per run, after each transition.
+On Windows, replacement retries only access-denied/sharing violations for up
+to 310 ms of backoff to tolerate temporary scanner handles. It never deletes
+the old destination or replays inspection; persistent save failures remain visible.
 The UI lists the latest 30 records; older files are preserved. API keys and SSH
 credentials are not part of the task schema. Known credentials and conventional
 secret patterns are scrubbed before output goes into history or model context.
@@ -256,17 +302,21 @@ audited under the report without overwriting AI opinions or measurements.
 Model Diagnostic Evaluation is opened from AI Settings. It uses the currently saved model with four selectable
 fixed fixtures: a healthy host, 98% disk usage, an inactive service/unreachable
 local port, and missing Docker. It executes no SSH commands or tools.
-Each case makes one bounded model call with simulated evidence and saves the
+Each fixed case makes one bounded model call with simulated evidence and only
+the report submission tool, then saves the
 raw answer, expected/actual check states, format/reference validation, analysis
 presence, tokens and duration. Results record model/protocol, case version and
 prompt version, allowing comparisons after changing models or prompts.
-Case version 2 / prompt version assessment-v3 added the explicit failed-unit
-count and the JSON reminder and output mode; compare scores only within one
-version.
-
-Each case is a single tool-less turn, so it does not reproduce a model that
-drifts into Markdown after several tool rounds. Real-run statistics are the
-measure for that.
+Case version 3 / prompt version assessment-v4 uses the submission tool and adds
+two optional multi-round cases (healthy host and disk pressure). These reuse
+the actual inspection orchestration with a simulated executor, require at least
+two separate query rounds before submission, and never connect SSH. They record
+tool rounds, model calls, submission method and workflow completion separately
+from original-report format and check scores. Repair/rule corrections do not
+inflate original-report scores. Temporary evaluation runs never enter real-host
+history/statistics. The four single-turn cases remain selected by default;
+multi-round cases are opt-in and can use more time/tokens. Historical evaluation
+versions remain unchanged; compare like versions.
 
 Check accuracy is calculated from the original model answer BEFORE deterministic
 report rules correct it. A model that misses disk pressure therefore loses the
@@ -278,14 +328,22 @@ and are not automatically retried. The fixture data is sent to the selected API,
 and normal provider token charges may apply.
 
 The same dialog shows Real-Run Statistics for saved diagnoses on your own
-servers, grouped by provider and model. Each finished run is classified from
+servers, grouped by provider/model, workflow/prompt version, endpoint fingerprint,
+submission method, language, workflow and batch. Version and batch filters
+separate new experiments from historical, unversioned runs. Endpoint fingerprints
+contain no URL or credentials. Each finished run is classified from
 its report validation steps: accepted on the first answer, auto-corrected
 (item fixes or a successful repair turn), report failed (no answer was
 accepted), or no report (the task ended before the model produced one).
 Cancelled and interrupted runs are counted but excluded from the percentages,
-average tokens and average duration. False alarm and missed issue counts use
+average tokens and average execution duration (excluding queue wait). Workflow
+completion is shown separately from report acceptance. False alarm and missed issue counts use
 the latest feedback on each run. Statistics are computed locally from saved
 history; nothing is sent to the model.
+
+Format acceptance and workflow completion do not establish diagnostic accuracy;
+check-score evaluation and human feedback remain independent measures. New runs
+record inspection-v5 / assessment-v4; old runs are not retroactively labelled.
 
 ### Cases from real reports
 
@@ -302,7 +360,10 @@ An evaluation takes one to eight cases. When any saved case is selected, the
 in-app approval panel lists those cases with their servers and names the
 provider, model and endpoint that will receive the evidence; this is asked
 every time and is never remembered. Rejecting it starts nothing. Saved cases
-are graded the same way as fixtures: on the model's raw answer, before
+in a batch must all be approved; unchecking any cancels the batch so the user
+can change the selected cases before trying again. Unknown approval IDs do
+not authorize cases. Saved cases are graded the same way as fixtures: on the
+model's raw answer, before
 deterministic rules correct it, against the user's expected states.
 
 ## Validation

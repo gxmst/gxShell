@@ -162,7 +162,7 @@ func TestAnalysisValidationAndLatestEvidence(t *testing.T) {
 
 func TestEvaluationGradesRawModelWithoutSSHAndPersists(t *testing.T) {
 	model := func(_ context.Context, _ ai.Config, request ai.ChatRequest, emit func(ai.ChatResponse)) error {
-		if request.EnableTools || len(request.Tools) != 0 {
+		if !onlyReportTool(request) {
 			t.Error("evaluation exposed execution tools")
 		}
 		emit(ai.ChatResponse{Content: testReportJSON("en", Checks)})

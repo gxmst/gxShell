@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -21,36 +23,43 @@ type EvaluationCase struct {
 	Saved       bool      `json:"saved,omitempty"`
 	Target      string    `json:"target,omitempty"`
 	CreatedAt   time.Time `json:"createdAt,omitempty"`
+	MultiRound  bool      `json:"multiRound,omitempty"`
 }
 type EvaluationResult struct {
-	CaseID           string            `json:"caseId"`
-	Title            string            `json:"title"`
-	Passed           bool              `json:"passed"`
-	SchemaValid      bool              `json:"schemaValid"`
-	CorrectChecks    int               `json:"correctChecks"`
-	TotalChecks      int               `json:"totalChecks"`
-	AnalysisPresent  bool              `json:"analysisPresent"`
-	Expected         map[string]string `json:"expected"`
-	Actual           map[string]string `json:"actual"`
-	Error            string            `json:"error,omitempty"`
-	DurationMs       int64             `json:"durationMs"`
-	PromptTokens     int               `json:"promptTokens"`
-	CompletionTokens int               `json:"completionTokens"`
-	RawReport        string            `json:"rawReport,omitempty"`
+	CaseID            string            `json:"caseId"`
+	Title             string            `json:"title"`
+	Passed            bool              `json:"passed"`
+	SchemaValid       bool              `json:"schemaValid"`
+	CorrectChecks     int               `json:"correctChecks"`
+	TotalChecks       int               `json:"totalChecks"`
+	AnalysisPresent   bool              `json:"analysisPresent"`
+	Expected          map[string]string `json:"expected"`
+	Actual            map[string]string `json:"actual"`
+	Error             string            `json:"error,omitempty"`
+	DurationMs        int64             `json:"durationMs"`
+	PromptTokens      int               `json:"promptTokens"`
+	CompletionTokens  int               `json:"completionTokens"`
+	RawReport         string            `json:"rawReport,omitempty"`
+	ReportMode        string            `json:"reportMode,omitempty"`
+	ToolRounds        int               `json:"toolRounds,omitempty"`
+	WorkflowCompleted bool              `json:"workflowCompleted"`
+	ModelCalls        int               `json:"modelCalls,omitempty"`
 }
 type EvaluationRun struct {
-	ID            string             `json:"id"`
-	Provider      string             `json:"provider"`
-	Model         string             `json:"model"`
-	Language      string             `json:"language"`
-	State         string             `json:"state"`
-	CaseVersion   int                `json:"caseVersion"`
-	PromptVersion string             `json:"promptVersion"`
-	CaseIDs       []string           `json:"caseIds"`
-	CreatedAt     time.Time          `json:"createdAt"`
-	FinishedAt    time.Time          `json:"finishedAt"`
-	Results       []EvaluationResult `json:"results"`
-	Error         string             `json:"error,omitempty"`
+	ID              string             `json:"id"`
+	Provider        string             `json:"provider"`
+	Model           string             `json:"model"`
+	Language        string             `json:"language"`
+	State           string             `json:"state"`
+	CaseVersion     int                `json:"caseVersion"`
+	PromptVersion   string             `json:"promptVersion"`
+	CaseIDs         []string           `json:"caseIds"`
+	CreatedAt       time.Time          `json:"createdAt"`
+	FinishedAt      time.Time          `json:"finishedAt"`
+	Results         []EvaluationResult `json:"results"`
+	Error           string             `json:"error,omitempty"`
+	WorkflowVersion string             `json:"workflowVersion,omitempty"`
+	EndpointID      string             `json:"endpointId,omitempty"`
 }
 
 func EvaluationCases(language string) []EvaluationCase {
@@ -59,9 +68,17 @@ func EvaluationCases(language string) []EvaluationCase {
 		{ID: "disk_pressure", Title: tr(language, "磁盘接近满", "Disk pressure"), Description: tr(language, "根分区使用率 98%，应识别磁盘异常。", "Root usage is 98%; detect critical disk pressure.")},
 		{ID: "service_port", Title: tr(language, "服务停止与端口不通", "Stopped service and unreachable port"), Description: tr(language, "服务未运行，所选端口本机连接失败，其他端口存在监听。", "The service is inactive and its local port fails; another port is listening.")},
 		{ID: "missing_tool", Title: tr(language, "Docker 工具缺失", "Missing Docker tool"), Description: tr(language, "Docker 不存在应判为未确认，不能当作容器故障。", "Missing Docker should be unconfirmed, not a container fault.")},
+		{ID: "multi_round_healthy", Title: tr(language, "多轮补查后提交：正常主机", "Multi-round submission: healthy host"), Description: tr(language, "运行完整巡检流程，至少两轮模拟服务补查后提交报告；不连接 SSH。", "Run the inspection workflow and submit after at least two rounds of simulated service queries; no SSH."), MultiRound: true},
+		{ID: "multi_round_disk", Title: tr(language, "多轮补查后提交：磁盘异常", "Multi-round submission: disk pressure"), Description: tr(language, "多轮工具交互后识别 98% 磁盘占用，同时校验格式和原始判断。", "Detect 98% disk usage after multiple tool rounds; grade format and original judgments."), MultiRound: true},
 	}
 }
 func evaluationFixture(id, language string) (Run, map[string]string) {
+	if id == "multi_round_healthy" {
+		id = "healthy_host"
+	}
+	if id == "multi_round_disk" {
+		id = "disk_pressure"
+	}
 	run := Run{ID: strings.Repeat("e", 32), Workflow: "host_inspection", Language: NormalizeLanguage(language), ReportSchemaVersion: 2, Evidence: []Evidence{}, State: "completed"}
 	outputs := map[string]string{
 		"system":     "Linux 6.8.0 x86_64\n2\nPRETTY_NAME=\"Ubuntu 24.04 LTS\"",
@@ -134,9 +151,11 @@ func (m *Manager) StartEvaluation(parent context.Context, cfg ai.Config, languag
 	if _, err := rand.Read(bytes[:]); err != nil {
 		return EvaluationRun{}, err
 	}
-	evaluation := EvaluationRun{ID: hex.EncodeToString(bytes[:]), Provider: string(cfg.Provider), Model: cfg.Model, Language: NormalizeLanguage(language), CaseVersion: 2, PromptVersion: "assessment-v3", CaseIDs: append([]string{}, caseIDs...), State: "running", CreatedAt: time.Now(), Results: []EvaluationResult{}}
+	versionRun := Run{}
+	stampRun(&versionRun, cfg)
+	evaluation := EvaluationRun{ID: hex.EncodeToString(bytes[:]), Provider: string(cfg.Provider), Model: cfg.Model, Language: NormalizeLanguage(language), CaseVersion: 3, PromptVersion: PromptVersion, WorkflowVersion: WorkflowVersion, EndpointID: versionRun.EndpointID, CaseIDs: append([]string{}, caseIDs...), State: "running", CreatedAt: time.Now(), Results: []EvaluationResult{}}
 	// Each case is bounded to 40 seconds; leave room for all of them.
-	ctx, cancel := context.WithTimeout(parent, time.Duration(len(caseIDs))*45*time.Second)
+	ctx, cancel := context.WithTimeout(parent, time.Duration(len(caseIDs))*100*time.Second)
 	m.mu.Lock()
 	if len(m.activeEvaluation) > 0 {
 		m.mu.Unlock()
@@ -197,13 +216,17 @@ func (m *Manager) evaluateCase(parent context.Context, cfg ai.Config, language, 
 		fixture, expected = savedCaseFixture(saved, language)
 		result.Title, result.Expected, result.TotalChecks = saved.Title, expected, len(expected)
 	}
+	if strings.HasPrefix(caseID, "multi_round_") {
+		return m.evaluateMultiRound(parent, cfg, fixture, result)
+	}
 	ctx, cancel := context.WithTimeout(parent, 40*time.Second)
 	defer cancel()
 	started := time.Now()
 	raw, _ := json.Marshal(map[string]any{"evidence": fixture.Evidence, "observations": fallbackDocument(fixture).Checks})
 	var content strings.Builder
 	var response ai.ChatResponse
-	err := m.chat(ctx, cfg, ai.ChatRequest{Instructions: inspectionInstructions(fixture.Language) + diagnosisInstructions(fixture) + reportContract(fixture) + contextInstructions(fixture), Messages: []ai.Message{{Role: "user", Content: tr(language, "根据模拟证据生成诊断报告。本次不连接服务器，不调用工具。", "Diagnose this simulated evidence. No server connection or tools.") + string(raw) + reportReminder(fixture)}}, EnableTools: false, JSONObject: true}, func(chunk ai.ChatResponse) {
+	messages := []ai.Message{{Role: "user", Content: tr(language, "根据模拟证据生成诊断报告。本次不连接服务器，只允许提交报告。", "Diagnose this simulated evidence. No server connection; only report submission is allowed.") + string(raw) + reportReminder(fixture)}}
+	err := m.chat(ctx, cfg, reportRequest(fixture, messages, inspectionInstructions(fixture.Language)+diagnosisInstructions(fixture)+reportContract(fixture)+contextInstructions(fixture)), func(chunk ai.ChatResponse) {
 		if content.Len() < maxReport {
 			content.WriteString(chunk.Content)
 		}
@@ -211,8 +234,19 @@ func (m *Manager) evaluateCase(parent context.Context, cfg ai.Config, language, 
 			response = chunk
 		}
 	})
+	var rejected *ai.ToolArgumentsError
+	if errors.As(err, &rejected) {
+		response = rejected.Response
+	}
 	result.DurationMs, result.PromptTokens, result.CompletionTokens = time.Since(started).Milliseconds(), response.PromptTk, response.CompleteTk
-	text := content.String()
+	text, mode, answerErr := reportAnswer(response, content.String())
+	if rejected != nil {
+		text = rejectedReportAnswer(rejected)
+	}
+	result.ReportMode, result.ModelCalls = mode, 1
+	if err == nil {
+		err = answerErr
+	}
 	if m.redact != nil {
 		text = m.redact("", text)
 	}
@@ -228,10 +262,13 @@ func (m *Manager) evaluateCase(parent context.Context, cfg ai.Config, language, 
 		result.Error = LocalizeError(language, message)
 		return result
 	}
-	if !response.Finish || len(response.ToolCalls) > 0 {
-		result.Error = tr(language, "响应未完整结束或模型试图调用工具。", "Response did not finish or attempted a tool call.")
-		return result
-	}
+	result.WorkflowCompleted = true
+	result = gradeEvaluation(result, text, fixture)
+	result.WorkflowCompleted = result.SchemaValid
+	return result
+}
+
+func gradeEvaluation(result EvaluationResult, text string, fixture Run) EvaluationResult {
 	// Grade raw model judgments BEFORE deterministic report reconciliation.
 	// Otherwise a rule correcting a missed disk fault would inflate model scores.
 	var original ReportDocument
@@ -246,7 +283,7 @@ func (m *Manager) evaluateCase(parent context.Context, cfg ai.Config, language, 
 		for _, c := range original.Checks {
 			result.Actual[c.Check] = c.Status
 		}
-		for check, wanted := range expected {
+		for check, wanted := range result.Expected {
 			if result.Actual[check] == wanted {
 				result.CorrectChecks++
 			}
@@ -258,6 +295,92 @@ func (m *Manager) evaluateCase(parent context.Context, cfg ai.Config, language, 
 		result.SchemaValid = true
 	}
 	result.Passed = result.SchemaValid && result.AnalysisPresent && result.CorrectChecks == result.TotalChecks
+	return result
+}
+
+// Reuse real orchestration with a simulated executor. Temporary runs never
+// enter real-host history/statistics and cannot contact an SSH host.
+func (m *Manager) evaluateMultiRound(parent context.Context, cfg ai.Config, fixture Run, result EvaluationResult) EvaluationResult {
+	dir, err := os.MkdirTemp("", "gxshell-evaluation-*")
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	defer os.RemoveAll(dir)
+	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
+	defer cancel()
+	started := time.Now()
+	firstReport, gotReport := "", false
+	modelCalls, toolRounds := 0, 0
+	chat := func(ctx context.Context, cfg ai.Config, request ai.ChatRequest, output func(ai.ChatResponse)) error {
+		modelCalls++
+		var content strings.Builder
+		var response ai.ChatResponse
+		err := m.chat(ctx, cfg, request, func(chunk ai.ChatResponse) {
+			if content.Len() < maxReport {
+				content.WriteString(chunk.Content)
+			}
+			if chunk.Finish {
+				response = chunk
+			}
+			output(chunk)
+		})
+		var rejected *ai.ToolArgumentsError
+		if errors.As(err, &rejected) {
+			response = rejected.Response
+		}
+		isReport := rejected != nil || request.ForceTool == "submit_report" || len(response.ToolCalls) == 0
+		for _, call := range response.ToolCalls {
+			isReport = isReport || call.Function.Name == "submit_report"
+		}
+		if !isReport && response.Finish {
+			toolRounds++
+		}
+		if isReport && !gotReport && response.Finish {
+			firstReport, result.ReportMode, _ = reportAnswer(response, content.String())
+			if rejected != nil {
+				firstReport = rejectedReportAnswer(rejected)
+			}
+			gotReport = true
+		}
+		return err
+	}
+	sourceEvidence := append([]Evidence{}, fixture.Evidence...)
+	execute := func(_ context.Context, _ string, query Query) Evidence {
+		for _, e := range sourceEvidence {
+			if e.Query == query {
+				return e
+			}
+		}
+		if query.Check == "service" && (query.Service == "ssh.service" || query.Service == "nginx.service") {
+			out := "LoadState=loaded\nActiveState=active\nSubState=running\nResult=success"
+			if query.View == "logs" {
+				out = "service started successfully; no recent errors"
+			}
+			return Evidence{Query: query, Status: "collected", Output: out, RemoteState: "exited"}
+		}
+		return Evidence{Query: query, Status: "unavailable", Error: "query unavailable in simulated fixture", RemoteState: "exited", ExitCode: 127}
+	}
+	sandbox, err := NewManager(dir, execute, chat, nil, m.redact)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	defer sandbox.Close()
+	fixture.State, fixture.Evidence, fixture.SessionID, fixture.ProfileID = "queued", []Evidence{}, "simulated", "simulated"
+	fixture.Question = tr(fixture.Language, "本次为多轮评测：先用 inspect_service 查询 ssh.service 的 status；取得结果后，在下一轮查询 ssh.service 的 logs。完成至少两个独立补查轮次后，调用 submit_report 提交完整报告。所有工具返回模拟数据。", "This is a multi-round evaluation. First call inspect_service for ssh.service status. After receiving the result, call inspect_service for ssh.service logs in the next round. After at least two separate query rounds, call submit_report with the complete report. All tool output is simulated.")
+	stampRun(&fixture, cfg)
+	sandbox.runs[fixture.ID] = &fixture
+	sandbox.run(ctx, fixture.ID, cfg)
+	finished, _ := sandbox.Get(fixture.ID)
+	result.DurationMs, result.PromptTokens, result.CompletionTokens = time.Since(started).Milliseconds(), finished.PromptTokens, finished.CompletionTokens
+	result.ToolRounds, result.ModelCalls, result.WorkflowCompleted = toolRounds, modelCalls, finished.State == "completed"
+	result.RawReport = sandbox.clean(fixture.ID, firstReport, maxReport)
+	result = gradeEvaluation(result, result.RawReport, finished)
+	if !result.WorkflowCompleted || toolRounds < 2 {
+		result.Passed = false
+		result.Error = tr(fixture.Language, "完整巡检未完成，或模型未进行至少两轮独立补查。", "The inspection did not complete, or the model did not perform at least two separate query rounds.") + " " + finished.Error
+	}
 	return result
 }
 func (m *Manager) updateEvaluation(id string, update func(*EvaluationRun)) error {

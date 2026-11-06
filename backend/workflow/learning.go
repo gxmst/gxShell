@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -95,7 +96,7 @@ func writeLearning(path string, value any) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	return replaceHistoryFile(f.Name(), path)
 }
 func (m *Manager) loadLearningData() error {
 	for _, folder := range []string{"dossiers", "evaluations", "cases"} {
@@ -357,7 +358,7 @@ func (m *Manager) recordTrace(id, kind, reason, state, message string, ids []str
 func (m *Manager) tracedChat(ctx context.Context, id string, cfg ai.Config, request ai.ChatRequest, emit func(ai.ChatResponse)) error {
 	run, _ := m.Get(id)
 	reason := tr(run.Language, "模型根据采集证据和主机背景进行分析。", "The model assesses collected evidence and host background.")
-	if !request.EnableTools {
+	if !request.EnableTools || request.ForceTool == "submit_report" {
 		reason = tr(run.Language, "模型生成或修正报告，本轮不允许补查。", "The model generates or repairs the report; queries are disabled.")
 	}
 	traceID, err := m.beginTrace(id, "model", reason, nil)
@@ -374,11 +375,34 @@ func (m *Manager) tracedChat(ctx context.Context, id string, cfg ai.Config, requ
 	state, message := "completed", ""
 	if err != nil {
 		state, message = "failed", err.Error()
+		var rejected *ai.ToolArgumentsError
+		if errors.As(err, &rejected) {
+			final = rejected.Response
+		}
 	} else if !final.Finish {
 		state, message = "failed", "model stream did not finish"
 	}
 	if traceErr := m.endTrace(id, traceID, state, message, nil, final.PromptTk, final.CompleteTk); traceErr != nil {
 		return traceErr
+	}
+	if final.Finish {
+		if traceErr := m.update(id, func(run *Run) { run.PromptTokens += final.PromptTk; run.CompletionTokens += final.CompleteTk }); traceErr != nil {
+			return traceErr
+		}
+	}
+	var rejected *ai.ToolArgumentsError
+	if errors.As(err, &rejected) {
+		raw, _ := json.Marshal(map[string]any{"rejectedToolCalls": rejected.Response.ToolCalls})
+		output := m.clean(id, string(raw), maxTraceOutput)
+		if traceErr := m.update(id, func(run *Run) {
+			for i := range run.Trace {
+				if run.Trace[i].ID == traceID {
+					run.Trace[i].Output = output
+				}
+			}
+		}); traceErr != nil {
+			return traceErr
+		}
 	}
 	return err
 }

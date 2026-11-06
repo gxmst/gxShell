@@ -15,7 +15,14 @@ import (
 // renderer that has not registered yet, as everywhere else.
 func (a *App) confirmInspection(title, nativeMessage string, req cliApprovalPanelRequest) bool {
 	if result, ok := a.requestCliApprovalPanel(context.Background(), req); ok {
-		return len(result.Approved) > 0
+		// A boolean confirmation authorizes the entire operation. Partial or
+		// invented selections must never authorize unchecked batch items.
+		for _, approved := range result.mask(req.Items) {
+			if !approved {
+				return false
+			}
+		}
+		return len(req.Items) > 0
 	}
 	ctx := a.ctx.Get()
 	if ctx == nil {

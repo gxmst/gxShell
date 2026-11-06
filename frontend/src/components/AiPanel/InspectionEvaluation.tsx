@@ -26,7 +26,7 @@ export function InspectionEvaluation({ locale, onError }: { locale: string; onEr
       catch (error) { if (!disposed) errorCallback.current(String(error)); } finally { refreshing = false; }
     };
     void (async () => {
-      try { const values = await ListAiInspectionEvaluationCases(); if (!disposed) { setCases(values || []); setSelected((values || []).filter((value) => !value.saved).map((value) => value.id)); } }
+      try { const values = await ListAiInspectionEvaluationCases(); if (!disposed) { setCases(values || []); setSelected((values || []).filter((value) => !value.saved && !value.multiRound).map((value) => value.id)); } }
       catch (error) { if (!disposed) errorCallback.current(String(error)); }
     })();
     void refresh();
@@ -74,6 +74,7 @@ export function InspectionEvaluation({ locale, onError }: { locale: string; onEr
       {evaluation.results.map((result) => <details key={result.caseId}>
         <summary>{result.title} · {t(locale, result.passed ? "inspectionEvaluationPassed" : "inspectionEvaluationFailed")} · {result.correctChecks}/{result.totalChecks}</summary>
         <p>{t(locale, "inspectionEvaluationCheckScore")} {result.correctChecks}/{result.totalChecks} · {result.durationMs} ms · {t(locale, "aiTokenUsage")} {result.promptTokens + result.completionTokens}</p>
+        <p>{t(locale, "inspectionFormatResult")}: {t(locale, result.schemaValid ? "inspectionEvaluationPassed" : "inspectionEvaluationFailed")} · {t(locale, "inspectionWorkflowResult")}: {result.workflowCompleted === undefined ? "—" : t(locale, result.workflowCompleted ? "inspectionEvaluationPassed" : "inspectionEvaluationFailed")} · {t(locale, "inspectionRounds")}: {result.toolRounds || 0} · {result.reportMode || "—"}</p>
         <div className="inspection-report-table-wrap"><table>
           <thead><tr><th>{t(locale, "inspectionCheckColumn")}</th><th>{t(locale, "inspectionEvaluationExpected")}</th><th>{t(locale, "inspectionEvaluationActual")}</th></tr></thead>
           <tbody>{Object.entries(result.expected).map(([check, expected]) => <tr key={check}><th>{inspectionCheckLabel(locale, check)}</th><td>{verdict(expected)}</td><td>{result.actual[check] ? verdict(result.actual[check]) : "—"}</td></tr>)}</tbody>

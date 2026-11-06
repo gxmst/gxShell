@@ -161,8 +161,8 @@ func TestInspectionRoundBudgetAndModelFailure(t *testing.T) {
 						}
 						output(ai.ChatResponse{Finish: true, ToolCalls: []ai.ToolCall{{ID: fmt.Sprint(turn), Function: ai.FunctionCall{Name: "inspect_service", Arguments: fmt.Sprintf("{\"service\":\"service%d\",\"view\":\"status\"}", turn)}}}})
 					} else {
-						if req.EnableTools || !req.JSONObject {
-							t.Error("the report-only turn must disable tools and ask for JSON")
+						if !onlyReportTool(req) {
+							t.Error("the final turn must expose only submit_report")
 						}
 						output(ai.ChatResponse{Content: testReportJSON("en", Checks)})
 						output(ai.ChatResponse{Finish: true})
@@ -180,7 +180,7 @@ func TestInspectionRoundBudgetAndModelFailure(t *testing.T) {
 				t.Error("model failure discarded collected evidence")
 			}
 			if !fail && (turn != MaxRounds+1 || finished.Rounds != MaxRounds || finished.State != "completed") {
-				t.Error("round budget not enforced")
+				t.Errorf("round budget not enforced: state=%s rounds=%d error=%s", finished.State, finished.Rounds, finished.Error)
 			}
 		})
 	}

@@ -82,6 +82,12 @@ local CLI lets external agents reuse saved connections without copying SSH
 credentials into prompts or agent configuration. `secret://` references also
 keep named secret values out of prompts and command arguments.
 
+The built-in assistant supports OpenAI-compatible, Anthropic, Gemini and Ollama
+protocols. Inspection agents produce structured reports with AI assessments,
+evidence references and human review. Parallel Hosts runs independent agents for
+2–12 connected hosts, with up to three active at once. See
+[AI inspection](docs/ai-inspection.md) for the workflow, limits and evaluation.
+
 Review requested operations and approve only the items you choose. Trust can
 be granted for 1, 4, 8, or 24 hours; sensitive and high-risk operations still
 require confirmation. These controls reduce accidental exposure and are not

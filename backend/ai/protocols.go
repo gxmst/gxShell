@@ -167,6 +167,9 @@ func (m *Manager) nativeRequest(cfg Config, req ChatRequest) (string, map[string
 				native = append(native, map[string]any{"name": fn["name"], "description": fn["description"], "input_schema": fn["parameters"]})
 			}
 			body["tools"] = native
+			if req.ForceTool != "" {
+				body["tool_choice"] = map[string]any{"type": "tool", "name": req.ForceTool}
+			}
 		}
 		return base + "/messages", body, nil
 	case ProviderGemini:
@@ -232,6 +235,9 @@ func (m *Manager) nativeRequest(cfg Config, req ChatRequest) (string, map[string
 				declarations = append(declarations, map[string]any{"name": fn["name"], "description": fn["description"], "parametersJsonSchema": fn["parameters"]})
 			}
 			body["tools"] = []any{map[string]any{"functionDeclarations": declarations}}
+			if req.ForceTool != "" {
+				body["toolConfig"] = map[string]any{"functionCallingConfig": map[string]any{"mode": "ANY", "allowedFunctionNames": []string{req.ForceTool}}}
+			}
 		} else if req.JSONObject {
 			body["generationConfig"] = map[string]any{"responseMimeType": "application/json"}
 		}
@@ -300,6 +306,16 @@ func (m *Manager) chatNative(ctx context.Context, cfg Config, req ChatRequest, o
 	if err != nil {
 		return err
 	}
+	fallback := false
+	if req.ForceTool != "" || req.AllowToolFallback {
+		for attempt := 0; attempt < 2 && downgradeToolRequest(resp, body, cfg.Provider); attempt++ {
+			fallback = true
+			resp.Body.Close()
+			if resp, err = send(); err != nil {
+				return err
+			}
+		}
+	}
 	// The JSON constraint is optional; a gateway that rejects it is asked again
 	// without it before anything was streamed.
 	if constraint := jsonConstraintKey(body); constraint != "" && rejectedJSONMode(resp) {
@@ -314,7 +330,7 @@ func (m *Manager) chatNative(ctx context.Context, cfg Config, req ChatRequest, o
 		body, _ := readLimited(resp.Body, maxErrorBodyBytes)
 		return providerError(fmt.Errorf("API error (%d): %s", resp.StatusCode, string(body)), cfg)
 	}
-	return providerError(m.parseNativeStream(cfg.Provider, resp.Body, onChunk), cfg)
+	return providerError(m.parseNativeStream(cfg.Provider, resp.Body, func(chunk ChatResponse) { chunk.ToolFallback = fallback; onChunk(chunk) }), cfg)
 }
 
 // parseNativeStream releases tools only after a complete provider finish event.
@@ -508,17 +524,8 @@ func (m *Manager) parseNativeStream(provider Provider, body io.Reader, onChunk f
 		if calls[i].ID == "" || calls[i].Function.Name == "" {
 			return fmt.Errorf("incomplete tool call")
 		}
-		if _, err := toolInput(calls[i].Function.Arguments); err != nil {
-			return err
-		}
 	}
-	m.mu.Lock()
-	m.usage.PromptTokens += int64(prompt)
-	m.usage.CompletionTokens += int64(completion)
-	m.usage.TotalTokens += int64(prompt + completion)
-	m.mu.Unlock()
-	onChunk(ChatResponse{Finish: true, ToolCalls: calls, PromptTk: prompt, CompleteTk: completion})
-	return nil
+	return m.finishResponse(calls, prompt, completion, onChunk)
 }
 
 func intNumber(v any) int {

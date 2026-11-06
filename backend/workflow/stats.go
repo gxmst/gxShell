@@ -5,8 +5,16 @@ import "sort"
 // ModelStats summarizes saved diagnostic runs for one provider and model, so
 // report reliability on real hosts can be measured instead of guessed.
 type ModelStats struct {
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
+	Provider        string `json:"provider"`
+	Model           string `json:"model"`
+	WorkflowVersion string `json:"workflowVersion,omitempty"`
+	PromptVersion   string `json:"promptVersion,omitempty"`
+	EndpointID      string `json:"endpointId,omitempty"`
+	ReportMode      string `json:"reportMode,omitempty"`
+	Language        string `json:"language,omitempty"`
+	Workflow        string `json:"workflow,omitempty"`
+	BatchID         string `json:"batchId,omitempty"`
+	Completed       int    `json:"completed"`
 	// Runs counts finished tasks. Stopped (cancelled or interrupted) runs are
 	// counted but excluded from every outcome and average below.
 	Runs    int `json:"runs"`
@@ -57,18 +65,23 @@ func (m *Manager) Stats() []ModelStats {
 		duration int64
 	}
 	m.mu.Lock()
-	groups := map[[2]string]*totals{}
+	groups := map[[9]string]*totals{}
 	for _, run := range m.runs {
 		if !Terminal(run.State) {
 			continue
 		}
-		key := [2]string{run.Provider, run.Model}
+		key := [9]string{run.Provider, run.Model, run.WorkflowVersion, run.PromptVersion, run.EndpointID, run.ReportMode, run.Language, run.Workflow, run.BatchID}
 		group := groups[key]
 		if group == nil {
 			group = &totals{ModelStats: ModelStats{Provider: run.Provider, Model: run.Model}}
+			group.WorkflowVersion, group.PromptVersion, group.EndpointID, group.ReportMode = run.WorkflowVersion, run.PromptVersion, run.EndpointID, run.ReportMode
+			group.Language, group.Workflow, group.BatchID = run.Language, run.Workflow, run.BatchID
 			groups[key] = group
 		}
 		group.Runs++
+		if run.State == "completed" {
+			group.Completed++
+		}
 		if run.State == "cancelled" || run.State == "interrupted" {
 			group.Stopped++
 			continue
@@ -92,8 +105,12 @@ func (m *Manager) Stats() []ModelStats {
 			}
 		}
 		group.tokens += run.PromptTokens + run.CompletionTokens
-		if !run.FinishedAt.IsZero() && run.FinishedAt.After(run.CreatedAt) {
-			group.duration += run.FinishedAt.Sub(run.CreatedAt).Milliseconds()
+		started := run.StartedAt
+		if started.IsZero() {
+			started = run.CreatedAt
+		}
+		if !run.FinishedAt.IsZero() && run.FinishedAt.After(started) {
+			group.duration += run.FinishedAt.Sub(started).Milliseconds()
 		}
 	}
 	m.mu.Unlock()
@@ -109,7 +126,11 @@ func (m *Manager) Stats() []ModelStats {
 		if out[i].Runs != out[j].Runs {
 			return out[i].Runs > out[j].Runs
 		}
-		return out[i].Provider+"/"+out[i].Model < out[j].Provider+"/"+out[j].Model
+		return statsKey(out[i]) < statsKey(out[j])
 	})
 	return out
+}
+
+func statsKey(row ModelStats) string {
+	return row.Provider + "/" + row.Model + "/" + row.WorkflowVersion + "/" + row.PromptVersion + "/" + row.EndpointID + "/" + row.ReportMode + "/" + row.Language + "/" + row.Workflow + "/" + row.BatchID
 }

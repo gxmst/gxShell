@@ -663,3 +663,19 @@ export function ReadSessionLogFile(name) {
 export function UpdateProfilesBatch(ids, patch) {
   return window['go']['app']['App']['UpdateProfilesBatch'](ids, patch);
 }
+
+export function StartAiInspectionBatch(sessionIDs, concurrency) {
+  return window['go']['app']['App']['StartAiInspectionBatch'](sessionIDs, concurrency);
+}
+export function ListAiInspectionBatches() {
+  return window['go']['app']['App']['ListAiInspectionBatches']();
+}
+export function GetAiInspectionBatch(id) {
+  return window['go']['app']['App']['GetAiInspectionBatch'](id);
+}
+export function CancelAiInspectionBatch(id) {
+  return window['go']['app']['App']['CancelAiInspectionBatch'](id);
+}
+export function ExportAiInspectionBatch(id) {
+  return window['go']['app']['App']['ExportAiInspectionBatch'](id);
+}

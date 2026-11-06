@@ -38,6 +38,7 @@ func decodeQueryReason(call ai.ToolCall) (Query, string, error) {
 // text is kept as an unverified answer.
 func (m *Manager) acceptReport(ctx context.Context, id string, cfg ai.Config, messages []ai.Message, text, instructions string) (*ReportDocument, error) {
 	run, _ := m.Get(id)
+	originalMode := run.ReportMode
 	doc, issues, err := normalizeReport(text, run)
 	if err := m.recordValidation(id, tr(run.Language, "校验报告结构、语言、观点和证据引用。", "Validate report structure, language, assessment and evidence references."), text, issues, err); err != nil {
 		return nil, err
@@ -67,6 +68,9 @@ func (m *Manager) acceptReport(ctx context.Context, id string, cfg ai.Config, me
 		return nil, ctx.Err()
 	}
 	if doc != nil {
+		if err := m.update(id, func(r *Run) { r.ReportMode = originalMode }); err != nil {
+			return nil, err
+		}
 		return doc, nil
 	}
 	// Neither answer fits the schema. The model's own analysis may still be
@@ -147,8 +151,8 @@ func reportSkeleton(run Run) string {
 func reportReminder(run Run) string {
 	names, _ := json.Marshal(RunChecks(run))
 	return tr(run.Language,
-		"\n\n最终回答必须是且只能是一个 JSON 对象（以 { 开头、以 } 结尾），严格使用系统说明里的字段名，checks 中每个检查项 "+string(names)+" 各一条。不要写 Markdown 标题、表格或 JSON 之外的文字。",
-		"\n\nYour final answer must be exactly one JSON object (starting with { and ending with }) using the field names from the system instructions, with one checks item for each of "+string(names)+". No Markdown headings, tables or text outside the JSON.")
+		"\n\n完成补查后仅调用 submit_report 提交报告。若接口不支持工具，最终回答必须是且只能是一个 JSON 对象（以 { 开头、以 } 结尾），严格使用系统说明里的字段名，checks 中每个检查项 "+string(names)+" 各一条。不要写 Markdown 标题、表格或 JSON 之外的文字。",
+		"\n\nWhen queries are complete, call only submit_report. If tools are unavailable, your final answer must be exactly one JSON object (starting with { and ending with }) using the field names from the system instructions, with one checks item for each of "+string(names)+". No Markdown headings, tables or text outside the JSON.")
 }
 
 var reportKeys = map[string]bool{"version": true, "verdict": true, "summary": true, "checks": true, "findings": true, "unknowns": true, "analysis": true}
@@ -174,7 +178,7 @@ func shapeProblem(run Run, text string) string {
 	return tr(run.Language, "上一个回答自己编了字段名，这些字段不允许使用：", "The previous answer invented field names that are not allowed: ") + strings.Join(unknown, ", ")
 }
 
-// One bounded repair with tools disabled. It never re-runs SSH queries or
+// One bounded repair with only the data submission tool. It never re-runs SSH queries or
 // translates/overwrites historical reports.
 func (m *Manager) repairReport(ctx context.Context, id string, cfg ai.Config, messages []ai.Message, text, instructions string, problems []string) (string, error) {
 	if err := m.update(id, func(r *Run) {
@@ -190,12 +194,13 @@ func (m *Manager) repairReport(ctx context.Context, id string, cfg ai.Config, me
 		problems = append([]string{shape}, problems...)
 	}
 	prompt := tr(run.Language,
-		"上一个回答有以下问题：\n- "+strings.Join(problems, "\n- ")+"\n\n分析内容不用重写，请把你已经得出的结论原样填进下面这个 JSON 结构，只返回这个 JSON 对象。字段名一个都不能改，不能增加别的字段。空字符串都要用简体中文填写；status 只能是 normal、warning、critical、unknown；verdict 只能是 normal、attention、unknown；confidence 只能是 supported、hypothesis、uncertain；severity 只能是 warning、critical。没有问题或未确认项时，findings、unknowns 写成 []。只引用已有的证据编号，不得调用工具。\n\n",
-		"The previous answer has these problems:\n- "+strings.Join(problems, "\n- ")+"\n\nKeep your analysis; put the conclusions you already reached into exactly this JSON structure and return only that object. Do not rename or add fields. Fill every empty string in English; status is normal, warning, critical or unknown; verdict is normal, attention or unknown; confidence is supported, hypothesis or uncertain; severity is warning or critical. Use [] for findings or unknowns when there are none. Cite only existing evidence IDs. Do not call tools.\n\n") + reportSkeleton(run)
+		"上一个回答有以下问题：\n- "+strings.Join(problems, "\n- ")+"\n\n分析内容不用重写，请把你已经得出的结论原样填进下面这个 JSON 结构。字段名一个都不能改，不能增加别的字段。空字符串都要用简体中文填写；status 只能是 normal、warning、critical、unknown；verdict 只能是 normal、attention、unknown；confidence 只能是 supported、hypothesis、uncertain；severity 只能是 warning、critical。没有问题或未确认项时，findings、unknowns 写成 []。只引用已有的证据编号。\n\n",
+		"The previous answer has these problems:\n- "+strings.Join(problems, "\n- ")+"\n\nKeep your analysis; put the conclusions you already reached into exactly this JSON structure. Do not rename or add fields. Fill every empty string in English; status is normal, warning, critical or unknown; verdict is normal, attention or unknown; confidence is supported, hypothesis or uncertain; severity is warning or critical. Use [] for findings or unknowns when there are none. Cite only existing evidence IDs.\n\n") + reportSkeleton(run)
+	prompt += tr(run.Language, "\n请仅调用 submit_report 提交上面的对象，不得执行补查。如果接口不支持工具，直接返回这个 JSON 对象。", "\nCall only submit_report with the object above. Do not query the host. If tools are unavailable, return that JSON object.")
 	messages = append(append([]ai.Message{}, messages...), ai.Message{Role: "assistant", Content: text}, ai.Message{Role: "user", Content: prompt})
 	var content strings.Builder
 	var response ai.ChatResponse
-	err := m.tracedChat(ctx, id, cfg, ai.ChatRequest{Messages: messages, Instructions: instructions, EnableTools: false, Tools: inspectionTools(), JSONObject: true}, func(chunk ai.ChatResponse) {
+	err := m.tracedChat(ctx, id, cfg, reportRequest(run, messages, instructions), func(chunk ai.ChatResponse) {
 		if content.Len() < maxReport {
 			content.WriteString(chunk.Content)
 		}
@@ -206,11 +211,16 @@ func (m *Manager) repairReport(ctx context.Context, id string, cfg ai.Config, me
 	if err != nil {
 		return "", err
 	}
-	if !response.Finish || len(response.ToolCalls) > 0 {
-		return "", fmt.Errorf("invalid report repair")
-	}
-	if err := m.update(id, func(r *Run) { r.PromptTokens += response.PromptTk; r.CompletionTokens += response.CompleteTk }); err != nil {
+	answer, mode, answerErr := reportAnswer(response, content.String())
+	if err := m.update(id, func(r *Run) {
+		if answerErr == nil {
+			r.ReportMode = mode
+		}
+	}); err != nil {
 		return "", err
 	}
-	return m.clean(id, content.String(), maxReport), nil
+	if answerErr != nil {
+		return "", answerErr
+	}
+	return m.clean(id, answer, maxReport), nil
 }

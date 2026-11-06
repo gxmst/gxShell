@@ -4,6 +4,13 @@ import {types} from '../models';
 import {version} from '../models';
 import {sshmanager} from '../models';
 import type {InspectionRun} from '../workflow';
+import type {InspectionBatch} from '../workflow';
+
+export function StartAiInspectionBatch(sessionIDs:string[],concurrency:number):Promise<InspectionBatch>;
+export function ListAiInspectionBatches():Promise<InspectionBatch[]>;
+export function GetAiInspectionBatch(id:string):Promise<InspectionBatch>;
+export function CancelAiInspectionBatch(id:string):Promise<boolean>;
+export function ExportAiInspectionBatch(id:string):Promise<string>;
 import type {HostDossier,DossierInput,InspectionEvaluationCase,InspectionEvaluationRun,InspectionModelStats,InspectionSavedCase} from '../workflow';
 
 export function StartAiInspectionFollowup(id:string,question:string,focusEvidenceID:string):Promise<InspectionRun>;

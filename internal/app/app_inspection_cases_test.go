@@ -26,6 +26,13 @@ func TestSavedCaseEvaluationAsksBeforeSendingRealEvidence(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "cases", strings.Repeat("ab", 16)+".json"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
+	secondID := "saved-" + strings.Repeat("cd", 16)
+	second := saved
+	second.ID, second.Title, second.Target = secondID, "Service missed", "web-2"
+	secondData, _ := json.Marshal(second)
+	if err := os.WriteFile(filepath.Join(dir, "cases", strings.Repeat("cd", 16)+".json"), secondData, 0600); err != nil {
+		t.Fatal(err)
+	}
 	app := NewApp()
 	app.ctx.Set(context.Background())
 	app.ai = ai.NewManager()
@@ -61,6 +68,23 @@ func TestSavedCaseEvaluationAsksBeforeSendingRealEvidence(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 	}
 
+	go func() { _, err := app.StartAiInspectionEvaluation([]string{id, secondID}); done <- err }()
+	req = panels.nextRequest(t)
+	if len(req.Items) != 2 {
+		t.Fatalf("expected both real-server cases to be reviewed: %+v", req)
+	}
+	if err := app.ResolveCliApproval(req.ID, []string{id}); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err == nil {
+		t.Fatal("partially approved batch started and could send an unchecked case")
+	}
+	select {
+	case <-called:
+		t.Fatal("partially approved batch reached the model")
+	case <-time.After(100 * time.Millisecond):
+	}
+
 	if _, err := app.StartAiInspectionEvaluation([]string{"healthy_host"}); err != nil {
 		t.Fatalf("fixed fixtures need no confirmation: %v", err)
 	}
@@ -68,5 +92,36 @@ func TestSavedCaseEvaluationAsksBeforeSendingRealEvidence(t *testing.T) {
 	case req := <-panels.requests:
 		t.Fatalf("fixed fixtures asked for approval: %+v", req)
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestInspectionConfirmationRequiresEveryRequestedItem(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		ids  []string
+		want bool
+	}{
+		{"invented selection", []string{"a", "invented"}, false},
+		{"complete selection", []string{"a", "b"}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app := NewApp()
+			app.ctx.Set(context.Background())
+			panels := newApprovalPanelHarness(app)
+			done := make(chan bool, 1)
+			go func() {
+				done <- app.confirmInspection("Review", "Review cases", cliApprovalPanelRequest{Source: "ai", Items: []cliApprovalItem{
+					{ID: "a", Kind: "inspection", Text: "Case A", RiskTier: "T0"},
+					{ID: "b", Kind: "inspection", Text: "Case B", RiskTier: "T0"},
+				}})
+			}()
+			req := panels.nextRequest(t)
+			if err := app.ResolveCliApproval(req.ID, test.ids); err != nil {
+				t.Fatal(err)
+			}
+			if got := <-done; got != test.want {
+				t.Fatalf("confirmation = %v, want %v", got, test.want)
+			}
+		})
 	}
 }

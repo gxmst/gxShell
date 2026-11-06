@@ -190,6 +190,7 @@ type App struct {
 	cliServer   atomic.Pointer[http.Server]
 	rateLimiter *connectionRateLimiter
 	trayIcon    []byte
+	trayStarted atomic.Bool
 	// profilesMu serializes every read-modify-write cycle on profiles.json
 	// (profile CRUD, touchProfile, tunnel rule persistence, imports).
 	// config.Store only locks the individual read and write, so without this a
@@ -357,7 +358,7 @@ func (a *App) startup(ctx context.Context) {
 	})
 	a.tunnels = tunnel.NewManager(emit)
 	a.ai = ai.NewManagerWithTransport(a.networkProxy)
-	a.inspections, err = workflow.NewManager(filepath.Join(a.store.DataDir(), "inspections"), a.executeInspectionQuery, a.ai.ChatWithConfig, func(run workflow.Run) { emit("ai:inspection", run) }, a.redactInspection)
+	a.inspections, err = workflow.NewManager(filepath.Join(a.store.DataDir(), "inspections"), a.executeInspectionQuery, a.ai.ChatWithConfig, func(run workflow.Run) { emit("ai:inspection", run) }, a.redactInspection, a.validateInspectionSession)
 	if err != nil {
 		a.log.ErrorFields("Inspection history unavailable", LogFields{"error": err.Error()})
 	}
@@ -528,6 +529,7 @@ func (a *App) GetStartupFile() string {
 
 // shutdown cleans up resources before application exit.
 func (a *App) shutdown(ctx context.Context) {
+	a.stopSystemTray()
 	if a.inspections != nil {
 		a.inspections.Close()
 	}

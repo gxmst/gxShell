@@ -7,3 +7,4 @@ package app
 // into one application fails. The experimental macOS build therefore runs
 // without a tray until gxShell adopts a Wails-compatible tray implementation.
 func (a *App) setupSystemTray() {}
+func (a *App) stopSystemTray()  {}

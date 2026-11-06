@@ -11,6 +11,7 @@ import { InspectionReport, InspectionEvidence } from "./InspectionReport";
 import { inspectionCheckLabel } from "./inspectionLabels";
 import { ModalShell } from "../modals/ModalShell";
 import { HostDossierEditor } from "./HostDossierEditor";
+import { InspectionBatchPanel } from "./InspectionBatchPanel";
 
 const terminalStates = new Set(["completed", "partial", "failed", "cancelled", "interrupted"]);
 const checkLabels = {
@@ -38,6 +39,7 @@ export function InspectionPanel({ locale, tabs, activeTabId, onNotify }: {
   const [service, setService] = useState("");
   const [port, setPort] = useState("");
   const [dossierOpen, setDossierOpen] = useState(false);
+  const [batchMode, setBatchMode] = useState(false);
   const notify = useRef(onNotify);
   notify.current = onNotify;
   const targets = tabs.filter(isRemoteSession);
@@ -146,7 +148,12 @@ export function InspectionPanel({ locale, tabs, activeTabId, onNotify }: {
       </div>
   );
 
-  return <div className="ai-inspection-panel">
+  const modeControls = <div className="inspection-mode-controls" role="tablist" aria-label={t(locale, "inspectionTitle")}>
+    <button role="tab" aria-selected={!batchMode} onClick={() => setBatchMode(false)}>{t(locale, "inspectionSingleMode")}</button>
+    <button role="tab" aria-selected={batchMode} onClick={() => setBatchMode(true)}>{t(locale, "inspectionBatchMode")}</button>
+  </div>;
+  if (batchMode) return <>{modeControls}<InspectionBatchPanel locale={locale} tabs={tabs} history={runs} onUpdated={applyRun} onNotify={onNotify} onNavigate={(created) => { applyRun(created); setTargetId(created.sessionId); setSelectedRun(created.id); setBatchMode(false); }} /></>;
+  return <>{modeControls}<div className="ai-inspection-panel">
     <div className="ai-inspection-intro">
       <strong>{t(locale, "inspectionTitle")}</strong>
       <p>{t(locale, "inspectionDescription")}</p>
@@ -194,5 +201,5 @@ export function InspectionPanel({ locale, tabs, activeTabId, onNotify }: {
         {reportActions()}
       </ModalShell>}
     </>}
-  </div>;
+  </div></>;
 }

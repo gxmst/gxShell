@@ -69,6 +69,10 @@ type ChatRequest struct {
 	// object where the protocol supports it. Endpoints that reject the
 	// parameter are retried once without it.
 	JSONObject bool `json:"-"`
+	// ForceTool is a backend-owned tool name. Unsupported choice constraints
+	// are removed before retrying; unsupported tools fall back to JSON output.
+	ForceTool         string `json:"-"`
+	AllowToolFallback bool   `json:"-"`
 }
 
 type ChatResponse struct {
@@ -78,6 +82,7 @@ type ChatResponse struct {
 	PromptTk         int        `json:"promptTokens"`
 	CompleteTk       int        `json:"completionTokens"`
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ToolFallback     bool       `json:"toolFallback,omitempty"`
 }
 
 type TokenUsage struct {
@@ -421,6 +426,9 @@ func (m *Manager) ChatWithConfig(ctx context.Context, cfg Config, req ChatReques
 		if req.Tools != nil {
 			body["tools"] = req.Tools
 		}
+		if req.ForceTool != "" {
+			body["tool_choice"] = map[string]any{"type": "function", "function": map[string]any{"name": req.ForceTool}}
+		}
 	}
 	if cfg.Provider == ProviderOpenAI {
 		body["stream_options"] = map[string]any{"include_usage": true}
@@ -451,6 +459,16 @@ func (m *Manager) ChatWithConfig(ctx context.Context, cfg Config, req ChatReques
 	resp, err := send()
 	if err != nil {
 		return err
+	}
+	fallback := false
+	if req.ForceTool != "" || req.AllowToolFallback {
+		for attempt := 0; attempt < 2 && downgradeToolRequest(resp, body, cfg.Provider); attempt++ {
+			fallback = true
+			resp.Body.Close()
+			if resp, err = send(); err != nil {
+				return err
+			}
+		}
 	}
 	if jsonConstraintKey(body) != "" && rejectedJSONMode(resp) {
 		// Nothing was streamed yet, so dropping the optional constraint and
@@ -485,7 +503,7 @@ func (m *Manager) ChatWithConfig(ctx context.Context, cfg Config, req ChatReques
 			resp.StatusCode, string(respBody), len(apiMessages), roleCounts, toolCallMsgs), cfg)
 	}
 
-	return providerError(m.parseSSE(resp.Body, onChunk), cfg)
+	return providerError(m.parseSSE(resp.Body, func(chunk ChatResponse) { chunk.ToolFallback = fallback; onChunk(chunk) }), cfg)
 }
 
 func (m *Manager) resolveEndpoint(cfg Config) string {
@@ -632,7 +650,7 @@ func (m *Manager) parseSSE(body io.Reader, onChunk func(ChatResponse)) error {
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("stream interrupted: %w", err)
 	}
-	if !complete {
+	if !complete || !done {
 		return fmt.Errorf("stream ended before completion")
 	}
 	if reason != "" && reason != "stop" && reason != "tool_calls" {
@@ -653,16 +671,7 @@ func (m *Manager) parseSSE(body io.Reader, onChunk func(ChatResponse)) error {
 		if call.ID == "" || call.Function.Name == "" {
 			return fmt.Errorf("incomplete tool call")
 		}
-		if _, err := toolInput(call.Function.Arguments); err != nil {
-			return err
-		}
 		calls = append(calls, *call)
 	}
-	m.mu.Lock()
-	m.usage.PromptTokens += int64(prompt)
-	m.usage.CompletionTokens += int64(completion)
-	m.usage.TotalTokens += int64(prompt + completion)
-	m.mu.Unlock()
-	onChunk(ChatResponse{Finish: true, ToolCalls: calls, PromptTk: prompt, CompleteTk: completion})
-	return nil
+	return m.finishResponse(calls, prompt, completion, onChunk)
 }

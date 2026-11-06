@@ -99,6 +99,7 @@ func LocalizeError(language, message string) string {
 		return message
 	}
 	replacements := []string{
+		"tool arguments must be a JSON object", "模型返回的工具参数格式错误：应为 JSON 对象",
 		"remote exit code ", "远程退出码 ", "context deadline exceeded", "任务已超时",
 		"context canceled", "任务已停止", "permission denied", "权限不足",
 		"model stream did not finish", "模型响应未完整结束", "model returned an empty report", "模型返回了空报告",
@@ -571,6 +572,12 @@ func ReportMarkdown(run Run) string {
 	fmt.Fprintf(&out, "# %s\n\n", title)
 	fmt.Fprintf(&out, "| %s | %s |\n| --- | --- |\n", tr(l, "报告信息", "Report details"), tr(l, "内容", "Value"))
 	fields := [][2]string{{tr(l, "主机", "Host"), run.Target}, {tr(l, "报告编号", "Report ID"), run.ID}, {tr(l, "巡检时间", "Started"), run.CreatedAt.Local().Format("2006-01-02 15:04:05")}, {tr(l, "总体结论", "Verdict"), StatusLabel(l, doc.Verdict)}}
+	if run.WorkflowVersion != "" {
+		fields = append(fields, [2]string{tr(l, "工作流版本", "Workflow version"), run.WorkflowVersion}, [2]string{tr(l, "提示词版本", "Prompt version"), run.PromptVersion}, [2]string{tr(l, "报告提交方式", "Report submission"), run.ReportMode})
+	}
+	if run.BatchID != "" {
+		fields = append(fields, [2]string{tr(l, "批次编号", "Batch ID"), run.BatchID})
+	}
 	if len(doc.Unknowns) > 0 {
 		confirmed, pending, issue := ReviewStatus(run)
 		status := tr(l, "待人工核实", "Pending human review")

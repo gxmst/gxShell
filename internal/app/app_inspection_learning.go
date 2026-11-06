@@ -107,6 +107,10 @@ func (a *App) confirmSavedCaseEvaluation(caseIDs []string, cfg ai.Config) bool {
 	}
 	message := fmt.Sprintf(i18n.Text(l, "评测会把以下保存用例中已脱敏的真实服务器证据发送给 %s / %s（%s）。不连接服务器，不执行命令。", "Evaluation sends the redacted real-server evidence in these saved cases to %s / %s (%s). No server is contacted and no command runs."),
 		cfg.Provider, cfg.Model, strings.TrimRight(cfg.Endpoint, "/"))
+	for _, item := range items {
+		message += "\n- " + item.Text
+	}
+	message += i18n.Text(l, "\n\n这批保存用例须全部允许；取消任一项则不开始评测。可返回评测界面重新选择用例。", "\n\nAll saved cases in this batch must be approved; unchecking any cancels the evaluation. Return to the evaluation screen to change the selected cases.")
 	return a.confirmInspection(i18n.Text(l, "确认评测保存的用例", "Confirm saved-case evaluation"), message, cliApprovalPanelRequest{Source: "ai", Server: "gxShell", Summary: message, Items: items})
 }
 func (a *App) CancelAiInspectionEvaluation(id string) bool {

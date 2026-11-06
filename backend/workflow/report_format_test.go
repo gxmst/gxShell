@@ -37,7 +37,7 @@ func formatRun(t *testing.T, answers ...string) (Run, []ai.ChatRequest) {
 	return awaitRun(t, manager, run.ID), requests
 }
 
-func TestMarkdownReportGetsSkeletonRepairInJSONMode(t *testing.T) {
+func TestMarkdownReportGetsSkeletonRepairWithSubmissionTool(t *testing.T) {
 	run, requests := formatRun(t, markdownAnswer, testReportJSON("zh-CN", Checks))
 	if run.State != "completed" || run.UnverifiedAnswer != "" {
 		t.Fatalf("repaired report not accepted: %s %s", run.State, run.Error)
@@ -47,8 +47,8 @@ func TestMarkdownReportGetsSkeletonRepairInJSONMode(t *testing.T) {
 	}
 	repair := requests[1]
 	prompt := repair.Messages[len(repair.Messages)-1].Content
-	if repair.EnableTools || !repair.JSONObject {
-		t.Fatal("repair must disable tools and ask for JSON output")
+	if !onlyReportTool(repair) {
+		t.Fatal("repair must expose only the report submission tool")
 	}
 	for _, want := range []string{"不是 JSON，而是 Markdown", `"check": "disk"`, `"E3"`, `"analysis"`} {
 		if !strings.Contains(prompt, want) {

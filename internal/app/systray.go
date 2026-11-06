@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 
 	"github.com/getlantern/systray"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -13,7 +14,24 @@ import (
 
 // setupSystemTray initializes the system tray
 func (a *App) setupSystemTray() {
-	go systray.Run(a.onTrayReady, a.onTrayExit)
+	if !a.trayStarted.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		// systray locks the importing main goroutine, but this goroutine is
+		// separate. Windows associates its hidden tray window and message
+		// queue with the creating OS thread: both Run phases must stay there.
+		goruntime.LockOSThread()
+		defer goruntime.UnlockOSThread()
+		defer a.trayStarted.Store(false)
+		systray.Run(a.onTrayReady, a.onTrayExit)
+	}()
+}
+
+func (a *App) stopSystemTray() {
+	if a.trayStarted.Swap(false) {
+		systray.Quit()
+	}
 }
 
 // onTrayReady is called when the system tray is ready
@@ -69,11 +87,14 @@ func (a *App) onTrayReady() {
 					runtime.EventsEmit(ctx, "tray:settings")
 				}
 			case <-mQuit.ClickedCh:
-				systray.Quit()
 				if ctx := a.ctx.Get(); ctx != nil {
+					// Quit consults the unsaved-work gate. Keep the tray and
+					// handler alive if the user cancels; shutdown removes it
+					// only after the application actually agrees to close.
+					runtime.WindowShow(ctx)
+					runtime.WindowUnminimise(ctx)
 					runtime.Quit(ctx)
 				}
-				return
 			}
 		}
 	}()
