@@ -4,7 +4,7 @@ import { HostDossierEditor } from "./HostDossierEditor";
 import { InspectionFollowup } from "./InspectionFollowup";
 import { InspectionEvaluation } from "./InspectionEvaluation";
 import { InspectionReport } from "./InspectionReport";
-import { GetAiHostDossier, SaveAiHostDossier, StartAiInspectionFollowup, ListAiInspectionEvaluationCases, ListAiInspectionEvaluations, StartAiInspectionEvaluation, FeedbackAiInspection } from "../../../wailsjs/go/app/App";
+import { GetAiHostDossier, SaveAiHostDossier, StartAiInspectionFollowup, ListAiInspectionEvaluationCases, ListAiInspectionEvaluations, StartAiInspectionEvaluation, FeedbackAiInspection, SaveAiInspectionCase, DeleteAiInspectionCase } from "../../../wailsjs/go/app/App";
 import type { HostDossier, InspectionRun } from "../../../wailsjs/go/workflow";
 
 vi.mock("../../../wailsjs/go/app/App", () => ({
@@ -12,6 +12,7 @@ vi.mock("../../../wailsjs/go/app/App", () => ({
   ListAiInspectionEvaluationCases: vi.fn(), ListAiInspectionEvaluations: vi.fn(), StartAiInspectionEvaluation: vi.fn(), CancelAiInspectionEvaluation: vi.fn(),
   FeedbackAiInspection: vi.fn(), ReviewAiInspectionUnknown: vi.fn(), CompareAiInspections: vi.fn(), PrepareAiInspectionPlan: vi.fn(),
   ExecuteAiInspectionPlan: vi.fn(), DismissAiInspectionPlan: vi.fn(), CancelAiInspection: vi.fn(),
+  SaveAiInspectionCase: vi.fn(), DeleteAiInspectionCase: vi.fn(),
 }));
 const run = (): InspectionRun => ({
   id: "original-report", workflow: "host_inspection", sessionId: "ssh-a", profileId: "server-a", target: "Server A",
@@ -122,4 +123,42 @@ it("keeps a started evaluation when an older history request completes later", a
   await act(async () => { resolveHistory([]); });
   expect(screen.getByRole("combobox", { name: "评测历史" })).toHaveValue("new-evaluation");
   expect(screen.getByRole("button", { name: "开始评测所选案例" })).toBeDisabled();
+});
+
+it("turns a flagged report into an evaluation case with corrected states", async () => {
+  const flagged = { ...run(), feedback: [{ outcome: "missed_issue" as const, note: "8080 是未授权的调试端口", reviewer: "operator", at: "2026-11-06T02:00:00Z" }] };
+  vi.mocked(SaveAiInspectionCase).mockResolvedValue({} as never);
+  render(<InspectionReport run={flagged} locale="zh-CN" onUpdated={vi.fn()} onError={vi.fn()} />);
+  fireEvent.click(screen.getByRole("button", { name: "加入评测集" }));
+  const form = screen.getByRole("textbox", { name: "用例标题" }).closest("div") as HTMLElement;
+  expect(screen.getByRole("textbox", { name: "用例标题" })).toHaveValue("8080 是未授权的调试端口");
+  const state = within(form).getByRole("combobox");
+  expect(state).toHaveValue("unknown");
+  fireEvent.change(state, { target: { value: "warning" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存用例" }));
+  await waitFor(() => expect(SaveAiInspectionCase).toHaveBeenCalledWith("original-report", "8080 是未授权的调试端口", { ports: "warning" }));
+  expect(await screen.findByText(/已加入评测集/)).toBeInTheDocument();
+});
+it("does not offer a case for a report marked correct", () => {
+  const confirmed = { ...run(), feedback: [{ outcome: "correct" as const, note: "", reviewer: "operator", at: "2026-11-06T02:00:00Z" }] };
+  render(<InspectionReport run={confirmed} locale="zh-CN" onUpdated={vi.fn()} onError={vi.fn()} />);
+  expect(screen.queryByRole("button", { name: "加入评测集" })).not.toBeInTheDocument();
+});
+it("lists saved cases unselected and deletes one only after confirmation", async () => {
+  vi.mocked(ListAiInspectionEvaluationCases).mockResolvedValue([
+    { id: "healthy_host", title: "正常主机", description: "正常" },
+    { id: "saved-a", title: "调试端口漏报", description: "漏报：8080", saved: true, target: "Server A", createdAt: "2026-11-06T02:00:00Z" },
+  ]);
+  vi.mocked(DeleteAiInspectionCase).mockResolvedValue();
+  render(<InspectionEvaluation locale="zh-CN" onError={vi.fn()} />);
+  const saved = await screen.findByRole("checkbox", { name: /调试端口漏报/ });
+  expect(saved).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: "正常主机" })).toBeChecked();
+  expect(screen.getByText(/Server A · 漏报：8080/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "删除" }));
+  expect(DeleteAiInspectionCase).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+  await waitFor(() => expect(DeleteAiInspectionCase).toHaveBeenCalledWith("saved-a"));
+  await waitFor(() => expect(screen.queryByRole("checkbox", { name: /调试端口漏报/ })).not.toBeInTheDocument());
+  expect(saved).not.toBeChecked();
 });

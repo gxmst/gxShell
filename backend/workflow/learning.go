@@ -98,7 +98,7 @@ func writeLearning(path string, value any) error {
 	return os.Rename(f.Name(), path)
 }
 func (m *Manager) loadLearningData() error {
-	for _, folder := range []string{"dossiers", "evaluations"} {
+	for _, folder := range []string{"dossiers", "evaluations", "cases"} {
 		if err := os.MkdirAll(filepath.Join(m.dir, folder), 0700); err != nil {
 			return err
 		}
@@ -115,7 +115,9 @@ func (m *Manager) loadLearningData() error {
 			if err != nil {
 				continue
 			}
-			if folder == "dossiers" {
+			if folder == "cases" {
+				m.loadSavedCase(path, data)
+			} else if folder == "dossiers" {
 				var dossier HostDossier
 				if json.Unmarshal(data, &dossier) == nil && dossier.ProfileID != "" && filepath.Base(path) == learningFilename(dossier.ProfileID) {
 					m.dossiers[dossier.ProfileID] = dossier

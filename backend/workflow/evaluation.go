@@ -15,9 +15,12 @@ import (
 )
 
 type EvaluationCase struct {
-	ID          string `json:"id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Saved       bool      `json:"saved,omitempty"`
+	Target      string    `json:"target,omitempty"`
+	CreatedAt   time.Time `json:"createdAt,omitempty"`
 }
 type EvaluationResult struct {
 	CaseID           string            `json:"caseId"`
@@ -114,11 +117,11 @@ func (m *Manager) StartEvaluation(parent context.Context, cfg ai.Config, languag
 	if err := ai.ValidateConfig(cfg); err != nil {
 		return EvaluationRun{}, err
 	}
-	if len(caseIDs) < 1 || len(caseIDs) > 4 {
-		return EvaluationRun{}, fmt.Errorf("select one to four evaluation cases")
+	if len(caseIDs) < 1 || len(caseIDs) > maxEvaluationRuns {
+		return EvaluationRun{}, fmt.Errorf("select one to %d evaluation cases", maxEvaluationRuns)
 	}
 	known, seen := map[string]bool{}, map[string]bool{}
-	for _, c := range EvaluationCases(language) {
+	for _, c := range m.AllEvaluationCases(language) {
 		known[c.ID] = true
 	}
 	for _, id := range caseIDs {
@@ -132,7 +135,8 @@ func (m *Manager) StartEvaluation(parent context.Context, cfg ai.Config, languag
 		return EvaluationRun{}, err
 	}
 	evaluation := EvaluationRun{ID: hex.EncodeToString(bytes[:]), Provider: string(cfg.Provider), Model: cfg.Model, Language: NormalizeLanguage(language), CaseVersion: 1, PromptVersion: "assessment-v2", CaseIDs: append([]string{}, caseIDs...), State: "running", CreatedAt: time.Now(), Results: []EvaluationResult{}}
-	ctx, cancel := context.WithTimeout(parent, 3*time.Minute)
+	// Each case is bounded to 40 seconds; leave room for all of them.
+	ctx, cancel := context.WithTimeout(parent, time.Duration(len(caseIDs))*45*time.Second)
 	m.mu.Lock()
 	if len(m.activeEvaluation) > 0 {
 		m.mu.Unlock()
@@ -183,6 +187,15 @@ func (m *Manager) evaluateCase(parent context.Context, cfg ai.Config, language, 
 		if c.ID == caseID {
 			result.Title = c.Title
 		}
+	}
+	if strings.HasPrefix(caseID, savedCasePrefix) {
+		saved, ok := m.savedCase(caseID)
+		if !ok {
+			result.Title, result.Error = caseID, tr(language, "评测用例已被删除。", "The evaluation case was deleted.")
+			return result
+		}
+		fixture, expected = savedCaseFixture(saved, language)
+		result.Title, result.Expected, result.TotalChecks = saved.Title, expected, len(expected)
 	}
 	ctx, cancel := context.WithTimeout(parent, 40*time.Second)
 	defer cancel()

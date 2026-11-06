@@ -44,6 +44,9 @@ credentials away from ordinary profile data and terminal input.
   model reasoning. Feedback is an audit overlay. Model evaluation sends fixed
   simulated evidence to the saved provider with tools disabled and never uses
   SSH; raw judgments are scored before deterministic rules correct them.
+  Cases saved from flagged reports hold redacted real evidence locally;
+  evaluating them names the cases, servers and receiving model in the approval
+  panel every time, and a rejection sends nothing.
 
 - CLI access is globally disabled by default and is additionally opt-in per profile.
 - Requests stay on `127.0.0.1` and require a local bearer token.

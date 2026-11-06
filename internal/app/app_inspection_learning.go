@@ -6,6 +6,7 @@ import (
 	"os/user"
 	"strings"
 
+	"gxShell/backend/ai"
 	"gxShell/backend/i18n"
 	"gxShell/backend/types"
 	"gxShell/backend/workflow"
@@ -48,7 +49,22 @@ func (a *App) FeedbackAiInspection(id, outcome, note string) (workflow.Run, erro
 	return a.inspections.FeedbackReport(id, outcome, note, localInspectionReviewer())
 }
 func (a *App) ListAiInspectionEvaluationCases() []workflow.EvaluationCase {
-	return workflow.EvaluationCases(a.uiLanguage())
+	if a.inspections == nil {
+		return workflow.EvaluationCases(a.uiLanguage())
+	}
+	return a.inspections.AllEvaluationCases(a.uiLanguage())
+}
+func (a *App) SaveAiInspectionCase(runID, title string, expected map[string]string) (workflow.SavedCase, error) {
+	if a.inspections == nil {
+		return workflow.SavedCase{}, fmt.Errorf("inspection service unavailable")
+	}
+	return a.inspections.SaveCase(runID, title, expected, localInspectionReviewer())
+}
+func (a *App) DeleteAiInspectionCase(id string) error {
+	if a.inspections == nil {
+		return fmt.Errorf("inspection service unavailable")
+	}
+	return a.inspections.DeleteCase(id)
 }
 func (a *App) ListAiInspectionEvaluations() []workflow.EvaluationRun {
 	if a.inspections == nil {
@@ -66,7 +82,32 @@ func (a *App) StartAiInspectionEvaluation(caseIDs []string) (workflow.Evaluation
 	if a.inspections == nil || a.ai == nil || a.ctx.Get() == nil {
 		return workflow.EvaluationRun{}, fmt.Errorf("inspection service unavailable")
 	}
-	return a.inspections.StartEvaluation(a.ctx.Get(), a.ai.GetConfig(), a.uiLanguage(), caseIDs)
+	cfg := a.ai.GetConfig()
+	if !a.confirmSavedCaseEvaluation(caseIDs, cfg) {
+		return workflow.EvaluationRun{}, fmt.Errorf("%s", i18n.Text(workflow.NormalizeLanguage(a.uiLanguage()), "已取消评测。", "Evaluation cancelled."))
+	}
+	return a.inspections.StartEvaluation(a.ctx.Get(), cfg, a.uiLanguage(), caseIDs)
+}
+
+// Saved cases hold redacted evidence from real servers, and the current model
+// may differ from the one the user originally allowed, so sending them is
+// confirmed every time. Fixed fixtures are simulated and need no prompt.
+func (a *App) confirmSavedCaseEvaluation(caseIDs []string, cfg ai.Config) bool {
+	l := workflow.NormalizeLanguage(a.uiLanguage())
+	items := []cliApprovalItem{}
+	for _, c := range a.inspections.AllEvaluationCases(l) {
+		for _, id := range caseIDs {
+			if c.Saved && c.ID == id {
+				items = append(items, cliApprovalItem{ID: c.ID, Kind: "inspection", Text: c.Title + " · " + c.Target, RiskTier: "T0"})
+			}
+		}
+	}
+	if len(items) == 0 {
+		return true
+	}
+	message := fmt.Sprintf(i18n.Text(l, "评测会把以下保存用例中已脱敏的真实服务器证据发送给 %s / %s（%s）。不连接服务器，不执行命令。", "Evaluation sends the redacted real-server evidence in these saved cases to %s / %s (%s). No server is contacted and no command runs."),
+		cfg.Provider, cfg.Model, strings.TrimRight(cfg.Endpoint, "/"))
+	return a.confirmInspection(i18n.Text(l, "确认评测保存的用例", "Confirm saved-case evaluation"), message, cliApprovalPanelRequest{Source: "ai", Server: "gxShell", Summary: message, Items: items})
 }
 func (a *App) CancelAiInspectionEvaluation(id string) bool {
 	return a.inspections != nil && a.inspections.CancelEvaluation(id)

@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { ListAiInspectionEvaluationCases, ListAiInspectionEvaluations, StartAiInspectionEvaluation, CancelAiInspectionEvaluation } from "../../../wailsjs/go/app/App";
+import { ListAiInspectionEvaluationCases, ListAiInspectionEvaluations, StartAiInspectionEvaluation, CancelAiInspectionEvaluation, DeleteAiInspectionCase } from "../../../wailsjs/go/app/App";
 import type { InspectionEvaluationCase, InspectionEvaluationRun } from "../../../wailsjs/go/workflow";
 import { t } from "../../i18n";
 import { inspectionCheckLabel } from "./inspectionLabels";
+
+// Mirrors the backend limit on cases per evaluation.
+const MAX_SELECTED = 8;
 
 export function InspectionEvaluation({ locale, onError }: { locale: string; onError: (message: string) => void }) {
   const [cases, setCases] = useState<InspectionEvaluationCase[]>([]);
@@ -10,6 +13,7 @@ export function InspectionEvaluation({ locale, onError }: { locale: string; onEr
   const [evaluations, setEvaluations] = useState<InspectionEvaluationRun[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState("");
   const updateVersion = useRef(0);
   const errorCallback = useRef(onError); errorCallback.current = onError;
   useEffect(() => {
@@ -22,7 +26,7 @@ export function InspectionEvaluation({ locale, onError }: { locale: string; onEr
       catch (error) { if (!disposed) errorCallback.current(String(error)); } finally { refreshing = false; }
     };
     void (async () => {
-      try { const values = await ListAiInspectionEvaluationCases(); if (!disposed) { setCases(values || []); setSelected((values || []).map((value) => value.id)); } }
+      try { const values = await ListAiInspectionEvaluationCases(); if (!disposed) { setCases(values || []); setSelected((values || []).filter((value) => !value.saved).map((value) => value.id)); } }
       catch (error) { if (!disposed) errorCallback.current(String(error)); }
     })();
     void refresh();
@@ -39,11 +43,26 @@ export function InspectionEvaluation({ locale, onError }: { locale: string; onEr
     try { const value = await StartAiInspectionEvaluation(selected); updateVersion.current++; setEvaluations((previous) => [value, ...previous.filter((e) => e.id !== value.id)]); setSelectedId(value.id); }
     catch (error) { onError(String(error)); } finally { setBusy(false); }
   };
+  const remove = async (id: string) => {
+    if (deleting !== id) { setDeleting(id); return; }
+    try { await DeleteAiInspectionCase(id); setCases((previous) => previous.filter((value) => value.id !== id)); setSelected((previous) => previous.filter((value) => value !== id)); }
+    catch (error) { onError(String(error)); } finally { setDeleting(""); }
+  };
+  const caseRow = (value: InspectionEvaluationCase) => <label key={value.id} title={value.description}>
+    <input type="checkbox" checked={selected.includes(value.id)} disabled={busy || running || (!selected.includes(value.id) && selected.length >= MAX_SELECTED)}
+      onChange={(e) => setSelected((previous) => e.target.checked ? [...previous, value.id] : previous.filter((id) => id !== value.id))} />{value.title}
+    {value.saved && <><small>{value.target} · {value.description}</small>
+      <button className="mini-btn" disabled={busy || running} onClick={(e) => { e.preventDefault(); void remove(value.id); }}>{t(locale, deleting === value.id ? "inspectionCaseDeleteConfirm" : "inspectionCaseDelete")}</button></>}
+  </label>;
+  const savedCases = cases.filter((value) => value.saved);
   return <section className="inspection-evaluation">
     <p>{t(locale, "inspectionEvaluationNote")}</p>
-    <div className="inspection-evaluation-cases">{cases.map((value) => <label key={value.id} title={value.description}>
-      <input type="checkbox" checked={selected.includes(value.id)} disabled={busy || running} onChange={(e) => setSelected((previous) => e.target.checked ? [...previous, value.id] : previous.filter((id) => id !== value.id))} />{value.title}
-    </label>)}</div>
+    <div className="inspection-evaluation-cases">{cases.filter((value) => !value.saved).map(caseRow)}</div>
+    <strong>{t(locale, "inspectionCasesSaved")}</strong>
+    {savedCases.length ? <>
+      <p>{t(locale, "inspectionCasesSavedNote")}</p>
+      <div className="inspection-evaluation-cases">{savedCases.map(caseRow)}</div>
+    </> : <p className="inspection-report-empty">{t(locale, "inspectionCasesEmpty")}</p>}
     <button className="btn-secondary" onClick={start} disabled={busy || running || !selected.length}>{t(locale, "inspectionEvaluationStart")}</button>
     {evaluation && <>
       <select className="input" aria-label={t(locale, "inspectionEvaluationHistory")} value={evaluation.id} onChange={(e) => setSelectedId(e.target.value)}>

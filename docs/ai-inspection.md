@@ -265,6 +265,24 @@ average tokens and average duration. False alarm and missed issue counts use
 the latest feedback on each run. Statistics are computed locally from saved
 history; nothing is sent to the model.
 
+### Cases from real reports
+
+A report whose latest feedback is False Alarm or Missed Issue can be added to
+the evaluation set from Diagnostic Feedback. The user names the case and sets
+each check to the state that is actually correct, starting from the report's
+states. gxShell stores the run's already redacted evidence (redacted again on
+save), the expected states, the feedback and the server name under the local
+history directory. One run can be saved once, and at most 20 cases are kept;
+cases can be deleted from the evaluation dialog after a second click.
+
+Saved cases appear below the fixed fixtures and are not selected by default.
+An evaluation takes one to eight cases. When any saved case is selected, the
+in-app approval panel lists those cases with their servers and names the
+provider, model and endpoint that will receive the evidence; this is asked
+every time and is never remembered. Rejecting it starts nothing. Saved cases
+are graded the same way as fixtures: on the model's raw answer, before
+deterministic rules correct it, against the user's expected states.
+
 ## Validation
 
 Local tests exercise native request schemas, authentication headers, model-list

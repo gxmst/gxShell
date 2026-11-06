@@ -10,6 +10,8 @@ export function FeedbackAiInspection(id, outcome, note) { return window['go']['a
 export function ListAiInspectionEvaluationCases() { return window['go']['app']['App']['ListAiInspectionEvaluationCases'](); }
 export function ListAiInspectionEvaluations() { return window['go']['app']['App']['ListAiInspectionEvaluations'](); }
 export function GetAiInspectionStats() { return window['go']['app']['App']['GetAiInspectionStats'](); }
+export function SaveAiInspectionCase(runID, title, expected) { return window['go']['app']['App']['SaveAiInspectionCase'](runID, title, expected); }
+export function DeleteAiInspectionCase(id) { return window['go']['app']['App']['DeleteAiInspectionCase'](id); }
 export function StartAiInspectionEvaluation(caseIDs) { return window['go']['app']['App']['StartAiInspectionEvaluation'](caseIDs); }
 export function CancelAiInspectionEvaluation(id) { return window['go']['app']['App']['CancelAiInspectionEvaluation'](id); }
 

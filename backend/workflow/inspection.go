@@ -108,6 +108,7 @@ type Manager struct {
 	timeout          time.Duration
 	dossiers         map[string]HostDossier
 	evaluations      map[string]*EvaluationRun
+	cases            map[string]*SavedCase
 	activeEvaluation map[string]context.CancelFunc
 }
 
@@ -118,6 +119,7 @@ func NewManager(dir string, execute Executor, chat Chat, emit func(Run), redact 
 	m := &Manager{dir: dir, runs: map[string]*Run{}, active: map[string]context.CancelFunc{}, activePlans: map[string]context.CancelFunc{}, execute: execute, chat: chat, emit: emit, redact: redact, timeout: 5 * time.Minute}
 	m.dossiers = map[string]HostDossier{}
 	m.evaluations = map[string]*EvaluationRun{}
+	m.cases = map[string]*SavedCase{}
 	m.activeEvaluation = map[string]context.CancelFunc{}
 	if err := m.loadLearningData(); err != nil {
 		return nil, err
