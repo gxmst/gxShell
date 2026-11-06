@@ -340,6 +340,7 @@ func toAiChatRequest(req types.AiChatRequest) ai.ChatRequest {
 			})
 		}
 	}
+	compactAiToolResults(aiReq.Messages)
 	return aiReq
 }
 

@@ -25,6 +25,16 @@ key to a different endpoint. API keys remain in the existing secure store and
 are sent in headers, never in Gemini query strings. Redirects to a different
 API origin are rejected to avoid forwarding credentials.
 
+## Chat context size
+
+Chat resends the whole conversation on every turn, and one command result may
+hold up to 128 KiB. Before a request is sent, command and file results from the
+current turn (after the latest user message) are cut to 32 KiB and earlier ones
+to 2 KiB. The kept text is the head and tail with a note of how many bytes were
+left out, so the model can ask for a narrower command. Only the copy sent to the
+model is shortened; the chat keeps the full output. The usage bar shows the
+input tokens the provider reported for the active chat's latest request.
+
 ## Host inspection
 
 1. Connect one remote SSH server and select it in the Inspection view.

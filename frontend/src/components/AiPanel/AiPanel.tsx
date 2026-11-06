@@ -59,6 +59,7 @@ type AiStreamEvent = {
   cancelled?: boolean;
   error?: string;
   toolCalls?: ToolCallData[];
+  promptTokens?: number;
 };
 
 type BufferedAiEvent = {
@@ -70,6 +71,7 @@ type BufferedAiEvent = {
   cancelled: boolean;
   error: string;
   toolCalls?: ToolCallData[];
+  promptTokens?: number;
 };
 
 let sessionCounter = 0;
@@ -212,6 +214,8 @@ export function AiPanel(props: {
   const [input, setInput] = useState("");
   const [streamingByChat, setStreamingByChat] = useState<Record<string, string>>({});
   const [usage, setUsage] = useState<types.AiTokenUsage | null>(null);
+  // Input size the provider reported for each chat's latest request.
+  const [lastPromptTokens, setLastPromptTokens] = useState<Record<string, number>>({});
   const [showSettings, setShowSettings] = useState(false);
   const [mode, setMode] = useState<"chat" | "inspection">("chat");
   const [evaluationOpen, setEvaluationOpen] = useState(false);
@@ -340,6 +344,7 @@ export function AiPanel(props: {
       if (activeRequestsRef.current[event.chatId] !== event.requestId) continue;
       delete activeRequestsRef.current[event.chatId];
       completedChats.add(event.chatId);
+      if (event.promptTokens) setLastPromptTokens((previous) => ({ ...previous, [event.chatId]: event.promptTokens || 0 }));
       if (event.error && !event.cancelled) onNotifyRef.current(event.error, "error");
     }
     if (completedChats.size > 0) {
@@ -372,6 +377,7 @@ export function AiPanel(props: {
     existing.cancelled = existing.cancelled || !!data.cancelled;
     existing.error = existing.error || data.error || "";
     if (data.toolCalls?.length) existing.toolCalls = data.toolCalls;
+    if (data.promptTokens) existing.promptTokens = data.promptTokens;
     eventBufferRef.current.set(key, existing);
     if (eventTimerRef.current === null) {
       eventTimerRef.current = window.setTimeout(flushBufferedEvents, 75);
@@ -891,6 +897,7 @@ export function AiPanel(props: {
       {usage && usage.totalTokens > 0 && (
         <div className="ai-usage">
           <span>{t(lang, "aiTokenUsage")}: {usage.totalTokens.toLocaleString()}</span>
+          {!!lastPromptTokens[activeSessionId] && <span title={t(lang, "aiLastPromptTokensHint")}>{t(lang, "aiLastPromptTokens")}: {lastPromptTokens[activeSessionId].toLocaleString()}</span>}
           <button className="text-[9px] opacity-60 hover:opacity-100" onClick={() => { ResetAiUsage(); setUsage(new types.AiTokenUsage()); }}>{t(lang, "aiResetUsage")}</button>
         </div>
       )}
