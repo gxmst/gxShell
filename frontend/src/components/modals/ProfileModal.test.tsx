@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { emptyProfile } from '../../constants';
 import { ProfileModal } from './ProfileModal';
@@ -173,5 +173,48 @@ describe('ProfileModal shortcuts', () => {
     expect(onDirtyChange).toHaveBeenLastCalledWith(true);
     view.unmount();
     expect(onDirtyChange).toHaveBeenLastCalledWith(false);
+  });
+});
+
+describe('ProfileModal full CLI trust', () => {
+  function renderProfile(mode?: string) {
+    const profile = emptyProfile();
+    profile.host = 'example.test';
+    profile.cliEnabled = true;
+    profile.cliAlias = 'prod';
+    profile.cliTrustMode = mode;
+    if (mode) profile.cliTrustUntil = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    const onSave = vi.fn();
+    render(<ProfileModal profile={profile} profiles={[]} language="zh-CN" onClose={vi.fn()} onSave={onSave} onPickKey={async () => ''} onDelete={vi.fn()} onDuplicate={vi.fn()} />);
+    return { onSave, select: screen.getByLabelText('限时信任外部 AI CLI 自动化') };
+  }
+
+  it('offers exactly one full-trust duration and saves a one-hour deadline', () => {
+    const now = Date.now();
+    vi.spyOn(Date, 'now').mockReturnValue(now);
+    const { onSave, select } = renderProfile();
+    const fullOptions = Array.from((select as HTMLSelectElement).options).filter((option) => option.textContent?.includes('完全信任'));
+    expect(fullOptions.map((option) => option.value)).toEqual(['full-1']);
+    fireEvent.change(select, { target: { value: 'full-1' } });
+    expect(within(select).getByRole('option', { selected: true })).toHaveTextContent('完全信任生效至');
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0].cliTrustMode).toBe('full');
+    expect(Date.parse(onSave.mock.calls[0][0].cliTrustUntil)).toBe(now + 60 * 60 * 1000);
+  });
+
+  it.each(['off', '4'])('clears full-trust mode when selecting %s', (duration) => {
+    const { onSave, select } = renderProfile('full');
+    fireEvent.change(select, { target: { value: duration } });
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+    expect(onSave.mock.calls[0][0].cliTrustMode).toBeUndefined();
+    if (duration === 'off') expect(onSave.mock.calls[0][0].cliTrustUntil).toBeUndefined();
+  });
+
+  it('clears both the mode and deadline when disabling CLI access', () => {
+    const { onSave } = renderProfile('full');
+    fireEvent.click(screen.getByLabelText('允许 CLI / MCP 访问'));
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+    expect(onSave.mock.calls[0][0]).toMatchObject({ cliEnabled: false, cliTrustMode: undefined, cliTrustUntil: undefined });
   });
 });

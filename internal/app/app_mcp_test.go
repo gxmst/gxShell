@@ -109,6 +109,25 @@ func TestMCPHTTPUsesCLIProfileVisibilityAndPolicy(t *testing.T) {
 	if !result.IsError || payload["riskTier"] != "T3" || (payload["outcome"] != "blocked" && payload["errorKind"] != "confirmation") {
 		t.Fatalf("critical command bypassed approval: %#v", payload)
 	}
+	// MCP uses the same full-trust boundary and structured self-destruction
+	// block as CLI commands, including complete scripts sent over stdin.
+	if err := store.SaveProfiles([]types.Profile{{ID: "allowed", CliEnabled: true, CliAlias: "prod", CliTrustMode: "full", CliTrustUntil: time.Now().Add(time.Hour)}}); err != nil {
+		t.Fatal(err)
+	}
+	app.cliConfirmRiskFn = func(string, string, riskAssessment, approvalStrength) (bool, error) {
+		t.Error("full-trust self-destruction opened an MCP approval")
+		return false, nil
+	}
+	result, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "gxshell_execute_script", Arguments: map[string]any{"server": "prod", "script": "echo starting\nrm -rf /\n", "shell": "bash"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(result.Content[0].(*mcp.TextContent).Text), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsError || payload["blockedBy"] != "self-destructive" || payload["approval"] != cliApprovalSelfDestructiveBlock || payload["outcome"] != "blocked" {
+		t.Fatalf("MCP full-trust self-destruction bypassed CLI policy: %#v", payload)
+	}
 }
 
 func TestMCPHTTPRequiresAuthAndRejectsCrossOriginAndRebinding(t *testing.T) {

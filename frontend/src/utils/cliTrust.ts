@@ -6,7 +6,9 @@ export function cliTrustDeadline(profile: types.Profile): number {
 }
 
 export function isCliTrustActive(profile: types.Profile, now: number): boolean {
-  return Boolean(profile.cliEnabled && cliTrustDeadline(profile) > now);
+  const remaining = cliTrustDeadline(profile) - now;
+  return Boolean(profile.cliEnabled && remaining > 0 &&
+    (!profile.cliTrustMode || (profile.cliTrustMode === "full" && remaining <= 60 * 60 * 1000)));
 }
 
 export function formatCliTrustRemaining(milliseconds: number): string {

@@ -3,6 +3,7 @@ package secrets
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/zalando/go-keyring"
@@ -20,23 +21,11 @@ type Value struct {
 func (s *Store) NamedValues(namespace string) (map[string]string, error) {
 	s.operationMu.Lock()
 	defer s.operationMu.Unlock()
-	names, err := s.credentials().NamedNames(namespace)
+	names, err := s.namedNames(namespace, true)
 	if err != nil {
 		return nil, err
 	}
 	prefix := "named:" + namespace + ":"
-	s.mu.Lock()
-	data := s.fallbackData()
-	degraded := s.fallbackDegraded
-	for id := range data {
-		if strings.HasPrefix(id, prefix) {
-			names = append(names, strings.TrimPrefix(id, prefix))
-		}
-	}
-	s.mu.Unlock()
-	if degraded {
-		return nil, errors.New("cannot read encrypted secret storage")
-	}
 	result := map[string]string{}
 	for _, name := range names {
 		value, err := s.migrationValue(prefix+name, "value")
@@ -50,7 +39,70 @@ func (s *Store) NamedValues(namespace string) (map[string]string, error) {
 	return result, nil
 }
 
+// NamedNames lists references without retrieving their values from the keyring.
+func (s *Store) NamedNames(namespace string) ([]string, error) {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
+	return s.namedNames(namespace, false)
+}
+
+// Caller holds operationMu, including when exporting values.
+func (s *Store) namedNames(namespace string, requireNative bool) ([]string, error) {
+	names, err := s.credentials().NamedNames(namespace)
+	// Exports must not silently omit legacy native-only credentials. Metadata
+	// listing can use the persisted encrypted index during a keyring outage.
+	if err != nil && requireNative {
+		return nil, err
+	}
+	prefix := "named:" + namespace + ":"
+	s.mu.Lock()
+	data := s.fallbackData()
+	degraded := s.fallbackDegraded
+	// Index legacy native-only names while enumeration is available, so a later
+	// outage cannot mistake a previously listed credential for a new name.
+	if err == nil && !degraded {
+		next := cloneFallback(data)
+		changed := false
+		for _, name := range names {
+			id := prefix + name
+			if len(next[id]) == 0 {
+				next[id] = map[string]string{"indexed": "1"}
+				changed = true
+			}
+		}
+		if changed {
+			if writeErr := s.writeFallback(next); writeErr != nil {
+				s.mu.Unlock()
+				return nil, writeErr
+			}
+			data = next
+		}
+	}
+	for id := range data {
+		if strings.HasPrefix(id, prefix) {
+			names = append(names, strings.TrimPrefix(id, prefix))
+		}
+	}
+	s.mu.Unlock()
+	if degraded {
+		return nil, errors.New("cannot read encrypted secret storage")
+	}
+	seen := map[string]bool{}
+	result := make([]string, 0, len(names))
+	for _, name := range names {
+		if !seen[name] {
+			seen[name] = true
+			result = append(result, name)
+		}
+	}
+	sort.Strings(result)
+	return result, nil
+}
+
 func (s *Store) migrationValue(id, kind string) (string, error) {
+	if kind == "value" && strings.HasPrefix(id, "named:") {
+		return s.namedValue(id)
+	}
 	value, err := s.credentials().Get(key(id, kind))
 	if err == nil {
 		return value, nil

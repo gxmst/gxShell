@@ -4,6 +4,31 @@
    element's containing block, so the hero unstuck and scrolled away as soon as
    the sections grew past one viewport. Making the page a flex column and
    letting only .settings-sections scroll pins the hero for real. */
+.named-secret-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-raised);
+}
+.named-secret-copy { flex: 1; min-width: 0; }
+.named-secret-copy strong, .named-secret-copy code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.named-secret-copy code { margin-top: 3px; color: var(--muted); }
+.named-secret-actions { display: flex; flex: 0 0 auto; gap: 4px; }
+.named-secret-value::-ms-reveal { display: none; }
+@container settings (max-width: 300px) {
+  .named-secret-row { flex-direction: column; align-items: stretch; }
+  .named-secret-actions { justify-content: flex-end; }
+}
+
 .settings-page {
   display: flex;
   flex-direction: column;

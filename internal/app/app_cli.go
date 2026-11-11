@@ -41,12 +41,15 @@ type cliApprovalDecision struct {
 	Source   string
 	Strength string
 	Err      error
+	Block    *commandBlock
 }
 
 const (
-	cliApprovalNotRequired = "not-required"
-	cliApprovalUser        = "user"
-	cliApprovalTimedTrust  = "timed-trust"
+	cliApprovalNotRequired          = "not-required"
+	cliApprovalUser                 = "user"
+	cliApprovalTimedTrust           = "timed-trust"
+	cliApprovalFullTrust            = "full-trust"
+	cliApprovalSelfDestructiveBlock = "self-destructive-block"
 )
 
 // startCliServer starts an authenticated localhost HTTP server for CLI access.
@@ -190,11 +193,14 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	serverName := cliProfileName(profile)
-	secretValues, secretNames, err := a.resolveCliSecretRefs(req.Secrets)
+	// Validate and show references first; do not retrieve values until the
+	// credential-bearing request has crossed its approval boundary.
+	secretNames, err := cliSecretReferenceNames(req.Secrets)
 	if err != nil {
 		writeCliError(w, http.StatusBadRequest, "secret", err.Error())
 		return
 	}
+	var secretValues map[string]string
 	guardText := req.Command
 	execCommand := req.Command
 	var stdin *string
@@ -204,26 +210,25 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		script := req.Script
 		stdin = &script
 	}
-	if len(secretValues) > 0 {
+	if len(secretNames) > 0 {
 		displayShell := req.Shell
 		if displayShell == "" {
 			displayShell = "sh"
 		}
 		execCommand = displayShell + " -s"
-		script := buildSecretExecutionScript(secretValues, req.Command, req.Script)
-		stdin = &script
 	}
 
 	display := execCommand
 	if req.Script != "" {
 		display += " via SSH stdin:\n" + req.Script
-	} else if len(secretValues) > 0 {
+	} else if len(secretNames) > 0 {
 		display += " via SSH stdin:\n" + req.Command
 	}
 	if len(secretNames) > 0 {
 		display += "\nNamed secrets: " + strings.Join(secretNames, ", ") + " (values hidden)"
 	}
 	assessment := classifyCommand(guardText)
+	addNamedCredentialRisk(&assessment, secretNames)
 	matchedUploads := a.applyCliUploadedFileRisk(profile.ID, guardText, &assessment)
 	if len(matchedUploads) > 0 {
 		display += formatCliUploadedFileContext(matchedUploads)
@@ -254,6 +259,9 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		block := commandBlock{Kind: "confirmation", Reason: "user declined execution", Detail: describeTier(assessment)}
+		if decision.Block != nil {
+			block = *decision.Block
+		}
 		fields := logger.CommandAuditFields(guardText)
 		fields["server"] = serverName
 		fields["profileID"] = profile.ID
@@ -279,6 +287,15 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	secretValues, _, err = a.resolveCliSecretRefs(req.Secrets)
+	if err != nil {
+		writeCliError(w, http.StatusBadRequest, "secret", err.Error())
+		return
+	}
+	if len(secretValues) > 0 {
+		script := buildSecretExecutionScript(secretValues, req.Command, req.Script)
+		stdin = &script
+	}
 	fields := logger.CommandAuditFields(guardText)
 	fields["server"] = serverName
 	fields["profileID"] = profile.ID
@@ -367,21 +384,21 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if !activityFinished {
-			a.finishTerminalAutomation(sessionID, activityID, "cli", "execute_command", "", err.Error(), 1, 0, false)
+			a.finishTerminalAutomation(sessionID, activityID, "cli", "execute_command", "", a.protectCredentialTexts(profile.ID, err.Error())[0], 1, 0, false)
 		}
 		writeCliJSON(w, http.StatusBadGateway, map[string]any{
 			"alias":              serverName,
 			"reusedConnection":   reusedConnection,
 			"reconnectAttempted": reconnectAttempted,
 			"reconnected":        reconnected,
-			"error":              err.Error(),
+			"error":              a.protectCredentialTexts(profile.ID, err.Error())[0],
 			"errorKind":          map[bool]string{true: "connect", false: "ssh"}[reconnectFailed],
 			"outcome":            "transport_error",
 			"blocked":            false,
 		})
 		return
 	}
-	redactCommandExecutionResult(&result, secretValues)
+	a.protectCredentialResult(profile.ID, &result, guardText)
 	automationError := result.Error
 	if result.TimedOut && automationError == "" {
 		automationError = "remote command timeout"
@@ -801,7 +818,16 @@ func (a *App) authorizeCliProfileExecution(profile types.Profile, command string
 }
 
 func (a *App) authorizeCliProfileRiskExecution(ctx context.Context, profile types.Profile, display, riskText string, assessment riskAssessment) cliApprovalDecision {
-	trusted := a.cliProfilesTrustedNow([]string{profile.ID}, time.Now())
+	if err := ctx.Err(); err != nil {
+		return cliApprovalDecision{Source: cliApprovalUser, Err: err}
+	}
+	trusted, fullyTrusted := a.cliProfilesTrustStateNow([]string{profile.ID}, time.Now())
+	if fullyTrusted {
+		if block, blocked := cliSelfDestructiveBlock(riskText, assessment); blocked {
+			return cliApprovalDecision{Source: cliApprovalSelfDestructiveBlock, Strength: "blocked", Block: &block}
+		}
+		return cliApprovalDecision{Allowed: true, Source: cliApprovalFullTrust, Strength: approvalNone.String()}
+	}
 	strength := assessment.requiredApproval(trusted)
 	if strength == approvalNone {
 		source := cliApprovalNotRequired
@@ -972,8 +998,13 @@ func (a *App) authorizeCliCopy(ctx context.Context, source, destination types.Pr
 // emergency revoke that commits before this short read therefore takes effect
 // immediately; storage failures fail closed into native approval.
 func (a *App) cliProfilesTrustedNow(profileIDs []string, now time.Time) bool {
+	trusted, _ := a.cliProfilesTrustStateNow(profileIDs, now)
+	return trusted
+}
+
+func (a *App) cliProfilesTrustStateNow(profileIDs []string, now time.Time) (bool, bool) {
 	if a.store == nil || len(profileIDs) == 0 {
-		return false
+		return false, false
 	}
 	a.profilesMu.Lock()
 	profiles, err := a.store.ListProfiles()
@@ -982,21 +1013,23 @@ func (a *App) cliProfilesTrustedNow(profileIDs []string, now time.Time) bool {
 		if a.log != nil {
 			a.log.ErrorFields("CLI trust state could not be read", logger.LogFields{"error": err.Error()})
 		}
-		return false
+		return false, false
 	}
 	wanted := make(map[string]bool, len(profileIDs))
+	full := true
 	for _, id := range profileIDs {
 		if id == "" {
-			return false
+			return false, false
 		}
 		wanted[id] = true
 	}
 	for _, profile := range profiles {
 		if wanted[profile.ID] && cliProfileTrustActive(profile, now) {
+			full = full && cliProfileFullTrustActive(profile, now)
 			delete(wanted, profile.ID)
 		}
 	}
-	return len(wanted) == 0
+	return len(wanted) == 0, len(wanted) == 0 && full
 }
 
 func (a *App) flushCliApprovalBatch(key string) {

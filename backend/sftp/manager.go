@@ -321,9 +321,8 @@ func (m *Manager) acquireSlow(sessionID string) (*sftp.Client, func(), error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	// Concurrent reads/writes pipeline multiple outstanding packets per
-	// transfer instead of one 32KB request per round trip; on a high-latency
-	// link this is the difference between ~1MB/s and saturating the pipe.
+	// Downloads and upload-prefix verification use concurrent read-ahead.
+	// Uploads explicitly select bounded pipelining in copyUpload below.
 	client, err := sftp.NewClient(sshClient,
 		sftp.UseConcurrentReads(true),
 		sftp.UseConcurrentWrites(true),
@@ -731,6 +730,13 @@ func (j *transferJob) resume() bool {
 // waitIfPaused is deliberately context-aware: cancellation must still abort a
 // paused transfer immediately, without requiring the user to press Resume.
 func (j *transferJob) waitIfPaused() error {
+	return j.waitIfPausedContext(j.ctx)
+}
+
+func (j *transferJob) waitIfPausedContext(ctx context.Context) error {
+	if err := checkTransferContext(ctx); err != nil {
+		return err
+	}
 	if err := checkTransferContext(j.ctx); err != nil {
 		return err
 	}
@@ -746,6 +752,8 @@ func (j *transferJob) waitIfPaused() error {
 		return checkTransferContext(j.ctx)
 	case <-j.ctx.Done():
 		return j.ctx.Err()
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 
@@ -1132,7 +1140,7 @@ func (m *Manager) uploadFileWithPolicy(sessionID, localPath, remotePath string, 
 	})
 	defer clearInterrupt()
 	if offset > 0 {
-		matches, verifyErr := verifyResumePrefix(job, src, dst, offset)
+		matches, verifyErr := verifyUploadPrefix(job, src, dst, offset)
 		if verifyErr != nil {
 			return verifyErr
 		}
@@ -1143,36 +1151,32 @@ func (m *Manager) uploadFileWithPolicy(sessionID, localPath, remotePath string, 
 			offset = 0
 		}
 	}
+	// Prefix read-ahead changes the remote handle offset, including on a
+	// mismatch. Reset both handles even when restarting from byte zero.
+	if _, err = src.Seek(offset, io.SeekStart); err != nil {
+		return err
+	}
+	if _, err = dst.Seek(offset, io.SeekStart); err != nil {
+		return err
+	}
 	if offset > 0 {
-		if _, err = src.Seek(offset, io.SeekStart); err != nil {
-			return err
-		}
-		if _, err = dst.Seek(offset, io.SeekStart); err != nil {
-			return err
-		}
 		m.emitResumed(job, offset, totalSize)
 	}
 
 	progress := m.transferProgress(job, offset, totalSize)
-	// ReadFrom writes from the handle's current offset, so the seek above is what
-	// makes a resumed upload append.
-	//
-	// It writes sequentially, one packet per round trip: pkg/sftp only switches
-	// to concurrent offset-addressed writes when the reader advertises a length,
-	// and progressReader deliberately does not (see resume.go's
-	// contiguous-prefix invariant — that mode can leave a part file longer than
-	// its last contiguous byte, which is precisely what resuming at the part's
-	// length must be able to trust). Downloads get the concurrency for free
-	// because WriteTo orders its writes; matching it here would mean giving up
-	// length-based resume for content verification.
-	reader := io.Reader(&progressReader{ctx: job.ctx, job: job, r: src, fn: progress})
+	// Keep pause/cancel and optional approval hashing on the source stream.
+	// copyUpload selects concurrent writes explicitly, even through TeeReader,
+	// and reports confirmed bytes rather than read-ahead bytes on failure.
+	readCtx, stopSource := context.WithCancel(job.ctx)
+	defer stopSource()
+	reader := io.Reader(&progressReader{ctx: readCtx, job: job, r: src, fn: progress})
 	var uploadedHash hash.Hash
 	if expectedSHA256 != "" {
 		uploadedHash = sha256.New()
 		reader = io.TeeReader(reader, uploadedHash)
 	}
 	var copied int64
-	copied, err = dst.ReadFrom(reader)
+	copied, err = copyUpload(dst, reader, offset, stopSource)
 	done = offset + copied
 	closeErr := dst.Close()
 	dstClosed = true
@@ -2426,7 +2430,7 @@ type progressReader struct {
 
 func (p *progressReader) Read(b []byte) (int, error) {
 	if p.job != nil {
-		if err := p.job.waitIfPaused(); err != nil {
+		if err := p.job.waitIfPausedContext(p.ctx); err != nil {
 			return 0, err
 		}
 	}

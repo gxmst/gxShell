@@ -92,7 +92,7 @@ func TestClassifyCommandTiers(t *testing.T) {
 		{"systemctl stop myapp", tierBounded, riskDestructive, "stops a non-critical service"},
 		{"crontab /tmp/jobs", tierBounded, riskPersistence, "replaces scheduled jobs"},
 		{"chmod -R 755 /srv/app", tierBounded, riskDestructive, "recursive permission change"},
-		{"ufw allow 8080", tierBounded, riskDestructive, "changes network exposure"},
+		{"ufw allow 8080", tierBounded, riskExposure, "changes network exposure"},
 		{"docker exec app sh -c 'ls'", tierBounded, riskUndecidable, "command inside a container is not analysed"},
 		{"tar -xzf release.tar.gz", tierBounded, riskUndecidable, "archive chooses its own paths"},
 		{"find /srv -name '*.tmp' -delete", tierBounded, riskDestructive, "find can delete"},

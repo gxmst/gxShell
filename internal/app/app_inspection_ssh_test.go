@@ -26,7 +26,7 @@ import (
 
 // This fixture exercises real TCP/SSH channels with deterministic Linux-shaped
 // command results. It does not execute Linux commands or alter a remote machine.
-func inspectionSSHFixture(t *testing.T) (types.Profile, string) {
+func inspectionSSHFixture(t *testing.T, scriptFixtures ...func(string) (string, uint32, bool)) (types.Profile, string) {
 	t.Helper()
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -91,6 +91,13 @@ func inspectionSSHFixture(t *testing.T) (types.Profile, string) {
 									return
 								}
 								script := string(data)
+								for _, fixture := range scriptFixtures {
+									if output, code, handled := fixture(script); handled {
+										_, _ = io.WriteString(channel, output)
+										_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{code}))
+										return
+									}
+								}
 								if !strings.HasPrefix(script, "PATH=/usr/sbin:/usr/bin:/sbin:/bin\n") {
 									_, _ = io.WriteString(channel.Stderr(), "fixture rejected missing fixed PATH")
 									_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{99}))

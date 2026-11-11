@@ -3,6 +3,30 @@
 All notable gxShell changes are documented here. Release notes are generated
 from the version section in this file.
 
+## [1.8.2] - 2026-11-11
+
+### English
+
+- Build with Go 1.26.11 to fix the reachable net/http MaxBytesReader header race (GO-2026-6859); CI uses the same minimum toolchain from go.mod.
+- Add a credential vault in Settings for manually adding, replacing, deleting and copying named references without revealing saved values. Explicit **Full trust for 1 hour** lets CLI/MCP commands skip execution approvals while retaining output protection and recognized host-destruction guards; expiration, revocation, duplication and imports do not carry the grant forward.
+- Pipeline SFTP uploads with bounded concurrent writes and prefix reads, retain pause/cancel and approval hashing, and verify interrupted partial contents before resuming.
+- Fix failed CLI credential deletion reporting success, delayed large-document search missing its scroll target, Kubernetes SecretList/nested Secret output escaping credential capture, and CSS checks failing when the checkout path contains spaces. Preserve large JSON metadata integers during Secret protection.
+- Capture recognized credentials from CLI/MCP results and built-in AI context into the local credential vault, return reusable references, and protect every provider request before history compaction. Failed captures mask values; background output is buffered until completion to protect split credentials.
+- Require individual approval for named-credential use outside full trust, retrieve values after approval, and close scoped-trust gaps for critical paths, firewall/account/process changes, Docker volume removal and credential reads. Fix `bash --norc -c` analysis and expand recognized host-destruction guards while keeping full trust free of execution prompts.
+- Release the inspection server slot with its terminal state so a completed report can immediately start the next inspection.
+- Wrap service names, descriptions and summary text, show resource usage on its own line, and move controls below service details in narrow sidebars to prevent clipped content.
+
+### 中文
+
+- 改用 Go 1.26.11，修复可达的 net/http MaxBytesReader 请求头竞态漏洞（GO-2026-6859）；CI 从 go.mod 读取相同的最低工具链版本。
+- 设置新增凭据库，可手动添加、替换、删除命名凭据及复制引用，不回显已保存原值。显式开启「完全信任 1 小时」后，CLI/MCP 命令免执行审批，保留输出保护和已识别的主机自毁拦截；到期、撤销、复制和导入均不会延续授权。
+- SFTP 上传使用有界并发写入和前缀读取，保留暂停／取消及审批哈希校验，并在续传前核对中断临时文件的实际内容。
+- 修复 CLI 凭据删除失败仍返回成功、大文档延迟查找不滚动定位、Kubernetes SecretList／嵌套 Secret 输出遗漏凭据捕获，以及仓库路径含空格时 CSS 检查失败；Secret 保护保留 JSON 大整数元数据精度。
+- 将 CLI/MCP 结果及内置 AI 上下文中已识别的凭据捕获到本地凭据库，返回可调用引用，并在历史压缩前保护每次模型请求。捕获失败时遮蔽原值；后台输出在结束后统一返回，防止分段凭据漏过。
+- 完全信任之外，命名凭据使用必须单独审批，原值在审批后读取；补齐关键路径、防火墙／账户／进程变更、Docker 卷删除及凭据读取的普通信任分级。修复 `bash --norc -c` 分析，并扩展已识别的主机自毁拦截，保留完全信任免执行审批。
+- 巡检进入结束状态时同步释放服务器占用，避免报告已完成后立即开始下一次巡检仍被拒绝。
+- 服务名称、描述及顶部摘要支持换行，资源用量单独显示；窄侧栏下将操作按钮移至卡片底部，避免内容被截断。
+
 ## [1.8.1] - 2026-11-04
 
 ### English

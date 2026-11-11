@@ -60,6 +60,7 @@ try {
         "$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $relative"
     }
     [IO.File]::WriteAllText((Join-Path $archive 'SHA256SUMS.txt'), (($checksums -join "`n") + "`n"), $utf8)
+    [IO.File]::WriteAllText((Join-Path (Split-Path -Parent $archive) 'LATEST.txt'), ($leaf + "`n"), $utf8)
     Write-Output "Archive: $archive"
     Write-Output "Package: $package"
 } finally {

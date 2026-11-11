@@ -267,7 +267,10 @@ func (a *App) startAiChat(req types.AiChatRequest, continuing bool) error {
 			})
 		}()
 
-		aiReq := toAiChatRequest(req)
+		// Protect before history compaction: clipping an undiscovered secret
+		// first could leave a fragment that exact-value matching cannot recognise.
+		aiReq := a.protectAIRequest(cfg, toUncompactedAiChatRequest(req))
+		compactAiToolResults(aiReq.Messages)
 		err := a.ai.ChatWithContext(ctx, aiReq, func(resp ai.ChatResponse) {
 			emitCtx := a.ctx.Get()
 			if emitCtx == nil {
@@ -316,6 +319,12 @@ func (a *App) startAiChat(req types.AiChatRequest, continuing bool) error {
 }
 
 func toAiChatRequest(req types.AiChatRequest) ai.ChatRequest {
+	aiReq := toUncompactedAiChatRequest(req)
+	compactAiToolResults(aiReq.Messages)
+	return aiReq
+}
+
+func toUncompactedAiChatRequest(req types.AiChatRequest) ai.ChatRequest {
 	aiReq := ai.ChatRequest{
 		Messages:    make([]ai.Message, len(req.Messages)),
 		Context:     req.Context,
@@ -340,7 +349,6 @@ func toAiChatRequest(req types.AiChatRequest) ai.ChatRequest {
 			})
 		}
 	}
-	compactAiToolResults(aiReq.Messages)
 	return aiReq
 }
 
@@ -367,6 +375,7 @@ type aiToolExecutionPlan struct {
 	Command      string
 	Shell        string
 	SecretValues map[string]string
+	SecretRefs   map[string]string
 	SecretNames  []string
 	Detail       string
 	EmptyMessage string
@@ -490,7 +499,7 @@ func (a *App) prepareAiToolExecution(toolCall authorizedAIToolCall) (aiToolExecu
 		if !isAllowedCliShell(args.Shell) {
 			return aiToolExecutionPlan{}, "BLOCKED: script shell must be one of: sh, bash, dash, zsh, ksh", false
 		}
-		secretValues, secretNames, err := a.resolveCliSecretRefs(args.Secrets)
+		secretNames, err := cliSecretReferenceNames(args.Secrets)
 		if err != nil {
 			return aiToolExecutionPlan{}, "Error resolving named secret: " + err.Error(), false
 		}
@@ -503,7 +512,7 @@ func (a *App) prepareAiToolExecution(toolCall authorizedAIToolCall) (aiToolExecu
 			ToolName:     toolCall.ToolName,
 			Command:      args.Command,
 			Shell:        args.Shell,
-			SecretValues: secretValues,
+			SecretRefs:   args.Secrets,
 			SecretNames:  secretNames,
 			Detail:       detail,
 			EmptyMessage: "(command produced no output)",
@@ -542,6 +551,11 @@ func validateAiToolCommand(command string) (string, bool) {
 }
 
 func (a *App) executeAiToolPlan(sessionID string, plan aiToolExecutionPlan) string {
+	values, _, err := a.resolveCliSecretRefs(plan.SecretRefs)
+	if err != nil {
+		return "BLOCKED: named credential could not be resolved after approval"
+	}
+	plan.SecretValues = values
 	activityID := a.beginTerminalAutomation(sessionID, "ai", plan.ToolName, logger.RedactKnownSecrets(plan.Command, nil))
 	// No caller context reaches this point (plans run from their own worker
 	// goroutines); the exec timeout remains the effective bound.
@@ -553,7 +567,7 @@ func (a *App) executeAiToolPlan(sessionID string, plan aiToolExecutionPlan) stri
 		stdin = &script
 	}
 	result, err := a.ssh.ExecuteCommandResultStream(context.Background(), sessionID, execCommand, stdin, aiToolTimeout, aiToolOutputLimit, nil)
-	redactCommandExecutionResult(&result, plan.SecretValues)
+	a.protectCredentialResult(sessionID, &result, plan.Command)
 	terminalOutput := result.DisplayOutput()
 	var output string
 	if err != nil {
@@ -573,12 +587,13 @@ func (a *App) executeAiToolPlan(sessionID string, plan aiToolExecutionPlan) stri
 	} else if result.Error != "" {
 		errorText = result.Error
 	}
+	errorText = a.protectCredentialTexts(sessionID, errorText)[0]
 	a.finishTerminalAutomation(sessionID, activityID, "ai", plan.ToolName, terminalOutput, errorText, result.ExitCode, result.Duration, result.Truncated)
 	a.log.InfoFields("AI tool result", LogFields{
 		"tool":      plan.ToolName,
 		"outputLen": len(output),
 	})
-	return output
+	return a.protectCredentialTexts(sessionID, output)[0]
 }
 
 // GetAiUsage returns cumulative token usage statistics.

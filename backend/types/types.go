@@ -40,6 +40,9 @@ type Profile struct {
 	// deadline intentionally expires while the machine is asleep. A zero or
 	// past value means normal approval rules apply.
 	CliTrustUntil time.Time `json:"cliTrustUntil,omitempty"`
+	// Empty is the existing scoped trust. Full trust permits T1-T3 commands
+	// except host self-destruction, and may be granted for at most one hour.
+	CliTrustMode string `json:"cliTrustMode,omitempty"`
 	// Deprecated: legacyAIEnabled/legacyAIAlias hold values written by versions
 	// that named this flag "aiEnabled"/"aiAlias". They are migrated into
 	// CliEnabled/CliAlias on startup (see App.migrateCliProfileFlags) and then

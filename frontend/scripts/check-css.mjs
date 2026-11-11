@@ -18,8 +18,9 @@
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+const root = fileURLToPath(new URL("..", import.meta.url));
 const srcDir = join(root, "src");
 
 /** Tailwind utilities and other generated/dynamic names, by exact value or prefix. */
@@ -49,9 +50,9 @@ const isUtility = (name) => UTILITY_PREFIXES.some((prefix) => (
 const PRE_EXISTING = new Set([
   "admin-item", "admin-panel", "ai-persistent-host", "cast-progress", "command-panel",
   "cron-editor", "fill-muted", "fill-ok", "firewall-header", "firewall-list", "firewall-panel",
-  "quick-connect-grid", "recordings-panel", "recordings-toolbar", "service-header",
-  "service-list", "service-panel", "sftp-col-name",
-  "site-editor", "svc-item", "terminal-state-connecting", "tsb-sessions",
+  "quick-connect-grid", "recordings-panel", "recordings-toolbar",
+  "service-list", "sftp-col-name",
+  "site-editor", "terminal-state-connecting", "tsb-sessions",
 ]);
 
 function walk(dir, test) {

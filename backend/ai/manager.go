@@ -92,10 +92,19 @@ type TokenUsage struct {
 }
 
 type Manager struct {
-	mu     sync.RWMutex
-	config Config
-	usage  TokenUsage
-	client *http.Client
+	mu               sync.RWMutex
+	config           Config
+	usage            TokenUsage
+	client           *http.Client
+	requestProtector func(Config, ChatRequest) ChatRequest
+}
+
+// SetRequestProtector installs the application's local credential boundary.
+// Every protocol and pinned inspection task passes through it before encoding.
+func (m *Manager) SetRequestProtector(protect func(Config, ChatRequest) ChatRequest) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.requestProtector = protect
 }
 
 func NewManager() *Manager {
@@ -361,6 +370,12 @@ func (m *Manager) ChatWithConfig(ctx context.Context, cfg Config, req ChatReques
 	if err := ValidateConfig(cfg); err != nil {
 		return err
 	}
+	m.mu.RLock()
+	protect := m.requestProtector
+	m.mu.RUnlock()
+	if protect != nil {
+		req = protect(cfg, req)
+	}
 	if cfg.Provider == ProviderAnthropic || cfg.Provider == ProviderGemini || cfg.Provider == ProviderOllama {
 		return m.chatNative(ctx, cfg, req, onChunk)
 	}
@@ -545,6 +560,7 @@ IMPORTANT notes about command execution:
 - Always analyze the OUTPUT content, not just the exit code. If the output has useful info, proceed with the next step.
 - When you find a problem and the requested scope authorizes a change, fix it and verify it.
 - Use sed -i for in-place file edits. Use full paths for reliability.`
+	base += "\nCredentials in tool output and terminal context are captured locally as secret:// references. Bind those references through the execute_command secrets object to environment variables and use the variables in the command. Never print, decode, reconstruct or request plaintext credentials. References retain the original value; field names alone do not identify a credential."
 	if !enableTools {
 		base = `You are an AI assistant integrated into gxShell, a terminal/SSH client application. You help users diagnose and solve problems in their terminal sessions. Be concise, practical, and provide actionable advice. Format your responses in markdown.
 

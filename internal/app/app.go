@@ -71,6 +71,7 @@ type secretStore interface {
 	GetNamed(string, string) (string, error)
 	DeleteNamed(string, string)
 	NamedValues(string) (map[string]string, error)
+	NamedNames(string) ([]string, error)
 	ApplyMigration([]secrets.Value, func() error) error
 }
 
@@ -173,7 +174,7 @@ type App struct {
 	cliApprovalDelay  time.Duration
 	cliConfirmBatchFn func(serverName string, commands []string) bool
 	// cliConfirmRiskFn overrides immediate T3 confirmation in tests.
-	// T3 never enters cliConfirmBatchFn, even when trusted.
+	// T3 never enters cliConfirmBatchFn; explicit full trust bypasses both seams.
 	cliConfirmRiskFn func(serverName, command string, assessment riskAssessment, strength approvalStrength) (bool, error)
 	// cliTrustConfirmFn is a test seam for the native warning shown when a
 	// profile gains or extends time-limited automation trust.
@@ -196,11 +197,12 @@ type App struct {
 	// config.Store only locks the individual read and write, so without this a
 	// CLI-triggered touchProfile and a UI profile edit can interleave and one
 	// silently overwrites the other.
-	profilesMu      sync.Mutex
-	backupMu        sync.Mutex
-	backupPending   *backupPlan
-	startupFilePath string
-	startedAt       time.Time
+	profilesMu          sync.Mutex
+	backupMu            sync.Mutex
+	credentialContextMu sync.Mutex
+	backupPending       *backupPlan
+	startupFilePath     string
+	startedAt           time.Time
 	// allowedFiles tracks the local file paths the user has genuinely chosen to
 	// open. ReadLocalFile/WriteLocalFile only operate on paths in this set, so a
 	// compromised renderer cannot use them to read or overwrite arbitrary files
@@ -358,6 +360,7 @@ func (a *App) startup(ctx context.Context) {
 	})
 	a.tunnels = tunnel.NewManager(emit)
 	a.ai = ai.NewManagerWithTransport(a.networkProxy)
+	a.ai.SetRequestProtector(a.protectAIRequest)
 	a.inspections, err = workflow.NewManager(filepath.Join(a.store.DataDir(), "inspections"), a.executeInspectionQuery, a.ai.ChatWithConfig, func(run workflow.Run) { emit("ai:inspection", run) }, a.redactInspection, a.validateInspectionSession)
 	if err != nil {
 		a.log.ErrorFields("Inspection history unavailable", LogFields{"error": err.Error()})

@@ -24,6 +24,8 @@ commands, metrics, and documents. No personal server data is used.*
 
 ## Download
 
+Current version: **1.8.2** — [release notes](CHANGELOG.md#182---2026-11-11).
+
 Download the latest [Windows x64 release](https://github.com/gxmst/gxShell/releases/latest).
 The recommended zip keeps the desktop app at its root. The optional CLI,
 English and Chinese usage guides, and agent-safety guide are grouped under
@@ -82,16 +84,26 @@ local CLI lets external agents reuse saved connections without copying SSH
 credentials into prompts or agent configuration. `secret://` references also
 keep named secret values out of prompts and command arguments.
 
+Use **Settings → Credential vault** to enter a credential in a masked field,
+replace or delete it, and copy its reference. Recognized credentials in CLI/MCP
+results and AI context are captured locally as reusable references before they
+reach a model; failed captures are masked. Bind a reference to an environment
+variable through the CLI `--secret` option or the MCP tool's `secrets` object.
+
 The built-in assistant supports OpenAI-compatible, Anthropic, Gemini and Ollama
 protocols. Inspection agents produce structured reports with AI assessments,
 evidence references and human review. Parallel Hosts runs independent agents for
 2–12 connected hosts, with up to three active at once. See
 [AI inspection](docs/ai-inspection.md) for the workflow, limits and evaluation.
 
-Review requested operations and approve only the items you choose. Trust can
-be granted for 1, 4, 8, or 24 hours; sensitive and high-risk operations still
-require confirmation. These controls reduce accidental exposure and are not
-a sandbox for untrusted commands. See the [security model](docs/security.md).
+Review requested operations and approve only the items you choose. Scoped trust
+can be granted for 1, 4, 8, or 24 hours; sensitive and high-risk operations still
+require confirmation. The separate **Full trust for 1 hour** option requires
+native confirmation and lets CLI/MCP commands skip execution approvals,
+including credential use. Output protection and recognized host-destruction
+guards stay active. Trust expires and can be revoked; copies and imports do not
+inherit it. These controls are not a sandbox for arbitrary scripts. See the
+[security model](docs/security.md).
 
 [![Command review with a service restart deselected and two read-only checks selected](docs/marketing/assets/readme/agent-review.webp)](docs/marketing/assets/03-agent-review.png)
 
@@ -120,7 +132,7 @@ without leaving the workspace. Click either screenshot for the full-size view.
 - Built-in AI assistant over any OpenAI-compatible API, with streaming replies, terminal context, and confirmation before any remote tool call.
 - Multi-session SSH terminal with independent terminals for the same server, two- or four-pane layouts, named workspaces, reconnect and broadcast input. Tabs have stable widths, a separate pinned area, overflow arrows, server grouping and search, stable terminal numbers, and confirmed bulk closing.
 - Per-server terminal appearance, SSH character encoding, TERM, and Backspace/Delete preferences.
-- SFTP browsing, uploads, downloads, resumable transfers, and local/remote document workflows.
+- SFTP browsing, pipelined uploads, downloads, pause/cancel and resumable transfers with verified partial contents, and local/remote document workflows.
 - Linux monitoring, Docker operations, SSH tunnels, services, firewall, cron, and website helpers over SSH.
 - Local/remote document navigation and editing for Markdown, JSON/JSONC/JSONL/NDJSON, source code, and deployment files; Mermaid zoom, read-only PDF viewing, and responsive large-text previews.
 - Encrypted configuration backups with import previews, conflict handling, optional credentials/private keys, and rollback on failed imports.
@@ -145,6 +157,7 @@ without leaving the workspace. Click either screenshot for the full-size view.
 - Passwords, key passphrases, and AI API keys use the OS credential store or an encrypted fallback.
 - CLI access is disabled by default. When explicitly enabled, it is local-only, token-protected, opt-in per profile, and guarded by native confirmations.
 - AI and CLI commands apply dangerous-command and sensitive-path policies before execution.
+- Named credential values and recognized credentials in CLI/MCP results and AI context are protected locally before delivery; arbitrary transformations and unknown unlabeled credentials can evade recognition.
 - The app does not send telemetry; its optional public release check is disabled by default.
 
 Read the full [security model](docs/security.md).

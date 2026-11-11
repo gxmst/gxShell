@@ -813,7 +813,6 @@ export default function MarkdownViewer({
     // and re-revealing each time would drag the caret to the first match.
     const target = `${query}\u0000${current}`;
     const moved = revealTargetRef.current !== target;
-    revealTargetRef.current = target;
 
     if (sourceView) {
       const offsets = editMatchesRef.current;
@@ -821,6 +820,9 @@ export default function MarkdownViewer({
         pendingEditorRevealRef.current = null;
         return;
       }
+      // A large-document scan is delayed. Do not consume its navigation target
+      // until offsets exist, or the completed scan will look already revealed.
+      revealTargetRef.current = target;
       // A rescan must not touch the pending-reveal slot either: attachEditor
       // consumes it whenever the editor re-attaches, so refilling it here would
       // reveal on every keystroke by the back door.
@@ -843,6 +845,7 @@ export default function MarkdownViewer({
     const ranges = rangesRef.current;
     const range = ranges[current];
     if (!reg || !range) return;
+    revealTargetRef.current = target;
     reg.set(HL_ACTIVE, new (window as any).Highlight(range));
     if (!moved) return;
     const container = range.startContainer.parentElement;

@@ -9,6 +9,12 @@ credentials away from ordinary profile data and terminal input.
 - The fallback store uses AES-256-GCM and wraps its key with Windows DPAPI.
 - Older plaintext profile secrets are migrated on startup and removed from normal profile JSON.
 - Named secrets are resolved only at the execution boundary and exact values are redacted from captured output.
+- Settings → Credential vault provides masked manual entry, metadata-only listing,
+  reference copying, explicit replacement and confirmed deletion. Saved values
+  are not returned to the renderer or exposed by a CLI/MCP value-reading operation.
+  New names cannot silently overwrite existing credentials, and failed writes or
+  deletions are reported rather than acknowledged as successful. This uses the
+  existing OS/encrypted storage; there is no separate vault master password.
 
 ## AI and CLI controls
 
@@ -52,12 +58,35 @@ credentials away from ordinary profile data and terminal input.
 - Requests stay on `127.0.0.1` and require a local bearer token.
 - The CLI exposes aliases rather than hostnames, usernames, ports, profile IDs, or jump-host details.
 - External CLI `exec` requests use behavior-based T0-T3 risk tiers. Inside a
-  trust window, T1 scoped, recoverable changes and T2 bounded local operations
+  scoped trust window, T1 scoped, recoverable changes and T2 bounded local operations
   run without a prompt. T2 operations the classifier cannot statically resolve,
   or whose effect leaves the machine, still require a native click, and T3 uses
-  an immediate individual click and never joins a batch, regardless of trust.
+  an immediate individual click and never joins a batch under scoped trust.
   Prompted commands include a short classifier-derived explanation of their
   recognized behavior and target.
+- The profile editor also offers **Full trust for 1 hour**. After the native
+  activation confirmation, CLI and MCP commands of all tiers run without
+  execution approval prompts until expiry or revocation. Known host
+  self-destruction (critical-directory removal, disk destruction, fork bombs)
+  is blocked outright. This is a static guard, not a sandbox for arbitrary code.
+  Trust mode and deadline are cleared on duplication, export and import.
+- Named-credential bindings are T3 even when the command only observes state.
+  Values are retrieved after approval; scoped trust never skips that confirmation.
+  Full trust includes credential use and sensitive-file reads, but keeps local
+  output/context protection enabled.
+- Recognized secret fields, authorization headers and private-key blocks in
+  CLI/MCP results and built-in AI tool output are captured in the encrypted/native
+  credential vault before model-facing delivery. References expose no values and
+  work through environment-binding execution. Saved SSH/jump passwords and named
+  values are matched by value too. Automatic references persist until deleted;
+  matching field names never authorize overwriting them.
+- Every built-in provider request passes the local credential boundary, including
+  pinned inspection requests, history, terminal context and tool arguments. This
+  protection occurs before history clipping. Failed capture masks the value; an
+  unreadable saved-value inventory withholds the context. CLI job output is held
+  until completion to avoid leaking secrets split across output events. Pattern
+  recognition cannot cover every secret or arbitrary transformation and does not
+  constrain code running under full trust.
 - The native dialog is authoritative. The in-app coloured risk card is
   informational and cannot approve execution.
 - Transfer/copy sensitive-path policy can still block an operation outright.

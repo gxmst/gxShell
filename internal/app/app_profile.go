@@ -129,6 +129,7 @@ func (a *App) logCliTrustEnabled(profile types.Profile) {
 		"profileID":  profile.ID,
 		"alias":      profile.CliAlias,
 		"trustUntil": profile.CliTrustUntil.UTC().Format(time.RFC3339Nano),
+		"trustMode":  profile.CliTrustMode,
 	})
 }
 
@@ -156,6 +157,14 @@ func (a *App) confirmCliProfileTrust(profile types.Profile) bool {
 		title = "开启限时 CLI 自动化信任？"
 		message = "在 " + until + " 前，持有本机 gxShell CLI token 的进程可以在 " + alias + " 上无提示执行范围明确的 T1 变更和服务器内影响局部的 T2 操作。无法判断、跨系统、凭据、可能断联及高危命令仍需原生框授权，每条 T3 命令都必须单独确认。受信任服务器之间的远程复制也可以跳过确认。\n\n" +
 			"脚本、构建工具和解释器都能执行任意代码，风险分类器不是沙箱。只有在你认可工作流代码及依赖时才开启自动化信任。本地文件传输、secret 变更和隧道仍需确认。\n\n是否为这台服务器开启自动化信任？"
+	}
+	if profile.CliTrustMode == "full" {
+		title = "Enable full CLI trust for one hour?"
+		message = "Until " + until + ", processes with the local gxShell CLI token may execute all T1, T2 and T3 commands on " + alias + " without approval prompts, including use of saved credentials and reads of sensitive files. Output/context protection remains enabled. A limited static guard blocks recognized critical-directory removal, disk destruction and fork bombs; arbitrary scripts are not sandboxed.\n\nEnable full trust for this server?"
+		if zh {
+			title = "开启一小时 CLI 完全信任？"
+			message = "在 " + until + " 前，持有本机 gxShell CLI token 的进程可以在 " + alias + " 上执行所有 T1、T2、T3 命令，包括使用已保存的凭据和读取敏感文件，不再弹出执行审批。输出和 AI 上下文保护仍然开启。有限的静态规则会拦截已识别的关键目录删除、毁盘和 fork bomb；任意脚本不受沙箱约束。\n\n是否为这台服务器开启完全信任？"
+		}
 	}
 	a.nativeDialogMu.Lock()
 	defer a.nativeDialogMu.Unlock()
@@ -190,6 +199,7 @@ func (a *App) RevokeCliTrust(profileID string) error {
 			continue
 		}
 		profiles[i].CliTrustUntil = time.Time{}
+		profiles[i].CliTrustMode = ""
 		profiles[i].UpdatedAt = time.Now()
 		if err := a.store.SaveProfiles(profiles); err != nil {
 			return err
@@ -238,6 +248,7 @@ func (a *App) DuplicateProfile(id string) (types.Profile, error) {
 	profile.Name = profile.Name + " Copy"
 	// Trust is an explicit local, time-bound consent and never follows a copy.
 	profile.CliTrustUntil = time.Time{}
+	profile.CliTrustMode = ""
 	// Neither does the CLI identity. An alias is the name a CLI caller uses to
 	// address a host, and validateProfileCliSettings rejects a second profile
 	// claiming the same one — so duplicating a CLI-enabled profile used to fail

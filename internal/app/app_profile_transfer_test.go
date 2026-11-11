@@ -123,6 +123,7 @@ func TestMergeImportedProfilesAddsUpdatesSkipsAndStoresSecret(t *testing.T) {
 			CliEnabled:       true,
 			CliAlias:         "new-server",
 			CliTrustUntil:    time.Now().Add(12 * time.Hour),
+			CliTrustMode:     "full",
 		}},
 	})
 	if err != nil {
@@ -147,7 +148,7 @@ func TestMergeImportedProfilesAddsUpdatesSkipsAndStoresSecret(t *testing.T) {
 	if imported.ID == "" || !imported.RememberPassword || imported.Password != "" {
 		t.Fatalf("unexpected imported profile metadata: %+v", imported)
 	}
-	if !imported.CliTrustUntil.IsZero() {
+	if !imported.CliTrustUntil.IsZero() || imported.CliTrustMode != "" {
 		t.Fatalf("imported profile retained unsafe trust deadline: %s", imported.CliTrustUntil)
 	}
 	password, err := app.secrets.GetPassword(imported.ID)

@@ -104,16 +104,18 @@ func TestDuplicateProfileRequiresCredentialsToBeEnteredAgain(t *testing.T) {
 func TestDuplicateProfileDropsTheCliIdentity(t *testing.T) {
 	app := newProfileTestApp(t)
 	original := types.Profile{
-		ID:         types.NewID("profile-test"),
-		Name:       "production",
-		Host:       "example.test",
-		Port:       22,
-		Username:   "root",
-		AuthType:   types.AuthPassword,
-		CliEnabled: true,
-		CliAlias:   "prod-web",
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
+		ID:            types.NewID("profile-test"),
+		Name:          "production",
+		Host:          "example.test",
+		Port:          22,
+		Username:      "root",
+		AuthType:      types.AuthPassword,
+		CliEnabled:    true,
+		CliAlias:      "prod-web",
+		CliTrustMode:  "full",
+		CliTrustUntil: time.Now().Add(time.Hour),
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
 	}
 	if err := app.store.SaveProfiles([]types.Profile{original}); err != nil {
 		t.Fatal(err)
@@ -125,7 +127,7 @@ func TestDuplicateProfileDropsTheCliIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("duplicating a CLI-enabled profile failed: %v", err)
 	}
-	if duplicate.CliEnabled || duplicate.CliAlias != "" {
+	if duplicate.CliEnabled || duplicate.CliAlias != "" || duplicate.CliTrustMode != "" || !duplicate.CliTrustUntil.IsZero() {
 		t.Fatalf("duplicate inherited CLI access: enabled=%v alias=%q", duplicate.CliEnabled, duplicate.CliAlias)
 	}
 	// The original keeps its own identity. Read the store directly: ListProfiles

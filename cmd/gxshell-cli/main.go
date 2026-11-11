@@ -312,9 +312,27 @@ func fatalScriptInput(opts cliOptions, server string) {
 
 func handleSecretCommand(args []string, opts cliOptions) {
 	if len(args) == 0 {
-		fatalErrorKind(opts, 1, "validation", "secret requires set, status, or delete")
+		fatalErrorKind(opts, 1, "validation", "secret requires list, set, status, or delete")
 	}
 	action := args[0]
+	if action == "list" {
+		nextOpts, err := parseNoArgCommand(args[1:], opts, "secret list")
+		if err != nil {
+			fatalErrorKind(nextOpts, 1, "validation", "secret list accepts options only")
+		}
+		result := requestJSON("GET", "/cli/secrets", nil, nextOpts)
+		if !nextOpts.json && stringField(result, "error") == "" {
+			entries, _ := result["secrets"].([]any)
+			for _, entry := range entries {
+				if metadata, ok := entry.(map[string]any); ok {
+					fmt.Println(stringField(metadata, "reference"))
+				}
+			}
+			return
+		}
+		printSecretResult(result, nextOpts, "")
+		return
+	}
 	alias, nextOpts, err := parseOneArgCommand(args[1:], opts, "secret "+action)
 	if err != nil {
 		fatalErrorKind(nextOpts, 1, "validation", err.Error())
@@ -1468,6 +1486,7 @@ COMMANDS:
   exec-file <server> <file>     Send a script to <shell> -s over SSH stdin
   exec-stdin <server>           Send stdin to <shell> -s over SSH stdin
   secret set <alias>            Store stdin as secret://<alias> (value never in argv)
+  secret list                   List named secret references (never values)
   secret status <alias>         Check whether a named secret exists
   secret delete <alias>         Delete a named secret
   copy <server:path> <server:path>

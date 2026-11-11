@@ -22,7 +22,7 @@ export function CliTrustIndicator({ profile, locale, revoking, onRevoke }: {
   if (!active) return null;
   const remaining = formatCliTrustRemaining(cliTrustDeadline(profile) - now);
   const title = [
-    t(locale, "cliTrustIndicator", { remaining }),
+    t(locale, profile.cliTrustMode === "full" ? "cliFullTrustIndicator" : "cliTrustIndicator", { remaining }),
     t(locale, "cliTrustIndicatorAction"),
     t(locale, "cliTrustRunningJobsHint"),
   ].join("\n");

@@ -212,6 +212,7 @@ func (a *App) collectBackup(workspaces string, includeSecrets, includePrivateKey
 	for i := range payload.Profiles {
 		profile := &payload.Profiles[i]
 		profile.CliTrustUntil = time.Time{}
+		profile.CliTrustMode = ""
 		if includeSecrets && profile.RememberPassword {
 			// Failed startup migrations retain legacy credentials in the config.
 			// loadProfileSecrets replaces them only when secure storage has a value.

@@ -21,4 +21,15 @@ describe("CLI timed trust display", () => {
     expect(isCliTrustActive(profile("2026-07-28T07:59:59Z"), now)).toBe(false);
     expect(isCliTrustActive(profile("not-a-date"), now)).toBe(false);
   });
+
+  it("bounds full trust to one hour and rejects unknown modes", () => {
+    const now = Date.parse("2026-11-09T08:00:00Z");
+    const full = new types.Profile({ cliEnabled: true, cliTrustMode: "full", cliTrustUntil: new Date(now + 60 * 60 * 1000).toISOString() });
+    expect(isCliTrustActive(full, now)).toBe(true);
+    expect(isCliTrustActive(full, now + 60 * 60 * 1000)).toBe(false);
+    full.cliTrustUntil = new Date(now + 60 * 60 * 1000 + 1).toISOString();
+    expect(isCliTrustActive(full, now)).toBe(false);
+    full.cliTrustMode = "unknown";
+    expect(isCliTrustActive(full, now)).toBe(false);
+  });
 });

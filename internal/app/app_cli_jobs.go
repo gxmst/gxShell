@@ -90,12 +90,9 @@ func (a *App) startCliJob(alias, profileID, sessionID, command string, stdin *st
 		activityID := a.beginTerminalAutomationWithRisk(currentSessionID, "cli", "execute_command", command, assessment, approval)
 		activityFinished := false
 		run := func() (sshmanager.CommandExecutionResult, error) {
-			return a.ssh.ExecuteCommandResultStream(ctx, currentSessionID, command, stdin, timeout, cliOutputLimit, func(stream string, chunk []byte) {
-				job.mu.Lock()
-				job.NextSeq++
-				job.Events = append(job.Events, cliJobEvent{Sequence: job.NextSeq, Stream: stream, Data: string(chunk)})
-				job.mu.Unlock()
-			})
+			// Raw chunks can split a field, password or PEM block. Buffer the
+			// bounded result until capture/redaction, then publish safe events.
+			return a.ssh.ExecuteCommandResultStream(ctx, currentSessionID, command, stdin, timeout, cliOutputLimit, nil)
 		}
 		result, err := run()
 		if err != nil && ctx.Err() == nil && reusedConnection && sshmanager.IsRetryableCommandStartError(err) {
@@ -129,11 +126,18 @@ func (a *App) startCliJob(alias, profileID, sessionID, command string, stdin *st
 				result.ExitCode = 1
 			}
 		}
+		a.protectCredentialResult(profileID, &result, command)
 		if !activityFinished {
 			a.finishTerminalAutomation(currentSessionID, activityID, "cli", "execute_command", result.DisplayOutput(), result.Error, result.ExitCode, result.Duration, result.Truncated)
 		}
 
 		job.mu.Lock()
+		for _, output := range []struct{ stream, text string }{{"stdout", result.Stdout}, {"stderr", result.Stderr}} {
+			if output.text != "" {
+				job.NextSeq++
+				job.Events = append(job.Events, cliJobEvent{Sequence: job.NextSeq, Stream: output.stream, Data: output.text})
+			}
+		}
 		job.Result = result
 		job.RemoteState = cliRemoteState(result, err)
 		job.FinishedAt = time.Now()

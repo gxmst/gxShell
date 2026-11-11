@@ -1,6 +1,24 @@
 /* Systemd service manager panel (ServicePanel). Rows/log pane reuse the
-   container.css surfaces; this file only adds the toolbar, tags and the
-   shared two-step confirm state. */
+   container.css surfaces, with wrapping content for narrow sidebars. */
+
+.service-panel {
+  container: services / inline-size;
+}
+
+.service-header .panel-page-heading {
+  flex: 1;
+}
+
+.service-header .panel-page-heading small {
+  display: block;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.service-header .panel-page-actions {
+  flex-shrink: 0;
+}
 
 .service-toolbar {
   display: flex;
@@ -100,14 +118,28 @@
 
 .svc-name-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 5px;
   min-width: 0;
+  overflow: visible;
+  white-space: normal;
 }
 
 .svc-name-row > span:first-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.svc-item .container-meta {
+  flex-wrap: wrap;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.svc-description > span {
+  min-width: 0;
 }
 
 .svc-tag {
@@ -137,11 +169,25 @@
 }
 
 .svc-resource {
-  overflow: hidden;
   color: var(--accent);
   font-family: var(--font-mono);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+/* Controls should yield their horizontal space to the service details instead
+   of squeezing every line even while the hover buttons are invisible. */
+@container services (max-width: 380px) {
+  .svc-item {
+    flex-direction: column;
+  }
+
+  .svc-item .container-item-main {
+    width: 100%;
+  }
+
+  .svc-item .container-actions {
+    align-self: flex-end;
+    opacity: 1;
+  }
 }
 
 .service-log-focus:focus {

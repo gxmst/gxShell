@@ -6,6 +6,11 @@ import {sshmanager} from '../models';
 import type {InspectionRun} from '../workflow';
 import type {InspectionBatch} from '../workflow';
 
+export type NamedSecret = {alias:string; reference:string};
+export function ListNamedSecrets():Promise<NamedSecret[]>;
+export function SaveNamedSecret(alias:string,value:string,replace:boolean):Promise<void>;
+export function DeleteNamedSecret(alias:string):Promise<void>;
+
 export function StartAiInspectionBatch(sessionIDs:string[],concurrency:number):Promise<InspectionBatch>;
 export function ListAiInspectionBatches():Promise<InspectionBatch[]>;
 export function GetAiInspectionBatch(id:string):Promise<InspectionBatch>;

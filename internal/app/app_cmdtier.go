@@ -1,6 +1,8 @@
 package app
 
 // Behaviour-based risk tiers for remote command execution.
+// The rules below describe normal/scoped trust. Explicit one-hour full trust
+// is applied separately in app_cli.go and retains the host self-destruction guard.
 //
 // This file replaces the previous "unoverridable blocklist + confirm everything
 // else" policy with a graded classification. The motivation is that the old
@@ -398,6 +400,9 @@ func classifyCommand(command string) riskAssessment {
 	// credential read is lexically a plain `cat`, so a verb-driven walk would
 	// classify it as observation.
 	appendCredentialFindings(&assessment, command, 0)
+	if match := cliForkBombPattern.FindStringIndex(command); match != nil {
+		assessment.add(riskFinding{Tier: tierCritical, Category: riskIrreversible, Reason: "fork bomb", Target: command[match[0]:match[1]], Start: match[0], End: match[1]})
+	}
 
 	// Preserve the historical fast path exactly: only a single bare read-only
 	// command with no shell machinery qualifies as T0. Everything else is at
@@ -1025,7 +1030,8 @@ func nestedShellScript(tokens []cmdToken) (nestedScript, bool) {
 		if !strings.HasPrefix(text, "-") {
 			break
 		}
-		if !strings.Contains(strings.TrimLeft(text, "-"), "c") {
+		// Long options such as --norc contain 'c' but do not take a script.
+		if strings.HasPrefix(text, "--") || !strings.Contains(strings.TrimLeft(text, "-"), "c") {
 			continue
 		}
 		payload := tokens[i+1]
@@ -1226,72 +1232,80 @@ var recoverableVerbs = map[string]string{
 }
 
 var verbHandlers = map[string]func(*segmentCtx){
-	"rm":         classifyRemove,
-	"rmdir":      classifyRemove,
-	"dd":         classifyDD,
-	"cp":         classifyCopyMove,
-	"mv":         classifyCopyMove,
-	"tee":        classifyWriteTarget,
-	"mkdir":      classifyFilesystemWrite,
-	"touch":      classifyFilesystemWrite,
-	"ln":         classifyFilesystemWrite,
-	"install":    classifyFilesystemWrite,
-	"gzip":       classifyFilesystemWrite,
-	"gunzip":     classifyFilesystemWrite,
-	"bzip2":      classifyFilesystemWrite,
-	"xz":         classifyFilesystemWrite,
-	"unxz":       classifyFilesystemWrite,
-	"zip":        classifyArchiveTool,
-	"unzip":      classifyArchiveTool,
-	"patch":      classifyOpaqueFileProgram,
-	"curl":       classifyNetworkTransfer,
-	"wget":       classifyNetworkTransfer,
-	"rsync":      classifyNetworkTransfer,
-	"scp":        classifyNetworkTransfer,
-	"sftp":       classifyNetworkTransfer,
-	"journalctl": classifyJournalctl,
-	"sed":        classifySed,
-	"chmod":      classifyPermission,
-	"chown":      classifyPermission,
-	"chgrp":      classifyPermission,
-	"git":        classifyGit,
-	"systemctl":  classifySystemctl,
-	"service":    classifySystemctl,
-	"docker":     classifyDocker,
-	"podman":     classifyDocker,
-	"apt":        classifyPackage,
-	"apt-get":    classifyPackage,
-	"dnf":        classifyPackage,
-	"yum":        classifyPackage,
-	"pacman":     classifyPackage,
-	"zypper":     classifyPackage,
-	"pip":        classifyPackage,
-	"pip3":       classifyPackage,
-	"npm":        classifyPackage,
-	"pnpm":       classifyPackage,
-	"yarn":       classifyPackage,
-	"iptables":   classifyFirewall,
-	"ip6tables":  classifyFirewall,
-	"nft":        classifyNft,
-	"find":       classifyFind,
-	"tar":        classifyTar,
-	"mysql":      classifyDatabase,
-	"psql":       classifyDatabase,
-	"mongosh":    classifyDatabase,
-	"redis-cli":  classifyDatabase,
-	"sqlite3":    classifyDatabase,
-	"kubectl":    classifyKubectl,
-	"terraform":  classifyTerraform,
-	"aws":        classifyAWS,
-	"ip":         classifyIP,
-	"ifconfig":   classifyIP,
-	"init":       classifyInit,
-	"telinit":    classifyInit,
-	"crontab":    classifyCrontab,
-	"zpool":      classifyStoragePool,
-	"zfs":        classifyStoragePool,
-	"mdadm":      classifyStoragePool,
-	"passwd":     classifyPasswd,
+	"truncate":     classifyTruncate,
+	"ufw":          classifyCriticalFirewall,
+	"firewall-cmd": classifyCriticalFirewall,
+	"kill":         classifyCriticalSignal,
+	"pkill":        classifyCriticalSignal,
+	"killall":      classifyCriticalSignal,
+	"usermod":      classifyUserModification,
+	"cryptsetup":   classifyCryptsetup,
+	"rm":           classifyRemove,
+	"rmdir":        classifyRemove,
+	"dd":           classifyDD,
+	"cp":           classifyCopyMove,
+	"mv":           classifyCopyMove,
+	"tee":          classifyWriteTarget,
+	"mkdir":        classifyFilesystemWrite,
+	"touch":        classifyFilesystemWrite,
+	"ln":           classifyFilesystemWrite,
+	"install":      classifyFilesystemWrite,
+	"gzip":         classifyFilesystemWrite,
+	"gunzip":       classifyFilesystemWrite,
+	"bzip2":        classifyFilesystemWrite,
+	"xz":           classifyFilesystemWrite,
+	"unxz":         classifyFilesystemWrite,
+	"zip":          classifyArchiveTool,
+	"unzip":        classifyArchiveTool,
+	"patch":        classifyOpaqueFileProgram,
+	"curl":         classifyNetworkTransfer,
+	"wget":         classifyNetworkTransfer,
+	"rsync":        classifyNetworkTransfer,
+	"scp":          classifyNetworkTransfer,
+	"sftp":         classifyNetworkTransfer,
+	"journalctl":   classifyJournalctl,
+	"sed":          classifySed,
+	"chmod":        classifyPermission,
+	"chown":        classifyPermission,
+	"chgrp":        classifyPermission,
+	"git":          classifyGit,
+	"systemctl":    classifySystemctl,
+	"service":      classifySystemctl,
+	"docker":       classifyDocker,
+	"podman":       classifyDocker,
+	"apt":          classifyPackage,
+	"apt-get":      classifyPackage,
+	"dnf":          classifyPackage,
+	"yum":          classifyPackage,
+	"pacman":       classifyPackage,
+	"zypper":       classifyPackage,
+	"pip":          classifyPackage,
+	"pip3":         classifyPackage,
+	"npm":          classifyPackage,
+	"pnpm":         classifyPackage,
+	"yarn":         classifyPackage,
+	"iptables":     classifyFirewall,
+	"ip6tables":    classifyFirewall,
+	"nft":          classifyNft,
+	"find":         classifyFind,
+	"tar":          classifyTar,
+	"mysql":        classifyDatabase,
+	"psql":         classifyDatabase,
+	"mongosh":      classifyDatabase,
+	"redis-cli":    classifyDatabase,
+	"sqlite3":      classifyDatabase,
+	"kubectl":      classifyKubectl,
+	"terraform":    classifyTerraform,
+	"aws":          classifyAWS,
+	"ip":           classifyIP,
+	"ifconfig":     classifyIP,
+	"init":         classifyInit,
+	"telinit":      classifyInit,
+	"crontab":      classifyCrontab,
+	"zpool":        classifyStoragePool,
+	"zfs":          classifyStoragePool,
+	"mdadm":        classifyStoragePool,
+	"passwd":       classifyPasswd,
 }
 
 // classifyFilesystemWrite handles ordinary filesystem tools whose risk comes
@@ -1934,6 +1948,10 @@ func classifyDocker(c *segmentCtx) {
 	}
 	switch sub {
 	case "ps", "images", "logs", "inspect", "top", "stats", "version", "info", "compose ps", "compose logs":
+		if sub == "inspect" {
+			c.add(tierCritical, riskCredential, "reads container environment and credentials", rest, nil)
+			return
+		}
 		c.add(tierObserve, riskObserve, "reports Docker state", rest, nil)
 	case "build", "pull", "tag", "compose build", "compose pull":
 		c.add(tierRecoverable, riskWrite, "builds or fetches an image", rest, nil)
@@ -1947,6 +1965,10 @@ func classifyDocker(c *segmentCtx) {
 		}
 		c.add(tierRecoverable, riskWrite, "starts containers", rest, nil)
 	case "stop", "kill", "compose stop", "compose down", "pause":
+		if sub == "compose down" && c.hasFlag("-v", "--volumes") {
+			c.add(tierCritical, riskIrreversible, "removes Docker compose volumes", rest, nil)
+			return
+		}
 		c.add(tierBounded, riskDestructive, "stops containers", rest, nil)
 	case "rm", "rmi", "compose rm":
 		c.add(tierBounded, riskDestructive, "removes containers or images", rest, nil)
@@ -2179,6 +2201,15 @@ func classifyKubectl(c *segmentCtx) {
 	sub := c.subcommand()
 	args := c.joinedArgs()
 	lower := strings.ToLower(args)
+	if sub == "get" || sub == "describe" {
+		for _, token := range c.args {
+			resource := strings.ToLower(token.Text)
+			if resource == "secret" || resource == "secrets" || strings.HasPrefix(resource, "secret/") || strings.HasPrefix(resource, "secrets/") {
+				c.add(tierCritical, riskCredential, "reads a Kubernetes credential store", args, nil)
+				return
+			}
+		}
+	}
 	switch sub {
 	case "get", "describe", "logs", "explain", "top", "version", "config", "api-resources":
 		c.add(tierObserve, riskObserve, "reads cluster state", args, nil)

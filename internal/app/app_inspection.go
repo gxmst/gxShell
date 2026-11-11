@@ -291,6 +291,7 @@ func (a *App) CancelAiInspection(id string) bool {
 }
 
 func (a *App) redactInspection(profileID, text string) string {
+	text = a.protectCredentialTexts(profileID, text)[0]
 	values := map[string]string{}
 	if a.secrets != nil {
 		if named, err := a.secrets.NamedValues(profileID); err == nil {

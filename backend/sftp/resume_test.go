@@ -1,8 +1,6 @@
 package sftpmanager
 
 import (
-	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -293,46 +291,5 @@ func TestRemoteBaseUsesSlashSemantics(t *testing.T) {
 	// Remote paths are always forward-slash, even though the app runs on Windows.
 	if got := remoteBase("/srv/app/report.csv"); got != "/srv/app" {
 		t.Errorf("remoteBase = %q, want /srv/app", got)
-	}
-}
-
-// Guards the contiguous-prefix invariant documented in resume.go.
-//
-// pkg/sftp's File.ReadFrom switches from sequential writes to concurrent writes
-// at explicit offsets when the reader it receives advertises a length, via any
-// of Len() / Size() / Stat(), or by being an *io.LimitedReader. That mode
-// documents that an error can leave the file longer than its last contiguous
-// byte — at which point resuming an upload at the part file's length would
-// append after a hole and silently produce a corrupt file, because the size
-// check at the end of UploadFile still adds up.
-//
-// progressReader wraps the *os.File source and must not forward those methods.
-// This is easy to undo by accident: embedding io.Reader instead of naming the
-// field, or "helpfully" adding a Size() so progress can report a total, both
-// re-enable concurrency and break resume with no other visible change. Fail
-// here rather than in a user's corrupted upload.
-func TestProgressReaderHidesSourceLengthFromSftp(t *testing.T) {
-	// An *os.File has Stat(); the wrapper is what must not expose it.
-	file, err := os.CreateTemp(t.TempDir(), "src")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-
-	var reader io.Reader = &progressReader{ctx: context.Background(), r: file, fn: func(int64) {}}
-
-	if _, ok := reader.(interface{ Len() int }); ok {
-		t.Error("progressReader must not expose Len(): it enables concurrent offset writes")
-	}
-	if _, ok := reader.(interface{ Size() int64 }); ok {
-		t.Error("progressReader must not expose Size(): it enables concurrent offset writes")
-	}
-	if _, ok := reader.(interface {
-		Stat() (os.FileInfo, error)
-	}); ok {
-		t.Error("progressReader must not expose Stat(): it enables concurrent offset writes")
-	}
-	if _, ok := reader.(*io.LimitedReader); ok {
-		t.Error("progressReader must not be an *io.LimitedReader: it enables concurrent offset writes")
 	}
 }

@@ -28,6 +28,15 @@ func (a *App) handleCliSecrets(w http.ResponseWriter, r *http.Request) {
 	alias := strings.TrimSpace(r.URL.Query().Get("alias"))
 	switch r.Method {
 	case http.MethodGet:
+		if alias == "" {
+			entries, err := a.ListNamedSecrets()
+			if err != nil {
+				writeCliError(w, http.StatusInternalServerError, "secret", "failed to list named secrets")
+				return
+			}
+			writeCliJSON(w, http.StatusOK, map[string]any{"secrets": entries})
+			return
+		}
 		if !cliSecretAliasPattern.MatchString(alias) {
 			writeCliError(w, http.StatusBadRequest, "validation", "valid secret alias is required")
 			return
@@ -73,7 +82,10 @@ func (a *App) handleCliSecrets(w http.ResponseWriter, r *http.Request) {
 			writeCliError(w, http.StatusForbidden, "blocked", "user declined named secret deletion")
 			return
 		}
-		a.secrets.DeleteNamed(cliSecretNamespace, alias)
+		if err := a.DeleteNamedSecret(alias); err != nil {
+			writeCliError(w, http.StatusInternalServerError, "secret", "failed to delete named secret")
+			return
+		}
 		writeCliJSON(w, http.StatusOK, map[string]any{"alias": alias, "deleted": true})
 	default:
 		writeCliError(w, http.StatusMethodNotAllowed, "validation", "method not allowed")
@@ -100,6 +112,25 @@ func (a *App) resolveCliSecretRefs(refs map[string]string) (map[string]string, [
 	}
 	sort.Strings(names)
 	return values, names, nil
+}
+
+func cliSecretReferenceNames(refs map[string]string) ([]string, error) {
+	names := make([]string, 0, len(refs))
+	for envName, alias := range refs {
+		alias = strings.TrimPrefix(strings.TrimSpace(alias), "secret://")
+		if !cliSecretEnvPattern.MatchString(envName) || !cliSecretAliasPattern.MatchString(alias) {
+			return nil, fmt.Errorf("invalid secret binding %q=%q", envName, alias)
+		}
+		names = append(names, envName+"=secret://"+alias)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func addNamedCredentialRisk(assessment *riskAssessment, names []string) {
+	for _, name := range names {
+		assessment.add(riskFinding{Tier: tierCritical, Category: riskCredential, Reason: "uses a named credential", Target: name, Start: -1, End: -1})
+	}
 }
 
 func buildSecretExecutionScript(values map[string]string, command, script string) string {

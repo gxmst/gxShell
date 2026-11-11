@@ -41,6 +41,23 @@ func TestCliTrustDurationIsBounded(t *testing.T) {
 	}
 }
 
+func TestCliFullTrustDurationAndModeAreBounded(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		mode     string
+		duration time.Duration
+		valid    bool
+	}{
+		{"full", time.Hour, true}, {"full", time.Hour + time.Second, false},
+		{"full", 4 * time.Hour, false}, {"", 24 * time.Hour, true}, {"unknown", time.Hour, false},
+	} {
+		profile := types.Profile{CliEnabled: true, CliAlias: "prod", CliTrustMode: tc.mode, CliTrustUntil: now.Add(tc.duration)}
+		if err := validateProfileCliSettings(profile, nil); (err == nil) != tc.valid {
+			t.Fatalf("mode=%q duration=%s: %v", tc.mode, tc.duration, err)
+		}
+	}
+}
+
 func TestDeprecatedGlobalCliAutoApproveIsNotSurfacedOrResaved(t *testing.T) {
 	store, err := config.NewStoreAt(t.TempDir())
 	if err != nil {

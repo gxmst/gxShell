@@ -37,6 +37,7 @@ try {
     window.smokeSiblings = null;
     window.smokeBackups = [];
     window.smokeQuit = false;
+    const vaultNames = new Set(['teldrive-api-hash', 'a'.repeat(64)]);
     let settings = {
       themeName: 'Light', language: 'zh-CN', highlightLevel: 'basic', highlightRules: [], monitorEnabled: false, monitorIntervalSec: 5, connectionTimeout: 15,
       sidebarWidth: 290, sidebarSplitPct: 45, smartHighlight: true, restoreWorkspace: false, cliServerEnabled: false, updateCheckEnabled: false,
@@ -84,7 +85,14 @@ try {
         return new Promise((resolve) => { window.smokeFinishImport = () => { window.smokeBackups.push({ action: 'apply' }); resolve(); }; });
       },
       DiscardBackupPreview: () => undefined,
+      ListNamedSecrets: () => [...vaultNames].sort().map((alias) => ({ alias, reference: `secret://${alias}` })),
+      SaveNamedSecret: (alias, value, replace) => {
+        assertMock(value === 'isolated-fake-value' && replace === vaultNames.has(alias));
+        vaultNames.add(alias);
+      },
+      DeleteNamedSecret: (alias) => { vaultNames.delete(alias); },
     };
+    function assertMock(ok) { if (!ok) throw new Error('Unexpected isolated credential operation'); }
     window.go = { app: { App: new Proxy(app, { get: (target, key) => (...args) => Promise.resolve(target[key] ? target[key](...args) : /^List|^Read/.test(String(key)) ? [] : undefined) }) } };
     window.runtime = new Proxy({ EventsOnMultiple: (name, callback) => { const list = events.get(name) || new Set(); list.add(callback); events.set(name, list); return () => list.delete(callback); } }, { get: (target, key) => target[key] || (() => undefined) });
   });
@@ -114,7 +122,53 @@ try {
     }), `Server controls overlap at sidebar width ${width}`);
     await page.screenshot({ path: join(out, `server-actions-${width}.png`), animations: 'disabled' });
   }
-  if (process.argv.includes('--sftp')) {
+  if (process.argv.includes('--vault')) {
+    await page.getByRole('button', { name: '设置', exact: true }).click();
+    const vault = page.locator('.settings-card').filter({ has: page.getByText('凭据库', { exact: true }) });
+    await vault.getByRole('button', { name: '添加凭据', exact: true }).waitFor();
+    for (const width of [240, 328, 480]) {
+      const grip = page.getByRole('separator', { name: '调整侧栏宽度', exact: true });
+      await grip.focus(); await page.keyboard.press('Home');
+      for (let value = 240; value < width; value += 16) await page.keyboard.press('ArrowRight');
+      await vault.scrollIntoViewIfNeeded();
+      assert(await vault.locator('.named-secret-row').evaluateAll((rows) => rows.every((row) => {
+        const box = row.getBoundingClientRect();
+        const actions = row.querySelector('.named-secret-actions').getBoundingClientRect();
+        const copy = row.querySelector('.named-secret-copy').getBoundingClientRect();
+        return row.scrollWidth <= row.clientWidth + 1 && (copy.right <= actions.left || copy.bottom <= actions.top) && actions.right <= box.right;
+      })), `Vault rows overflow at ${width}`);
+      await page.screenshot({ path: join(out, `vault-${width}.png`), animations: 'disabled' });
+    }
+    await vault.getByRole('button', { name: '添加凭据', exact: true }).click();
+    let dialog = page.getByRole('dialog', { name: '添加凭据', exact: true });
+    await dialog.getByLabel('凭据名称', { exact: true }).fill('teldrive-api-id');
+    const input = dialog.getByLabel('凭据内容', { exact: true });
+    assert.equal(await input.getAttribute('type'), 'password');
+    await input.fill('isolated-fake-value');
+    assert.equal(await input.getAttribute('value'), null);
+    await page.screenshot({ path: join(out, 'vault-masked-entry.png'), animations: 'disabled' });
+    await dialog.getByRole('button', { name: '保存凭据', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    const row = vault.locator('.named-secret-row').filter({ hasText: 'teldrive-api-id' });
+    await row.getByRole('button', { name: '替换凭据', exact: true }).click();
+    dialog = page.getByRole('dialog', { name: '替换凭据', exact: true });
+    assert.equal(await dialog.getByLabel('凭据内容', { exact: true }).inputValue(), '');
+    await dialog.getByLabel('凭据内容', { exact: true }).fill('isolated-fake-value');
+    await dialog.getByRole('button', { name: '保存凭据', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    await row.getByRole('button', { name: '删除凭据', exact: true }).click();
+    dialog = page.getByRole('dialog', { name: '删除凭据', exact: true });
+    await dialog.getByRole('button', { name: '取消', exact: true }).click();
+    await row.waitFor();
+    await row.getByRole('button', { name: '删除凭据', exact: true }).click();
+    await page.getByRole('dialog', { name: '删除凭据', exact: true }).getByRole('button', { name: '删除凭据', exact: true }).click();
+    await row.waitFor({ state: 'hidden' });
+    await page.locator('.app-shell').evaluate((node) => { node.dataset.theme = 'Dark'; });
+    await vault.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(out, 'vault-dark.png'), animations: 'disabled' });
+    assert.deepEqual(errors, []);
+    console.log(JSON.stringify({ status: 'passed', screenshots: out, checks: ['vault rows at three widths', 'masked manual entry', 'reference-only list', 'blank replacement form', 'cancelled and confirmed deletion', 'light and dark themes'] }));
+  } else if (process.argv.includes('--sftp')) {
     await page.getByRole('button', { name: '文件', exact: true }).click();
     await page.locator('.sftp-file-row').first().waitFor();
     const reads = await page.evaluate(() => window.smokeRemoteReads);

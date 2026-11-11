@@ -164,7 +164,7 @@ type pathVerdict struct {
 // self-lock axis rather than the ordinary-write one.
 var systemConfigRoots = []string{
 	"/etc", "/boot", "/usr", "/lib", "/lib32", "/lib64", "/libx32",
-	"/bin", "/sbin", "/sys", "/proc", "/var/lib", "/var/spool", "/dev",
+	"/bin", "/sbin", "/sys", "/proc", "/var/lib", "/var/spool", "/dev", "/run",
 }
 
 // servicePayloadRoots hold deployed application state: not required to boot,
@@ -192,6 +192,9 @@ var credentialNeedles = []string{
 	"/var/lib/kubelet", "/.npmrc", "/.pypirc", "/.my.cnf", "/.pgpass",
 	"service-account", "credentials.json", "secrets.yml", "secrets.yaml",
 	"/.env",
+	"/etc/wireguard/", "/.config/rclone/rclone.conf", "/.rclone.conf",
+	"/.bash_history", "/.zsh_history", "wp-config.php",
+	"password.txt", "passwords.txt", "api-key.txt", "apikey.txt", "secrets.json",
 }
 
 var credentialSuffixes = []string{
@@ -260,6 +263,9 @@ func classifyTargetPath(raw string) pathVerdict {
 	if cleaned == "/" {
 		return pathVerdict{Class: pathFilesystemRoot, Display: "/"}
 	}
+	if cleaned == "/var" {
+		return pathVerdict{Class: pathSystemConfig, Display: display}
+	}
 	// A relative path that climbs out of the working directory lands somewhere
 	// only the remote shell knows.
 	if !absolute && (cleaned == ".." || strings.HasPrefix(cleaned, "../")) {
@@ -309,6 +315,9 @@ func classifyTargetPath(raw string) pathVerdict {
 }
 
 func credentialPathClass(lower string) (pathClass, bool) {
+	if strings.HasPrefix(lower, "/proc/") && (strings.HasSuffix(lower, "/environ") || strings.HasSuffix(lower, "/cmdline")) {
+		return pathCredentialStore, true
+	}
 	// A public key is not a secret; the older blocklist made the same exception
 	// and it matters in practice (deploying authorized_keys reads .pub files).
 	if strings.HasSuffix(lower, ".pub") {

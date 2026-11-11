@@ -120,6 +120,9 @@ func normalizeProfile(profile *types.Profile) {
 	if !profile.CliEnabled {
 		profile.CliTrustUntil = time.Time{}
 	}
+	if profile.CliTrustUntil.IsZero() {
+		profile.CliTrustMode = ""
+	}
 }
 
 func validateProfileCliSettings(profile types.Profile, profiles []types.Profile) error {
@@ -129,6 +132,12 @@ func validateProfileCliSettings(profile types.Profile, profiles []types.Profile)
 	alias := strings.TrimSpace(profile.CliAlias)
 	if alias == "" {
 		return errors.New("CLI alias is required when access is enabled")
+	}
+	if profile.CliTrustMode != "" && profile.CliTrustMode != "full" {
+		return errors.New("invalid CLI trust mode")
+	}
+	if profile.CliTrustMode == "full" && profile.CliTrustUntil.After(time.Now().Add(time.Hour)) {
+		return errors.New("CLI full trust cannot be granted for more than one hour")
 	}
 	if profile.CliTrustUntil.After(time.Now().Add(24*time.Hour + time.Minute)) {
 		return errors.New("CLI automation trust cannot be granted for more than 24 hours")
@@ -213,14 +222,22 @@ func normalizeImportedProxyJumps(profiles []types.Profile, imported map[int]bool
 }
 
 func cliProfileTrustActive(profile types.Profile, now time.Time) bool {
-	return profile.CliEnabled && !profile.CliTrustUntil.IsZero() && profile.CliTrustUntil.After(now)
+	if !profile.CliEnabled || !profile.CliTrustUntil.After(now) {
+		return false
+	}
+	return profile.CliTrustMode == "" || (profile.CliTrustMode == "full" && !profile.CliTrustUntil.After(now.Add(time.Hour)))
+}
+
+func cliProfileFullTrustActive(profile types.Profile, now time.Time) bool {
+	return cliProfileTrustActive(profile, now) && profile.CliTrustMode == "full"
 }
 
 func cliTrustNeedsConfirmation(previous, next types.Profile, now time.Time) bool {
 	if !cliProfileTrustActive(next, now) {
 		return false
 	}
-	return !cliProfileTrustActive(previous, now) || next.CliTrustUntil.After(previous.CliTrustUntil)
+	return !cliProfileTrustActive(previous, now) || next.CliTrustUntil.After(previous.CliTrustUntil) ||
+		(next.CliTrustMode == "full" && previous.CliTrustMode != "full")
 }
 
 // sanitizeProfiles removes sensitive data from a list of profiles.

@@ -83,21 +83,11 @@ func (s *Store) SavePassphrase(profileID string, passphrase string) error {
 // Callers should expose only the name to untrusted clients; the returned value
 // from GetNamed must stay inside the final execution boundary.
 func (s *Store) SaveNamed(namespace string, name string, value string) error {
-	s.operationMu.Lock()
-	defer s.operationMu.Unlock()
 	if namespace == "" || name == "" || value == "" {
 		return errors.New("secret namespace, name, and value are required")
 	}
 	id := "named:" + namespace + ":" + name
-	if err := s.saveFallback(id, "indexed", "1"); err != nil {
-		return err
-	}
-	err := s.credentials().Set(key(id, "value"), value)
-	if err != nil {
-		return s.saveFallback(id, "value", value)
-	}
-	s.deleteFallbackKind(id, "value")
-	return nil
+	return s.ApplyMigration([]Value{{ID: id, Kind: "value", Text: value}}, func() error { return nil })
 }
 
 // GetNamed retrieves an application-managed secret without exposing it through
@@ -106,14 +96,33 @@ func (s *Store) GetNamed(namespace string, name string) (string, error) {
 	s.operationMu.Lock()
 	defer s.operationMu.Unlock()
 	id := "named:" + namespace + ":" + name
+	return s.namedValue(id)
+}
+
+// Caller holds operationMu. An encrypted value is the newest successful write
+// when a native update failed, so it takes precedence over an older native copy.
+func (s *Store) namedValue(id string) (string, error) {
+	s.mu.Lock()
+	data := s.fallbackData()
+	entry := data[id]
+	degraded := s.fallbackDegraded
+	fallback, indexed := entry["value"], len(entry) != 0
+	s.mu.Unlock()
+	if degraded {
+		return "", errors.New("cannot read encrypted secret storage")
+	}
+	if fallback != "" {
+		return fallback, nil
+	}
 	value, err := s.credentials().Get(key(id, "value"))
 	if err == nil {
 		return value, nil
 	}
-	if fallback := s.loadFallback(id, "value"); fallback != "" {
-		return fallback, nil
-	}
-	if errors.Is(err, keyring.ErrNotFound) {
+	if errors.Is(err, keyring.ErrNotFound) || !indexed {
+		// New named credentials have a durable local index before any native
+		// write. A name absent from that index can be created in the fallback
+		// during an outage; an indexed native-only value must remain unreadable
+		// rather than being mistaken for an empty credential and overwritten.
 		return "", nil
 	}
 	return "", err

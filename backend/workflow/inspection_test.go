@@ -243,6 +243,33 @@ func TestInspectionReportsFinalPersistenceFailure(t *testing.T) {
 	}
 }
 
+func TestInspectionCompletionCallbackCanStartNextInspection(t *testing.T) {
+	manager, err := NewManager(t.TempDir(), func(ctx context.Context, _ string, _ Query) Evidence {
+		<-ctx.Done()
+		return Evidence{Status: "unavailable", Error: ctx.Err().Error()}
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	id := strings.Repeat("a", 32)
+	manager.runs[id] = &Run{ID: id, ProfileID: "server", SessionID: "session", State: "analyzing", Language: "en", Report: "finished report"}
+	manager.active[id] = func() {}
+	var next Run
+	var startErr error
+	manager.emit = func(run Run) {
+		if run.ID == id && Terminal(run.State) {
+			next, startErr = manager.Start(context.Background(), "session", "server", "fixture", "en", ai.Config{Provider: ai.ProviderOpenAI, Model: "fixture"})
+		}
+	}
+	manager.finish(id, "completed", "")
+	if startErr != nil || next.ID == "" {
+		t.Fatalf("completion still held the server slot: %v", startErr)
+	}
+	manager.Cancel(next.ID)
+	awaitRun(t, manager, next.ID)
+}
+
 func TestInspectionDeadlinePreservesEvidence(t *testing.T) {
 	manager, err := NewManager(t.TempDir(), func(ctx context.Context, _ string, query Query) Evidence {
 		if query.Check == "system" {

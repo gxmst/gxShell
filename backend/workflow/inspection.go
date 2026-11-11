@@ -256,6 +256,12 @@ func (m *Manager) update(id string, fn func(*Run)) error {
 	run.Revision++
 	snapshot := clone(run)
 	err := m.save(run)
+	// A terminal snapshot must mean the server slot is available, including
+	// inside the completion callback. Waiting for the worker's deferred cleanup
+	// leaves a window where an immediate next inspection is incorrectly refused.
+	if Terminal(run.State) {
+		delete(m.active, id)
+	}
 	m.mu.Unlock()
 	if m.emit != nil && err == nil {
 		m.emit(snapshot)

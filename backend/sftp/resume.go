@@ -8,27 +8,19 @@ package sftpmanager
 //
 //	report.csv.gxshell-r2-<source-hash>-<size>-<mtime>.part
 //
-// # The contiguous-prefix invariant
+// # Verified prefixes
 //
-// Resuming at the part file's length assumes the first N bytes of a part file
-// are the first N bytes of the source — that is, that every attempt leaves
-// behind a contiguous prefix and never a file with a hole in it. Nothing about
-// a file's size proves this on its own, so both transfer directions have to
-// keep it true by construction:
+// A file's size does not prove its contents are a correct source prefix.
+// Both directions verify every existing byte before appending:
 //
 //   - Downloads: pkg/sftp reads ahead concurrently but serializes the results
 //     into ordered local writes (its WriteTo "Reduce" phase), so the local file
 //     is always a prefix.
-//   - Uploads: pkg/sftp's ReadFrom writes sequentially at a monotonic offset
-//     *unless* the reader it is handed advertises a length, which switches it to
-//     writing chunks at explicit offsets from several goroutines. That mode
-//     documents that an error can leave the file longer than its last
-//     contiguous byte, which would make the length a lie. progressReader
-//     therefore deliberately hides the source's size; see the invariant test in
-//     resume_test.go.
-//
-// Anything that changes how bytes reach a part file has to preserve this, or
-// resume has to stop trusting the length and start verifying content.
+//   - Uploads: writes are pipelined. On failure every dispatched write is
+//     awaited and the earliest failed byte is used to trim any later writes.
+//     If the connection cannot trim,
+//     the complete prefix comparison on retry detects holes or stale content
+//     and restarts from byte zero. Prefix verification uses pipelined reads.
 
 import (
 	"bytes"
@@ -210,8 +202,8 @@ func isHex(value string) bool {
 // there is none. The returned offset is 0 for "start from the beginning", in
 // which case the caller truncates. total is the source size.
 //
-// This trusts existing as a byte count of correct leading data, which holds only
-// under the contiguous-prefix invariant documented at the top of this file.
+// This selects a candidate offset only. The caller must verify its contents
+// against the source before appending, including after an interrupted pipeline.
 //
 // A part file larger than the source means the name collided with a stale file
 // from a different version, or the source shrank without its recorded size

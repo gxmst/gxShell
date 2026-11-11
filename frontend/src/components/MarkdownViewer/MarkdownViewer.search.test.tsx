@@ -126,4 +126,18 @@ describe('MarkdownViewer find bar while editing', () => {
     // A different query starts over at its own first match.
     expect(revealRange).toHaveBeenLastCalledWith(6, 10);
   });
+
+  it('reveals a large document tail after the delayed search completes', async () => {
+    const prefix = 'background worker heartbeat completed\n'.repeat(100000);
+    const needle = 'END-LARGE-DOCUMENT';
+    appMocks.readLocalFile.mockResolvedValue(prefix + needle);
+    const { container } = render(
+      <MarkdownViewer active locale="en" filePath={'C:\\large.log'} onClose={vi.fn()} />,
+    );
+    await screen.findByRole('textbox');
+    fireEvent.click(screen.getByRole('button', { name: 'Find' }));
+    fireEvent.change(screen.getByPlaceholderText('Find'), { target: { value: needle } });
+    await waitFor(() => expect(container.querySelector('.markdown-search-count')).toHaveTextContent('1/1'));
+    expect(revealRange).toHaveBeenLastCalledWith(prefix.length, prefix.length + needle.length);
+  });
 });

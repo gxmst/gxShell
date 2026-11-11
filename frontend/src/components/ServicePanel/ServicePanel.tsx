@@ -698,26 +698,25 @@ export function ServicePanel(props: {
                   </span>
                   <span className="text-muted">·</span>
                   <span>{s.subState}</span>
-                  {s.activeState === "active" && (
-                    <>
-                      <span className="text-muted">·</span>
-                      {/* Without resourceStats the host's ps could not report per-unit
-                          usage, so there are no numbers to show — printing 0.0% there
-                          would read as an idle service rather than a missing feature. */}
-                      {s.resourceStats ? (
-                        <span className="svc-resource" title={t(lang, "svcResourceSort")}>
-                          CPU {s.cpuPercent.toFixed(1)}% · {formatServiceMemory(s.memoryBytes)}
-                        </span>
-                      ) : (
-                        <span className="svc-resource text-muted" title={t(lang, "svcResourceUnavailableHint")}>
-                          {t(lang, "svcResourceUnavailable")}
-                        </span>
-                      )}
-                    </>
-                  )}
                 </div>
+                {s.activeState === "active" && (
+                  <div className="container-meta">
+                    {/* Without resourceStats the host's ps could not report per-unit
+                        usage, so there are no numbers to show — printing 0.0% there
+                        would read as an idle service rather than a missing feature. */}
+                    {s.resourceStats ? (
+                      <span className="svc-resource" title={t(lang, "svcResourceSort")}>
+                        CPU {s.cpuPercent.toFixed(1)}% · {formatServiceMemory(s.memoryBytes)}
+                      </span>
+                    ) : (
+                      <span className="svc-resource text-muted" title={t(lang, "svcResourceUnavailableHint")}>
+                        {t(lang, "svcResourceUnavailable")}
+                      </span>
+                    )}
+                  </div>
+                )}
                 {s.description && (
-                  <div className="container-meta text-muted">
+                  <div className="container-meta svc-description text-muted">
                     <span title={s.description}>{s.description}</span>
                   </div>
                 )}

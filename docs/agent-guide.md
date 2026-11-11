@@ -42,7 +42,7 @@ a higher-risk approval or that the user did not authorize. This includes:
 Treat the complete script or generated program, its destination, file changes,
 network destinations, and secret use as the requested action. A successful
 upload approval covers file movement only; it does not approve executing the
-uploaded file. A profile trust window suppresses approval for T1 scoped,
+uploaded file. A scoped profile trust window suppresses approval for T1 scoped,
 recoverable changes and for bounded local T2 operations; opaque execution and
 effects that leave the server still prompt. This is
 a policy control for cooperative automation, not containment against a
@@ -88,7 +88,7 @@ Always request and inspect JSON. `outcome` is authoritative:
 Never describe a plain non-zero `exitCode` as a gxShell guard rejection. A guard rejection is explicitly marked `blocked: true` and `outcome: blocked`.
 
 For `exec`, also inspect `riskTier`, `riskCategories`, `approval`, and
-`approvalStrength`. The approval policy is:
+`approvalStrength`. The normal/scoped approval policy is:
 
 - T0 observation: no prompt.
 - T1 scoped, recoverable change: no prompt only during an active trust window;
@@ -98,7 +98,15 @@ For `exec`, also inspect `riskTier`, `riskCategories`, `approval`, and
   opaque or external T2 actions take one native click even during a trust
   window.
 - T3 irreversible, self-locking, credential, or public action: immediate native
-  click and never part of an "Allow all" batch, regardless of trust.
+  click and never part of an "Allow all" batch under scoped trust.
+
+The user may explicitly enable **Full trust for 1 hour** in the profile editor.
+During that window CLI / MCP commands in T1, T2 and T3 skip execution approvals
+and report `approval: "full-trust"`. Known host self-destruction is blocked,
+including critical-directory removal, disk destruction and fork bombs. A block
+reports `blockedBy: "self-destructive"`; do not work around it. Expiry or revoke
+restores the normal policy. Full trust does not authorize work outside the
+user's requested task or turn arbitrary scripts into a sandbox.
 
 Prompted commands include a short classifier-derived explanation of recognized
 behavior and targets below the command. Treat it as a review aid, not a safety
@@ -108,6 +116,18 @@ The native dialog is the authorization boundary. Any coloured in-app risk card
 is explanatory only and never grants permission.
 
 ## Use named secrets without revealing values
+
+Prefer manual entry in **Settings → Credential vault**: the user types the value
+in a masked field and shares only its `secret://name` reference. The vault lists,
+copies, replaces and deletes named credentials without revealing saved values.
+Do not use computer automation to read a user's secret-entry field. Let the user
+finish entering and saving it before continuing with references.
+
+Discover references without reading values:
+
+```powershell
+.\gxshell-cli.exe secret list --json
+```
 
 Store a secret by piping it over stdin. Never put the value in argv, source code, a prompt, or a command string:
 
@@ -132,8 +152,35 @@ gxShell resolves the reference only after the applicable local approval gate,
 injects the value through SSH stdin, hides it from approval text and command
 audit, and replaces exact occurrences in captured output. Named-secret
 execution is synchronous only; `--follow` and `--detach` are rejected. A trust
-window does not bypass T3 credential confirmation, and exact-value redaction is
-still not a secret sandbox: transformed or encoded values may evade it.
+scoped window does not bypass T3 credential confirmation; full trust does.
+CLI/MCP results and built-in AI context are protected locally before delivery.
+Recognized password/API-key/token fields, authorization headers and private-key
+blocks are saved in the credential vault and replaced with `secret://auto-...`
+references. Existing values reuse their saved references, regardless of field
+name. AI-bound history, reasoning, tool arguments and terminal context are
+checked again before each provider request, before history is compacted.
+The API key authenticating that provider stays in its transport header.
+
+Use captured references like manually registered ones: bind them with
+`--secret API_KEY=auto-...` or the tool's `secrets` object, then use `$API_KEY`
+in the remote command. Do not paste the reference as the literal API password.
+Kubernetes Secret `data` values are decoded locally before capture. A `cat` of
+a known credential file with no recognizable fields returns a reference to its
+content; a single-line value loses its trailing line terminator, while multiline
+content is preserved. Never reconstruct a credential by printing fragments.
+
+Capture uses unique random names and never replaces an existing credential just
+because the field names match. Automatic captures persist in the same vault and
+can be listed or deleted in Settings. Captures are bounded to 100 new values per
+text and 64 KiB per value. Incomplete quoted values and unsupported values are
+masked. Failed saves return a mask, not a usable reference; if the saved-value
+inventory cannot be checked, the context/result is withheld. Async job output
+is buffered until completion so split fields and private keys cannot leak through
+individual stream events.
+
+This is still not a secret sandbox: arbitrary transformations, unknown unlabeled
+credentials and malicious programs can evade recognition. Scoped trust prompts
+for named-credential use; full trust skips that prompt but keeps context protection.
 
 This protects against accidental disclosure, including `echo $API_KEY` and ordinary error output. It cannot make a general shell safe against a malicious command that transforms or encodes a secret before exfiltration. Approve secret-bearing commands only when their destination and purpose are clear. If a task only needs to test whether a secret works, do that without printing it.
 

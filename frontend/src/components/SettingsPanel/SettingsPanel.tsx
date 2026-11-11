@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Activity, Database, Download, FileText, Globe, HardDrive, Palette, RefreshCw, Save, Search, Settings2, ShieldCheck, TerminalSquare, X } from "lucide-react";
+import { Activity, Database, Download, FileText, Globe, HardDrive, KeyRound, Palette, RefreshCw, Save, Search, Settings2, ShieldCheck, TerminalSquare, X } from "lucide-react";
 import { CheckForUpdate, ExportHistory, GetVersion, IsTextContextMenuRegistered, RegisterTextContextMenu, UnregisterTextContextMenu } from "../../../wailsjs/go/app/App";
 import { BrowserOpenURL } from "../../../wailsjs/runtime/runtime";
 import { types, version as versionModel } from "../../../wailsjs/go/models";
@@ -8,6 +8,7 @@ import { normalizeAppTheme } from "../../utils/format";
 import { defaultSessionLog, defaultSessionLogRetention, normalizeFontSize, normalizeLineHeight, normalizeScrollbackLines } from "../../utils/terminalSettings";
 import { t } from "../../i18n";
 import { KnownHostsManager } from "./KnownHostsManager";
+import { NamedSecretsManager } from "./NamedSecretsManager";
 import { HighlightRulesEditor } from "./HighlightRulesEditor";
 import { SessionLogFields, SessionLogRetentionFields } from "./SessionLogFields";
 import { TerminalCompatibilityFields } from "./TerminalCompatibilityFields";
@@ -340,6 +341,10 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
           />
           <SettingsToggle checked={draft.cliServerEnabled ?? false} onChange={(checked) => update({ cliServerEnabled: checked })} label={t(lang, "cliServerEnabled")} hint={t(lang, "cliServerEnabledHint")} />
           {draft.cliServerEnabled && <p className="settings-field-hint">{t(lang, "mcpConnectionHint")}</p>}
+        </SettingsSection>
+
+        <SettingsSection icon={<KeyRound size={15} />} title={t(lang, "secretVault")} description={t(lang, "secretVaultHint")}>
+          <NamedSecretsManager language={lang} onNotify={onNotify} />
         </SettingsSection>
 
         <SettingsSection icon={<ShieldCheck size={15} />} title={t(lang, "settingsSystemIntegration")} description={t(lang, "settingsSystemIntegrationHint")}>

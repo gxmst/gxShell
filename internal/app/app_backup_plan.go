@@ -76,6 +76,7 @@ func (a *App) planBackup(payload backupPayload, workspaces, policy string, resto
 		}
 		profile.CliEnabled, profile.LegacyAIEnabled = false, false
 		profile.CliTrustUntil = time.Time{}
+		profile.CliTrustMode = ""
 		profile.LegacyAIAlias = ""
 		profile.LastConnectedAt = time.Time{}
 		profile.RememberPassword = payload.IncludesSecret && (profile.Password != "" || profile.PrivateKeyPassphrase != "")

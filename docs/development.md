@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.26.10+ (pinned by the `go` directive in `go.mod`; a newer toolchain is downloaded automatically)
+- Go 1.26.11+ (pinned by the `go` directive in `go.mod`; a newer toolchain is downloaded automatically)
 - Node.js 20.19+ (or 22.13+) and npm
 - Wails CLI v2
 - Microsoft WebView2 Runtime for desktop execution

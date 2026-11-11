@@ -20,8 +20,9 @@ instructions are in [mcp.md](mcp.md) and [mcp.zh-CN.md](mcp.zh-CN.md).
 - Profiles are hidden from the CLI by default.
 - A profile must have `Allow CLI / MCP access` enabled before it appears in `gxshell-cli list`.
 - The CLI lists aliases only. It does not return hostnames, IP addresses, usernames, ports, profile IDs, or jump-host details.
-- External CLI commands are classified by visible behavior from T0 through T3. T0 observation runs without a prompt. T1 scoped, recoverable changes require a native click unless the profile has active automation trust. Bounded T2 operations also skip the prompt inside a trust window; opaque or external T2 actions always require a native click. T3 irreversible, self-locking, credential, or public actions use an immediate native click and never join a batched "Allow all" prompt.
-- Automation trust lasts 1, 4, 8, or 24 hours and has no permanent switch. It auto-approves T1 commands and bounded local T2 operations; opaque or external T2 commands and every T3 command remain interactive, and each T3 command is confirmed separately regardless of trust.
+- External CLI commands are classified by visible behavior from T0 through T3. Under normal/scoped approvals, T0 observation runs without a prompt. T1 scoped, recoverable changes require a native click unless the profile has active automation trust. Bounded T2 operations also skip the prompt inside a scoped trust window; opaque or external T2 actions require a native click. T3 irreversible, self-locking, credential, or public actions use an immediate native click and never join a batched "Allow all" prompt.
+- Scoped automation trust lasts 1, 4, 8, or 24 hours and has no permanent switch. It auto-approves T1 commands and bounded local T2 operations; opaque or external T2 commands and every T3 command remain interactive.
+- **Full trust for 1 hour** is a separate profile-editor option. CLI / MCP T1, T2 and T3 commands run without execution approval prompts during that hour. Known host self-destruction is blocked outright; expiry or revocation restores normal approvals. Enabling or extending full trust requires the existing native activation confirmation.
 - Sensitive-path policy can still block transfer/copy operations outright. The built-in AI assistant retains its existing known-pattern command preflight. External CLI `exec` uses risk tiers rather than treating a permanent command blacklist as its security boundary.
 - Remote file copies require native confirmation by default and apply sensitive-path checks to both endpoints. They skip confirmation only while both endpoint profiles are trusted.
 - Local file transfers (`transfer push`/`pull`) are single-file SFTP operations. They always require a native approval dialog, even when the server profile has an active CLI trust window. Overwrite is disabled by default and must be requested explicitly with `--overwrite`; missing remote parent directories can be created for uploads with `--mkdir`.
@@ -91,7 +92,7 @@ For an external caller (including an AI agent), `exec` uses four tiers:
 - **T0 observation** - fixed, statically understood read-only behavior runs without a prompt.
 - **T1 recoverable change** - scoped local writes, ordinary builds/tests, and similar recoverable work. It needs one native click normally; an active automation-trust window auto-approves it.
 - **T2 bounded/opaque/external** - bounded deletion, persistence, network exposure, ordinary remote publication, interpreters, uploaded scripts, decoded payloads, and anything the classifier cannot resolve. A statically resolvable, bounded local T2 action skips the prompt inside a trust window; opaque or external T2 actions always need one native click. Concurrent T1/T2 requests for one alias may be shown in a batched prompt.
-- **T3 critical** - irreversible storage loss, loss of host access, credential access, or unrecallable/public state. It opens an immediate native click dialog and never joins a batch, regardless of trust.
+- **T3 critical** - irreversible storage loss, loss of host access, credential access, or unrecallable/public state. Under normal/scoped trust it opens an immediate native click dialog and never joins a batch. Explicit one-hour full trust permits T3 executions except known host self-destruction.
 
 Every command that requires confirmation is followed by a short `What this
 does` explanation derived from the classifier's recognized behavior and target.
@@ -190,7 +191,7 @@ Get-Content .\script.sh -Raw | .\gxshell-cli.exe exec-stdin prod-web --shell bas
 .\gxshell-cli.exe status
 ```
 
-T0 commands run immediately. A server profile can receive automation trust for
+T0 commands run immediately. A server profile can receive scoped automation trust for
 a bounded 1/4/8/24-hour window; T1 commands and bounded local T2 operations
 skip interactive approval in that window, while opaque or external T2 commands
 and all T3 commands remain interactive. Remote copies skip approval only
@@ -198,13 +199,31 @@ when both endpoints are trusted. Local transfers, secret changes, and tunnels
 always prompt. Transfer/copy sensitive-path restrictions remain separate from
 the `exec` tier classifier.
 
+In **Edit server → Time-limited external AI CLI automation trust**, select
+**Full trust for 1 hour** to enable the broader mode. This has only a one-hour
+duration and allows all T1, T2 and T3 command executions without approval.
+Known self-destruction, such as removing critical system directories, destroying
+disks and fork bombs, remains blocked with `blockedBy: "self-destructive"`.
+Approved commands identify `approval: "full-trust"` in their JSON audit metadata.
+Use the server's trust indicator to revoke either mode immediately. Copies,
+exports and imports do not carry the grant. A classifier cannot inspect every
+opaque program or runtime expansion; full trust is not a sandbox.
+
 Put `--timeout` before `exec` or after the quoted remote command, not inside the remote command string. If it is inside the quoted command, the remote shell receives it as part of the command.
 
 `exec-file` and `exec-stdin` require an explicit `--shell` selected from `sh`, `bash`, `dash`, `zsh`, or `ksh`. The client sends normalized script text in the JSON request body; the daemon starts `<shell> -s` and writes the script through SSH stdin. The script is never embedded into the remote command string. Before sending, gxShell strips a leading UTF-8 BOM and normalizes CRLF/CR line endings to LF. Scripts use the same approval, timeout, output limit, and SSH exec-channel behavior as `exec`. The local CLI request body is capped at about 2 MB. Plain `exec` rejects literal newlines and heredocs with `script_input_required` so callers cannot accidentally create several nested quoting layers.
 
 ## Named Secrets
 
-External and built-in AI agents should use named references instead of plaintext credentials. `secret set` reads the value from stdin so it never appears in the process argument list:
+External and built-in AI agents should use named references instead of plaintext credentials.
+
+Users can also add, replace and delete credentials manually in **Settings →
+Credential vault**. The masked entry form does not load saved values. Agents can
+run `gxshell-cli secret list --json` to discover names and references only; no
+operation returns the saved value. Names created in the UI and CLI share the
+same store and work with CLI `--secret` and MCP secret bindings.
+
+`secret set` reads the value from stdin so it never appears in the process argument list:
 
 ```powershell
 Get-Content .\api-key.txt -Raw | .\gxshell-cli.exe secret set anyrouter-api-key
@@ -212,17 +231,19 @@ Get-Content .\api-key.txt -Raw | .\gxshell-cli.exe secret set anyrouter-api-key
 .\gxshell-cli.exe exec prod-web 'curl -H "Authorization: Bearer $API_KEY" https://example.test/v1/models' --secret API_KEY=anyrouter-api-key --json
 ```
 
-The value is stored through gxShell's OS credential-store/encrypted-fallback subsystem. During synchronous execution gxShell resolves `secret://anyrouter-api-key`, injects it through SSH stdin, keeps it out of approval/audit text, and removes exact occurrences from captured output. `--follow` and `--detach` cannot be combined with named secrets because streaming chunks could cross a redaction boundary.
+The value is stored through gxShell's OS credential-store/encrypted-fallback subsystem. During synchronous execution gxShell resolves `secret://anyrouter-api-key` after approval, injects it through SSH stdin, and keeps it out of approval/audit text. Named secret bindings currently require synchronous execution; omit `--follow` and `--detach` when using them.
+
+Before tool output or an AI request leaves gxShell, recognized passwords, API keys and private keys are captured locally and replaced with reusable `secret://...` references. Existing values reuse their references; field names help discover new values without overwriting saved credentials. Public context such as Base URLs is preserved. Known values and common wire encodings are also masked. See [the credential contract](agent-guide.md) for supported inputs and limits.
 
 This prevents accidental plaintext disclosure but cannot make a general-purpose
 shell safe against deliberate encoding or transformation of a secret.
-Credential-related T3 commands require an individual native click even during
-an automation-trust window, but a disguised program can still evade static text
-classification and exact-value output redaction. Review the destination and
+Credential-related T3 commands require an individual native click during
+a scoped automation-trust window; full trust bypasses that click. A disguised program can still evade static text
+classification and credential detection. Review the destination and
 purpose in the native dialog and rotate any credential that was exposed before
 it was registered.
 
-`--follow` and `--detach` create a trackable command job. Follow mode polls ordered stdout/stderr chunks until completion; detach mode returns the job ID immediately. `job status`, `job logs`, and `job cancel` work while the GUI process remains running. Finished jobs and their captured output are retained in memory for 30 minutes, then pruned. Output capture remains capped at about 1 MB per stream. Closing gxShell cancels running CLI jobs.
+`--follow` and `--detach` create a trackable command job. Follow mode polls until completion; detach mode returns the job ID immediately. Captured stdout/stderr is withheld until execution finishes and credential protection completes, so partial streaming chunks cannot bypass that protection. `job status`, `job logs`, and `job cancel` work while the GUI process remains running. Finished jobs and their captured output are retained in memory for 30 minutes, then pruned. Output capture remains capped at about 1 MB per stream. Closing gxShell cancels running CLI jobs.
 
 `copy` currently supports one remote file, not directories. It reuses gxShell's SFTP clients for both profiles, streams through the local app, writes a sibling temporary destination, verifies the temporary file with SHA-256, preserves source permission bits where supported, and only then atomically replaces the final destination. A failed or cancelled transfer removes the temporary file and leaves an existing destination intact.
 

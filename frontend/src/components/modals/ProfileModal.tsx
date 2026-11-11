@@ -21,7 +21,7 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const savingRef = useRef(false);
-  const [openedAt] = useState(Date.now);
+  const [now, setNow] = useState(Date.now);
   // The two multi-line fields keep their raw text here. Deriving the textarea
   // value from the stored array instead would filter blank lines on every
   // keystroke, so pressing Enter would re-render the same string and the user
@@ -55,16 +55,22 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
     onClose();
   }, [dirty, onClose]);
   const trustDeadline = Date.parse(String(draft.cliTrustUntil || ""));
-  const trustActive = Boolean(draft.cliEnabled && Number.isFinite(trustDeadline) && trustDeadline > openedAt);
+  const trustActive = Boolean(draft.cliEnabled && Number.isFinite(trustDeadline) && trustDeadline > now);
+  useEffect(() => {
+    if (!trustActive) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [trustActive]);
   const usedAsJumpHost = (props.profiles || []).some((profile) => profile.id !== draft.id && profile.proxyJumpId === draft.id);
   const setTrustDuration = (value: string) => {
     if (value === "off") {
-      update({ cliTrustUntil: undefined });
+      update({ cliTrustUntil: undefined, cliTrustMode: undefined });
       return;
     }
-    const hours = Number(value);
+    const full = value === "full-1";
+    const hours = full ? 1 : Number(value);
     if (Number.isFinite(hours) && hours > 0) {
-      update({ cliTrustUntil: new Date(Date.now() + hours * 60 * 60 * 1000).toISOString() });
+      update({ cliTrustUntil: new Date(Date.now() + hours * 60 * 60 * 1000).toISOString(), cliTrustMode: full ? "full" : undefined });
     }
   };
 
@@ -187,7 +193,7 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
         </Label>
         <div className="profile-modal-checks col-span-2">
           <label className="check"><input type="checkbox" checked={draft.favorite} onChange={(e) => update({ favorite: e.target.checked })} /> {t(lang, "favorite")}</label>
-          <label className="check"><input type="checkbox" checked={draft.cliEnabled || false} onChange={(e) => update({ cliEnabled: e.target.checked, ...(!e.target.checked ? { cliTrustUntil: undefined } : {}) })} /> {t(lang, "cliServerAccess")}</label>
+          <label className="check"><input type="checkbox" checked={draft.cliEnabled || false} onChange={(e) => update({ cliEnabled: e.target.checked, ...(!e.target.checked ? { cliTrustUntil: undefined, cliTrustMode: undefined } : {}) })} /> {t(lang, "cliServerAccess")}</label>
           <label className="check"><input type="checkbox" checked={draft.rememberPassword || false} onChange={(e) => update({ rememberPassword: e.target.checked })} /> {t(lang, "savePassword")}</label>
           <label className="check"><input type="checkbox" checked={draft.autoReconnect || false} onChange={(e) => update({ autoReconnect: e.target.checked })} /> {t(lang, "autoReconnect")}</label>
         </div>
@@ -195,15 +201,16 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
         {draft.cliEnabled && (
           <div className="profile-cli-trust col-span-2">
             <div className="profile-cli-trust-heading"><AlertTriangle size={13} /> {t(lang, "cliTrustTitle")}</div>
-            <select className="input compact-input" value={trustActive ? "active" : "off"} onChange={(event) => setTrustDuration(event.target.value)}>
-              {trustActive && <option value="active" disabled>{t(lang, "cliTrustActiveUntil", { time: new Date(trustDeadline).toLocaleString() })}</option>}
+            <select className="input compact-input" aria-label={t(lang, "cliTrustTitle")} value={trustActive ? "active" : "off"} onChange={(event) => setTrustDuration(event.target.value)}>
+              {trustActive && <option value="active" disabled>{t(lang, draft.cliTrustMode === "full" ? "cliFullTrustActiveUntil" : "cliTrustActiveUntil", { time: new Date(trustDeadline).toLocaleString() })}</option>}
               <option value="off">{t(lang, "cliTrustOff")}</option>
               <option value="1">{t(lang, "cliTrustOneHour")}</option>
               <option value="4">{t(lang, "cliTrustFourHours")}</option>
               <option value="8">{t(lang, "cliTrustEightHours")}</option>
               <option value="24">{t(lang, "cliTrustDay")}</option>
+              <option value="full-1">{t(lang, "cliFullTrustOneHour")}</option>
             </select>
-            <div className="profile-cli-trust-hint">{t(lang, "cliTrustHint")}</div>
+            <div className="profile-cli-trust-hint">{t(lang, draft.cliTrustMode === "full" ? "cliFullTrustHint" : "cliTrustHint")}</div>
           </div>
         )}
         <Label text={t(lang, "description")} className="col-span-2"><textarea className="input compact-input min-h-[56px]" value={draft.description} onChange={(e) => update({ description: e.target.value })} placeholder={t(lang, "optionalNotes")} /></Label>

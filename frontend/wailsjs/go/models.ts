@@ -941,6 +941,7 @@ export namespace types {
 	    cliAlias?: string;
 	    // RFC3339 wall-clock deadline serialized by Go time.Time.
 	    cliTrustUntil?: string;
+	    cliTrustMode?: string;
 	    aiEnabled?: boolean;
 	    aiAlias?: string;
 	    tunnels: TunnelRule[];
@@ -981,6 +982,7 @@ export namespace types {
 	        this.cliEnabled = source["cliEnabled"];
 	        this.cliAlias = source["cliAlias"];
 	        this.cliTrustUntil = source["cliTrustUntil"];
+	        this.cliTrustMode = source["cliTrustMode"];
 	        this.aiEnabled = source["aiEnabled"];
 	        this.aiAlias = source["aiAlias"];
 	        this.tunnels = this.convertValues(source["tunnels"], TunnelRule);

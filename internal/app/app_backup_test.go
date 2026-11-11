@@ -162,6 +162,7 @@ func TestBackupPreviewRemapsKeysAndWorkspacesWithoutExposingCredentials(t *testi
 	payload.Profiles[0].PrivateKeyPassphrase = "test-only-passphrase"
 	payload.Profiles[0].CliEnabled = true
 	payload.Profiles[0].CliTrustUntil = time.Now().Add(time.Hour)
+	payload.Profiles[0].CliTrustMode = "full"
 	payload.PrivateKeys = map[string][]byte{"source": private}
 	payload.Workspaces = `[{"id":"work","name":"Daily","items":[{"key":"p:source","kind":"profile","target":"source","title":"Main"},{"key":"p:source:terminal:second","kind":"profile","target":"source","instanceId":"second","title":"Logs"}],"active":"p:source:terminal:second","layout":{"keys":["p:source","p:source:terminal:second"],"direction":"horizontal","ratio":0.4,"rowRatio":0.5}}]`
 	before, _ := a.store.SnapshotFiles("profiles.json", "settings.json", "commands.json", "known_hosts")
@@ -174,7 +175,7 @@ func TestBackupPreviewRemapsKeysAndWorkspacesWithoutExposingCredentials(t *testi
 		t.Fatal(err)
 	}
 	profile := profiles[0]
-	if profile.ID == "source" || profile.CliEnabled || !profile.CliTrustUntil.IsZero() || !profile.RememberPassword {
+	if profile.ID == "source" || profile.CliEnabled || !profile.CliTrustUntil.IsZero() || profile.CliTrustMode != "" || !profile.RememberPassword {
 		t.Fatal("identity, trust or credentials were not remapped")
 	}
 	if filepath.Dir(profile.PrivateKeyPath) != filepath.Join(a.store.DataDir(), "imported-keys") {
@@ -322,6 +323,7 @@ func TestBackupExportOmitsCredentialsAndOptionallyIncludesPrivateKeys(t *testing
 	profile.AuthType, profile.PrivateKeyPath = types.AuthPrivateKey, path
 	profile.Password, profile.PrivateKeyPassphrase, profile.RememberPassword = "legacy-password", "legacy-passphrase", true
 	profile.CliTrustUntil = time.Now().Add(time.Hour)
+	profile.CliTrustMode = "full"
 	if err := a.store.SaveProfilesPreservingSecrets([]types.Profile{profile}, map[string]bool{profile.ID: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -336,7 +338,7 @@ func TestBackupExportOmitsCredentialsAndOptionallyIncludesPrivateKeys(t *testing
 			t.Fatal(err)
 		}
 		data, _ := json.Marshal(backup)
-		if strings.Contains(string(data), "legacy-password") || strings.Contains(string(data), "legacy-passphrase") || strings.Contains(string(data), "legacy-api-key") || backup.Profiles[0].RememberPassword || !backup.Profiles[0].CliTrustUntil.IsZero() {
+		if strings.Contains(string(data), "legacy-password") || strings.Contains(string(data), "legacy-passphrase") || strings.Contains(string(data), "legacy-api-key") || backup.Profiles[0].RememberPassword || !backup.Profiles[0].CliTrustUntil.IsZero() || backup.Profiles[0].CliTrustMode != "" {
 			t.Fatal("credential-free export leaked credentials or trust")
 		}
 		if (len(backup.PrivateKeys) == 1) != includeKeys {
