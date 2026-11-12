@@ -42,3 +42,8 @@ frontend/vite.config.ts.timestamp-*.mjs
 # a cache — keep the directory, but it is machine-local and must not be
 # committed, or every session's scratch notes end up in the history.
 /.workbuddy-ai/
+
+# Local marketing capture bookkeeping and extracted delivery kits.
+/docs/marketing/assets/capture-report.json
+/docs/marketing/assets/contact-sheet.png
+/docs/marketing/*media-kit*/

@@ -42,7 +42,8 @@ export function FirewallPanel(props: {
   locale: string;
   onNotify: (text: string, tone?: Toast["tone"]) => void;
 }) {
-  const lang = props.locale;
+  const { locale: propLocale, active: propActive, onNotify: propOnNotify } = props;
+  const lang = propLocale;
   const [status, setStatus] = useState<types.FirewallStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [toggling, setToggling] = useState(false);
@@ -59,9 +60,9 @@ export function FirewallPanel(props: {
   const [dialog, setDialog] = useState<FirewallDialog | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval>>();
   const armedTimerRef = useRef<number | null>(null);
-  const activeSessionRef = useRef(props.active?.id || "");
+  const activeSessionRef = useRef(propActive?.id || "");
   const refreshSeqRef = useRef(0);
-  activeSessionRef.current = props.active?.id || "";
+  activeSessionRef.current = propActive?.id || "";
 
   // Every mutation runs behind the previous one. UFW deletes by index and the
   // backend checks a rule before deleting it, so two deletes in flight at once
@@ -76,13 +77,13 @@ export function FirewallPanel(props: {
     return next;
   }, []);
 
-  const onNotifyRef = useRef(props.onNotify);
-  onNotifyRef.current = props.onNotify;
+  const onNotifyRef = useRef(propOnNotify);
+  onNotifyRef.current = propOnNotify;
 
   // Only a live remote session has a firewall to inspect. A local terminal or a
   // Markdown document has a tab id too, and polling one only produced
   // "session not found" every interval.
-  const sessionId = isRemoteSession(props.active) ? props.active.id : "";
+  const sessionId = isRemoteSession(propActive) ? propActive.id : "";
 
   const refresh = useCallback(async () => {
     const sessionID = sessionId;
@@ -103,7 +104,7 @@ export function FirewallPanel(props: {
         activeSessionRef.current !== sessionID
       )
         return;
-      props.onNotify(String(err), "error");
+      propOnNotify(String(err), "error");
       setStatus(null);
     } finally {
       if (
@@ -112,7 +113,7 @@ export function FirewallPanel(props: {
       )
         setLoading(false);
     }
-  }, [sessionId, props.onNotify]);
+  }, [sessionId, propOnNotify]);
 
   useEffect(() => {
     refresh();
@@ -134,7 +135,7 @@ export function FirewallPanel(props: {
     // clear the spinner of an action started on the host replacing it.
     setToggling(false);
     setSubmitting(false);
-  }, [props.active?.id]);
+  }, [propActive?.id]);
 
   useEffect(() => {
     return () => {
@@ -162,7 +163,7 @@ export function FirewallPanel(props: {
   }, []);
 
   const toggleEnabled = useCallback(async () => {
-    const sessionID = props.active?.id;
+    const sessionID = propActive?.id;
     if (!sessionID || !status) return;
     if (status.enabled) {
       // Disabling always requires force=true on the backend; ask first.
@@ -186,10 +187,10 @@ export function FirewallPanel(props: {
     } finally {
       if (activeSessionRef.current === sessionID) setToggling(false);
     }
-  }, [props.active?.id, status, lang, runExclusive]);
+  }, [propActive?.id, status, lang, runExclusive]);
 
   const confirmDisable = useCallback(async () => {
-    const sessionID = props.active?.id;
+    const sessionID = propActive?.id;
     if (!sessionID) return;
     setDialog(null);
     setToggling(true);
@@ -207,11 +208,11 @@ export function FirewallPanel(props: {
     } finally {
       if (activeSessionRef.current === sessionID) setToggling(false);
     }
-  }, [props.active?.id, lang, runExclusive]);
+  }, [propActive?.id, lang, runExclusive]);
 
   const deleteRuleGroup = useCallback(
     async (group: FirewallRuleGroup, force: boolean) => {
-      const sessionID = props.active?.id;
+      const sessionID = propActive?.id;
       if (!sessionID) return;
       const key = group.key;
       setBusyRule(key);
@@ -253,7 +254,7 @@ export function FirewallPanel(props: {
         if (activeSessionRef.current === sessionID) setBusyRule(null);
       }
     },
-    [props.active?.id, status, lang, runExclusive],
+    [propActive?.id, status, lang, runExclusive],
   );
 
   // Every delete is two-step (arm, then execute). Rules covering the SSH port
@@ -281,7 +282,7 @@ export function FirewallPanel(props: {
 
   const submitRule = useCallback(
     async (force: boolean) => {
-      const sessionID = props.active?.id;
+      const sessionID = propActive?.id;
       if (!sessionID || !status) return;
       const port = form.port.trim();
       if (!PORT_RE.test(port)) {
@@ -325,7 +326,7 @@ export function FirewallPanel(props: {
         if (activeSessionRef.current === sessionID) setSubmitting(false);
       }
     },
-    [props.active?.id, status, form, lang, runExclusive],
+    [propActive?.id, status, form, lang, runExclusive],
   );
 
   if (!sessionId) {

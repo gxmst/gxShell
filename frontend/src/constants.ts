@@ -1,3 +1,4 @@
+import { createElement } from "react";
 import { Activity, ArrowRightLeft, Bot, Box, CalendarClock, Cog, Command, FileText, Folder, Globe2, Settings, Shield, Video } from "lucide-react";
 import { types } from "../wailsjs/go/models";
 import { t, type LangKey } from "./i18n";
@@ -244,28 +245,18 @@ export const terminalThemes: Record<string, any> = {
 };
 
 export function drawerIcon(item: Drawer, size = 15) {
-  if (item === "monitor") return <Activity size={size} />;
-  if (item === "sftp") return <Folder size={size} />;
-  if (item === "documents") return <FileText size={size} />;
-  if (item === "commands") return <Command size={size} />;
-  if (item === "tunnels") return <ArrowRightLeft size={size} />;
-  if (item === "logs") return <FileText size={size} />;
-  if (item === "containers") return <Box size={size} />;
-  if (item === "services") return <Cog size={size} />;
-  if (item === "firewall") return <Shield size={size} />;
-  if (item === "cron") return <CalendarClock size={size} />;
-  if (item === "websites") return <Globe2 size={size} />;
-  if (item === "ai") return <Bot size={size} />;
-  if (item === "recordings") return <Video size={size} />;
-  return <Settings size={size} />;
-}
-
-export function AppIcon() {
-  return (
-    <img
-      src={new URL('./assets/images/logo.png', import.meta.url).href}
-      alt="gxShell"
-      style={{ width: 28, height: 28, objectFit: 'contain' }}
-    />
-  );
+  if (item === "monitor") return createElement(Activity, { size });
+  if (item === "sftp") return createElement(Folder, { size });
+  if (item === "documents") return createElement(FileText, { size });
+  if (item === "commands") return createElement(Command, { size });
+  if (item === "tunnels") return createElement(ArrowRightLeft, { size });
+  if (item === "logs") return createElement(FileText, { size });
+  if (item === "containers") return createElement(Box, { size });
+  if (item === "services") return createElement(Cog, { size });
+  if (item === "firewall") return createElement(Shield, { size });
+  if (item === "cron") return createElement(CalendarClock, { size });
+  if (item === "websites") return createElement(Globe2, { size });
+  if (item === "ai") return createElement(Bot, { size });
+  if (item === "recordings") return createElement(Video, { size });
+  return createElement(Settings, { size });
 }

@@ -36,7 +36,8 @@ function appendBoundedLog(previous: string, chunk: string) {
 }
 
 export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: (text: string, tone?: Toast["tone"]) => void }) {
-  const lang = props.locale;
+  const { locale: propLocale, active: propActive, onNotify: propOnNotify } = props;
+  const lang = propLocale;
   const [containers, setContainers] = useState<types.ContainerInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -58,9 +59,9 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   // result if the panel has moved on. Without that, a reply from host A landed
   // in host B's list — and a `docker rm -f` confirmed on A reported success
   // while B was on screen.
-  const activeSessionRef = useRef(props.active?.id || "");
+  const activeSessionRef = useRef(propActive?.id || "");
   const refreshSeqRef = useRef(0);
-  activeSessionRef.current = props.active?.id || "";
+  activeSessionRef.current = propActive?.id || "";
 
   // A render-time ref cannot see a remount. The sidebar keys this panel by
   // session, so switching hosts unmounts this instance and mounts a new one —
@@ -108,7 +109,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   // document has a tab id too, and polling one produced a "session not found"
   // toast every interval; a host without docker produced one every interval as
   // well. Both are gone with the session gate and the silent background poll.
-  const sessionId = isRemoteSession(props.active) ? props.active.id : "";
+  const sessionId = isRemoteSession(propActive) ? propActive.id : "";
 
   const refresh = useCallback(async (notifyOnError = true) => {
     const sessionID = sessionId;
@@ -121,12 +122,12 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
       setContainers(list || []);
     } catch (err) {
       if (seq !== refreshSeqRef.current || !stillOwnsSession(sessionID)) return;
-      if (notifyOnError) props.onNotify(String(err), "error");
+      if (notifyOnError) propOnNotify(String(err), "error");
       setContainers([]);
     } finally {
       if (seq === refreshSeqRef.current && stillOwnsSession(sessionID)) setLoading(false);
     }
-  }, [sessionId, showAll, props.onNotify, stillOwnsSession]);
+  }, [sessionId, showAll, propOnNotify, stillOwnsSession]);
 
   useEffect(() => {
     if (!sessionId) {
@@ -153,8 +154,8 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
     el.scrollTop = el.scrollHeight;
   }, [logs]);
 
-  const onNotifyRef = useRef(props.onNotify);
-  onNotifyRef.current = props.onNotify;
+  const onNotifyRef = useRef(propOnNotify);
+  onNotifyRef.current = propOnNotify;
 
   useEffect(() => {
     const off = EventsOn("docker:log", (data: DockerLogEvent) => {
@@ -192,10 +193,10 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
       window.clearTimeout(armedRemoveTimerRef.current);
       armedRemoveTimerRef.current = null;
     }
-  }, [props.active?.id]);
+  }, [propActive?.id]);
 
   const viewLogs = useCallback(async (c: types.ContainerInfo) => {
-    const sessionID = props.active?.id;
+    const sessionID = propActive?.id;
     if (!sessionID) return;
     const previousStream = logStreamIdRef.current;
     if (previousStream) {
@@ -222,7 +223,7 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
       }
       onNotifyRef.current(String(err), "error");
     }
-  }, [props.active?.id, flushPendingLogs, stillOwnsSession]);
+  }, [propActive?.id, flushPendingLogs, stillOwnsSession]);
 
   const closeLogs = useCallback(() => {
     const streamID = logStreamIdRef.current;
@@ -264,22 +265,22 @@ export function ContainerPanel(props: { active?: Tab; locale: string; onNotify: 
   // list is applied if the panel has moved to another host meanwhile.
   const runContainerAction = useCallback(
     async (c: types.ContainerInfo, verb: LangKey, run: (sessionID: string) => Promise<unknown>) => {
-      const sessionID = props.active?.id;
+      const sessionID = propActive?.id;
       if (!sessionID) return;
       setActionLoading(c.id);
       try {
         await run(sessionID);
         if (!stillOwnsSession(sessionID)) return;
-        props.onNotify(`${c.names?.[0] || c.id}: ${t(lang, verb)}`, "success");
+        propOnNotify(`${c.names?.[0] || c.id}: ${t(lang, verb)}`, "success");
         await refresh();
       } catch (err) {
         if (!stillOwnsSession(sessionID)) return;
-        props.onNotify(String(err), "error");
+        propOnNotify(String(err), "error");
       } finally {
         if (stillOwnsSession(sessionID)) setActionLoading(null);
       }
     },
-    [props.active?.id, refresh, props.onNotify, lang, stillOwnsSession],
+    [propActive?.id, refresh, propOnNotify, lang, stillOwnsSession],
   );
 
   const restart = useCallback((c: types.ContainerInfo) => (

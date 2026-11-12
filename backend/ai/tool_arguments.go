@@ -2,6 +2,14 @@ package ai
 
 import "fmt"
 
+// TruncatedResponseError preserves streamed text but never releases tool calls
+// whose arguments may have been cut off by the provider's output limit.
+type TruncatedResponseError struct{}
+
+func (*TruncatedResponseError) Error() string {
+	return "response truncated at the output token limit (MAX_TOKENS); streamed text was retained and tool calls were not executed"
+}
+
 // ToolArgumentsError carries rejected calls only after a fully completed
 // provider stream. It never releases them through the executable-tool callback.
 // Built-in workflows can use this data for a bounded report-only repair.

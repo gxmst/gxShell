@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { types } from "../../../wailsjs/go/models";
-import { detectOsFromText, detectServerOs, getStoredServerOs, saveStoredServerOs } from "./ServerOsIcon";
+import { detectOsFromText, detectServerOs, getStoredServerOs, saveStoredServerOs } from "../../utils/serverOs";
 
 describe("ServerOsIcon detection", () => {
   const store = new Map<string, string>();

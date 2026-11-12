@@ -45,25 +45,26 @@ export function CronPanel(props: {
   locale: string;
   onNotify: (text: string, tone?: Toast["tone"]) => void;
 }) {
-  const lang = props.locale;
+  const { locale: propLocale, active: propActive, onNotify: propOnNotify } = props;
+  const lang = propLocale;
   const [jobs, setJobs] = useState<types.CronJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
-  const activeSessionRef = useRef(props.active?.id || "");
+  const activeSessionRef = useRef(propActive?.id || "");
   const refreshSeqRef = useRef(0);
   const armedTimerRef = useRef<number | null>(null);
-  activeSessionRef.current = props.active?.id || "";
+  activeSessionRef.current = propActive?.id || "";
 
   // A crontab belongs to one host. A local terminal or a Markdown document has
   // a tab id too, and acting on one only produced a "session not found" error.
-  const sessionId = isRemoteSession(props.active) ? props.active.id : "";
+  const sessionId = isRemoteSession(propActive) ? propActive.id : "";
 
   // The draft belongs to the host, so a second terminal on the same server - or
   // an auto-reconnect that hands the session a new id - no longer discards it.
   const [draft, setDraft, replaceDraftIfCurrent] = useProfileDraft<CronDraft | null>(
     "cron",
-    props.active?.profileId || "",
+    propActive?.profileId || "",
     null,
   );
   const dirty = draft !== null && (
@@ -85,11 +86,11 @@ export function CronPanel(props: {
     } catch (err) {
       if (seq !== refreshSeqRef.current || activeSessionRef.current !== sessionID) return;
       setJobs([]);
-      props.onNotify(String(err), "error");
+      propOnNotify(String(err), "error");
     } finally {
       if (seq === refreshSeqRef.current && activeSessionRef.current === sessionID) setLoading(false);
     }
-  }, [sessionId, props.onNotify]);
+  }, [sessionId, propOnNotify]);
 
   useEffect(() => {
     refresh();
@@ -101,7 +102,7 @@ export function CronPanel(props: {
   useEffect(() => {
     setJobs([]);
     setArmed(null);
-  }, [props.active?.id]);
+  }, [propActive?.id]);
 
   const openNew = () => guard(() => {
     const baseline = { schedule: NEW_SCHEDULE, command: "", enabled: true };
@@ -126,7 +127,7 @@ export function CronPanel(props: {
       return activeSessionRef.current === sessionID;
     } catch (err) {
       if (activeSessionRef.current !== sessionID) return false;
-      if (notifyOnError) props.onNotify(String(err), "error");
+      if (notifyOnError) propOnNotify(String(err), "error");
       return false;
     } finally {
       if (activeSessionRef.current === sessionID) setBusy(null);
@@ -136,7 +137,7 @@ export function CronPanel(props: {
   const save = async (): Promise<boolean> => {
     const ok = await persist(true);
     if (!ok || !replaceDraftIfCurrent(draft, null)) return false;
-    props.onNotify(t(lang, "cronSaved"), "success");
+    propOnNotify(t(lang, "cronSaved"), "success");
     await refresh();
     return true;
   };
@@ -158,7 +159,7 @@ export function CronPanel(props: {
       await refresh();
     } catch (err) {
       if (activeSessionRef.current !== sessionID) return;
-      props.onNotify(String(err), "error");
+      propOnNotify(String(err), "error");
     } finally {
       if (activeSessionRef.current === sessionID) setBusy(null);
     }
@@ -172,10 +173,10 @@ export function CronPanel(props: {
       const output = await RunCronJob(sessionID, job.id);
       if (activeSessionRef.current !== sessionID) return;
       const summary = (output || "").trim().slice(0, 180);
-      props.onNotify(summary ? `${t(lang, "cronRunOk")}: ${summary}` : t(lang, "cronRunOk"), "success");
+      propOnNotify(summary ? `${t(lang, "cronRunOk")}: ${summary}` : t(lang, "cronRunOk"), "success");
     } catch (err) {
       if (activeSessionRef.current !== sessionID) return;
-      props.onNotify(String(err), "error");
+      propOnNotify(String(err), "error");
     } finally {
       if (activeSessionRef.current === sessionID) setBusy(null);
     }
@@ -195,11 +196,11 @@ export function CronPanel(props: {
     try {
       await DeleteCronJob(sessionID, job.id);
       if (activeSessionRef.current !== sessionID) return;
-      props.onNotify(t(lang, "cronDeleted"), "success");
+      propOnNotify(t(lang, "cronDeleted"), "success");
       await refresh();
     } catch (err) {
       if (activeSessionRef.current !== sessionID) return;
-      props.onNotify(String(err), "error");
+      propOnNotify(String(err), "error");
     } finally {
       if (activeSessionRef.current === sessionID) setBusy(null);
     }

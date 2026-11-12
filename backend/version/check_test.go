@@ -18,11 +18,11 @@ func TestCheckPicksHighestStableVersion(t *testing.T) {
 	// Deliberately out of version order and with a pre-release first, which is
 	// what the real feed looks like when a patch ships after a minor.
 	feed := `[
-		{"tag_name":"v1.5.0-rc.1","html_url":"u1","body":"rc","prerelease":true},
-		{"tag_name":"v1.3.1","html_url":"u2","body":"patch"},
-		{"tag_name":"v1.9.0","html_url":"u3","body":"notes for 1.9","published_at":"2026-07-01T00:00:00Z"},
-		{"tag_name":"v1.10.0","html_url":"u4","body":"notes for 1.10"},
-		{"tag_name":"v1.4.0","html_url":"u5","body":"old","draft":true}
+		{"tag_name":"v1.5.0-rc.1","html_url":"https://example.test/u1","body":"rc","prerelease":true},
+		{"tag_name":"v1.3.1","html_url":"https://example.test/u2","body":"patch"},
+		{"tag_name":"v1.9.0","html_url":"https://example.test/u3","body":"notes for 1.9","published_at":"2026-07-01T00:00:00Z"},
+		{"tag_name":"v1.10.0","html_url":"https://example.test/u4","body":"notes for 1.10"},
+		{"tag_name":"v1.4.0","html_url":"https://example.test/u5","body":"old","draft":true}
 	]`
 	checker, server := newTestChecker(func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, feed)
@@ -40,7 +40,7 @@ func TestCheckPicksHighestStableVersion(t *testing.T) {
 	if result.Latest.Version != "1.10.0" {
 		t.Errorf("Latest.Version = %q, want 1.10.0", result.Latest.Version)
 	}
-	if result.Latest.URL != "u4" {
+	if result.Latest.URL != "https://example.test/u4" {
 		t.Errorf("Latest.URL = %q, want u4", result.Latest.URL)
 	}
 	if !result.UpdateAvailable {
@@ -53,7 +53,7 @@ func TestCheckPicksHighestStableVersion(t *testing.T) {
 
 func TestCheckNoUpdateWhenFeedMatchesCurrent(t *testing.T) {
 	checker, server := newTestChecker(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintf(w, `[{"tag_name":"v%s","html_url":"u"}]`, Version)
+		fmt.Fprintf(w, `[{"tag_name":"v%s","html_url":"https://example.test/u"}]`, Version)
 	})
 	defer server.Close()
 
@@ -68,7 +68,7 @@ func TestCheckNoUpdateWhenFeedMatchesCurrent(t *testing.T) {
 
 func TestCheckNoUpdateWhenFeedIsOlder(t *testing.T) {
 	checker, server := newTestChecker(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `[{"tag_name":"v0.9.0","html_url":"u"}]`)
+		fmt.Fprint(w, `[{"tag_name":"v0.9.0","html_url":"https://example.test/u"}]`)
 	})
 	defer server.Close()
 
@@ -83,7 +83,7 @@ func TestCheckNoUpdateWhenFeedIsOlder(t *testing.T) {
 
 func TestCheckIgnoresPrereleaseOnlyFeed(t *testing.T) {
 	checker, server := newTestChecker(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `[{"tag_name":"v9.0.0-rc.1","html_url":"u","prerelease":true}]`)
+		fmt.Fprint(w, `[{"tag_name":"v9.0.0-rc.1","html_url":"https://example.test/u","prerelease":true}]`)
 	})
 	defer server.Close()
 
@@ -130,7 +130,7 @@ func TestCheckSkipsMalformedHighVersionTag(t *testing.T) {
 	checker, server := newTestChecker(func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprint(w, `[
 			{"tag_name":"v99.x.0","html_url":"bad"},
-			{"tag_name":"v1.10.0","html_url":"good"}
+			{"tag_name":"v1.10.0","html_url":"https://example.test/good"}
 		]`)
 	})
 	defer server.Close()
@@ -146,7 +146,7 @@ func TestCheckSkipsMalformedHighVersionTag(t *testing.T) {
 
 func TestCheckTruncatesLongNotes(t *testing.T) {
 	checker, server := newTestChecker(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintf(w, `[{"tag_name":"v99.0.0","html_url":"u","body":%q}]`, strings.Repeat("x", notesLimit*2))
+		fmt.Fprintf(w, `[{"tag_name":"v99.0.0","html_url":"https://example.test/u","body":%q}]`, strings.Repeat("x", notesLimit*2))
 	})
 	defer server.Close()
 
@@ -161,7 +161,7 @@ func TestCheckTruncatesLongNotes(t *testing.T) {
 
 func TestCheckRespectsCancelledContext(t *testing.T) {
 	checker, server := newTestChecker(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, `[{"tag_name":"v99.0.0","html_url":"u"}]`)
+		fmt.Fprint(w, `[{"tag_name":"v99.0.0","html_url":"https://example.test/u"}]`)
 	})
 	defer server.Close()
 

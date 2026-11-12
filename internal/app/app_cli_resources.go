@@ -116,11 +116,14 @@ func (a *App) handleCliTransfer(w http.ResponseWriter, r *http.Request) {
 	// Unlike remote command execution and remote-to-remote copy, a local file
 	// transfer must always go through the native approval dialog, even when the
 	// profile has an active CLI trust window.
-	if !a.confirmCliExecution(alias, description) {
+	if !a.confirmCliExecutionCtx(r.Context(), alias, description) {
 		writeCliJSON(w, http.StatusForbidden, map[string]any{
 			"error": "user declined local file transfer", "errorKind": "blocked",
 			"blocked": true, "blockedBy": "user-approval", "outcome": "blocked",
 		})
+		return
+	}
+	if r.Context().Err() != nil {
 		return
 	}
 	if a.sftp == nil || a.ssh == nil {
@@ -130,6 +133,9 @@ func (a *App) handleCliTransfer(w http.ResponseWriter, r *http.Request) {
 	sessionID, _, err := a.cliSessionForProfile(profile.ID)
 	if err != nil {
 		writeCliError(w, http.StatusBadGateway, "connect", "failed to connect: "+err.Error())
+		return
+	}
+	if r.Context().Err() != nil {
 		return
 	}
 	a.announceCliSession(sessionID)
@@ -444,13 +450,19 @@ func (a *App) openCliTunnel(w http.ResponseWriter, r *http.Request) {
 		description += " to " + req.Remote
 	}
 	description += ". This loopback listener must be closed immediately after use."
-	if !a.confirmCliExecution(alias, description) {
+	if !a.confirmCliExecutionCtx(r.Context(), alias, description) {
 		writeCliError(w, http.StatusForbidden, "blocked", "user declined temporary SSH tunnel")
+		return
+	}
+	if r.Context().Err() != nil {
 		return
 	}
 	sessionID, _, err := a.cliSessionForProfile(profile.ID)
 	if err != nil {
 		writeCliError(w, http.StatusBadGateway, "connect", "failed to connect: "+err.Error())
+		return
+	}
+	if r.Context().Err() != nil {
 		return
 	}
 	client, err := a.ssh.Client(sessionID)

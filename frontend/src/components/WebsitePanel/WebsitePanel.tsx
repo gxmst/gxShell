@@ -54,26 +54,27 @@ export function WebsitePanel(props: {
   locale: string;
   onNotify: (text: string, tone?: Toast["tone"]) => void;
 }) {
-  const lang = props.locale;
+  const { locale: propLocale, active: propActive, onNotify: propOnNotify } = props;
+  const lang = propLocale;
   const [status, setStatus] = useState<types.WebsiteStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [armed, setArmed] = useState<string | null>(null);
-  const activeSessionRef = useRef(props.active?.id || "");
+  const activeSessionRef = useRef(propActive?.id || "");
   const refreshSeqRef = useRef(0);
   const armedTimerRef = useRef<number | null>(null);
-  activeSessionRef.current = props.active?.id || "";
+  activeSessionRef.current = propActive?.id || "";
 
   // A site config is read from and written to one host. A local terminal or a
   // Markdown document has a tab id too, and acting on one only produced a
   // "session not found" error.
-  const sessionId = isRemoteSession(props.active) ? props.active.id : "";
+  const sessionId = isRemoteSession(propActive) ? propActive.id : "";
 
   // The draft belongs to the host, so a second terminal on the same server - or
   // an auto-reconnect that hands the session a new id - no longer discards it.
   const [draft, setDraft, replaceDraftIfCurrent] = useProfileDraft<SiteDraft | null>(
     "websites",
-    props.active?.profileId || "",
+    propActive?.profileId || "",
     null,
   );
   const dirty = draft !== null && draft.config !== draft.baseline;
@@ -91,11 +92,11 @@ export function WebsitePanel(props: {
     } catch (err) {
       if (seq !== refreshSeqRef.current || activeSessionRef.current !== sessionID) return;
       setStatus(null);
-      props.onNotify(String(err), "error");
+      propOnNotify(String(err), "error");
     } finally {
       if (seq === refreshSeqRef.current && activeSessionRef.current === sessionID) setLoading(false);
     }
-  }, [sessionId, props.onNotify]);
+  }, [sessionId, propOnNotify]);
 
   useEffect(() => {
     refresh();
@@ -107,7 +108,7 @@ export function WebsitePanel(props: {
   useEffect(() => {
     setStatus(null);
     setArmed(null);
-  }, [props.active?.id]);
+  }, [propActive?.id]);
 
   const openNew = () => guard(() => {
     const spec = status?.backends?.[0] || "nginx:sites";
@@ -156,7 +157,7 @@ export function WebsitePanel(props: {
       });
     } catch (err) {
       if (activeSessionRef.current !== sessionID) return;
-      props.onNotify(String(err), "error");
+      propOnNotify(String(err), "error");
     } finally {
       if (activeSessionRef.current === sessionID) setBusy(null);
     }
@@ -175,7 +176,7 @@ export function WebsitePanel(props: {
       return activeSessionRef.current === sessionID;
     } catch (err) {
       if (activeSessionRef.current !== sessionID) return false;
-      if (notifyOnError) props.onNotify(String(err), "error");
+      if (notifyOnError) propOnNotify(String(err), "error");
       return false;
     } finally {
       if (activeSessionRef.current === sessionID) setBusy(null);
@@ -185,7 +186,7 @@ export function WebsitePanel(props: {
   const save = async (): Promise<boolean> => {
     const ok = await persist(true);
     if (!ok || !replaceDraftIfCurrent(draft, null)) return false;
-    props.onNotify(t(lang, "siteSaved"), "success");
+    propOnNotify(t(lang, "siteSaved"), "success");
     await refresh();
     return true;
   };
@@ -207,11 +208,11 @@ export function WebsitePanel(props: {
     try {
       await SetWebsiteEnabled(sessionID, site.backend, site.mode, site.name, !site.enabled);
       if (activeSessionRef.current !== sessionID) return;
-      props.onNotify(t(lang, site.enabled ? "siteDisabled" : "siteEnabled"), "success");
+      propOnNotify(t(lang, site.enabled ? "siteDisabled" : "siteEnabled"), "success");
       await refresh();
     } catch (err) {
       if (activeSessionRef.current !== sessionID) return;
-      props.onNotify(String(err), "error");
+      propOnNotify(String(err), "error");
     } finally {
       if (activeSessionRef.current === sessionID) setBusy(null);
     }
@@ -232,11 +233,11 @@ export function WebsitePanel(props: {
     try {
       await DeleteWebsite(sessionID, site.backend, site.mode, site.name);
       if (activeSessionRef.current !== sessionID) return;
-      props.onNotify(t(lang, "siteDeleted"), "success");
+      propOnNotify(t(lang, "siteDeleted"), "success");
       await refresh();
     } catch (err) {
       if (activeSessionRef.current !== sessionID) return;
-      props.onNotify(String(err), "error");
+      propOnNotify(String(err), "error");
     } finally {
       if (activeSessionRef.current === sessionID) setBusy(null);
     }
@@ -251,10 +252,10 @@ export function WebsitePanel(props: {
     try {
       const output = await TestWebsiteConfig(sessionID, backend);
       if (activeSessionRef.current !== sessionID) return;
-      props.onNotify((output || t(lang, "siteTestOk")).trim().slice(0, 220), "success");
+      propOnNotify((output || t(lang, "siteTestOk")).trim().slice(0, 220), "success");
     } catch (err) {
       if (activeSessionRef.current !== sessionID) return;
-      props.onNotify(String(err), "error");
+      propOnNotify(String(err), "error");
     } finally {
       if (activeSessionRef.current === sessionID) setBusy(null);
     }

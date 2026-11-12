@@ -103,23 +103,7 @@ func (s *Store) migrationValue(id, kind string) (string, error) {
 	if kind == "value" && strings.HasPrefix(id, "named:") {
 		return s.namedValue(id)
 	}
-	value, err := s.credentials().Get(key(id, kind))
-	if err == nil {
-		return value, nil
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	data := s.fallbackData()
-	if s.fallbackDegraded {
-		return "", errors.New("cannot read encrypted secret storage")
-	}
-	if value := data[id][kind]; value != "" {
-		return value, nil
-	}
-	if errors.Is(err, keyring.ErrNotFound) {
-		return "", nil
-	}
-	return "", err
+	return s.storedValue(id, kind)
 }
 
 func (s *Store) putMigrationValue(value Value) error {

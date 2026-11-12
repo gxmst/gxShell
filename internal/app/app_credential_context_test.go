@@ -92,7 +92,7 @@ func TestCredentialCaptureReusesValuesAcrossResultsAndCanExecuteReferences(t *te
 		t.Fatal(err)
 	}
 	result := sshmanager.CommandExecutionResult{Stdout: `{"API_KEY":"api-canary","rootPassword":"root-canary","ubuntuPassword":"ubuntu-canary"}`, Stderr: "jump-password-canary", Output: "api-canary"}
-	a.protectCredentialResult("prod", &result)
+	a.protectCredentialResult(&result)
 	for _, value := range []string{"api-canary", "root-canary", "ubuntu-canary", "jump-password-canary"} {
 		if strings.Contains(result.Stdout+result.Stderr+result.Output, value) {
 			t.Fatal("plaintext escaped result boundary")
@@ -112,7 +112,7 @@ func TestCredentialCaptureReusesValuesAcrossResultsAndCanExecuteReferences(t *te
 	if err != nil || values["API_KEY"] != "api-canary" {
 		t.Fatal("captured reference cannot be used")
 	}
-	if again := a.protectCredentialTexts("prod", "api-canary")[0]; again != apiRef || len(v.values) != 4 {
+	if again := a.protectCredentialTexts("api-canary")[0]; again != apiRef || len(v.values) != 4 {
 		t.Fatal("unlabeled duplicate was not reused")
 	}
 }
@@ -152,7 +152,7 @@ func TestCredentialProtectionPreventsGatewayContextDisclosureForEveryProtocol(t 
 func TestCredentialFileUnlabeledValueBecomesUsableReference(t *testing.T) {
 	a, v := contextProtectionTestApp(t)
 	result := sshmanager.CommandExecutionResult{Stdout: "unlabeled-password-canary\n", Output: "unlabeled-password-canary\n"}
-	a.protectCredentialResult("prod", &result, "cat /root/password.txt")
+	a.protectCredentialResult(&result, "cat /root/password.txt")
 	if !strings.HasPrefix(result.Stdout, "secret://") || strings.Contains(result.Output, "canary") || len(v.values) != 1 {
 		t.Fatal("unlabeled sensitive file escaped capture")
 	}
@@ -166,7 +166,7 @@ func TestCredentialCaptureWriteFailureMasksUnlabeledDuplicates(t *testing.T) {
 	a, v := contextProtectionTestApp(t)
 	v.writeFail = true
 	result := sshmanager.CommandExecutionResult{Stdout: "write-failed-canary", Stderr: "PASSWORD=write-failed-canary"}
-	a.protectCredentialResult("prod", &result)
+	a.protectCredentialResult(&result)
 	if strings.Contains(result.Stdout+result.Stderr, "canary") || strings.Contains(result.Stdout+result.Stderr, "secret://") {
 		t.Fatal("failed capture leaked a duplicate or returned an unusable reference")
 	}
@@ -220,7 +220,7 @@ func TestCredentialProtectionCoversHistoryArgumentsAndStorageFailure(t *testing.
 		t.Fatal("tool arguments corrupted")
 	}
 	v.fail = true
-	if output := a.protectCredentialTexts("prod", "unlabeled-sensitive-canary")[0]; strings.Contains(output, "canary") || !strings.Contains(output, "withheld") {
+	if output := a.protectCredentialTexts("unlabeled-sensitive-canary")[0]; strings.Contains(output, "canary") || !strings.Contains(output, "withheld") {
 		t.Fatal("vault failure was not closed")
 	}
 }
@@ -259,7 +259,7 @@ func TestCredentialCaptureParallelResultsShareReference(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 12 {
 		wg.Add(1)
-		go func() { defer wg.Done(); a.protectCredentialTexts("prod", "PASSWORD=parallel-canary") }()
+		go func() { defer wg.Done(); a.protectCredentialTexts("PASSWORD=parallel-canary") }()
 	}
 	wg.Wait()
 	if len(v.values) != 1 {

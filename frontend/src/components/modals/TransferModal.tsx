@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { AlertTriangle, ArrowDown, ArrowUp, File, Folder, Pause, Play, RefreshCw, X } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
@@ -94,20 +94,9 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
     && remotePathRef.current === context.remotePath
   );
 
-  useEffect(() => {
-    LocalHomeDir().then((dir) => {
-      setLocalPath(dir);
-      loadLocalDir(dir);
-    });
-  }, []);
 
-  useEffect(() => {
-    remoteSeq.current += 1;
-    setSelectedRemote(new Set());
-    setLastRemoteIdx(-1);
-    setRemoteView({ sessionId: activeSessionId, path: "/", files: [], busy: false });
-    if (activeSessionId) void loadRemoteDir("/");
-  }, [activeSessionId]);
+
+
 
   useEffect(() => {
     setConflict(null);
@@ -117,7 +106,7 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
   // listing for a directory the user already left lands last and overwrites the
   // current one, and an upload started afterwards would use that stale
   // directory as its context.
-  const loadLocalDir = async (dir: string) => {
+  const loadLocalDir = useCallback(async (dir: string) => {
     const seq = ++localSeq.current;
     setLocalBusy(true);
     let files: types.LocalFile[] | null = null;
@@ -134,11 +123,11 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
       setLastLocalIdx(-1);
     }
     setLocalBusy(false);
-  };
+  }, []);
 
-  const loadRemoteDir = async (dir: string) => {
-    if (!active) return;
-    const sessionId = active.id;
+  const loadRemoteDir = useCallback(async (dir: string) => {
+    if (!activeSessionId) return;
+    const sessionId = activeSessionId;
     if (sessionId !== remoteSessionRef.current) return;
     const seq = ++remoteSeq.current;
     setRemoteView((current) => ({
@@ -157,7 +146,22 @@ export function TransferModal({ active, locale, initialLeft, initialTop, onClose
       if (seq !== remoteSeq.current || remoteSessionRef.current !== sessionId) return;
       setRemoteView((current) => current.sessionId === sessionId ? { ...current, busy: false } : current);
     }
-  };
+  }, [activeSessionId]);
+
+  useEffect(() => {
+    LocalHomeDir().then((dir) => {
+      setLocalPath(dir);
+      loadLocalDir(dir);
+    });
+  }, [loadLocalDir]);
+
+  useEffect(() => {
+    remoteSeq.current += 1;
+    setSelectedRemote(new Set());
+    setLastRemoteIdx(-1);
+    setRemoteView({ sessionId: activeSessionId, path: "/", files: [], busy: false });
+    if (activeSessionId) void loadRemoteDir("/");
+  }, [activeSessionId, loadRemoteDir]);
 
   const onLocalClick = (idx: number, e: React.MouseEvent) => {
     const file = localFiles[idx];

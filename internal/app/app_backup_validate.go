@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf16"
 
+	"gxShell/backend/ai"
 	"gxShell/backend/config"
 	"gxShell/backend/networkproxy"
 	"gxShell/backend/types"
@@ -131,6 +132,9 @@ func validateBackup(payload *backupPayload) error {
 	}
 	if err := networkproxy.Validate(payload.Settings.Proxy); err != nil {
 		return err
+	}
+	if err := ai.ValidateConfig(ai.Config{Provider: ai.Provider(payload.Settings.Ai.Provider), Endpoint: payload.Settings.Ai.Endpoint}); err != nil {
+		return fmt.Errorf("invalid backup AI configuration: %w", err)
 	}
 	if payload.Settings.ConnectionTimeout < 0 || payload.Settings.ConnectionTimeout > 3600 || payload.Settings.MonitorIntervalSec < 0 || payload.Settings.MonitorIntervalSec > 86400 {
 		return errors.New("invalid connection or monitor interval")

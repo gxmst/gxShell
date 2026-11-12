@@ -268,12 +268,11 @@ export function SftpPanel(props: {
 
   const draftPath = draftPathState.sessionId === activeSessionId ? draftPathState.value : path;
   const selectedPath = selectedPathState.sessionId === activeSessionId ? selectedPathState.value : "";
-  const visibleSuggestDirs = suggestSessionId === activeSessionId ? suggestDirs : [];
   const visibleSuggestBusy = suggestBusySessionId === activeSessionId && suggestBusy;
-  const setDraftPath = (value: string) => setDraftPathState({ sessionId: activeSessionId, value });
-  const setSelectedPath = (value: string) => setSelectedPathState({ sessionId: activeSessionId, value });
+  const setDraftPath = useCallback((value: string) => setDraftPathState({ sessionId: activeSessionId, value }), [activeSessionId]);
+  const setSelectedPath = useCallback((value: string) => setSelectedPathState({ sessionId: activeSessionId, value }), [activeSessionId]);
 
-  useEffect(() => setDraftPath(path), [activeSessionId, path]);
+  useEffect(() => setDraftPath(path), [setDraftPath, path]);
 
   // Close suggestions when clicking outside.
   useEffect(() => {
@@ -293,35 +292,36 @@ export function SftpPanel(props: {
   // Load directory listing for autocomplete base path.
   useEffect(() => {
     const seq = ++suggestSeq.current;
-    if (!pathFocus || !active || active.type === "markdown") return;
+    if (!pathFocus || !activeSessionId || active?.type === "markdown") return;
     const base = suggestBase || ".";
     // Current listing is enough when suggesting under the open folder.
     if (base === path || base === path.replace(/\/$/, "") || (base === "." && (path === "." || path === ""))) {
-      setSuggestSessionId(active.id);
+      setSuggestSessionId(activeSessionId);
       setSuggestDirs(files.filter((f) => f.isDir));
-      setSuggestBusySessionId(active.id);
+      setSuggestBusySessionId(activeSessionId);
       setSuggestBusy(false);
       return;
     }
-    setSuggestBusySessionId(active.id);
+    setSuggestBusySessionId(activeSessionId);
     setSuggestBusy(true);
-    ListRemoteDir(active.id, base)
+    ListRemoteDir(activeSessionId, base)
       .then((list) => {
         if (seq !== suggestSeq.current) return;
-        setSuggestSessionId(active.id);
+        setSuggestSessionId(activeSessionId);
         setSuggestDirs((list || []).filter((f) => f.isDir));
       })
       .catch(() => {
         if (seq !== suggestSeq.current) return;
-        setSuggestSessionId(active.id);
+        setSuggestSessionId(activeSessionId);
         setSuggestDirs([]);
       })
       .finally(() => {
         if (seq === suggestSeq.current) setSuggestBusy(false);
       });
-  }, [pathFocus, suggestBase, active?.id, active?.type, path, files]);
+  }, [pathFocus, suggestBase, activeSessionId, active?.type, path, files]);
 
   const suggestions = useMemo(() => {
+    const visibleSuggestDirs = suggestSessionId === activeSessionId ? suggestDirs : [];
     const out: PathSuggest[] = [];
     const q = suggestPrefix.toLowerCase();
     const dirs = visibleSuggestDirs
@@ -340,7 +340,7 @@ export function SftpPanel(props: {
       }
     }
     return out;
-  }, [visibleSuggestDirs, suggestPrefix, draftPath, path]);
+  }, [suggestSessionId, activeSessionId, suggestDirs, suggestPrefix, draftPath, path]);
 
   const breadcrumbs = useMemo(() => pathSegments(path), [path]);
 
@@ -361,7 +361,7 @@ export function SftpPanel(props: {
 
   useEffect(() => {
     if (selectedPath && !files.some((file) => file.path === selectedPath)) setSelectedPath("");
-  }, [files, selectedPath]);
+  }, [files, selectedPath, setSelectedPath]);
 
   const goTo = useCallback(
     (next: string) => {
@@ -370,7 +370,7 @@ export function SftpPanel(props: {
       setPathFocus(false);
       onRefresh(next);
     },
-    [onRefresh],
+    [onRefresh, setDraftPath, setSelectedPath],
   );
 
   const goUp = () => goTo(parentRemotePath(path));

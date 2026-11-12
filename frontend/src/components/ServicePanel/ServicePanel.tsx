@@ -89,7 +89,8 @@ export function ServicePanel(props: {
   locale: string;
   onNotify: (text: string, tone?: Toast["tone"]) => void;
 }) {
-  const lang = props.locale;
+  const { locale: propLocale, active: propActive, onNotify: propOnNotify } = props;
+  const lang = propLocale;
   const [services, setServices] = useState<types.ServiceInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -115,13 +116,13 @@ export function ServicePanel(props: {
   const logStreamIdRef = useRef<string | null>(null);
   const pendingLogRef = useRef("");
   const pendingLogTimerRef = useRef<number | null>(null);
-  const activeSessionRef = useRef(props.active?.id || "");
+  const activeSessionRef = useRef(propActive?.id || "");
   const refreshSeqRef = useRef(0);
   const logRequestSeqRef = useRef(0);
-  activeSessionRef.current = props.active?.id || "";
+  activeSessionRef.current = propActive?.id || "";
 
-  const onNotifyRef = useRef(props.onNotify);
-  onNotifyRef.current = props.onNotify;
+  const onNotifyRef = useRef(propOnNotify);
+  onNotifyRef.current = propOnNotify;
 
   const flushPendingLogs = useCallback(() => {
     if (pendingLogTimerRef.current !== null) {
@@ -153,7 +154,7 @@ export function ServicePanel(props: {
   // Only a live remote session can be listed. A local terminal or a Markdown
   // document has a tab id too, and polling one only produced "session not
   // found" every interval.
-  const sessionId = isRemoteSession(props.active) ? props.active.id : "";
+  const sessionId = isRemoteSession(propActive) ? propActive.id : "";
 
   const refresh = useCallback(async () => {
     const sessionID = sessionId;
@@ -181,7 +182,7 @@ export function ServicePanel(props: {
         setListError(msg);
       } else {
         setListError(null);
-        props.onNotify(msg, "error");
+        propOnNotify(msg, "error");
       }
     } finally {
       if (
@@ -190,7 +191,7 @@ export function ServicePanel(props: {
       )
         setLoading(false);
     }
-  }, [sessionId, props.onNotify]);
+  }, [sessionId, propOnNotify]);
 
   useEffect(() => {
     logRequestSeqRef.current++;
@@ -253,7 +254,7 @@ export function ServicePanel(props: {
     setListError(null);
     // The per-row spinner belongs to the session that was on screen.
     setActionLoading(null);
-  }, [props.active?.id]);
+  }, [propActive?.id]);
 
   useEffect(() => {
     return () => {
@@ -283,7 +284,7 @@ export function ServicePanel(props: {
 
   const openLogs = useCallback(
     async (unit: string) => {
-      const sessionID = props.active?.id;
+      const sessionID = propActive?.id;
       if (!sessionID) return;
       if (logUnit === unit) {
         closeLogs();
@@ -316,12 +317,12 @@ export function ServicePanel(props: {
         onNotifyRef.current(String(err), "error");
       }
     },
-    [props.active?.id, logUnit, stopFollow, closeLogs],
+    [propActive?.id, logUnit, stopFollow, closeLogs],
   );
 
   const startFollow = useCallback(
     async (unit: string) => {
-      const sessionID = props.active?.id;
+      const sessionID = propActive?.id;
       if (!sessionID) return;
       stopFollow();
       // Restart from a fresh 200-line tail so the pane never shows duplicated
@@ -354,7 +355,7 @@ export function ServicePanel(props: {
         }
       }
     },
-    [props.active?.id, stopFollow],
+    [propActive?.id, stopFollow],
   );
 
   const clearArm = useCallback(() => {

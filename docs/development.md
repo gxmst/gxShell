@@ -12,8 +12,7 @@
 From the repository root:
 
 ```powershell
-go test ./...
-go vet ./...
+.\scripts\check-go.ps1 -Race
 go build ./backend/... ./cmd/...
 ```
 
@@ -32,7 +31,7 @@ cd ..
 Build the Windows desktop app with:
 
 ```powershell
-wails build -clean -skipbindings
+.\scripts\build.ps1 -Clean
 ```
 
 `-skipbindings` is required, not optional. `frontend/wailsjs` is hand-maintained
@@ -42,7 +41,16 @@ bindings check inside `npm run build` — and leaves the reverted file in your
 working tree. If that happens, run `git checkout -- frontend/wailsjs` and rebuild
 with the flag. Both CI workflows pass it for the same reason.
 
-Build the separate CLI with:
+The build script supplies the required binding flags and also builds the CLI.
+It leaves the desktop executable in `build/bin/gxShell.exe`, the embedded
+frontend bundle in `frontend/dist`, and the CLI in `gxshell-cli.exe`. These are
+ordinary build outputs. Use `scripts/build-archive.ps1` only when preparing an
+archived delivery; it calls the same build script before copying final files.
+
+The Go check script covers the root, backend, CLI and internal packages explicitly
+so installed npm packages containing Go sources are excluded from our checks.
+
+Build only the separate CLI with:
 
 ```powershell
 go build -o gxshell-cli.exe .\cmd\gxshell-cli

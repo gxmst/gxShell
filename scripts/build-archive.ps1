@@ -5,10 +5,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 Push-Location $repo
 try {
-    & wails build -skipbindings -m -nosyncgomod -nocolour
-    if ($LASTEXITCODE -ne 0) { throw 'Desktop build failed' }
-    & go build -o gxshell-cli.exe ./cmd/gxshell-cli
-    if ($LASTEXITCODE -ne 0) { throw 'CLI build failed' }
+    & (Join-Path $PSScriptRoot 'build.ps1')
     $source = Get-Content backend/version/version.go -Raw
     if ($source -notmatch 'const\s+Version\s*=\s*"([^"]+)"') { throw 'Version missing' }
     $version = $Matches[1]

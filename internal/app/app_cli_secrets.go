@@ -63,8 +63,11 @@ func (a *App) handleCliSecrets(w http.ResponseWriter, r *http.Request) {
 			writeCliError(w, http.StatusBadRequest, "validation", "secret values cannot contain newlines or NUL bytes")
 			return
 		}
-		if !a.confirmCliExecution("local secret store", "Store or update named secret secret://"+req.Alias+" (value hidden)") {
+		if !a.confirmCliExecutionCtx(r.Context(), "local secret store", "Store or update named secret secret://"+req.Alias+" (value hidden)") {
 			writeCliError(w, http.StatusForbidden, "blocked", "user declined named secret update")
+			return
+		}
+		if r.Context().Err() != nil {
 			return
 		}
 		if err := a.secrets.SaveNamed(cliSecretNamespace, req.Alias, req.Value); err != nil {
@@ -78,8 +81,11 @@ func (a *App) handleCliSecrets(w http.ResponseWriter, r *http.Request) {
 			writeCliError(w, http.StatusBadRequest, "validation", "valid secret alias is required")
 			return
 		}
-		if !a.confirmCliExecution("local secret store", "Delete named secret secret://"+alias) {
+		if !a.confirmCliExecutionCtx(r.Context(), "local secret store", "Delete named secret secret://"+alias) {
 			writeCliError(w, http.StatusForbidden, "blocked", "user declined named secret deletion")
+			return
+		}
+		if r.Context().Err() != nil {
 			return
 		}
 		if err := a.DeleteNamedSecret(alias); err != nil {

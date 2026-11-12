@@ -15,7 +15,8 @@ import { NetworkPathCard } from "../NetworkPathCard/NetworkPathCard";
 import { MemoryCard } from "../MemoryCard/MemoryCard";
 import { MonitorDetailCard, type MonitorDetailKind } from "../MonitorDetailCard/MonitorDetailCard";
 import { CliTrustIndicator } from "../CliTrustIndicator/CliTrustIndicator";
-import { ServerOsIcon, detectServerOs, type ServerOsType } from "../common/ServerOsIcon";
+import { ServerOsIcon } from "../common/ServerOsIcon";
+import { detectServerOs, type ServerOsType } from "../../utils/serverOs";
 
 type FloatKey = "path" | "memory" | MonitorDetailKind;
 type PrimaryNav = "connections" | "files" | "documents" | "tools";
@@ -371,7 +372,8 @@ export function Sidebar(props: {
       <div
         key={profile.id}
         className={clsx("server-row group", automation && "server-row-automation")}
-        title={`${profile.name ? `${profile.name}\n` : ""}${fullTarget} (${statusLabel})`}
+        title={`${profile.name ? `${profile.name}
+` : ""}${fullTarget} (${statusLabel})`}
       >
         <button type="button" className="server-row-main" aria-label={`${t(lang, "connect")} ${profile.name || profile.host}, ${statusLabel}`} onClick={() => props.onConnectProfile(profile)}>
           <span className="server-avatar" title={session ? `${statusLabel} · ${t(lang, session.count === 1 ? "sessionCountOne" : "sessionCountMany", { count: String(session.count) })}${session.error ? ` · ${session.error}` : ""}` : statusLabel}>

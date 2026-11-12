@@ -24,7 +24,8 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
   onOpenCurrentDirectory?: (id: string, path: string) => void;
   language: string;
 }) {
-  const lang = props.language;
+  const { language: propLanguage, tabId: propTabId, getDimensions: propGetDimensions, getCurrentDirectory: propGetCurrentDirectory, tab: propTab, profile: propProfile, onOpenCurrentDirectory: propOnOpenCurrentDirectory, broadcastInput: propBroadcastInput, broadcastCount: propBroadcastCount, sessionCount: propSessionCount } = props;
+  const lang = propLanguage;
   const [latency, setLatency] = useState<number | null>(null);
   const [dims, setDims] = useState<Dims | null>(null);
   const [currentDirectory, setCurrentDirectory] = useState("");
@@ -36,32 +37,32 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
   useEffect(() => {
     setLatency(null);
     let stale = false;
-    GetLatestMetrics(props.tabId)
-      .then((m) => { if (!stale && m && m.sessionId === props.tabId) setLatency(m.online ? m.latencyMs : null); })
+    GetLatestMetrics(propTabId)
+      .then((m) => { if (!stale && m && m.sessionId === propTabId) setLatency(m.online ? m.latencyMs : null); })
       .catch(() => {});
     const off = EventsOn("monitor:update", (data: types.Metrics) => {
-      if (data.sessionId === props.tabId) setLatency(data.online ? data.latencyMs : null);
+      if (data.sessionId === propTabId) setLatency(data.online ? data.latencyMs : null);
     });
     return () => { stale = true; off(); };
-  }, [props.tabId]);
+  }, [propTabId]);
 
   // cols/rows live in a ref inside useTerminal; poll on a low-frequency tick
   // since dimensions only change on window resize or split drag.
   useEffect(() => {
     const read = () => {
-      const d = props.getDimensions?.(props.tabId);
+      const d = propGetDimensions?.(propTabId);
       if (d && d.cols > 0) setDims((prev) => (prev && prev.cols === d.cols && prev.rows === d.rows ? prev : d));
       else setDims((prev) => (prev === null ? prev : null));
-      const path = props.getCurrentDirectory?.(props.tabId)?.path || "";
+      const path = propGetCurrentDirectory?.(propTabId)?.path || "";
       setCurrentDirectory((prev) => prev === path ? prev : path);
     };
     read();
     const id = window.setInterval(read, 1500);
     return () => window.clearInterval(id);
-  }, [props.tabId, props.getCurrentDirectory, props.getDimensions]);
+  }, [propTabId, propGetCurrentDirectory, propGetDimensions]);
 
-  const state = props.tab.state;
-  const local = !!props.tab.local;
+  const state = propTab.state;
+  const local = !!propTab.local;
   const stateLabel =
     state === "connected" ? (local ? t(lang, "terminalStateReady") : t(lang, "serverStatusConnected"))
     : state === "connecting" ? t(lang, "terminalStateConnecting")
@@ -71,10 +72,10 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
     : t(lang, "terminalStateDisconnected");
 
   const target = local
-    ? (props.profile?.name || t(lang, "terminalLocal"))
-    : props.profile
-      ? `${props.profile.username}@${props.profile.host}${props.profile.port && props.profile.port !== 22 ? `:${props.profile.port}` : ""}`
-      : props.tab.title;
+    ? (propProfile?.name || t(lang, "terminalLocal"))
+    : propProfile
+      ? `${propProfile.username}@${propProfile.host}${propProfile.port && propProfile.port !== 22 ? `:${propProfile.port}` : ""}`
+      : propTab.title;
 
 
   return (
@@ -93,8 +94,8 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
             type="button"
             className="tsb-seg tsb-cwd"
             title={currentDirectory}
-            disabled={local || !props.onOpenCurrentDirectory}
-            onClick={() => props.onOpenCurrentDirectory?.(props.tabId, currentDirectory)}
+            disabled={local || !propOnOpenCurrentDirectory}
+            onClick={() => propOnOpenCurrentDirectory?.(propTabId, currentDirectory)}
           >
             <Folder size={11} />
             <span>{currentDirectory}</span>
@@ -113,10 +114,10 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
 
       <span className="tsb-spacer" />
 
-      {props.broadcastInput && (props.broadcastCount || 0) > 1 && (
+      {propBroadcastInput && (propBroadcastCount || 0) > 1 && (
         <span className="tsb-seg tsb-broadcast" title={t(lang, "terminalInputBroadcastOn")}>
           <Radio size={11} />
-          {props.broadcastCount}
+          {propBroadcastCount}
         </span>
       )}
       {dims && (
@@ -126,7 +127,7 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
       <span className="tsb-seg tsb-enc">UTF-8</span>
       <span className="tsb-sep" />
       <span className="tsb-seg tsb-sessions" title={t(lang, "activeSessions")}>
-        {t(lang, props.sessionCount === 1 ? "sessionCountOne" : "sessionCountMany", { count: String(props.sessionCount) })}
+        {t(lang, propSessionCount === 1 ? "sessionCountOne" : "sessionCountMany", { count: String(propSessionCount) })}
       </span>
     </div>
   );

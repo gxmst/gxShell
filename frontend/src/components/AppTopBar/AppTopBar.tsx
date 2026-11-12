@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { GetVersion, IsWindowMaximised, MinimiseWindow, RequestCloseWindow, ToggleMaximiseWindow } from "../../../wailsjs/go/app/App";
-import { AppIcon } from "../../constants";
+import { AppIcon } from "../common/AppIcon";
 import { t } from "../../i18n";
 
 // The application's own window chrome: with Frameless set in main.go there is

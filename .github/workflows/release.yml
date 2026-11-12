@@ -64,10 +64,10 @@ jobs:
 
       - name: Go test
         # Matches verify.yml; a release must not go out on a race-dirty tree.
-        run: go test -race ./...
+        run: go test -race . ./backend/... ./cmd/... ./internal/...
 
       - name: Go vet
-        run: go vet ./...
+        run: go vet . ./backend/... ./cmd/... ./internal/...
 
       # A release build must clear the same reachable-vulnerability scan as
       # verify.yml; without it, a red verify run would not stop the tag from
@@ -86,7 +86,7 @@ jobs:
       # regenerates before compiling the frontend, so without this flag the
       # bindings check inside npm run build fails the release build every time.
       - name: Build Windows desktop app
-        run: wails build -clean -skipbindings
+        run: pwsh -File scripts/build.ps1 -Clean -DesktopOnly
 
       - name: Build CLI
         run: go build -o gxshell-cli.exe ./cmd/gxshell-cli

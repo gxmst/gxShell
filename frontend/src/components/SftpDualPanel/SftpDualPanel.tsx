@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { ArrowDown, ArrowUp, File, Folder, RefreshCw } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
@@ -49,20 +49,9 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
   const remoteFiles = remoteMatches ? remoteView.files : [];
   const remoteBusy = remoteMatches && remoteView.busy;
 
-  useEffect(() => {
-    LocalHomeDir().then((dir) => {
-      setLocalPath(dir);
-      loadLocalDir(dir);
-    });
-  }, []);
 
-  useEffect(() => {
-    remoteSeq.current += 1;
-    setSelectedRemote(null);
-    setPendingConflict(null);
-    setRemoteView({ sessionId: activeSessionId, path: "/", files: [], busy: false });
-    if (activeSessionId) void loadRemoteDir("/");
-  }, [activeSessionId]);
+
+
 
   useEffect(() => {
     if (!pendingConflict) return;
@@ -71,7 +60,7 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
     }
   }, [activeSessionId, localPath, remotePath, pendingConflict]);
 
-  const loadLocalDir = async (dir: string) => {
+  const loadLocalDir = useCallback(async (dir: string) => {
     setLocalBusy(true);
     try {
       const files = await ListLocalDir(dir);
@@ -81,11 +70,11 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
       onNotify(String(err), "error");
     }
     setLocalBusy(false);
-  };
+  }, [onNotify]);
 
-  const loadRemoteDir = async (dir: string) => {
-    if (!active) return;
-    const sessionId = active.id;
+  const loadRemoteDir = useCallback(async (dir: string) => {
+    if (!activeSessionId) return;
+    const sessionId = activeSessionId;
     if (sessionId !== remoteSessionRef.current) return;
     const seq = ++remoteSeq.current;
     setRemoteView((current) => ({
@@ -104,7 +93,22 @@ export function SftpDualPanel({ active, locale, onNotify }: { active?: Tab; loca
       setRemoteView((current) => current.sessionId === sessionId ? { ...current, busy: false } : current);
       onNotify(String(err), "error");
     }
-  };
+  }, [activeSessionId, onNotify]);
+
+  useEffect(() => {
+    LocalHomeDir().then((dir) => {
+      setLocalPath(dir);
+      loadLocalDir(dir);
+    });
+  }, [loadLocalDir]);
+
+  useEffect(() => {
+    remoteSeq.current += 1;
+    setSelectedRemote(null);
+    setPendingConflict(null);
+    setRemoteView({ sessionId: activeSessionId, path: "/", files: [], busy: false });
+    if (activeSessionId) void loadRemoteDir("/");
+  }, [activeSessionId, loadRemoteDir]);
 
   const uploadSelected = async (overwrite = false, pending: PendingConflict | null = null) => {
     if (!active || (!pending && !selectedLocal)) return;

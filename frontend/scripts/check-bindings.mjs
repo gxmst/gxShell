@@ -19,7 +19,7 @@
 // Run via `npm run check:bindings` (chained into `npm run build`). If this fails
 // right after a local wails build, `git checkout -- frontend/wailsjs` and rerun.
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -44,6 +44,28 @@ function read(path, label) {
 const appJs = read(appJsPath, 'wailsjs/go/app/App.js');
 const appDts = read(appDtsPath, 'wailsjs/go/app/App.d.ts');
 const models = read(modelsPath, 'wailsjs/go/models.ts');
+
+// Maintained bindings must track the full exported App API in both JS and TS.
+// This catches a new backend method omitted from one of the two binding files.
+const appSourceRoot = join(frontendRoot, '..', 'internal', 'app');
+const goMethods = new Set();
+for (const file of readdirSync(appSourceRoot)) {
+  if (!file.endsWith('.go') || file.endsWith('_test.go')) continue;
+  const source = read(join(appSourceRoot, file), `internal/app/${file}`);
+  for (const match of source?.matchAll(/func\s+\(\w+\s+\*App\)\s+([A-Z]\w*)\(/g) ?? []) {
+    goMethods.add(match[1]);
+  }
+}
+for (const [label, source] of [['App.js', appJs], ['App.d.ts', appDts]]) {
+  if (source === null) continue;
+  const methods = new Set([...source.matchAll(/^export function (\w+)\(/gm)].map((match) => match[1]));
+  for (const method of goMethods) {
+    if (!methods.has(method)) failures.push(`${label} is missing backend method ${method}`);
+  }
+  for (const method of methods) {
+    if (!goMethods.has(method)) failures.push(`${label} exposes stale backend method ${method}`);
+  }
+}
 
 // 1. Bound namespace must match the Go package that Wails binds (internal/app).
 if (appJs !== null) {

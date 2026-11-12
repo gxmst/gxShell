@@ -383,8 +383,11 @@ func (m *Manager) parseNativeStream(provider Provider, body io.Reader, onChunk f
 			case "content_block_start":
 				block, _ := event["content_block"].(map[string]any)
 				if block["type"] == "tool_use" {
-					if idx < 0 || idx >= maxStreamToolCalls || len(calls) >= maxStreamToolCalls {
+					if idx < 0 || len(calls) >= maxStreamToolCalls {
 						return fmt.Errorf("too many tool calls")
+					}
+					if _, exists := slots[idx]; exists {
+						return fmt.Errorf("duplicate tool block index")
 					}
 					id, _ := block["id"].(string)
 					name, _ := block["name"].(string)
@@ -509,6 +512,9 @@ func (m *Manager) parseNativeStream(provider Provider, body io.Reader, onChunk f
 	}
 	if !done {
 		return fmt.Errorf("stream ended before completion")
+	}
+	if provider == ProviderGemini && stop == "MAX_TOKENS" {
+		return &TruncatedResponseError{}
 	}
 	if (provider == ProviderAnthropic && stop != "end_turn" && stop != "tool_use" && stop != "stop_sequence") ||
 		(provider == ProviderGemini && stop != "STOP") || (provider == ProviderOllama && stop != "" && stop != "stop") {

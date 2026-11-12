@@ -15,7 +15,7 @@ import (
 // protectCredentialTexts is the common local boundary for tool output, CLI/MCP
 // results and provider requests. Recognized values are replaced before delivery.
 // Serialising a pass also avoids duplicate captures from parallel tool results.
-func (a *App) protectCredentialTexts(profileID string, texts ...string) []string {
+func (a *App) protectCredentialTexts(texts ...string) []string {
 	a.credentialContextMu.Lock()
 	defer a.credentialContextMu.Unlock()
 	known := map[string]string{}
@@ -135,13 +135,13 @@ func (a *App) protectCredentialTexts(profileID string, texts ...string) []string
 	return out
 }
 
-func (a *App) protectCredentialResult(profileID string, result *sshmanager.CommandExecutionResult, command ...string) {
+func (a *App) protectCredentialResult(result *sshmanager.CommandExecutionResult, command ...string) {
 	// A known credential file may contain an unlabeled password or an opaque
 	// credential format. Capture the complete cat result if field matching found
 	// nothing, so it cannot slip into context just because it has no API_KEY label.
 	if len(command) > 0 && result.Stdout != "" && isCredentialFileRead(command[0]) {
 		original := result.Stdout
-		protected := a.protectCredentialTexts(profileID, result.Stdout)[0]
+		protected := a.protectCredentialTexts(result.Stdout)[0]
 		masked := protected != original && (strings.Contains(protected, "secret://") || strings.Contains(protected, "<redacted>") || strings.Contains(protected, "output withheld"))
 		if !masked {
 			valueToStore := original
@@ -149,7 +149,7 @@ func (a *App) protectCredentialResult(profileID string, result *sshmanager.Comma
 				valueToStore = line
 			}
 			encoded, _ := json.Marshal(map[string]string{"file_secret": valueToStore})
-			captured := a.protectCredentialTexts(profileID, string(encoded))[0]
+			captured := a.protectCredentialTexts(string(encoded))[0]
 			var value map[string]string
 			if json.Unmarshal([]byte(captured), &value) == nil && value["file_secret"] != "" {
 				result.Stdout = value["file_secret"]
@@ -161,7 +161,7 @@ func (a *App) protectCredentialResult(profileID string, result *sshmanager.Comma
 			result.Stdout = protected
 		}
 	}
-	texts := a.protectCredentialTexts(profileID, result.Stdout, result.Stderr, result.Output, result.Summary, result.Error)
+	texts := a.protectCredentialTexts(result.Stdout, result.Stderr, result.Output, result.Summary, result.Error)
 	result.Stdout, result.Stderr, result.Output, result.Summary, result.Error = texts[0], texts[1], texts[2], texts[3], texts[4]
 }
 
@@ -203,7 +203,7 @@ func (a *App) protectAIRequest(cfg ai.Config, req ai.ChatRequest) ai.ChatRequest
 				continue
 			}
 			encoded, _ := json.Marshal(map[string]string{"api_key": cfg.APIKey})
-			protected := a.protectCredentialTexts("", string(encoded))[0]
+			protected := a.protectCredentialTexts(string(encoded))[0]
 			var captured map[string]string
 			if json.Unmarshal([]byte(protected), &captured) == nil && strings.HasPrefix(captured["api_key"], "secret://") {
 				keyRef = captured["api_key"]
@@ -214,7 +214,7 @@ func (a *App) protectAIRequest(cfg ai.Config, req ai.ChatRequest) ai.ChatRequest
 			texts[i] = secrets.ReplaceContextValues(texts[i], map[string]string{cfg.APIKey: keyRef})
 		}
 	}
-	texts = a.protectCredentialTexts("", texts...)
+	texts = a.protectCredentialTexts(texts...)
 	req.Context, req.Instructions = texts[0], texts[1]
 	at := 2
 	for i := range req.Messages {

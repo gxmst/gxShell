@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -169,6 +170,10 @@ func (c *Checker) latestStable(ctx context.Context) (*Release, error) {
 		}
 		if !Valid(tag) {
 			continue
+		}
+		releaseURL, err := url.Parse(entry.HTMLURL)
+		if err != nil || releaseURL.Scheme != "https" || releaseURL.Hostname() == "" || releaseURL.User != nil {
+			return nil, errors.New("release feed contains an invalid HTTPS release URL")
 		}
 		// The feed is ordered newest-first by creation date, which is not the
 		// same as highest version: a patch for an older line can be published

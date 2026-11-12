@@ -363,7 +363,7 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	reconnectFailed := false
 	if err != nil && r.Context().Err() == nil && reusedConnection && sshmanager.IsRetryableCommandStartError(err) {
 		reconnectAttempted = true
-		a.finishTerminalAutomation(sessionID, activityID, "cli", "execute_command", "", err.Error(), 1, 0, false)
+		a.finishTerminalAutomation(sessionID, activityID, "cli", "execute_command", "", a.protectCredentialTexts(err.Error())[0], 1, 0, false)
 		activityFinished = true
 		oldSessionID := sessionID
 		a.announceCliSessionRecovering(oldSessionID)
@@ -384,21 +384,21 @@ func (a *App) handleCliExec(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if !activityFinished {
-			a.finishTerminalAutomation(sessionID, activityID, "cli", "execute_command", "", a.protectCredentialTexts(profile.ID, err.Error())[0], 1, 0, false)
+			a.finishTerminalAutomation(sessionID, activityID, "cli", "execute_command", "", a.protectCredentialTexts(err.Error())[0], 1, 0, false)
 		}
 		writeCliJSON(w, http.StatusBadGateway, map[string]any{
 			"alias":              serverName,
 			"reusedConnection":   reusedConnection,
 			"reconnectAttempted": reconnectAttempted,
 			"reconnected":        reconnected,
-			"error":              a.protectCredentialTexts(profile.ID, err.Error())[0],
+			"error":              a.protectCredentialTexts(err.Error())[0],
 			"errorKind":          map[bool]string{true: "connect", false: "ssh"}[reconnectFailed],
 			"outcome":            "transport_error",
 			"blocked":            false,
 		})
 		return
 	}
-	a.protectCredentialResult(profile.ID, &result, guardText)
+	a.protectCredentialResult(&result, guardText)
 	automationError := result.Error
 	if result.TimedOut && automationError == "" {
 		automationError = "remote command timeout"

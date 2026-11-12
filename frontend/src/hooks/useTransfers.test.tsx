@@ -1,7 +1,8 @@
 import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { TransfersProvider, useTransfers, type Transfer } from "./useTransfers";
+import { useTransfers, type Transfer } from "./useTransfers";
+import { TransfersProvider } from "./TransfersProvider";
 
 const mocks = vi.hoisted(() => ({
   listener: null as null | ((event: Partial<Transfer>) => void),

@@ -61,8 +61,7 @@ func (s *Store) SavePassword(profileID string, password string) error {
 	if err != nil {
 		return s.saveFallback(profileID, "password", password)
 	}
-	s.deleteFallbackKind(profileID, "password")
-	return nil
+	return s.deleteFallbackKind(profileID, "password")
 }
 
 func (s *Store) SavePassphrase(profileID string, passphrase string) error {
@@ -75,8 +74,7 @@ func (s *Store) SavePassphrase(profileID string, passphrase string) error {
 	if err != nil {
 		return s.saveFallback(profileID, "passphrase", passphrase)
 	}
-	s.deleteFallbackKind(profileID, "passphrase")
-	return nil
+	return s.deleteFallbackKind(profileID, "passphrase")
 }
 
 // SaveNamed stores an application-managed secret under an explicit namespace.
@@ -140,39 +138,33 @@ func (s *Store) DeleteNamed(namespace string, name string) {
 func (s *Store) GetPassword(profileID string) (string, error) {
 	s.operationMu.Lock()
 	defer s.operationMu.Unlock()
-	value, err := s.credentials().Get(key(profileID, "password"))
-	if err == nil {
-		return value, nil
-	}
-	if errors.Is(err, keyring.ErrNotFound) {
-		if fallback := s.loadFallback(profileID, "password"); fallback != "" {
-			return fallback, nil
-		}
-		return "", nil
-	}
-	if fallback := s.loadFallback(profileID, "password"); fallback != "" {
-		return fallback, nil
-	}
-	return "", err
+	return s.storedValue(profileID, "password")
 }
 
 func (s *Store) GetPassphrase(profileID string) (string, error) {
 	s.operationMu.Lock()
 	defer s.operationMu.Unlock()
-	value, err := s.credentials().Get(key(profileID, "passphrase"))
-	if err == nil {
+	return s.storedValue(profileID, "passphrase")
+}
+
+// Caller holds operationMu. A fallback value is the latest successful update,
+// including when the native store still contains an older readable value.
+func (s *Store) storedValue(id, kind string) (string, error) {
+	s.mu.Lock()
+	data := s.fallbackData()
+	value, degraded := data[id][kind], s.fallbackDegraded
+	s.mu.Unlock()
+	if degraded {
+		return "", errors.New("cannot read encrypted secret storage")
+	}
+	if value != "" {
 		return value, nil
 	}
+	value, err := s.credentials().Get(key(id, kind))
 	if errors.Is(err, keyring.ErrNotFound) {
-		if fallback := s.loadFallback(profileID, "passphrase"); fallback != "" {
-			return fallback, nil
-		}
 		return "", nil
 	}
-	if fallback := s.loadFallback(profileID, "passphrase"); fallback != "" {
-		return fallback, nil
-	}
-	return "", err
+	return value, err
 }
 
 func (s *Store) Delete(profileID string) {
@@ -459,30 +451,32 @@ func (s *Store) deleteFallback(profileID string) {
 // keyring accepts one kind, the OTHER kind may still exist only in the
 // fallback file (written during an earlier keyring outage); deleting the whole
 // profile entry there would silently destroy that remaining credential.
-func (s *Store) deleteFallbackKind(profileID, kind string) {
+func (s *Store) deleteFallbackKind(profileID, kind string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	data := s.fallbackData()
+	data := cloneFallback(s.fallbackData())
+	if s.fallbackDegraded {
+		return errors.New("cannot update encrypted secret storage")
+	}
 	entry, ok := data[profileID]
 	if !ok {
-		return
+		return nil
 	}
 	if _, exists := entry[kind]; !exists {
-		return
+		return nil
 	}
 	delete(entry, kind)
 	if len(entry) == 0 {
 		delete(data, profileID)
 	}
 	if len(data) == 0 {
-		if s.fallbackDegraded {
-			_ = s.quarantineFallback()
-			return
+		if err := os.Remove(s.fallbackPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
-		_ = os.Remove(s.fallbackPath())
-		return
+		s.fallbackCache = data
+		return nil
 	}
-	_ = s.writeFallback(data)
+	return s.writeFallback(data)
 }
 
 func encrypt(plaintext []byte, key []byte) ([]byte, error) {

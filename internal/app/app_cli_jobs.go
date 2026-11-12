@@ -126,7 +126,7 @@ func (a *App) startCliJob(alias, profileID, sessionID, command string, stdin *st
 				result.ExitCode = 1
 			}
 		}
-		a.protectCredentialResult(profileID, &result, command)
+		a.protectCredentialResult(&result, command)
 		if !activityFinished {
 			a.finishTerminalAutomation(currentSessionID, activityID, "cli", "execute_command", result.DisplayOutput(), result.Error, result.ExitCode, result.Duration, result.Truncated)
 		}

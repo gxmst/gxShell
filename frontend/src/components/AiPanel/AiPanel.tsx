@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bot, Check, Copy, History, Link2, ListChecks, MessageSquarePlus, Play, RefreshCw, Send, Server, Settings2, Square, Stethoscope, X } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { AiChat, AiContinueChat, AiExecuteTools, CancelAiChat, GetAiConfig, GetAiUsage, ListAiModels, ResetAiUsage, SaveAiConfig } from "../../../wailsjs/go/app/App";
@@ -192,7 +192,8 @@ export function AiPanel(props: {
   activeTabId: string;
   tabs: Tab[];
 }) {
-  const lang = props.locale;
+  const { locale: propLocale, tabs: propTabs, activeTabId: propActiveTabId, onNotify: propOnNotify, getTerminalLines: propGetTerminalLines } = props;
+  const lang = propLocale;
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     try {
       const stored = localStorage.getItem("gx:ai-sessions");
@@ -229,23 +230,23 @@ export function AiPanel(props: {
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sessionsRef = useRef(sessions);
-  const tabsRef = useRef(props.tabs);
+  const tabsRef = useRef(propTabs);
   const activeRequestsRef = useRef<Record<string, string>>({});
   const eventBufferRef = useRef<Map<string, BufferedAiEvent>>(new Map());
   const eventTimerRef = useRef<number | null>(null);
   sessionsRef.current = sessions;
-  tabsRef.current = props.tabs;
+  tabsRef.current = propTabs;
 
   const activeSession = sessions.find((session) => session.id === activeSessionId);
-  const messages = activeSession?.messages || [];
-  const boundTerminal = props.tabs.find((tab) => tab.id === activeSession?.terminalSessionId);
+  const messages = useMemo(() => activeSession?.messages || [], [activeSession?.messages]);
+  const boundTerminal = propTabs.find((tab) => tab.id === activeSession?.terminalSessionId);
   const boundTerminalSessionId = activeSession?.terminalSessionId || "";
   const targetConnected = isRemoteSession(boundTerminal);
   const activeStreaming = !!streamingByChat[activeSessionId];
   const activeHasPendingTools = messages.some((message) => message.toolResults?.some((result) => !result.executed));
   const activeHasExecutingTools = messages.some((message) => message.toolResults?.some((result) => result.executing));
   const activeHasUncontinuedTools = messages.some((message) => !!message.toolResults?.length && !message.toolContinued);
-  const activeBindableTerminal = props.tabs.find((tab) => tab.id === props.activeTabId && isRemoteSession(tab));
+  const activeBindableTerminal = propTabs.find((tab) => tab.id === propActiveTabId && isRemoteSession(tab));
 
   const MAX_STORED_SESSIONS = 20;
   const MAX_MSG_LENGTH = 8000;
@@ -297,8 +298,8 @@ export function AiPanel(props: {
     }).catch(() => {});
   }, []);
 
-  const onNotifyRef = useRef(props.onNotify);
-  onNotifyRef.current = props.onNotify;
+  const onNotifyRef = useRef(propOnNotify);
+  onNotifyRef.current = propOnNotify;
 
   const flushBufferedEvents = useCallback(() => {
     eventTimerRef.current = null;
@@ -505,11 +506,11 @@ export function AiPanel(props: {
       }));
       let terminalContext = "";
       if (session.terminalSessionId) {
-        try { terminalContext = props.getTerminalLines(session.terminalSessionId, 10); } catch {}
+        try { terminalContext = propGetTerminalLines(session.terminalSessionId, 10); } catch {}
       }
       launchAiRequest(session, apiMessages, terminalContext, true);
     }
-  }, [sessions, launchAiRequest, props.getTerminalLines]);
+  }, [sessions, launchAiRequest, propGetTerminalLines]);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -517,7 +518,7 @@ export function AiPanel(props: {
 
   const newSession = useCallback(() => {
     const id = "ai-sess-" + Date.now() + "-" + (++sessionCounter);
-    const candidate = tabsRef.current.find((tab) => tab.id === props.activeTabId && isRemoteSession(tab));
+    const candidate = tabsRef.current.find((tab) => tab.id === propActiveTabId && isRemoteSession(tab));
     const session: ChatSession = {
       id,
       title: t(lang, "aiNewChat") + " " + (sessionsRef.current.length + 1),
@@ -540,7 +541,7 @@ export function AiPanel(props: {
     });
     setActiveSessionId(id);
     setInput("");
-  }, [lang, props.activeTabId]);
+  }, [lang, propActiveTabId]);
 
   useEffect(() => {
     if (sessions.length === 0 && !activeSessionId) {
@@ -611,7 +612,7 @@ export function AiPanel(props: {
 
     let terminalContext = explicitContext || "";
     if (explicitContext === undefined && session.terminalSessionId) {
-      try { terminalContext = props.getTerminalLines(session.terminalSessionId, 10); } catch {}
+      try { terminalContext = propGetTerminalLines(session.terminalSessionId, 10); } catch {}
     }
     const userMessage: ChatMsg = { role: "user", content: text };
     const assistantMessage: ChatMsg = { role: "assistant", content: "" };
@@ -624,7 +625,7 @@ export function AiPanel(props: {
     setSessions((previous) => previous.map((item) => item.id === session.id ? updatedSession : item));
     setInput("");
     launchAiRequest(updatedSession, toApiMessages(nextMessages), terminalContext, false);
-  }, [activeSessionId, model, lang, props.getTerminalLines, launchAiRequest]);
+  }, [activeSessionId, model, lang, propGetTerminalLines, launchAiRequest]);
 
   const send = useCallback(() => sendChat(input), [input, sendChat]);
 
@@ -632,13 +633,13 @@ export function AiPanel(props: {
     if (activeStreaming) return;
     let terminalContext = "";
     if (boundTerminalSessionId) {
-      try { terminalContext = props.getTerminalLines(boundTerminalSessionId, 30); } catch {}
+      try { terminalContext = propGetTerminalLines(boundTerminalSessionId, 30); } catch {}
     }
     const prompt = terminalContext
       ? t(lang, "aiDiagnose")
       : t(lang, "aiDiagnose") + " (" + t(lang, "aiNoTerminalOutput") + ")";
     sendChat(prompt, terminalContext);
-  }, [activeStreaming, boundTerminalSessionId, props.getTerminalLines, lang, sendChat]);
+  }, [activeStreaming, boundTerminalSessionId, propGetTerminalLines, lang, sendChat]);
 
   const cancelStreaming = useCallback(() => {
     const currentRequestId = activeRequestsRef.current[activeSessionId];
@@ -656,7 +657,7 @@ export function AiPanel(props: {
   }, [activeSessionId, enqueueStreamEvent]);
 
   const rebindTarget = useCallback(() => {
-    const target = tabsRef.current.find((tab) => tab.id === props.activeTabId && isRemoteSession(tab));
+    const target = tabsRef.current.find((tab) => tab.id === propActiveTabId && isRemoteSession(tab));
     if (!target) {
       onNotifyRef.current(t(lang, "aiNoConnectedTarget"), "error");
       return;
@@ -681,7 +682,7 @@ export function AiPanel(props: {
         }),
       };
     }));
-  }, [activeSessionId, props.activeTabId, lang]);
+  }, [activeSessionId, propActiveTabId, lang]);
 
   const onKeyDown = (event: React.KeyboardEvent) => {
     // Enter sends, but it also commits an IME candidate while a composition is
@@ -696,7 +697,7 @@ export function AiPanel(props: {
 
   let terminalContextReady = false;
   if (boundTerminalSessionId) {
-    try { terminalContextReady = !!props.getTerminalLines(boundTerminalSessionId, 1); } catch {}
+    try { terminalContextReady = !!propGetTerminalLines(boundTerminalSessionId, 1); } catch {}
   }
   const assistantStatus = model
     ? `${model} · ${(apiKey || provider === "ollama") ? (terminalContextReady ? t(lang, "aiContextReady") : t(lang, "aiNoContext")) : t(lang, "aiNoApiKey")}`
@@ -819,7 +820,7 @@ export function AiPanel(props: {
         <div className="inspection-report-scroll"><InspectionStats locale={lang} onError={(message) => onNotifyRef.current(message, "error")} /><InspectionEvaluation locale={lang} onError={(message) => onNotifyRef.current(message, "error")} /></div>
       </ModalShell>}
 
-      {mode === "inspection" ? <InspectionPanel locale={lang} tabs={props.tabs} activeTabId={props.activeTabId} onNotify={props.onNotify} /> : <>
+      {mode === "inspection" ? <InspectionPanel locale={lang} tabs={propTabs} activeTabId={propActiveTabId} onNotify={propOnNotify} /> : <>
       <div className="ai-messages" ref={scrollRef}>
         {messages.length === 0 && (
           <div className="ai-empty">
@@ -879,8 +880,8 @@ export function AiPanel(props: {
                       className="mini-btn ai-copy-btn"
                       onClick={() => {
                         writeClipboardText(message.content)
-                          .then(() => props.onNotify(t(lang, "copiedToClipboard"), "success"))
-                          .catch(() => props.onNotify(t(lang, "copyFailed"), "error"));
+                          .then(() => propOnNotify(t(lang, "copiedToClipboard"), "success"))
+                          .catch(() => propOnNotify(t(lang, "copyFailed"), "error"));
                       }}
                       title={t(lang, "copyContent")}
                     >

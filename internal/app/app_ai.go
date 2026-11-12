@@ -567,7 +567,7 @@ func (a *App) executeAiToolPlan(sessionID string, plan aiToolExecutionPlan) stri
 		stdin = &script
 	}
 	result, err := a.ssh.ExecuteCommandResultStream(context.Background(), sessionID, execCommand, stdin, aiToolTimeout, aiToolOutputLimit, nil)
-	a.protectCredentialResult(sessionID, &result, plan.Command)
+	a.protectCredentialResult(&result, plan.Command)
 	terminalOutput := result.DisplayOutput()
 	var output string
 	if err != nil {
@@ -587,13 +587,13 @@ func (a *App) executeAiToolPlan(sessionID string, plan aiToolExecutionPlan) stri
 	} else if result.Error != "" {
 		errorText = result.Error
 	}
-	errorText = a.protectCredentialTexts(sessionID, errorText)[0]
+	errorText = a.protectCredentialTexts(errorText)[0]
 	a.finishTerminalAutomation(sessionID, activityID, "ai", plan.ToolName, terminalOutput, errorText, result.ExitCode, result.Duration, result.Truncated)
 	a.log.InfoFields("AI tool result", LogFields{
 		"tool":      plan.ToolName,
 		"outputLen": len(output),
 	})
-	return a.protectCredentialTexts(sessionID, output)[0]
+	return a.protectCredentialTexts(output)[0]
 }
 
 // GetAiUsage returns cumulative token usage statistics.
@@ -687,27 +687,69 @@ func (a *App) confirmAiToolExecutionBatch(plans []aiToolExecutionPlan) []bool {
 	if len(plans) == 0 {
 		return nil
 	}
+	language := a.uiLanguage()
 	items := make([]cliApprovalItem, 0, len(plans))
 	for i, plan := range plans {
 		kind := "command"
+		text := logger.RedactKnownSecrets(plan.Command, nil)
+		assessment := classifyCommand(text)
+		addNamedCredentialRisk(&assessment, plan.SecretNames)
 		if plan.ToolName == "read_file" {
 			kind = "read_file"
+			text = plan.Detail
+			// The classifier scored the generated cat command. The panel shows
+			// only the path, so command offsets must not highlight unrelated text.
+			assessment.Spans = nil
+			if assessment.hasCategory(riskCredential) && text != "" {
+				assessment.Spans = []riskSpan{{Start: 0, End: len(text), Class: spanCredential}}
+			}
 		}
+		text = truncate(text, cliApprovalItemTextLimit)
+		spans := make([]riskSpan, 0, len(assessment.Spans))
+		for _, span := range assessment.Spans {
+			if span.Start >= 0 && span.Start < len(text) {
+				span.End = min(span.End, len(text))
+				spans = append(spans, span)
+			}
+		}
+		riskLines := assessment.riskLinesForLanguage(language)
 		items = append(items, cliApprovalItem{
-			ID:   fmt.Sprintf("plan-%d", i),
-			Kind: kind,
-			Text: truncate(plan.Detail, cliApprovalItemTextLimit),
+			ID:        fmt.Sprintf("plan-%d", i),
+			Kind:      kind,
+			Text:      text,
+			RiskTier:  assessment.Tier.String(),
+			RiskLabel: assessment.Tier.labelForLanguage(language),
+			RiskLines: riskLines,
+			Spans:     spans,
+			Detail:    truncate(formatRiskApprovalForLanguage(plan.Detail, assessment, language, riskLines), cliApprovalItemDetailLimit),
 		})
 	}
-	if result, ok := a.requestCliApprovalPanel(context.Background(), cliApprovalPanelRequest{
-		Source:  "ai",
-		Server:  plans[0].Target,
-		Summary: aiToolSummary(plans, a.uiLanguage()),
-		Items:   items,
-	}); ok {
-		return result.mask(items)
+	approved := make([]bool, len(plans))
+	for start := 0; start < len(plans); {
+		critical := items[start].RiskTier == tierCritical.String()
+		end := start + 1
+		// As in CLI approvals, each T3 action must be reviewed on its own.
+		if !critical {
+			for end < len(plans) && items[end].RiskTier != tierCritical.String() {
+				end++
+			}
+		}
+		batch := items[start:end]
+		if result, ok := a.requestCliApprovalPanel(context.Background(), cliApprovalPanelRequest{
+			Source: "ai", Server: plans[start].Target, Critical: critical,
+			Summary: aiToolSummary(plans[start:end], language), Items: batch,
+		}); ok {
+			copy(approved[start:end], result.mask(batch))
+		} else {
+			fallback := append([]aiToolExecutionPlan(nil), plans[start:end]...)
+			for i := range fallback {
+				fallback[i].Detail = batch[i].nativeText()
+			}
+			copy(approved[start:end], repeatBool(a.confirmAiToolExecutionBatchDialog(fallback), len(batch)))
+		}
+		start = end
 	}
-	return repeatBool(a.confirmAiToolExecutionBatchDialog(plans), len(plans))
+	return approved
 }
 
 func aiToolSummary(plans []aiToolExecutionPlan, language string) string {
