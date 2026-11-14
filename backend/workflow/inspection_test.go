@@ -270,7 +270,27 @@ func TestInspectionCompletionCallbackCanStartNextInspection(t *testing.T) {
 	awaitRun(t, manager, next.ID)
 }
 
+// Signal a deadline explicitly so disk latency cannot consume the collection
+// window before the evidence whose preservation the test checks is saved.
+type inspectionDeadlineContext struct {
+	context.Context
+	expired <-chan struct{}
+}
+
+func (ctx inspectionDeadlineContext) Done() <-chan struct{} { return ctx.expired }
+
+func (ctx inspectionDeadlineContext) Err() error {
+	select {
+	case <-ctx.expired:
+		return context.DeadlineExceeded
+	default:
+		return nil
+	}
+}
+
 func TestInspectionDeadlinePreservesEvidence(t *testing.T) {
+	expired := make(chan struct{})
+	var expireOnce sync.Once
 	manager, err := NewManager(t.TempDir(), func(ctx context.Context, _ string, query Query) Evidence {
 		if query.Check == "system" {
 			return Evidence{Status: "collected", Output: "Linux"}
@@ -280,18 +300,25 @@ func TestInspectionDeadlinePreservesEvidence(t *testing.T) {
 	}, func(context.Context, ai.Config, ai.ChatRequest, func(ai.ChatResponse)) error {
 		t.Error("model called after deadline")
 		return nil
-	}, nil, nil)
+	}, func(run Run) {
+		if len(run.Evidence) > 0 {
+			expireOnce.Do(func() { close(expired) })
+		}
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer manager.Close()
-	manager.timeout = 25 * time.Millisecond
-	started, err := manager.Start(context.Background(), "session", "profile", "Server", "English", ai.Config{Model: "test"})
+	parent := inspectionDeadlineContext{Context: context.Background(), expired: expired}
+	started, err := manager.Start(parent, "session", "profile", "Server", "English", ai.Config{Model: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	run := awaitRun(t, manager, started.ID)
 	if run.State != "partial" || !strings.Contains(run.Error, "deadline exceeded") || len(run.Evidence) < 1 || run.Report == "" {
 		t.Fatalf("deadline lost partial result: %#v", run)
+	}
+	if run.Evidence[0].Status != "collected" || run.Evidence[0].Output != "Linux" || !strings.Contains(run.Report, "Linux") {
+		t.Fatalf("collected evidence missing after deadline: %#v", run)
 	}
 }
