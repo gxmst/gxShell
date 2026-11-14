@@ -3,6 +3,16 @@
 All notable gxShell changes are documented here. Release notes are generated
 from the version section in this file.
 
+## [Unreleased]
+
+### English
+
+- Ship a portable gxshell skill for Claude Code and Codex, with a shared installer, current CLI guidance and CI checks that keep bundled references synchronized with project documentation.
+
+### 中文
+
+- 提供 Claude Code 和 Codex 可安装的 gxshell Skill，附统一安装脚本和当前 CLI 指引；通过 CI 校验保证随 Skill 提供的参考文档与项目规范同步。
+
 ## [1.8.3] - 2026-11-14
 
 ### English

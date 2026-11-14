@@ -21,7 +21,7 @@ gxShell 是一个基于 Go、Wails 和 WebView2 构建的 Windows SSH 工作台�
 
 ## 下载
 
-当前版本：**1.8.2** — [版本说明](CHANGELOG.md#182---2026-11-11)。
+当前版本：**1.8.3** — [版本说明](CHANGELOG.md#183---2026-11-14)。
 
 前往 [Windows x64 最新版](https://github.com/gxmst/gxShell/releases/latest)。
 推荐下载 zip；桌面应用位于压缩包根目录，可选 CLI、中英文使用说明和 Agent 安全
@@ -56,6 +56,11 @@ MCP 在 AI 客户端的全局或项目设置中注册一次即可，同一范围
 入口 `http://127.0.0.1:56789/mcp`。详见 [MCP 接入指南](docs/mcp.zh-CN.md)。
 能够执行本机命令的客户端仍可使用 [CLI 和 Agent 规范](docs/agent-guide.md)，
 两种入口共用审批和 SSH 会话。
+
+仓库提供可安装的 [gxshell Skill](skills/README.md)，适用于 Claude Code 和 Codex。
+可以直接告诉 Agent「请安装这里的 `skills/gxshell`」，或运行
+`scripts/install-skill.ps1 -Client claude` / `-Client codex`。Skill 携带所需参考文档，
+并会随后续发布包提供；gxShell 和 CLI 仍需另外安装。
 
 ## 演示
 

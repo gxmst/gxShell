@@ -2,7 +2,7 @@
 
 Before using `gxshell-cli`, follow [docs/agent-guide.md](docs/agent-guide.md). Use `exec-stdin` or `exec-file` for multiline scripts and heredocs, inspect structured JSON outcomes, and use `secret://` references instead of plaintext credentials.
 
-A packaged version of that contract, with bash examples and task recipes, is
-installed as the `gxshell` skill (`~/.claude/skills/gxshell/SKILL.md`). The guide
-above remains the source of truth: it is model-independent and ships with the
-repo, while the skill is a local convenience that has to be updated alongside it.
+The shared portable skill is maintained in [skills/gxshell/SKILL.md](skills/gxshell/SKILL.md),
+with installation instructions in [skills/README.md](skills/README.md). It can be
+installed for Claude Code or Codex; the two bundled references are synchronized
+from the project documentation by `scripts/sync-skill.ps1` and checked in CI.

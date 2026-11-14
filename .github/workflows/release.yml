@@ -16,6 +16,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check portable skill references
+        shell: pwsh
+        run: ./scripts/sync-skill.ps1 -Check
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -109,6 +113,10 @@ jobs:
           Copy-Item docs/mcp.md (Join-Path $cliStage 'mcp.md')
           Copy-Item docs/mcp.zh-CN.md (Join-Path $cliStage 'mcp.zh-CN.md')
           Copy-Item LICENSE (Join-Path $stage 'LICENSE')
+          Copy-Item -LiteralPath skills -Destination (Join-Path $stage 'skills') -Recurse
+          $scriptStage = Join-Path $stage 'scripts'
+          New-Item -ItemType Directory -Path $scriptStage | Out-Null
+          Copy-Item scripts/install-skill.ps1 (Join-Path $scriptStage 'install-skill.ps1')
           $manifest = @(
             'gxShell release build manifest',
             "version: $version",
@@ -123,6 +131,11 @@ jobs:
             '  CLI/agent-guide.md',
             '  CLI/mcp.md',
             '  CLI/mcp.zh-CN.md',
+            '  skills/README.md',
+            '  skills/gxshell/SKILL.md',
+            '  skills/gxshell/references/agent-guide.md',
+            '  skills/gxshell/references/cli.md',
+            '  scripts/install-skill.ps1',
             '  LICENSE',
             '  BUILD-MANIFEST.txt'
           )
@@ -182,7 +195,7 @@ jobs:
           $body = @(
             '## Download',
             '',
-            "Download ${tick}gxShell-v$version-windows-amd64.zip${tick}. The desktop app is at the archive root; the optional CLI, bilingual CLI/MCP setup documentation, and agent safety guide are grouped under ${tick}CLI/${tick}. The CLI / MCP server is disabled by default.",
+            "Download ${tick}gxShell-v$version-windows-amd64.zip${tick}. The desktop app is at the archive root; the optional CLI and its guides are grouped under ${tick}CLI/${tick}. The portable skill is in ${tick}skills/gxshell/${tick}, with installation instructions in ${tick}skills/README.md${tick}. The CLI / MCP server is disabled by default.",
             '',
             '## Changes',
             '',

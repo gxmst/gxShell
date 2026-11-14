@@ -18,6 +18,11 @@ and its automation safety contract discoverable together. The release body is
 extracted from the matching section in the root `CHANGELOG.md`; there is no
 separate release-notes source.
 
+Future packages also include `skills/gxshell/`, the installation guide at
+`skills/README.md`, and `scripts/install-skill.ps1`. Run `scripts/sync-skill.ps1`
+after editing the CLI/agent documentation; packaging and Windows CI use `-Check`
+to reject stale bundled references. Already published packages are unchanged.
+
 ## Local preparation
 
 1. Update `backend/version/version.go`, `wails.json`, `frontend/package.json`, and the root versions in `frontend/package-lock.json` to the same version.

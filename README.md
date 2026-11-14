@@ -24,7 +24,7 @@ commands, metrics, and documents. No personal server data is used.*
 
 ## Download
 
-Current version: **1.8.2** — [release notes](CHANGELOG.md#182---2026-11-11).
+Current version: **1.8.3** — [release notes](CHANGELOG.md#183---2026-11-14).
 
 Download the latest [Windows x64 release](https://github.com/gxmst/gxShell/releases/latest).
 The recommended zip keeps the desktop app at its root. The optional CLI,
@@ -63,6 +63,12 @@ without putting it in the configuration. Streamable HTTP is also available at
 `http://127.0.0.1:56789/mcp` with token authentication. See [MCP setup](docs/mcp.md).
 The [CLI and agent guide](docs/agent-guide.md) remain available for clients that
 execute local commands; both entrances use the same approvals and SSH sessions.
+
+The [portable gxshell skill](skills/README.md) provides the current operating
+contract for Claude Code and Codex. From this repository, ask your agent to
+install `skills/gxshell`, or run `scripts/install-skill.ps1 -Client claude` /
+`-Client codex`. It includes the required references and is included in future
+release packages. gxShell and the CLI still need to be installed separately.
 
 ## Demo
 

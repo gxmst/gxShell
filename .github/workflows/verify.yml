@@ -22,6 +22,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Check portable skill references
+        shell: pwsh
+        run: ./scripts/sync-skill.ps1 -Check
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:

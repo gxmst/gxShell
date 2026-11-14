@@ -1,0 +1,204 @@
+# gxShell Agent Guide
+
+This is the shared contract for Claude Code, Codex, DeepSeek, and other automation clients that use `gxshell-cli`. Correctness does not depend on a model-specific file: the CLI also enforces the important input rules and returns structured outcomes.
+
+The same execution contract applies to the [MCP server](https://github.com/gxmst/gxShell/blob/main/docs/mcp.md) over stdio and
+Streamable HTTP. Use `gxshell_execute_script` for multiline scripts and heredocs;
+inspect structured MCP results and retain `requestId` for deliberate retries.
+
+## Choose the correct execution mode
+
+Use `exec` only for one ordinary shell command with no literal newline or heredoc:
+
+```powershell
+.\gxshell-cli.exe exec 3 "uname -a" --json
+```
+
+Use `exec-stdin` or `exec-file` for every multiline script, heredoc, generated program, or command with difficult nested quoting:
+
+```powershell
+Get-Content .\check.sh -Raw | .\gxshell-cli.exe exec-stdin 3 --shell bash --json
+.\gxshell-cli.exe exec-file 3 .\check.sh --shell bash --json
+```
+
+Do not embed a heredoc in the `exec` argument. The CLI rejects it with `errorKind: script_input_required` and recommends the stdin form. This avoids parsing the same text through the caller shell, Windows argument handling, JSON, and the remote shell.
+
+## Treat Scripts And Interpreters As Arbitrary Code
+
+`exec-file` and `exec-stdin` are transport modes, not sandboxes. The same is
+true of a command that starts an interpreter, build tool, or compiler. gxShell
+classifies visible command and script text into risk tiers, but it cannot prove
+what an arbitrary Python, Node, Perl, Ruby, `awk`, compiled program, or decoded
+payload will do after it starts.
+
+An agent must not use another program to disguise an operation that would need
+a higher-risk approval or that the user did not authorize. This includes:
+
+- generating or uploading a script and then executing it;
+- using an interpreter's `-c`/`-e` option or a shell wrapper;
+- decoding, decompressing, compiling, or fetching code before running it;
+- replacing a blocked command with equivalent library calls or system APIs.
+
+Treat the complete script or generated program, its destination, file changes,
+network destinations, and secret use as the requested action. A successful
+upload approval covers file movement only; it does not approve executing the
+uploaded file. A scoped profile trust window suppresses approval for T1 scoped,
+recoverable changes and for bounded local T2 operations; opaque execution and
+effects that leave the server still prompt. This is
+a policy control for cooperative automation, not containment against a
+malicious token holder or cleverly disguised program. Use arbitrary scripts
+only when the user has explicitly authorized that exact source and purpose.
+Prefer a small, inspectable command or a dedicated CLI operation when one
+exists.
+
+`blocked: false` means only that gxShell did not stop the request. It does not
+mean that the operation is read-only, harmless, or fully reviewed.
+
+## Interpret fields instead of guessing
+
+Exec calls automatically carry a request ID. JSON responses expose `requestId`,
+`requestProtected` and `replayed`. When retrying the **same request**, pass its
+ID with `--request-id <id>`; the authenticated API accepts the corresponding
+`X-GxShell-Request-ID` header. Keep the alias, command/script, timeout, secret
+references and async mode unchanged. Reusing an ID with a different payload is
+rejected. Ordinary new calls get new IDs, even for identical commands.
+
+Protection lasts for 30 minutes after completion in the **same running GUI
+process**. It is not persisted across restarts. Do not infer that a timed-out
+remote action stopped, or retry automatically after restart/expiry. Duplicate
+pending calls wait for the original; cancelling a waiter does not cancel the
+original action. Response retention is bounded (4 MiB per result, 16 MiB total,
+4096 IDs); a retained ID whose response is unavailable refuses re-execution.
+An explicit retry ID requires a desktop app advertising this capability.
+
+`cancelRequested` acknowledges cancellation, not remote termination. Completed
+command/job results may include `remoteState`: `not_started` proves the exec did
+not start, `exited` means an SSH shell exit status was received, and `unknown`
+means the remote state must be checked. Shell exit does not prove detached child
+processes stopped. Existing `state` and `outcome` values remain compatible.
+
+Always request and inspect JSON. `outcome` is authoritative:
+
+- `succeeded`: the remote command exited successfully.
+- `remote_failed`: the remote program or shell returned a non-zero exit code. gxShell did not block it. Inspect `exitCode`, `stdout`, and `stderr`.
+- `blocked`: gxShell policy or the user stopped the operation. Inspect `blockedBy`, `reason`, and `detail`.
+- `timeout`: the SSH exec channel timed out; the remote system may have made partial changes.
+- `validation_error` or `client_error`: fix the request before reasoning about the server.
+
+Never describe a plain non-zero `exitCode` as a gxShell guard rejection. A guard rejection is explicitly marked `blocked: true` and `outcome: blocked`.
+
+For `exec`, also inspect `riskTier`, `riskCategories`, `approval`, and
+`approvalStrength`. The normal/scoped approval policy is:
+
+- T0 observation: no prompt.
+- T1 scoped, recoverable change: no prompt only during an active trust window;
+  otherwise one native click.
+- T2 bounded destructive, opaque, or external action: a statically resolvable,
+  bounded local action runs without a prompt during an active trust window;
+  opaque or external T2 actions take one native click even during a trust
+  window.
+- T3 irreversible, self-locking, credential, or public action: immediate native
+  click and never part of an "Allow all" batch under scoped trust.
+
+The user may explicitly enable **Full trust for 1 hour** in the profile editor.
+During that window CLI / MCP commands in T1, T2 and T3 skip execution approvals
+and report `approval: "full-trust"`. Known host self-destruction is blocked,
+including critical-directory removal, disk destruction and fork bombs. A block
+reports `blockedBy: "self-destructive"`; do not work around it. Expiry or revoke
+restores the normal policy. Full trust does not authorize work outside the
+user's requested task or turn arbitrary scripts into a sandbox.
+
+Prompted commands include a short classifier-derived explanation of recognized
+behavior and targets below the command. Treat it as a review aid, not a safety
+proof; opaque behavior remains at least T2.
+
+The native dialog is the authorization boundary. Any coloured in-app risk card
+is explanatory only and never grants permission.
+
+## Use named secrets without revealing values
+
+Prefer manual entry in **Settings → Credential vault**: the user types the value
+in a masked field and shares only its `secret://name` reference. The vault lists,
+copies, replaces and deletes named credentials without revealing saved values.
+Do not use computer automation to read a user's secret-entry field. Let the user
+finish entering and saving it before continuing with references.
+
+Discover references without reading values:
+
+```powershell
+.\gxshell-cli.exe secret list --json
+```
+
+Store a secret by piping it over stdin. Never put the value in argv, source code, a prompt, or a command string:
+
+```powershell
+Get-Content .\api-key.txt -Raw | .\gxshell-cli.exe secret set anyrouter-api-key
+.\gxshell-cli.exe secret status anyrouter-api-key --json
+```
+
+The model should use only `secret://anyrouter-api-key`. Bind it to an environment variable at execution time:
+
+```powershell
+.\gxshell-cli.exe exec 3 'curl -H "Authorization: Bearer $API_KEY" https://example.test/v1/models' --secret API_KEY=anyrouter-api-key --json
+```
+
+For a script:
+
+```powershell
+Get-Content .\request.sh -Raw | .\gxshell-cli.exe exec-stdin 3 --shell bash --secret API_KEY=anyrouter-api-key --json
+```
+
+gxShell resolves the reference only after the applicable local approval gate,
+injects the value through SSH stdin, hides it from approval text and command
+audit, and replaces exact occurrences in captured output. Named-secret
+execution is synchronous only; `--follow` and `--detach` are rejected. A trust
+scoped window does not bypass T3 credential confirmation; full trust does.
+CLI/MCP results and built-in AI context are protected locally before delivery.
+Recognized password/API-key/token fields, authorization headers and private-key
+blocks are saved in the credential vault and replaced with `secret://auto-...`
+references. Existing values reuse their saved references, regardless of field
+name. AI-bound history, reasoning, tool arguments and terminal context are
+checked again before each provider request, before history is compacted.
+The API key authenticating that provider stays in its transport header.
+
+Use captured references like manually registered ones: bind them with
+`--secret API_KEY=auto-...` or the tool's `secrets` object, then use `$API_KEY`
+in the remote command. Do not paste the reference as the literal API password.
+Kubernetes Secret `data` values are decoded locally before capture. A `cat` of
+a known credential file with no recognizable fields returns a reference to its
+content; a single-line value loses its trailing line terminator, while multiline
+content is preserved. Never reconstruct a credential by printing fragments.
+
+Capture uses unique random names and never replaces an existing credential just
+because the field names match. Automatic captures persist in the same vault and
+can be listed or deleted in Settings. Captures are bounded to 100 new values per
+text and 64 KiB per value. Incomplete quoted values and unsupported values are
+masked. Failed saves return a mask, not a usable reference; if the saved-value
+inventory cannot be checked, the context/result is withheld. Async job output
+is buffered until completion so split fields and private keys cannot leak through
+individual stream events.
+
+This is still not a secret sandbox: arbitrary transformations, unknown unlabeled
+credentials and malicious programs can evade recognition. Scoped trust prompts
+for named-credential use; full trust skips that prompt but keeps context protection.
+
+This protects against accidental disclosure, including `echo $API_KEY` and ordinary error output. It cannot make a general shell safe against a malicious command that transforms or encodes a secret before exfiltration. Approve secret-bearing commands only when their destination and purpose are clear. If a task only needs to test whether a secret works, do that without printing it.
+
+Delete a reference when it is no longer needed:
+
+```powershell
+.\gxshell-cli.exe secret delete anyrouter-api-key
+```
+
+If a real key ever appears in a model conversation, process argument, terminal capture, or log, rotate it. Redaction does not revoke an exposed credential.
+
+## Transfer local files
+
+Use the dedicated transfer command when a local artifact must move to or from a CLI-enabled server. It supports one regular file at a time and does not interpret directories or globs:
+
+```powershell
+.\gxshell-cli.exe transfer push .\build\app.tar.gz prod-web:/srv/app/app.tar.gz --mkdir --json
+.\gxshell-cli.exe transfer pull prod-web:/srv/app/app.tar.gz .\downloads\app.tar.gz --json
+```
+
+`upload` and `download` are aliases for `transfer push` and `transfer pull`. The GUI always shows a native approval dialog for these operations; an active CLI trust window never suppresses it. Existing destinations are protected by default. Add `--overwrite` only after checking that replacing the destination is intended. A conflict is authoritative when the JSON contains `outcome: "blocked"`, `blockedBy: "overwrite-policy"`, and `errorKind: "overwrite_required"`; the CLI exits with code 2. Upload-only `--mkdir` creates missing remote parent directories. Transfers use gxShell's atomic SFTP promotion and resumable partial files; do not construct an `scp` or shell command to emulate them.

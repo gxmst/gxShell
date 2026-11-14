@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 Push-Location $repo
 try {
+    & (Join-Path $PSScriptRoot 'sync-skill.ps1') -Check
     & (Join-Path $PSScriptRoot 'build.ps1')
     $source = Get-Content backend/version/version.go -Raw
     if ($source -notmatch 'const\s+Version\s*=\s*"([^"]+)"') { throw 'Version missing' }
@@ -28,9 +29,15 @@ try {
         'docs/agent-guide.md' = 'CLI/agent-guide.md'
         'docs/mcp.md' = 'CLI/mcp.md'
         'docs/mcp.zh-CN.md' = 'CLI/mcp.zh-CN.md'
+        'skills/README.md' = 'skills/README.md'
+        'skills/gxshell/SKILL.md' = 'skills/gxshell/SKILL.md'
+        'skills/gxshell/references/agent-guide.md' = 'skills/gxshell/references/agent-guide.md'
+        'skills/gxshell/references/cli.md' = 'skills/gxshell/references/cli.md'
+        'scripts/install-skill.ps1' = 'scripts/install-skill.ps1'
     }
     foreach ($item in $files.GetEnumerator()) {
         $destination = Join-Path $archive $item.Value
+        $null = New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force
         Copy-Item -LiteralPath $item.Key -Destination $destination
         if ((Get-FileHash -LiteralPath $item.Key).Hash -ne (Get-FileHash -LiteralPath $destination).Hash) {
             throw "Copy checksum mismatch: $($item.Value)"
