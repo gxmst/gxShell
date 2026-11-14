@@ -20,6 +20,29 @@ package app
 
 import "testing"
 
+func TestFileAndTreeCannotSkipCommandApproval(t *testing.T) {
+	for _, command := range []string{
+		"tree -o /srv/app/report.txt /srv/app",
+		"tree -o/srv/app/report.txt /srv/app",
+		"file -C -m /tmp/sample.magic",
+		"file --compile --magic-file=/tmp/sample.magic",
+		"tree /srv/app", "file /srv/app/config.json",
+	} {
+		t.Run(command, func(t *testing.T) {
+			asked := false
+			if _, allowed := guardCommand(command, true, denyConfirm(&asked)); allowed || !asked {
+				t.Fatal("command skipped the legacy confirmation gate")
+			}
+			risk := classifyCommand(command)
+			for _, trusted := range []bool{false, true} {
+				if risk.requiredApproval(trusted) == approvalNone {
+					t.Fatalf("command skipped CLI approval: trusted=%v tier=%s", trusted, risk.Tier)
+				}
+			}
+		})
+	}
+}
+
 // denyConfirm is a confirm() that always denies and records that it was asked.
 func denyConfirm(asked *bool) func() bool {
 	return func() bool {

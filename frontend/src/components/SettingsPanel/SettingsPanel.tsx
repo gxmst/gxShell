@@ -15,7 +15,7 @@ import { TerminalCompatibilityFields } from "./TerminalCompatibilityFields";
 import { highlightRuleError } from "../../utils/highlight";
 
 const themePreview: Record<string, { bg: string; surface: string; accent: string }> = {
-  Light: { bg: "#e8edf4", surface: "#ffffff", accent: "#2563eb" },
+  Light: { bg: "#eef1f6", surface: "#ffffff", accent: "#2563eb" },
   "Yuzu Study": { bg: "#fcf7ed", surface: "#ffffff", accent: "#b4692c" },
   "Sakura Mist": { bg: "#faf0f4", surface: "#ffffff", accent: "#d44d7d" },
   "Matcha Green": { bg: "#edf6f0", surface: "#ffffff", accent: "#16a34a" },

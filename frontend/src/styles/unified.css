@@ -24,7 +24,7 @@
 }
 
 .side-content {
-  padding: 12px 11px 11px 12px;
+  padding: 10px 10px 10px 11px;
 }
 
 /* The brand row, the nav pill strip and its aux chips are gone: the activity
@@ -78,24 +78,50 @@
 .server-list {
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  padding: 1px 2px 2px 0;
+  gap: 4px;
+  padding: 2px 2px 4px 0;
 }
 
 .server-row {
-  min-height: 38px;
+  min-height: 42px;
   margin: 0;
-  padding: 4px 6px;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  border: 1px solid transparent;
-  box-shadow: none;
+  padding: 6px 8px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--panel-raised) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  box-shadow: var(--hairline);
 }
 
 .server-row:hover {
-  border-color: transparent;
-  background: color-mix(in srgb, var(--panel-raised) 65%, transparent);
-  box-shadow: none;
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border-strong));
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-sm);
+}
+
+.server-row-active {
+  border-color: color-mix(in srgb, var(--accent) 44%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel-raised));
+  box-shadow: var(--shadow-sm);
+}
+
+.server-row-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent);
+}
+
+.server-row-active:hover {
+  border-color: color-mix(in srgb, var(--accent) 56%, var(--border));
+  background: color-mix(in srgb, var(--accent) 11%, var(--panel-raised));
+}
+
+.server-row-connected .server-avatar {
+  border-color: color-mix(in srgb, var(--ok) 32%, var(--border));
 }
 
 
@@ -105,61 +131,69 @@
 }
 
 .current-server-block {
-  margin-top: 4px;
-  padding: 8px;
-  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
-  border-radius: var(--radius-md);
+  margin-top: 2px;
+  padding: 8px 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
+  border-radius: 11px;
   background: var(--panel-raised);
   box-shadow: var(--shadow-md);
 }
 
-.current-server-block .section-title { padding: 1px 2px 6px; }
+.current-server-block .section-title { padding: 0 2px 5px; }
 .current-server-block .tool-body { padding-right: 1px; }
 
 .monitor-panel {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .current-card {
   margin-bottom: 3px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--section-accent) 7%, var(--panel-raised));
+  border-radius: 0;
+  background: transparent;
 }
 
-.metric-row,
-.mini-metric {
+.metric-row {
   border: 1px solid transparent;
-  background: color-mix(in srgb, var(--panel-raised) 26%, transparent);
+  background: transparent;
+}
+
+.mini-metric {
+  border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  background: color-mix(in srgb, var(--panel-soft) 52%, transparent);
+  border-radius: 7px;
 }
 
 .metric-row-clickable:hover,
 .mini-metric-clickable:hover {
-  border-color: color-mix(in srgb, var(--section-accent) 20%, transparent);
+  border-color: color-mix(in srgb, var(--section-accent) 24%, transparent);
   background: color-mix(in srgb, var(--section-accent) 8%, var(--panel-raised));
 }
 
 .subnav-strip {
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 5px;
+  gap: 3px;
   margin-bottom: 9px;
-  padding: 4px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--terminal-top) 46%, transparent);
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 10px;
+  background: var(--panel-soft);
   box-shadow: none;
 }
 
 .subnav-chip {
-  height: 31px;
-  border-radius: 8px;
+  height: 29px;
+  border: 1px solid transparent;
+  border-radius: 7px;
 }
 
 .subnav-chip-active {
   color: var(--section-accent);
-  border-color: color-mix(in srgb, var(--section-accent) 34%, var(--border));
-  background: color-mix(in srgb, var(--section-accent) 12%, var(--panel-raised));
-  box-shadow: 0 5px 15px color-mix(in srgb, var(--section-accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--section-accent) 30%, var(--border));
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-sm);
+  font-weight: 680;
 }
 
 .tool-panel-body,
@@ -180,16 +214,16 @@
 
 .panel-page-header {
   display: flex;
-  min-height: 48px;
+  min-height: 46px;
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 7px 8px;
-  border: 1px solid color-mix(in srgb, var(--section-accent) 16%, var(--border));
-  border-radius: 11px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--section-accent) 8%, var(--panel-raised)), color-mix(in srgb, var(--panel) 58%, transparent));
-  box-shadow: none;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--section-accent) 18%, var(--border));
+  border-radius: 10px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--section-accent) 7%, var(--panel-raised)), var(--panel-raised));
+  box-shadow: var(--hairline);
 }
 
 .panel-page-heading {
@@ -288,23 +322,23 @@
 .panel-item {
   display: flex;
   min-width: 0;
-  min-height: 48px;
+  min-height: 46px;
   align-items: center;
   gap: 8px;
   margin: 0;
-  padding: 7px 8px;
-  border: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
-  border-radius: 10px;
-  background: linear-gradient(135deg, color-mix(in srgb, var(--panel-raised) 44%, transparent), color-mix(in srgb, var(--panel) 42%, transparent));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--text) 3%, transparent);
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--panel-raised) 84%, transparent);
+  box-shadow: var(--hairline);
   transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 
 .panel-item:hover {
   transform: translateY(-1px);
-  border-color: color-mix(in srgb, var(--section-accent) 25%, var(--border));
-  background: linear-gradient(135deg, color-mix(in srgb, var(--section-accent) 7%, var(--panel-raised)), color-mix(in srgb, var(--panel-raised) 64%, transparent));
-  box-shadow: 0 7px 20px color-mix(in srgb, var(--shadow-color) 15%, transparent);
+  border-color: color-mix(in srgb, var(--section-accent) 28%, var(--border-strong));
+  background: var(--panel-raised);
+  box-shadow: var(--shadow-sm);
 }
 
 .panel-item-icon {

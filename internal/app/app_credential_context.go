@@ -16,9 +16,17 @@ import (
 // results and provider requests. Recognized values are replaced before delivery.
 // Serialising a pass also avoids duplicate captures from parallel tool results.
 func (a *App) protectCredentialTexts(texts ...string) []string {
+	return a.protectCredentialTextsWithKnown(nil, texts...)
+}
+
+// Keep captures and masks from earlier passes alive for the whole result,
+// including values that could not be persisted in the credential store.
+func (a *App) protectCredentialTextsWithKnown(known map[string]string, texts ...string) []string {
 	a.credentialContextMu.Lock()
 	defer a.credentialContextMu.Unlock()
-	known := map[string]string{}
+	if known == nil {
+		known = map[string]string{}
+	}
 	failed := false
 	if a.secrets != nil {
 		names, err := a.secrets.NamedNames(cliSecretNamespace)
@@ -136,32 +144,39 @@ func (a *App) protectCredentialTexts(texts ...string) []string {
 }
 
 func (a *App) protectCredentialResult(result *sshmanager.CommandExecutionResult, command ...string) {
+	known := map[string]string{}
 	// A known credential file may contain an unlabeled password or an opaque
-	// credential format. Capture the complete cat result if field matching found
-	// nothing, so it cannot slip into context just because it has no API_KEY label.
+	// credential format. Partial field matching cannot prove the remaining bytes
+	// are harmless, so always return a reference to the complete cat result.
 	if len(command) > 0 && result.Stdout != "" && isCredentialFileRead(command[0]) {
 		original := result.Stdout
-		protected := a.protectCredentialTexts(result.Stdout)[0]
-		masked := protected != original && (strings.Contains(protected, "secret://") || strings.Contains(protected, "<redacted>") || strings.Contains(protected, "output withheld"))
-		if !masked {
+		// Keep individually recognized values usable in the credential inventory.
+		a.protectCredentialTextsWithKnown(known, original)
+		result.Stdout = "<redacted>"
+		if !result.Truncated {
 			valueToStore := original
 			if line := strings.TrimRight(original, "\r\n"); !strings.ContainsAny(line, "\r\n") {
 				valueToStore = line
 			}
 			encoded, _ := json.Marshal(map[string]string{"file_secret": valueToStore})
-			captured := a.protectCredentialTexts(string(encoded))[0]
+			captured := a.protectCredentialTextsWithKnown(known, string(encoded))[0]
 			var value map[string]string
-			if json.Unmarshal([]byte(captured), &value) == nil && value["file_secret"] != "" {
+			if json.Unmarshal([]byte(captured), &value) == nil && strings.HasPrefix(value["file_secret"], "secret://") {
 				result.Stdout = value["file_secret"]
-			} else {
-				result.Stdout = "<redacted>"
 			}
-			result.Output = secrets.ReplaceContextValues(result.Output, map[string]string{original: result.Stdout})
-		} else {
-			result.Stdout = protected
 		}
+		known[original] = result.Stdout
+		if trimmed := strings.TrimRight(original, "\r\n"); trimmed != "" {
+			known[trimmed] = result.Stdout
+		}
+		// Replace before parsing: reformatting a YAML result could otherwise
+		// change the complete file bytes used as the replacement key.
+		result.Stderr = secrets.ReplaceContextValues(result.Stderr, known)
+		result.Output = secrets.ReplaceContextValues(result.Output, known)
+		result.Summary = secrets.ReplaceContextValues(result.Summary, known)
+		result.Error = secrets.ReplaceContextValues(result.Error, known)
 	}
-	texts := a.protectCredentialTexts(result.Stdout, result.Stderr, result.Output, result.Summary, result.Error)
+	texts := a.protectCredentialTextsWithKnown(known, result.Stdout, result.Stderr, result.Output, result.Summary, result.Error)
 	result.Stdout, result.Stderr, result.Output, result.Summary, result.Error = texts[0], texts[1], texts[2], texts[3], texts[4]
 }
 

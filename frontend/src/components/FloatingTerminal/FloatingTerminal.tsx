@@ -19,10 +19,22 @@ export function FloatingTerminal({ tab, terminalHosts, onDock, onClose, refitTer
   const resizeRef = useRef({ active: false, startX: 0, startY: 0, startW: 0, startH: 0 });
   const panelRef = useRef<HTMLDivElement>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const previousHostRef = useRef<HTMLDivElement | null>(null);
   const movedRef = useRef(false);
   const frameRef = useRef(0);
   const livePosRef = useRef(pos);
   const liveSizeRef = useRef(size);
+
+  const registerHost = useCallback((host: HTMLDivElement | null) => {
+    if (host) {
+      const previousHost = terminalHosts.current[tab.id];
+      if (previousHost && previousHost !== host) previousHostRef.current = previousHost;
+      terminalHosts.current[tab.id] = host;
+    } else if (terminalHosts.current[tab.id] === hostRef.current) {
+      delete terminalHosts.current[tab.id];
+    }
+    hostRef.current = host;
+  }, [tab.id, terminalHosts]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -31,7 +43,7 @@ export function FloatingTerminal({ tab, terminalHosts, onDock, onClose, refitTer
     if (reattachTerminal) {
       reattachTerminal(tab.id, host);
     } else {
-      const oldHost = terminalHosts.current[tab.id];
+      const oldHost = previousHostRef.current;
       if (oldHost && oldHost !== host) {
         const xtermEl = oldHost.querySelector(".xterm");
         if (xtermEl) {
@@ -48,8 +60,7 @@ export function FloatingTerminal({ tab, terminalHosts, onDock, onClose, refitTer
   useEffect(() => {
     return () => {
       // When unmounting (dock or close), move the terminal DOM back to the main window.
-      // reattachTerminal uses term.element directly, so it doesn't depend on
-      // terminalHosts.current (which may have been overwritten by TerminalArea's ref).
+      // reattachTerminal moves term.element and replaces the observer together.
       const mainHost = document.querySelector(`.terminal-stage [data-tab-id="${tab.id}"]`) as HTMLDivElement;
       if (mainHost && reattachTerminal) {
         reattachTerminal(tab.id, mainHost);
@@ -147,7 +158,7 @@ export function FloatingTerminal({ tab, terminalHosts, onDock, onClose, refitTer
         <button className="mini-btn" title="Dock back" onClick={() => onDock(tab.id)}><ArrowLeftToLine size={12} /></button>
         <button className="mini-btn" title="Close" onClick={() => onClose(tab.id)}><X size={12} /></button>
       </div>
-      <div className="floating-terminal-body" ref={hostRef} />
+      <div className="floating-terminal-body" ref={registerHost} />
       <div
         className="floating-terminal-resize"
         onPointerDown={onResizePointerDown}

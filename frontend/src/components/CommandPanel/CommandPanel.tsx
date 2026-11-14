@@ -48,7 +48,7 @@ export function CommandPanel(props: CommandPanelProps) {
         </div>
         <button className="panel-page-primary" onClick={props.onNew}><Plus size={12} /> {t(props.locale, "newCommand")}</button>
       </div>
-      <div className="flex gap-2 px-3 pb-2">
+      <div className="flex gap-2">
         <label className="relative flex-1 min-w-0">
           <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted" />
           <input className="input compact-input w-full command-search-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t(props.locale, "search")} />

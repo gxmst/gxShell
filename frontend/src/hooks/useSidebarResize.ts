@@ -32,6 +32,7 @@ export function useSidebarResize({
   const [sidebarResizing, setSidebarResizing] = useState(false);
   const effectiveSidebarWidth = clampSidebarPanelWidth(sidebarPanelWidth, viewportWidth);
   const sidebarPanelWidthRef = useRef(effectiveSidebarWidth);
+  const refitTimer = useRef<number>();
   sidebarPanelWidthRef.current = effectiveSidebarWidth;
   // Stored in AppSettings.sidebarWidth, the same place the vertical split ratio
   // lives, so the layout is restored per install rather than per browser profile.
@@ -57,7 +58,9 @@ export function useSidebarResize({
   const finishSidebarResize = useCallback((width?: number) => {
     // xterm reflows on a real size change only, so refit after the grid settles
     // rather than on every pointer move — a reflow per pixel is far too costly.
-    window.setTimeout(() => {
+    window.clearTimeout(refitTimer.current);
+    refitTimer.current = window.setTimeout(() => {
+      refitTimer.current = undefined;
       for (const tab of tabsRef.current || []) refitTerminal(tab.id);
     }, 60);
     const settings = profileSettings;
@@ -68,6 +71,8 @@ export function useSidebarResize({
       // A failed write only costs the restored width next launch.
     });
   }, [profileSettings, profileSaveSettings, refitTerminal, tabsRef]);
+
+  useEffect(() => () => window.clearTimeout(refitTimer.current), []);
 
   const beginSidebarResize = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;

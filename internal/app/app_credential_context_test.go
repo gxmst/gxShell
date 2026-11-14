@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -162,6 +163,58 @@ func TestCredentialFileUnlabeledValueBecomesUsableReference(t *testing.T) {
 	}
 }
 
+func TestCredentialFileMixedOutputIsCapturedCompletely(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			a, vault := contextProtectionTestApp(t)
+			vault.writeFail = fail
+			text := "opaque-file-canary\nAPI_KEY=api-field-canary\n"
+			result := sshmanager.CommandExecutionResult{Stdout: text, Output: text + "permission denied\n", Stderr: "permission denied\n", ExitCode: 1}
+			a.protectCredentialResult(&result, "cat /root/password.txt /srv/app/.env")
+			if strings.Contains(result.Stdout+result.Stderr+result.Output, "canary") || result.ExitCode != 1 || !strings.Contains(result.Stderr, "permission denied") {
+				t.Fatal("partial protection leaked a credential or damaged execution status")
+			}
+			if fail {
+				if strings.Contains(result.Stdout+result.Output, "secret://") || !strings.Contains(result.Stdout, "<redacted>") {
+					t.Fatal("failed capture returned an unusable file reference")
+				}
+				return
+			}
+			values, _, err := a.resolveCliSecretRefs(map[string]string{"FILE": result.Stdout})
+			if err != nil || values["FILE"] != text {
+				t.Fatal("file reference did not preserve the complete original bytes")
+			}
+			var keyRef string
+			for name, value := range vault.values {
+				if value == "api-field-canary" {
+					keyRef = "secret://" + name
+				}
+			}
+			if keyRef == "" {
+				t.Fatal("individual labeled credential was not captured")
+			}
+		})
+	}
+}
+
+func TestCredentialFileIncompleteOrUnsupportedOutputIsMasked(t *testing.T) {
+	for _, test := range []struct {
+		text      string
+		truncated bool
+	}{
+		{"incomplete-file-canary", true},
+		{strings.Repeat("large-file-canary", 5000), false},
+		{"true", false},
+	} {
+		a, vault := contextProtectionTestApp(t)
+		result := sshmanager.CommandExecutionResult{Stdout: test.text, Output: test.text, Truncated: test.truncated}
+		a.protectCredentialResult(&result, "cat /root/password.txt")
+		if result.Stdout != "<redacted>" || result.Output != "<redacted>" || len(vault.values) != 0 {
+			t.Fatal("incomplete or unsupported file output produced an unsafe credential reference")
+		}
+	}
+}
+
 func TestCredentialCaptureWriteFailureMasksUnlabeledDuplicates(t *testing.T) {
 	a, v := contextProtectionTestApp(t)
 	v.writeFail = true
@@ -169,6 +222,61 @@ func TestCredentialCaptureWriteFailureMasksUnlabeledDuplicates(t *testing.T) {
 	a.protectCredentialResult(&result)
 	if strings.Contains(result.Stdout+result.Stderr, "canary") || strings.Contains(result.Stdout+result.Stderr, "secret://") {
 		t.Fatal("failed capture leaked a duplicate or returned an unusable reference")
+	}
+}
+
+func TestCredentialFileMasksEveryResultFieldAndLineEnding(t *testing.T) {
+	for _, mode := range []string{"captured", "write-failure", "truncated", "oversized", "unsupported"} {
+		for _, ending := range []string{"", "\n", "\r\n"} {
+			t.Run(mode+fmt.Sprintf("-%q", ending), func(t *testing.T) {
+				a, vault := contextProtectionTestApp(t)
+				vault.writeFail = mode == "write-failure"
+				value := "opaque-credential-canary"
+				if mode == "oversized" {
+					value = strings.Repeat(value, 3000)
+				} else if mode == "unsupported" {
+					value = "true"
+				}
+				result := sshmanager.CommandExecutionResult{
+					Stdout: value + ending, Output: value, Stderr: value,
+					Summary: "remote failure: " + value, Error: value,
+					Truncated: mode == "truncated", ExitCode: 1,
+				}
+				a.protectCredentialResult(&result, "cat /root/password.txt")
+				for _, field := range []string{result.Stdout, result.Output, result.Stderr, result.Summary, result.Error} {
+					if strings.Contains(field, value) {
+						t.Fatal("credential survived in a result field")
+					}
+					if mode != "captured" && strings.Contains(field, "secret://") {
+						t.Fatal("failed capture produced a usable reference")
+					}
+				}
+				if result.ExitCode != 1 || !strings.HasPrefix(result.Summary, "remote failure: ") {
+					t.Fatal("protection damaged execution status")
+				}
+				if mode == "captured" {
+					resolved, _, err := a.resolveCliSecretRefs(map[string]string{"PASSWORD": result.Stdout})
+					if err != nil || resolved["PASSWORD"] != value {
+						t.Fatal("successful capture lost the credential value")
+					}
+				} else if len(vault.values) != 0 {
+					t.Fatal("incomplete capture stored a credential")
+				}
+			})
+		}
+	}
+}
+
+func TestCredentialFileCaptureFailurePreservesIndividualMasksAcrossFields(t *testing.T) {
+	a, vault := contextProtectionTestApp(t)
+	vault.writeFail = true
+	result := sshmanager.CommandExecutionResult{
+		Stdout: "opaque-canary\nAPI_KEY=field-canary\n",
+		Stderr: "request failed for field-canary", Summary: "field-canary", Error: "field-canary",
+	}
+	a.protectCredentialResult(&result, "cat /root/password.txt")
+	if strings.Contains(result.Stderr+result.Summary+result.Error, "field-canary") {
+		t.Fatal("failed individual capture was forgotten between protection passes")
 	}
 }
 

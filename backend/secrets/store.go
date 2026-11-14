@@ -57,11 +57,7 @@ func (s *Store) SavePassword(profileID string, password string) error {
 	if password == "" {
 		return nil
 	}
-	err := s.credentials().Set(key(profileID, "password"), password)
-	if err != nil {
-		return s.saveFallback(profileID, "password", password)
-	}
-	return s.deleteFallbackKind(profileID, "password")
+	return s.saveProfileCredential(profileID, "password", password)
 }
 
 func (s *Store) SavePassphrase(profileID string, passphrase string) error {
@@ -70,11 +66,46 @@ func (s *Store) SavePassphrase(profileID string, passphrase string) error {
 	if passphrase == "" {
 		return nil
 	}
-	err := s.credentials().Set(key(profileID, "passphrase"), passphrase)
-	if err != nil {
-		return s.saveFallback(profileID, "passphrase", passphrase)
+	return s.saveProfileCredential(profileID, "passphrase", passphrase)
+}
+
+// Caller holds operationMu. Snapshot the native copy itself (which may differ
+// from the preferred fallback) so a failed cleanup restores both stores.
+func (s *Store) saveProfileCredential(profileID, kind, value string) error {
+	native := s.credentials()
+	id := key(profileID, kind)
+	previous, readErr := native.Get(id)
+	if readErr != nil && !errors.Is(readErr, keyring.ErrNotFound) {
+		// Without a snapshot we cannot undo a native write. Keep the new value
+		// in the encrypted fallback until the native store can be read again.
+		return s.saveFallback(profileID, kind, value)
 	}
-	return s.deleteFallbackKind(profileID, "passphrase")
+	s.mu.Lock()
+	s.fallbackData()
+	degraded := s.fallbackDegraded
+	s.mu.Unlock()
+	if degraded {
+		return errors.New("cannot update encrypted secret storage")
+	}
+	if err := native.Set(id, value); err != nil {
+		return s.saveFallback(profileID, kind, value)
+	}
+	if err := s.deleteFallbackKind(profileID, kind); err != nil {
+		var restoreErr error
+		if errors.Is(readErr, keyring.ErrNotFound) {
+			restoreErr = native.Delete(id)
+			if errors.Is(restoreErr, keyring.ErrNotFound) {
+				restoreErr = nil
+			}
+		} else {
+			restoreErr = native.Set(id, previous)
+		}
+		if restoreErr != nil {
+			return errors.Join(err, fmt.Errorf("restore previous native credential: %w", restoreErr))
+		}
+		return err
+	}
+	return nil
 }
 
 // SaveNamed stores an application-managed secret under an explicit namespace.

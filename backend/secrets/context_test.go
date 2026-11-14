@@ -112,6 +112,75 @@ func TestProtectContextKubernetesListsAndNestedSecrets(t *testing.T) {
 	}
 }
 
+func TestProtectContextKubernetesYAMLListsAndDocuments(t *testing.T) {
+	value := "yaml-kubernetes-canary"
+	encoded := base64.StdEncoding.EncodeToString([]byte(value))
+	secret := "apiVersion: v1\ndata:\n  opaque: " + encoded + "\nkind: Secret\nmetadata:\n  name: example\n"
+	list := "apiVersion: v1\nitems:\n- " + strings.ReplaceAll(strings.TrimSuffix(secret, "\n"), "\n", "\n  ") + "\nkind: List\n"
+	configMap := "apiVersion: v1\nkind: ConfigMap\ndata:\n  public: cHVibGlj\nmetadata:\n  revision: 9007199254740993\n"
+	for _, input := range []string{
+		list, strings.Replace(list, "kind: List", "kind: SecretList", 1),
+		"result:\n  " + strings.ReplaceAll(strings.TrimSuffix(secret, "\n"), "\n", "\n  "),
+		configMap + "---\n" + secret,
+		"kind: 'Secret'\nstringData:\n  opaque: |\n    " + value + "\n",
+		"{kind: \"Secret\", data: {opaque: " + encoded + "}}",
+		"payload: &payload\n  opaque: " + encoded + "\nkind: Secret\ndata: *payload\n",
+	} {
+		t.Run(input, func(t *testing.T) {
+			calls := 0
+			known := map[string]string{}
+			capture := func(label, raw string) (string, error) {
+				calls++
+				if raw != value && raw != value+"\n" {
+					t.Fatalf("stored transport encoding or lost multiline value: %q", raw)
+				}
+				return "secret://yaml-kube", nil
+			}
+			output := ProtectContext(input, known, capture)
+			if calls != 1 || strings.Contains(output, encoded) || strings.Contains(output, value) || !strings.Contains(output, "secret://yaml-kube") {
+				t.Fatalf("YAML Secret escaped protection: calls=%d output=%s", calls, output)
+			}
+			if strings.Contains(input, "ConfigMap") && (!strings.Contains(output, "cHVibGlj") || !strings.Contains(output, "9007199254740993")) {
+				t.Fatal("non-secret document or integer precision changed")
+			}
+			if again := ProtectContext(output, known, capture); again != output || calls != 1 {
+				t.Fatal("YAML protection changed an existing reference or recaptured it")
+			}
+			failed := ProtectContext(input, nil, func(string, string) (string, error) { return "", errors.New("storage unavailable") })
+			if strings.Contains(failed, encoded) || strings.Contains(failed, value) || strings.Contains(failed, "secret://") {
+				t.Fatal("failed YAML capture exposed a value or unusable reference")
+			}
+		})
+	}
+	if output := ProtectContext(configMap, nil, nil); output != configMap {
+		t.Fatal("unrelated YAML was reformatted or treated as a Secret")
+	}
+}
+
+func TestProtectContextMalformedKubernetesYAMLIsWithheld(t *testing.T) {
+	input := "kind: Secret\ndata:\n  opaque: malformed-canary\nitems: ["
+	output := ProtectContext(input, nil, func(string, string) (string, error) {
+		t.Fatal("malformed document must not produce a usable credential")
+		return "", nil
+	})
+	if strings.Contains(output, "canary") || !strings.Contains(output, "withheld") {
+		t.Fatalf("malformed Secret was not withheld: %s", output)
+	}
+}
+
+func TestProtectContextKubernetesYAMLScalarAliasDoesNotExposeAnchor(t *testing.T) {
+	input := "value: &value cGFzcw==\nkind: Secret\ndata:\n  opaque: *value\n"
+	output := ProtectContext(input, nil, func(label, value string) (string, error) {
+		if value != "pass" {
+			t.Fatalf("scalar alias did not decode its credential: %q", value)
+		}
+		return "secret://aliased-value", nil
+	})
+	if strings.Contains(output, "cGFzcw==") || strings.Contains(output, "pass") || !strings.Contains(output, "secret://aliased-value") {
+		t.Fatalf("alias anchor exposed its encoded credential: %s", output)
+	}
+}
+
 func TestProtectContextTruncatedQuotedPasswordIsMaskedWithoutCapture(t *testing.T) {
 	output := ProtectContext(`{"password":"unfinished-canary`, nil, func(string, string) (string, error) {
 		t.Fatal("incomplete value must not be saved as a usable credential")

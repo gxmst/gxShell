@@ -3,6 +3,26 @@
 All notable gxShell changes are documented here. Release notes are generated
 from the version section in this file.
 
+## [1.8.3] - 2026-11-14
+
+### English
+
+- Refresh the sidebar and tool panels with clearer spacing, theme contrast and an All/Favorites/Recent server picker with search. Preserve group folding while filtering, improve document layout, and support keyboard navigation in server and log tabs.
+- Reduce terminal reflow and repeated PTY updates during window and split resizing. Serialize slow resize calls and keep floating-terminal resizing working after parent renders, during initialization and after docking.
+- Harden Kubernetes Secret protection for escaped keys, aliases, merged mappings and unsupported containers; withhold malformed Secret YAML before capturing credentials. Protect complete credential-file results and apply temporary masks consistently across result fields.
+- Prefer the latest encrypted fallback credentials over stale native copies. Restore the previous native credential when fallback cleanup fails, preserving both stores across failed saves and restarts.
+- Cancel pending CLI transfer, tunnel and named-secret approvals with their caller, and recheck cancellation before execution. Improve AI risk explanations and individual critical-action approval; retain Gemini streamed text on truncation and reject invalid Anthropic tool indexes.
+- Validate restored AI protocol and endpoint settings, require safe HTTPS update links, and protect credentials in retry errors.
+
+### 中文
+
+- 调整侧栏及工具面板的间距和主题对比度；服务器列表支持「全部／收藏／最近」切换与搜索。筛选时保留分组折叠状态，优化文档布局，并补齐服务器和日志标签的键盘导航。
+- 减少窗体及分屏缩放时的终端重排和重复 PTY 更新，串行处理较慢的缩放请求；修复浮窗终端在父组件重渲染、初始化和停靠后的缩放响应。
+- 加固 Kubernetes Secret 的转义键、别名、合并映射和异常容器保护；破损的 Secret YAML 在捕获凭据前即停止输出。完整保护凭据文件结果，并在各结果字段统一应用临时遮蔽。
+- 凭据读取优先使用最新的加密回退值，避免旧原生副本覆盖新值；回退清理失败时恢复此前的原生凭据，保留保存失败和重启前后的存储状态。
+- CLI 文件传输、隧道和命名凭据的待审批请求随调用方取消，执行前再次检查取消状态。改善 AI 风险说明及高风险操作的逐项审批；Gemini 流截断时保留已收到文本，Anthropic 拒绝异常工具索引。
+- 验证备份恢复中的 AI 协议和服务地址，更新链接必须是安全的 HTTPS 地址，并保护重试错误中的凭据。
+
 ## [1.8.2] - 2026-11-11
 
 ### English
@@ -287,6 +307,7 @@ from the version section in this file.
 - 全局搜索覆盖连接、已打开标签、命令和工作区操作；终端搜索增加清晰的匹配计数与导航。
 - 工作区恢复改为显式开关，并增加顶层错误兜底、辅助功能和键盘交互改进。
 
+[1.8.3]: https://github.com/gxmst/gxShell/releases/tag/v1.8.3
 [1.6.0]: https://github.com/gxmst/gxShell/releases/tag/v1.6.0
 [1.5.6]: https://github.com/gxmst/gxShell/releases/tag/v1.5.6
 [1.5.4]: https://github.com/gxmst/gxShell/releases/tag/v1.5.4

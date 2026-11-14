@@ -7,6 +7,9 @@ credentials away from ordinary profile data and terminal input.
 
 - Saved SSH passwords, key passphrases, and AI API keys use the operating-system credential store when available.
 - The fallback store uses AES-256-GCM and wraps its key with Windows DPAPI.
+- Profile credential updates restore the previous native value if fallback
+  cleanup fails. A failed restoration is reported with the cleanup error; native
+  values are not overwritten when a rollback snapshot cannot be read.
 - Older plaintext profile secrets are migrated on startup and removed from normal profile JSON.
 - Named secrets are resolved only at the execution boundary and exact values are redacted from captured output.
 - Settings → Credential vault provides masked manual entry, metadata-only listing,
@@ -80,6 +83,17 @@ credentials away from ordinary profile data and terminal input.
   work through environment-binding execution. Saved SSH/jump passwords and named
   values are matched by value too. Automatic references persist until deleted;
   matching field names never authorize overwriting them.
+- Kubernetes Secret values are decoded and protected in JSON and YAML objects,
+  lists and multi-document output. YAML escapes, alias keys and merge keys are
+  resolved with explicit-field and merge-sequence precedence preserved;
+  invalid containers also mask external alias targets. Malformed recognized
+  Secret YAML, invalid/cyclic merges and excessive merge expansion are withheld.
+  A known credential-file `cat` returns a reference to the complete stdout,
+  even when only some fields have recognizable labels; individually recognized
+  credentials remain available in the local inventory. Truncated or unsupported
+  file output is masked rather than saved as a usable complete credential.
+  Capture failures retain temporary masks across all fields of the same result,
+  including copies with trailing line endings removed.
 - Every built-in provider request passes the local credential boundary, including
   pinned inspection requests, history, terminal context and tool arguments. This
   protection occurs before history clipping. Failed capture masks the value; an

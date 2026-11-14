@@ -7,19 +7,19 @@
   min-height: 0;
   overflow: hidden;
   flex-direction: column;
-  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-  border-radius: 13px;
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 11px;
   background: var(--panel-raised);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-sm);
 }
 
 .sftp-browser-header {
   position: relative;
   z-index: 2;
   flex: 0 0 auto;
-  padding: 9px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-  background: var(--panel-soft);
+  padding: 9px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+  background: color-mix(in srgb, var(--panel-soft) 72%, var(--panel-raised));
 }
 
 .sftp-browser-topline {

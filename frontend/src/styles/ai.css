@@ -54,9 +54,35 @@
   border-bottom: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
 }
 
-.ai-mode-tabs { display: flex; width: 100%; gap: 4px; }
-.ai-mode-tabs button { flex: 1; padding: 6px; color: var(--muted); font-size: 11px; border-radius: var(--radius-sm); }
-.ai-mode-tabs button[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+.ai-mode-tabs {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  width: 100%;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: 9px;
+  background: var(--panel-soft);
+}
+.ai-mode-tabs button {
+  height: 25px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  border-radius: 6px;
+  transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.ai-mode-tabs button:hover { color: var(--text); }
+.ai-mode-tabs button[aria-selected="true"] {
+  background: var(--panel-raised);
+  border-color: color-mix(in srgb, var(--border-strong) 78%, transparent);
+  color: var(--accent);
+  box-shadow: var(--shadow-sm);
+  font-weight: 680;
+}
 .ai-inspection-panel { min-height: 0; overflow: auto; flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 12px 4px; font-size: 11px; }
 .inspection-mode-controls { display: flex; gap: 6px; padding: 8px 4px 0; }
 .inspection-mode-controls button { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); }
@@ -207,11 +233,14 @@
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 5px;
-  padding: 5px 3px 4px;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 5px 8px;
   color: var(--muted);
-  font-size: 9px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 56%, transparent);
+  font-size: 9.5px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 8px;
+  background: var(--panel-raised);
 }
 
 .ai-target-bar.connected > svg {
@@ -324,8 +353,8 @@
 }
 
 .ai-msg-assistant .ai-msg-content {
-  background: color-mix(in srgb, var(--panel-raised) 58%, transparent);
-  border: 1px solid var(--border);
+  background: var(--panel-raised);
+  border: 1px solid color-mix(in srgb, var(--border) 88%, transparent);
   border-radius: 12px 12px 12px 3px;
   padding: 7px 11px;
   max-width: 90%;
@@ -365,7 +394,7 @@
   resize: none;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  background: var(--panel-raised);
   padding: 7px 9px;
   font-size: var(--text-sm);
   color: var(--text);

@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { types } from "../../../wailsjs/go/models";
 import { Sidebar } from "./Sidebar";
 
@@ -99,6 +99,14 @@ function renderSidebar(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
 }
 
 describe("Sidebar shell", () => {
+  beforeEach(() => {
+    const storage = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+    });
+  });
+  afterEach(() => vi.unstubAllGlobals());
   // Regression guard for a refactor that deleted the CSS of the brand row, the
   // nav pill strip and the group tabs while the markup still rendered them. The
   // rail is now the single navigation surface, so those nodes must be gone.
@@ -137,28 +145,63 @@ describe("Sidebar shell", () => {
     expect(props.setCollapsed).toHaveBeenCalledWith(false);
   });
 
-  it("lists every profile under its group with favorites as a shortcut section", () => {
+  it("lists profiles by group without duplicating favorites or recents and switches segments cleanly", () => {
     const { container } = renderSidebar();
 
     expect(screen.getByText("Servers")).toBeInTheDocument();
     expect(container.querySelector(".panel-head-count")?.textContent).toBe("3");
 
+    const addButton = screen.getByRole("button", { name: "New connection" });
+    expect(addButton).toHaveClass("panel-head-icon-only");
+    expect(addButton.textContent).toBe("");
+
     const headings = Array.from(container.querySelectorAll(".srv-group-head"))
       .map((node) => node.querySelector(".srv-group-title")?.textContent);
-    expect(headings).toEqual(["Favorites", "Recent", "Prod", "Default"]);
+    expect(headings).toEqual(["Prod", "Default"]);
 
-    // Recent starts folded because its rows are duplicates of the group rows.
-    const recent = container.querySelectorAll(".srv-group")[1];
-    expect(recent.querySelectorAll(".server-row")).toHaveLength(0);
-
-    // web-1 shows twice: once as a favorite, once under Prod.
-    expect(screen.getAllByText("web-1")).toHaveLength(2);
+    // No duplicate shortcut rows when viewing All.
+    expect(screen.getAllByText("web-1")).toHaveLength(1);
     expect(screen.getAllByText("web-2")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Favorites" }));
+    expect(container.querySelectorAll(".srv-group")).toHaveLength(0);
+    expect(screen.getAllByText("web-1")).toHaveLength(1);
+    expect(screen.queryByText("web-2")).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "Recent" }));
+    expect(screen.getAllByText("web-1")).toHaveLength(1);
+    expect(screen.queryByText("scratch")).toBeNull();
+
+    fireEvent.click(screen.getByRole("tab", { name: "All" }));
+    expect(screen.getByText("web-2")).toBeInTheDocument();
+  });
+
+  it("filters servers inline across folded groups and highlights the active row", () => {
+    const { container } = renderSidebar({
+      active: { id: "session-1", profileId: "web-1", title: "web-1", state: "connected", type: "ssh" },
+    });
+
+    const activeRow = container.querySelector(".server-row-active");
+    expect(activeRow?.textContent).toContain("web-1");
+
+    const prodHeader = container.querySelectorAll(".srv-group-head")[0] as HTMLElement;
+    fireEvent.click(prodHeader);
+    expect(screen.queryByText("web-2")).toBeNull();
+
+    const filterInput = screen.getByLabelText("Filter servers");
+    fireEvent.change(filterInput, { target: { value: "web-2" } });
+    expect(screen.getByText("web-2")).toBeInTheDocument();
+    expect(screen.queryByText("scratch")).toBeNull();
+
+    fireEvent.change(filterInput, { target: { value: "not-found" } });
+    expect(screen.getByText("No matching servers.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filter" }));
+    expect(screen.getByText("scratch")).toBeInTheDocument();
   });
 
   it("folds and unfolds a group from its sticky header", () => {
     const { container } = renderSidebar();
-    const prod = container.querySelectorAll(".srv-group")[2];
+    const prod = container.querySelectorAll(".srv-group")[0];
     const header = prod.querySelector(".srv-group-head") as HTMLElement;
 
     expect(prod.querySelectorAll(".server-row")).toHaveLength(2);
@@ -170,6 +213,50 @@ describe("Sidebar shell", () => {
 
     fireEvent.click(header);
     expect(prod.querySelectorAll(".server-row")).toHaveLength(2);
+  });
+
+  it("preserves saved group folds while filtering temporarily expands matches", () => {
+    const { container } = renderSidebar();
+    const header = container.querySelector(".srv-group-head") as HTMLButtonElement;
+    fireEvent.click(header);
+    const savedFold = localStorage.getItem("gx:foldedServerGroups");
+    expect(savedFold).toContain("group:Prod");
+    const filter = screen.getByLabelText("Filter servers");
+    fireEvent.change(filter, { target: { value: "web" } });
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    expect(header).toBeDisabled();
+    fireEvent.click(header);
+    expect(screen.getByText("web-2")).toBeInTheDocument();
+    expect(localStorage.getItem("gx:foldedServerGroups")).toBe(savedFold);
+    fireEvent.change(filter, { target: { value: "" } });
+    expect(header).not.toBeDisabled();
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("web-2")).toBeNull();
+  });
+
+  it("switches server tabs from the keyboard and labels the visible panel", () => {
+    renderSidebar();
+    const all = screen.getByRole("tab", { name: "All" });
+    const favorites = screen.getByRole("tab", { name: "Favorites" });
+    const recent = screen.getByRole("tab", { name: "Recent" });
+    all.focus();
+    fireEvent.keyDown(all, { key: "ArrowRight" });
+    expect(favorites).toHaveFocus();
+    expect(favorites).toHaveAttribute("aria-selected", "true");
+    expect(all.tabIndex).toBe(-1);
+    expect(favorites.tabIndex).toBe(0);
+    const panel = screen.getByRole("tabpanel", { name: "Favorites" });
+    expect(panel.id).toBe(favorites.getAttribute("aria-controls"));
+    expect(within(panel).getByText("web-1")).toBeInTheDocument();
+    expect(within(panel).queryByText("web-2")).toBeNull();
+    fireEvent.keyDown(favorites, { key: "End" });
+    expect(recent).toHaveFocus();
+    fireEvent.keyDown(recent, { key: "ArrowRight" });
+    expect(all).toHaveFocus();
+    fireEvent.keyDown(all, { key: "ArrowLeft" });
+    expect(recent).toHaveFocus();
+    fireEvent.keyDown(recent, { key: "Home" });
+    expect(all).toHaveFocus();
   });
 
   it("keeps the monitor summary inside the current-server block when folded", () => {

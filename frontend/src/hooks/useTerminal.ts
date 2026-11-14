@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, type MutableRefObject } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, type MutableRefObject } from "react";
 import { Terminal, type IDecoration } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -20,6 +20,7 @@ import { parseOsc7Directory, type TerminalDirectory } from "../utils/terminalCwd
 import { splitTerminalInput, terminalCompatibilityKey, terminalKeyData, type TerminalCompatibilityKey } from "../utils/terminalInput";
 import { createWebglBudget, notifyWebglOnce } from "../utils/terminalWebgl";
 import { isImeComposing } from "../utils/ime";
+import { createTerminalResizeScheduler } from "../utils/terminalResize";
 
 const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 // requestAnimationFrame does not fire while the window is minimized/hidden in
@@ -28,7 +29,6 @@ const MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
 // internally, which is safe while hidden) so the queue cannot grow unbounded.
 const MAX_PENDING_OUTPUT_BYTES = 256 * 1024;
 const MAX_COMMAND_BUFFER_CHARS = 8192;
-const RESIZE_SETTLE_MS = 80;
 const MAX_HIGHLIGHT_DECORATIONS = 800;
 
 export type AppContextMenu = {
@@ -93,9 +93,8 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const cleanupFns = useRef<Record<string, () => void>>({});
   const cmdBuffer = useRef<Record<string, string>>({});
   const lastDimensions = useRef<Record<string, { cols: number; rows: number }>>({});
+  const [, renderDimensions] = useReducer((revision: number) => revision + 1, 0);
   const currentDirectories = useRef<Record<string, TerminalDirectory>>({});
-  const pendingFitFrames = useRef<Record<string, number>>({});
-  const pendingResizeTimers = useRef<Record<string, number>>({});
   const pendingOutput = useRef<Record<string, string[]>>({});
   const pendingOutputSizes = useRef<Record<string, number>>({});
   const pendingWriteFrames = useRef<Record<string, number>>({});
@@ -106,7 +105,6 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const lastInputErrorAt = useRef<Record<string, number>>({});
   const lastHostSize = useRef<Record<string, string>>({});
   const throughputRef = useRef<Record<string, number>>({});
-  const refitTimers = useRef<Record<string, number>>({});
   const linkProviders = useRef<Record<string, { dispose: () => void }>>({});
   const highlightDecorations = useRef<Record<string, IDecoration[]>>({});
   const pendingHighlightFrames = useRef<Record<string, number>>({});
@@ -295,10 +293,82 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     }
   }, [detachWebgl, notifyWebglProblem]);
 
-  // refitTerminal is defined further down with a stable identity, and this is
-  // how it reaches back without taking a dependency that would change it.
+  // Keep explicit refits stable while allowing them to recover the current renderer.
   const attachWebglRef = useRef(attachWebgl);
   attachWebglRef.current = attachWebgl;
+
+  const resizeScheduler = useRef<ReturnType<typeof createTerminalResizeScheduler> | null>(null);
+  const resizeLive = useRef(true);
+  if (!resizeScheduler.current) {
+    resizeScheduler.current = createTerminalResizeScheduler({
+      fit: (id) => {
+        const fit = fits.current[id];
+        const term = terminals.current[id];
+        const host = terminalHosts.current[id];
+        if (!fit || !term || !host || host.clientWidth <= 0 || host.clientHeight <= 0 || host.classList.contains("terminal-hidden")) return null;
+        fit.fit();
+        const dimensions = { cols: term.cols, rows: term.rows };
+        if (!Number.isInteger(dimensions.cols) || !Number.isInteger(dimensions.rows) || dimensions.cols <= 0 || dimensions.rows <= 0) return null;
+        const previous = lastDimensions.current[id];
+        if (previous?.cols !== dimensions.cols || previous?.rows !== dimensions.rows) {
+          lastDimensions.current[id] = dimensions;
+          // Fits settle after the last window resize render. Refresh the grid
+          // readout now instead of leaving the status bar at the old dimensions.
+          renderDimensions();
+        }
+        return dimensions;
+      },
+      resize: (id, { cols, rows }) => ResizeTerminal(id, cols, rows),
+    });
+  }
+
+  const refitTerminal = useCallback((id: string) => {
+    if (!resizeLive.current) return;
+    const term = terminals.current[id];
+    const host = terminalHosts.current[id];
+    if (!term || !host) return;
+    if (host.clientWidth > 0 && host.clientHeight > 0 && !host.classList.contains("terminal-hidden") && webglBudget.current.wantsWebgl(id)) {
+      attachWebglRef.current(id, term);
+    }
+    resizeScheduler.current?.request(id, true);
+  }, []);
+
+  const observeTerminalHost = useCallback((id: string, host: HTMLDivElement) => {
+    cleanupFns.current[id]?.();
+    const resize = () => {
+      if (observers.current[id] !== observer || terminalHosts.current[id] !== host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
+      const key = `${host.clientWidth}x${host.clientHeight}`;
+      if (lastHostSize.current[id] === key) return;
+      lastHostSize.current[id] = key;
+      resizeScheduler.current?.request(id);
+    };
+    lastHostSize.current[id] = `${host.clientWidth}x${host.clientHeight}`;
+    const observer = new ResizeObserver(resize);
+    observer.observe(host);
+    observers.current[id] = observer;
+    const cleanup = () => {
+      observer.disconnect();
+      if (observers.current[id] === observer) {
+        resizeScheduler.current?.cancel(id);
+        delete observers.current[id];
+        delete cleanupFns.current[id];
+        delete lastHostSize.current[id];
+      }
+    };
+    cleanupFns.current[id] = cleanup;
+    return cleanup;
+  }, []);
+
+  useEffect(() => {
+    resizeLive.current = true;
+    const scheduler = resizeScheduler.current;
+    const cleanupMap = cleanupFns.current;
+    return () => {
+      resizeLive.current = false;
+      Object.values(cleanupMap).forEach((cleanup) => cleanup());
+      scheduler?.disposeAll();
+    };
+  }, []);
 
   useEffect(() => {
     if (!activeTab || !activeIsTerminal || !settingsRef.current) return;
@@ -307,46 +377,6 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       if (!settingsRef.current) return;
       const host = terminalHosts.current[activeTab];
       if (!host) return;
-
-      // These three refs hold the per-session maps for the lifetime of the hook:
-      // nothing reassigns .current, only mutates the map in place. Capturing them
-      // here states that invariant instead of relying on it, and it is what
-      // exhaustive-deps wants to see for refs touched from the cleanup below.
-      const observerMap = observers.current;
-      const cleanupMap = cleanupFns.current;
-
-      // Disconnect any observer left by reattachTerminal before setting up our own
-      observerMap[activeTab]?.disconnect();
-      delete observerMap[activeTab];
-
-      const fitAndResize = () => {
-        if (pendingFitFrames.current[activeTab]) return;
-        pendingFitFrames.current[activeTab] = window.requestAnimationFrame(() => {
-          delete pendingFitFrames.current[activeTab];
-          try {
-            if (!host || host.clientWidth <= 0 || host.clientHeight <= 0) return;
-            const fit = fits.current[activeTab];
-            const term = terminals.current[activeTab];
-            if (!fit || !term) return;
-
-            fit.fit();
-            const { cols, rows } = term;
-
-            const prev = lastDimensions.current[activeTab];
-            if (prev && prev.cols === cols && prev.rows === rows) return;
-
-            lastDimensions.current[activeTab] = { cols, rows };
-            window.clearTimeout(pendingResizeTimers.current[activeTab]);
-            pendingResizeTimers.current[activeTab] = window.setTimeout(() => {
-              delete pendingResizeTimers.current[activeTab];
-              ResizeTerminal(activeTab, cols, rows).catch(() => {
-                delete lastDimensions.current[activeTab];
-              });
-            }, RESIZE_SETTLE_MS);
-          } catch {
-          }
-        });
-      };
 
       if (terminals.current[activeTab]) {
         // Coming back to a live terminal is the moment it becomes the one on
@@ -360,7 +390,6 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         if (webglBudget.current.wantsWebgl(activeTab)) {
           attachWebgl(activeTab, terminals.current[activeTab]);
         }
-        fitAndResize();
       } else {
         const s = { ...settingsRef.current, terminal: overridesRef.current?.[activeTab] || settingsRef.current.terminal };
         host.style.setProperty("--terminal", getTerminalTheme(s).background);
@@ -593,40 +622,17 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         delete bufferedOutputSizes.current[activeTab];
         delete bufferedOutputDropped.current[activeTab];
 
-        fitAndResize();
       }
-
-      const resize = () => {
-        const h = terminalHosts.current[activeTab];
-        if (!h || h.clientWidth <= 0 || h.clientHeight <= 0) return;
-        const key = `${h.clientWidth}x${h.clientHeight}`;
-        if (lastHostSize.current[activeTab] === key) return;
-        lastHostSize.current[activeTab] = key;
-        fitAndResize();
-      };
-      const observer = new ResizeObserver(resize);
-      observer.observe(host);
-      observerMap[activeTab] = observer;
-      window.addEventListener("resize", resize);
-
-      cleanupMap[activeTab] = () => {
-        observer.disconnect();
-        window.removeEventListener("resize", resize);
-      };
-
-      return () => {
-        observer.disconnect();
-        window.removeEventListener("resize", resize);
-        delete observerMap[activeTab];
-        delete cleanupMap[activeTab];
-      };
+      const cleanup = observeTerminalHost(activeTab, host);
+      refitTerminal(activeTab);
+      return cleanup;
     };
     const panes = splitPaneIds(splitPane);
     const ids = panes.includes(activeTab) ? panes : [activeTab];
     const cleanups = ids.map(attach);
     return () => cleanups.forEach((cleanup) => cleanup?.());
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, activeIsTerminal, enqueueTerminalInput, settingsReady, scheduleDisplayHighlights, splitPane, attachWebgl]);
+  }, [activeTab, activeIsTerminal, enqueueTerminalInput, settingsReady, scheduleDisplayHighlights, splitPane, attachWebgl, observeTerminalHost, refitTerminal]);
 
   const flushPendingOutput = useCallback((sessionId: string) => {
     const chunks = pendingOutput.current[sessionId];
@@ -686,10 +692,10 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   }, [flushPendingOutput]);
 
   const disposeTerminal = useCallback((id: string) => {
-    observers.current[id]?.disconnect();
-    delete observers.current[id];
     cleanupFns.current[id]?.();
     delete cleanupFns.current[id];
+    observers.current[id]?.disconnect();
+    delete observers.current[id];
     linkProviders.current[id]?.dispose();
     delete linkProviders.current[id];
     clearHighlightDecorations(id);
@@ -697,11 +703,9 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     detachWebgl(id);
     webglBudget.current.forget(id);
     terminals.current[id]?.dispose();
-    if (pendingFitFrames.current[id]) window.cancelAnimationFrame(pendingFitFrames.current[id]);
+    resizeScheduler.current?.dispose(id);
     if (pendingWriteFrames.current[id]) window.cancelAnimationFrame(pendingWriteFrames.current[id]);
-    window.clearTimeout(pendingResizeTimers.current[id]);
     window.clearTimeout(pendingInputTimers.current[id]);
-    window.clearTimeout(refitTimers.current[id]);
     delete terminals.current[id];
     delete fits.current[id];
     delete searches.current[id];
@@ -710,9 +714,6 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     delete bufferedOutputDropped.current[id];
     delete pendingOutput.current[id];
     delete pendingOutputSizes.current[id];
-    delete pendingResizeTimers.current[id];
-    delete refitTimers.current[id];
-    delete pendingFitFrames.current[id];
     delete pendingWriteFrames.current[id];
     delete pendingHighlightFrames.current[id];
     delete pendingInput.current[id];
@@ -738,38 +739,6 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   const findPrev = useCallback((id: string, query: string) => {
     if (!id || !query) return;
     searches.current[id]?.findPrevious(query, { decorations: SEARCH_DECORATIONS });
-  }, []);
-
-  const refitTerminal = useCallback((id: string, _depth = 0) => {
-    const fit = fits.current[id];
-    const term = terminals.current[id];
-    const host = terminalHosts.current[id];
-    if (!fit || !term || !host) return;
-    if (host.clientWidth <= 0 || host.clientHeight <= 0) {
-      if (_depth < 5) {
-        window.clearTimeout(refitTimers.current[id]);
-        refitTimers.current[id] = window.setTimeout(() => refitTerminal(id, _depth + 1), 80);
-      }
-      return;
-    }
-    window.clearTimeout(refitTimers.current[id]);
-    // A real size means the terminal is on screen again, which is the moment to
-    // hand back a context the budget or the browser took away.
-    if (webglBudget.current.wantsWebgl(id)) attachWebglRef.current(id, term);
-    refitTimers.current[id] = window.setTimeout(() => {
-      delete refitTimers.current[id];
-      try {
-        fit.fit();
-        const { cols, rows } = term;
-        const prev = lastDimensions.current[id];
-        if (!prev || prev.cols !== cols || prev.rows !== rows) {
-          lastDimensions.current[id] = { cols, rows };
-          ResizeTerminal(id, cols, rows).catch(() => {
-            delete lastDimensions.current[id];
-          });
-        }
-      } catch {}
-    }, 80);
   }, []);
 
   const applyRuntimeFontSize = useCallback((value: number) => {
@@ -851,30 +820,9 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     newHost.style.setProperty("--terminal", term.options.theme?.background || "");
     newHost.style.backgroundColor = "var(--terminal)";
 
-    // Setup ResizeObserver for the new host
-    if (observers.current[id]) {
-      observers.current[id].disconnect();
-    }
-    const resize = () => {
-      if (!newHost || newHost.clientWidth <= 0 || newHost.clientHeight <= 0) return;
-      refitTerminal(id);
-    };
-    const observer = new ResizeObserver(resize);
-    observer.observe(newHost);
-    observers.current[id] = observer;
-
-    const oldCleanup = cleanupFns.current[id];
-    cleanupFns.current[id] = () => {
-      oldCleanup?.();
-      observer.disconnect();
-      delete observers.current[id];
-    };
-
-    // Delayed refit: wait for the container to get real dimensions after React layout.
-    requestAnimationFrame(() => {
-      setTimeout(() => refitTerminal(id), 80);
-    });
-  }, [refitTerminal]);
+    observeTerminalHost(id, newHost);
+    refitTerminal(id);
+  }, [observeTerminalHost, refitTerminal]);
 
   const focusTerminal = useCallback((id: string) => {
     if (!hasActiveOverlay()) terminals.current[id]?.focus();

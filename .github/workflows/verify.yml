@@ -2,6 +2,10 @@ name: verify
 
 on:
   push:
+    # Release tags run the complete checks in release.yml; avoid spending a
+    # second Windows runner on the same tag. Branch pushes still verify first.
+    branches:
+      - '**'
   pull_request:
   workflow_dispatch:
     inputs:

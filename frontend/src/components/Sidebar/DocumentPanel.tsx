@@ -87,7 +87,7 @@ export function DocumentPanel({ active, siblings, busy, error, recent, collapsed
       <span className="panel-head-spacer" />
       <button className="icon-btn" disabled={!path} title={t(language, "revealCurrentDocument")} aria-label={t(language, "revealCurrentDocument")} onClick={revealCurrent}><LocateFixed size={14} /></button>
       <button className="icon-btn" disabled={!path || busy} title={t(language, "refreshDocumentFolder")} aria-label={t(language, "refreshDocumentFolder")} onClick={onRefresh}><RefreshCw size={14} className={busy ? "animate-spin" : undefined} /></button>
-      <button className="btn-primary panel-head-primary" onClick={onPick} title={t(language, "openDocument")}><Plus size={13} />{t(language, "open")}</button>
+      <button type="button" className="btn-primary panel-head-primary panel-head-icon-only" onClick={onPick} aria-label={t(language, "openDocument")} title={t(language, "openDocument")}><Plus size={15} strokeWidth={2.25} /></button>
     </div>
     {path ? <>
       <div className="document-folder" title={folder}>
@@ -96,7 +96,7 @@ export function DocumentPanel({ active, siblings, busy, error, recent, collapsed
         <span className="document-source" title={remote ? host : undefined}>{t(language, remote ? "remote" : "local")}</span>
       </div>
       {remote && host && <div className="document-host" title={host}>{host}</div>}
-      {(filesOpen || !hasOutline) && <label className="document-filter"><Search size={13} /><input value={query} onChange={(event) => setFilter({ folder: folderKey, query: event.target.value })} aria-label={t(language, "filterDocumentFiles")} placeholder={t(language, "filterDocumentFiles")} />{query && <button type="button" onClick={() => setFilter({ folder: folderKey, query: "" })} aria-label={t(language, "clearDocumentFilter")}><X size={12} /></button>}</label>}
+      {(filesOpen || !hasOutline) && <label className="sidebar-filter document-filter"><Search size={13} /><input value={query} onChange={(event) => setFilter({ folder: folderKey, query: event.target.value })} aria-label={t(language, "filterDocumentFiles")} placeholder={t(language, "filterDocumentFiles")} />{query && <button type="button" onClick={() => setFilter({ folder: folderKey, query: "" })} aria-label={t(language, "clearDocumentFilter")}><X size={12} /></button>}</label>}
       <section className={clsx("document-files text-file-section-current", hasOutline && "document-files-with-outline", hasOutline && !filesOpen && "document-files-folded")} aria-label={t(language, "siblingDocuments")} aria-busy={!!busy}>
         <button className="document-section-title document-section-toggle" disabled={!hasOutline} aria-expanded={filesOpen || !hasOutline} onClick={() => setFilesOpen((open) => !open)}>
           {hasOutline && <ChevronRight size={12} className={filesOpen ? "document-chevron-open" : undefined} />}<span>{t(language, "siblingDocuments")}</span><span>{files.length}{query ? ` / ${siblings.length}` : ""}</span>

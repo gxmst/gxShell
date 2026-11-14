@@ -1,12 +1,13 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { ArrowUpRight, Bot, ChevronDown, ChevronRight, Edit3, FileText, Folder, FolderOpen, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Play, Plus, Search, Server, Settings, Star, Trash2, Zap } from "lucide-react";
+import { ArrowUpRight, Bot, ChevronDown, ChevronRight, Clock, Edit3, FileText, Folder, FolderOpen, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Play, Plus, Search, Server, Settings, Star, Trash2, X, Zap } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { TraceRoute, PingHost, UpdateSettings } from "../../../wailsjs/go/app/App";
 import type { AutomationActivityRecord, AutomationIndicator, Drawer, RecentMarkdownItem, Tab, Toast } from "../../types";
 import type { AppContextMenu } from "../../hooks/useTerminal";
 import { drawerIcon } from "../../constants";
 import { stateClass } from "../../utils/format";
+import { handleTabKeyDown } from "../../utils/tabNavigation";
 import { t, navLabel } from "../../i18n";
 import { DocumentPanel } from "./DocumentPanel";
 import type { DocumentOutline } from "../../utils/documentPresentation";
@@ -20,6 +21,7 @@ import { detectServerOs, type ServerOsType } from "../../utils/serverOs";
 
 type FloatKey = "path" | "memory" | MonitorDetailKind;
 type PrimaryNav = "connections" | "files" | "documents" | "tools";
+type ServerSegment = "all" | "favorites" | "recent";
 
 // Tool drawers are not part of the terminal startup path. Loading them on first
 // use keeps the initial WebView bundle smaller without changing navigation.
@@ -44,7 +46,7 @@ const toolDrawers: Drawer[] = ["commands", "tunnels", "containers", "services", 
 
 const FOLDED_GROUPS_KEY = "gx:foldedServerGroups";
 const MONITOR_COLLAPSED_KEY = "gx:monitorCollapsed";
-const RECENT_SECTION_LIMIT = 8;
+const RECENT_SECTION_LIMIT = 24;
 
 function primaryForDrawer(drawer: Drawer): PrimaryNav | "ai" | "settings" {
   if (drawer === "monitor") return "connections";
@@ -128,24 +130,25 @@ export function Sidebar(props: {
   automationByProfile?: Record<string, AutomationIndicator>;
 }) {
   const lang = props.settings?.language || "en";
-  const [splitPct, setSplitPct] = useState(45);
+  const [splitPct, setSplitPct] = useState(56);
+  const [serverSegment, setServerSegment] = useState<ServerSegment>("all");
+  const serverTabsId = useId();
+  const [filterQuery, setFilterQuery] = useState("");
   const dragRef = useRef({ active: false, startY: 0, startPct: 0 });
   const splitRef = useRef(splitPct);
   splitRef.current = splitPct;
 
   const [floats, setFloats] = useState<Record<FloatKey, boolean>>({ path: false, memory: false, cpu: false, disk: false, network: false });
 
-  // Folded server sections, persisted so the list looks the same next launch.
-  // Recent is folded by default: it is a shortcut whose rows also appear under
-  // their own group, so opening it duplicates them.
+  // Folded server groups, persisted across launches.
   const [foldedGroups, setFoldedGroups] = useState<Set<string>>(() => {
     try {
       const parsed: unknown = JSON.parse(localStorage.getItem(FOLDED_GROUPS_KEY) || "null");
       if (Array.isArray(parsed)) return new Set(parsed.filter((item): item is string => typeof item === "string"));
     } catch {
-      /* unreadable storage falls back to the default fold */
+      /* unreadable storage falls back to expanded groups */
     }
-    return new Set(["__recent__"]);
+    return new Set();
   });
   const [monitorCollapsed, setMonitorCollapsed] = useState<boolean>(() => {
     try {
@@ -198,30 +201,27 @@ export function Sidebar(props: {
     return Number.isFinite(value) && value > Date.UTC(1970, 0, 1) ? value : 0;
   }, []);
 
-  // Sections of the server list. Favorites and recent are shortcuts at the top;
-  // every profile also appears under its own group, so the list is never a
-  // filtered view the user has to reset to see everything.
-  const serverSections = useMemo(() => {
-    const sections: Array<{ key: string; label: string; profiles: types.Profile[] }> = [];
-    const favorites = props.profiles.filter((profile) => profile.favorite);
-    if (favorites.length) sections.push({ key: "__favorites__", label: t(lang, "favorites"), profiles: favorites });
-    const recent = props.profiles
-      .filter((profile) => lastConnectedValue(profile) > 0)
-      .sort((left, right) => lastConnectedValue(right) - lastConnectedValue(left))
-      .slice(0, RECENT_SECTION_LIMIT);
-    if (recent.length) sections.push({ key: "__recent__", label: t(lang, "recentConnections"), profiles: recent });
+  const normalizedQuery = filterQuery.trim().toLowerCase();
 
+  const matchesServerFilter = useCallback((profile: types.Profile) => {
+    if (!normalizedQuery) return true;
+    const fields = [profile.name, profile.host, profile.username, profile.group, String(profile.port || "")];
+    return fields.some((field) => (field || "").toLowerCase().includes(normalizedQuery));
+  }, [normalizedQuery]);
+
+  // Grouped server list ("All" segment): no duplicate Favorites/Recent blocks above groups.
+  const groupedSections = useMemo(() => {
     const byGroup = new Map<string, types.Profile[]>();
-    props.profiles.forEach((profile) => {
+    props.profiles.filter(matchesServerFilter).forEach((profile) => {
       const key = profile.group || "";
       const existing = byGroup.get(key);
       if (existing) existing.push(profile);
       else byGroup.set(key, [profile]);
     });
     // Named groups alphabetically; the unnamed default group sorts last.
-    Array.from(byGroup.keys())
+    return Array.from(byGroup.keys())
       .sort((left, right) => (left === "" ? 1 : right === "" ? -1 : left.localeCompare(right)))
-      .forEach((key) => sections.push({
+      .map((key) => ({
         key: `group:${key}`,
         label: key || t(lang, "defaultGroup"),
         profiles: (byGroup.get(key) || []).slice().sort((left, right) => (
@@ -229,8 +229,23 @@ export function Sidebar(props: {
           || (left.name || left.host).localeCompare(right.name || right.host)
         )),
       }));
-    return sections;
-  }, [lang, lastConnectedValue, props.profiles]);
+  }, [lang, matchesServerFilter, props.profiles]);
+
+  const favoriteProfiles = useMemo(
+    () => props.profiles
+      .filter((profile) => profile.favorite && matchesServerFilter(profile))
+      .slice()
+      .sort((left, right) => (left.name || left.host).localeCompare(right.name || right.host)),
+    [matchesServerFilter, props.profiles],
+  );
+
+  const recentProfiles = useMemo(
+    () => props.profiles
+      .filter((profile) => lastConnectedValue(profile) > 0 && matchesServerFilter(profile))
+      .sort((left, right) => lastConnectedValue(right) - lastConnectedValue(left))
+      .slice(0, RECENT_SECTION_LIMIT),
+    [lastConnectedValue, matchesServerFilter, props.profiles],
+  );
 
   const toggleGroup = useCallback((key: string) => {
     setFoldedGroups((previous) => {
@@ -349,11 +364,11 @@ export function Sidebar(props: {
     });
   };
 
-  // One server row. Extracted because a profile now renders in more than one
-  // section (favorites and recent are shortcuts into the same list).
   const renderServerRow = (profile: types.Profile) => {
     const automation = props.automationByProfile?.[profile.id];
     const session = props.profileStates?.[profile.id];
+    const isActiveTab = !!props.active && !props.active.local && props.active.profileId === profile.id;
+    const isConnected = session?.state === "connected";
     const osType = detectServerOs(profile, props.detectedOsMap?.[profile.id]);
     const statusLabel = session?.state === "connected"
       ? t(lang, "serverStatusConnected")
@@ -371,7 +386,7 @@ export function Sidebar(props: {
     return (
       <div
         key={profile.id}
-        className={clsx("server-row group", automation && "server-row-automation")}
+        className={clsx("server-row group", isActiveTab && "server-row-active", isConnected && "server-row-connected", automation && "server-row-automation")}
         title={`${profile.name ? `${profile.name}
 ` : ""}${fullTarget} (${statusLabel})`}
       >
@@ -465,6 +480,7 @@ export function Sidebar(props: {
           </button>
         ))}
         <span className="rail-spacer" />
+        <span className="rail-divider" aria-hidden="true" />
         <button
           type="button"
           className={clsx("rail-btn", props.drawer === "ai" && "rail-btn-active")}
@@ -504,16 +520,62 @@ export function Sidebar(props: {
       >
         {activePrimary === "connections" && (
           <>
-            <div className="panel-head">
-              <span className="panel-head-title">{t(lang, "servers")}</span>
-              <span className="panel-head-count">{props.profiles.length}</span>
-              <span className="panel-head-spacer" />
-              <button type="button" className="icon-btn" onClick={props.onQuickConnect} aria-label={t(lang, "quickConnect")} title={t(lang, "quickConnect")}><Zap size={14} /></button>
-              <button type="button" className="icon-btn" onClick={props.onOpenSearch} aria-label={t(lang, "search")} title={t(lang, "search")}><Search size={14} /></button>
-              <button type="button" className="icon-btn" onClick={openProfileTools} aria-label={t(lang, "profileTools")} title={t(lang, "profileTools")}><MoreHorizontal size={14} /></button>
-              <button type="button" className="btn-primary panel-head-primary" onClick={props.onNewProfile} title={t(lang, "newConnection")}><Plus size={13} /> {t(lang, "new")}</button>
+            <div className="side-panel-top">
+              <div className="panel-head">
+                <span className="panel-head-title">{t(lang, "servers")}</span>
+                <span className="panel-head-count">{props.profiles.length}</span>
+                <span className="panel-head-spacer" />
+                <button type="button" className="icon-btn" onClick={props.onQuickConnect} aria-label={t(lang, "quickConnect")} title={t(lang, "quickConnect")}><Zap size={14} /></button>
+                <button type="button" className="icon-btn" onClick={props.onOpenSearch} aria-label={t(lang, "search")} title={t(lang, "search")}><Search size={14} /></button>
+                <button type="button" className="icon-btn" onClick={openProfileTools} aria-label={t(lang, "profileTools")} title={t(lang, "profileTools")}><MoreHorizontal size={14} /></button>
+                <button type="button" className="btn-primary panel-head-primary panel-head-icon-only" onClick={props.onNewProfile} aria-label={t(lang, "newConnection")} title={t(lang, "newConnection")}><Plus size={15} strokeWidth={2.25} /></button>
+              </div>
+              {props.profiles.length > 0 && (
+                <div className="server-controls">
+                  <label className="sidebar-filter">
+                    <Search size={13} aria-hidden="true" />
+                    <input
+                      value={filterQuery}
+                      onChange={(event) => setFilterQuery(event.target.value)}
+                      aria-label={t(lang, "filterServers")}
+                      placeholder={t(lang, "filterServersPlaceholder")}
+                    />
+                    {filterQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setFilterQuery("")}
+                        aria-label={t(lang, "clearServerFilter")}
+                        title={t(lang, "clearServerFilter")}
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
+                  </label>
+                  <div className="segment-control" role="tablist" aria-label={t(lang, "servers")} onKeyDown={handleTabKeyDown}>
+                    {([
+                      ["all", t(lang, "allGroups")],
+                      ["favorites", t(lang, "favorites")],
+                      ["recent", t(lang, "recentConnections")],
+                    ] as const).map(([key, label]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        role="tab"
+                        id={`${serverTabsId}-${key}`}
+                        aria-controls={`${serverTabsId}-panel`}
+                        aria-selected={serverSegment === key}
+                        tabIndex={serverSegment === key ? 0 : -1}
+                        className={clsx("segment-btn", serverSegment === key && "segment-btn-active")}
+                        onClick={() => setServerSegment(key)}
+                      >
+                        <span>{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="server-list">
+            <div className="server-list" id={`${serverTabsId}-panel`} role={props.profiles.length ? "tabpanel" : undefined} aria-labelledby={props.profiles.length ? `${serverTabsId}-${serverSegment}` : undefined} tabIndex={props.profiles.length ? 0 : undefined}>
               {props.profiles.length === 0 ? (
                 <div className="empty-state">
                   <div className="empty-state-icon"><Server size={22} /></div>
@@ -521,25 +583,50 @@ export function Sidebar(props: {
                   <div className="empty-state-text">{t(lang, "emptyServersHint")}</div>
                   <button className="btn-primary empty-state-action" onClick={props.onNewProfile}><Plus size={13} /> {t(lang, "newConnection")}</button>
                 </div>
-              ) : serverSections.map((section) => {
-                const folded = foldedGroups.has(section.key);
-                return (
-                  <div key={section.key} className="srv-group">
-                    <button
-                      type="button"
-                      className="srv-group-head"
-                      aria-expanded={!folded}
-                      onClick={() => toggleGroup(section.key)}
-                      title={section.label}
-                    >
-                      <ChevronRight size={11} className={clsx("srv-group-chev", !folded && "srv-group-chev-open")} aria-hidden="true" />
-                      <span className="srv-group-title">{section.label}</span>
-                      <span className="srv-group-count">{section.profiles.length}</span>
-                    </button>
-                    {!folded && section.profiles.map((profile) => renderServerRow(profile))}
+              ) : serverSegment === "favorites" ? (
+                favoriteProfiles.length > 0 ? favoriteProfiles.map((profile) => renderServerRow(profile)) : (
+                  <div className="server-list-empty">
+                    <Star size={18} />
+                    <span>{t(lang, normalizedQuery ? "noMatchingServers" : "noFavorites")}</span>
+                    {normalizedQuery && <button type="button" className="btn-secondary" onClick={() => setFilterQuery("")}>{t(lang, "clearFilter")}</button>}
                   </div>
-                );
-              })}
+                )
+              ) : serverSegment === "recent" ? (
+                recentProfiles.length > 0 ? recentProfiles.map((profile) => renderServerRow(profile)) : (
+                  <div className="server-list-empty">
+                    <Clock size={18} />
+                    <span>{t(lang, normalizedQuery ? "noMatchingServers" : "noRecentConnections")}</span>
+                    {normalizedQuery && <button type="button" className="btn-secondary" onClick={() => setFilterQuery("")}>{t(lang, "clearFilter")}</button>}
+                  </div>
+                )
+              ) : groupedSections.length > 0 ? (
+                groupedSections.map((section) => {
+                  const folded = !normalizedQuery && foldedGroups.has(section.key);
+                  return (
+                    <div key={section.key} className="srv-group">
+                      <button
+                        type="button"
+                        className="srv-group-head"
+                        aria-expanded={!folded}
+                        disabled={!!normalizedQuery}
+                        onClick={() => toggleGroup(section.key)}
+                        title={section.label}
+                      >
+                        <ChevronRight size={11} className={clsx("srv-group-chev", !folded && "srv-group-chev-open")} aria-hidden="true" />
+                        <span className="srv-group-title">{section.label}</span>
+                        <span className="srv-group-count">{section.profiles.length}</span>
+                      </button>
+                      {!folded && section.profiles.map((profile) => renderServerRow(profile))}
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="server-list-empty">
+                  <Search size={18} />
+                  <span>{t(lang, "noMatchingServers")}</span>
+                  <button type="button" className="btn-secondary" onClick={() => setFilterQuery("")}>{t(lang, "clearFilter")}</button>
+                </div>
+              )}
             </div>
 
             {!monitorCollapsed && <div className="split-handle" onMouseDown={onDragStart} />}
@@ -578,7 +665,7 @@ export function Sidebar(props: {
           </>
         )}
 
-        {activePrimary !== "connections" && props.drawer !== "ai" && <div className={clsx("tool-body-full", props.drawer === "settings" && "settings-host", props.drawer === "documents" && "documents-host")} key={`${activePrimary}-${props.drawer}`}><Suspense fallback={<DrawerFallback />}>
+        {activePrimary !== "connections" && props.drawer !== "ai" && <div className={clsx("tool-body-full", props.drawer === "settings" && "settings-host", props.drawer === "documents" && "documents-host", props.drawer === "sftp" && "files-host", activePrimary === "tools" && "tools-host")} key={`${activePrimary}-${props.drawer}`}><Suspense fallback={<DrawerFallback />}>
           {props.drawer === "documents" && <DocumentPanel
             active={props.active} siblings={props.markdownSiblings || []}
             busy={props.markdownSiblingsBusy} error={props.markdownSiblingsError}
@@ -590,12 +677,18 @@ export function Sidebar(props: {
           />}
           {props.drawer === "sftp" && (
             <div className="file-workspace">
-              <div className="file-workspace-bar"><div className="file-workspace-title"><Folder size={14} /><span>{titleText.files}</span></div></div>
-              <div className="file-workspace-body">
-                {!canBrowseRemote ? <div className="file-workspace-empty"><FolderOpen size={22} /><span>{t(lang, "connectFirstSftp")}</span></div> : (
+              {!canBrowseRemote ? (
+                <>
+                  <div className="panel-head">
+                    <span className="panel-head-title">{titleText.files}</span>
+                  </div>
+                  <div className="file-workspace-empty"><FolderOpen size={22} /><span>{t(lang, "connectFirstSftp")}</span></div>
+                </>
+              ) : (
+                <div className="file-workspace-body">
                   <SftpPanel active={props.active} path={props.remotePath} files={props.remoteFiles} busy={props.sftpBusy} locale={lang} onRefresh={props.onRefreshSftp} onNotify={props.onNotify} setCtxMenu={props.setCtxMenu} onOpenMarkdownFile={props.onOpenRemoteMarkdownFile} onOpenTerminalInDir={props.onOpenTerminalInDir} />
-                )}
-              </div>
+                </div>
+              )}
             </div>
           )}
           {activePrimary === "tools" && (

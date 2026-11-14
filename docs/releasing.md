@@ -34,6 +34,11 @@ git tag -a v<version> -m "gxShell v<version>"
 git push origin v<version>
 ```
 
+Branch pushes run Windows verification; release tags run the complete Windows
+checks and packaging in `release.yml` without starting a duplicate `verify` run.
+Linux/macOS jobs require a manual cross-platform dispatch and are not part of
+the ordinary release flow.
+
 The GitHub workflow then creates the Release and uploads the package. Do not
 upload raw build directories, PDB files, frontend `dist`, local databases, or
 user configuration.

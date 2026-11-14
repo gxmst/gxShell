@@ -3,6 +3,7 @@
      one restrained azure accent, no neon. Tuned to read like a mature desktop
      tool (VS Code Dark Modern / Zed / Linear) rather than an AI demo. */
   --bg: #0e1217;
+  --rail-bg: #10141b;
   --panel: #151a21;
   --panel-soft: #1a212a;
   --panel-raised: #212a35;
@@ -124,8 +125,9 @@
 /* Sakura Mist — elegant morning rose / sakura light theme */
 .app-shell[data-theme="Sakura Mist"] {
   --bg: #faf0f4;
+  --rail-bg: #f1e3ea;
   --panel: #f7f1f4;
-  --panel-soft: #efe6eb;
+  --panel-soft: #eee4ea;
   --panel-raised: #ffffff;
   --bg-secondary: #f6e6ee;
   --terminal: #fdf7fa;
@@ -157,8 +159,9 @@
 /* Matcha Green — fresh forest mint / matcha light theme */
 .app-shell[data-theme="Matcha Green"] {
   --bg: #edf6f0;
+  --rail-bg: #e2eee6;
   --panel: #f0f5f1;
-  --panel-soft: #e5ede7;
+  --panel-soft: #e4ede7;
   --panel-raised: #ffffff;
   --bg-secondary: #e3efe7;
   --terminal: #f4faf6;
@@ -190,8 +193,9 @@
 /* Yuzu Study — warm cream latte light theme */
 .app-shell[data-theme="Yuzu Study"] {
   --bg: #fcf7ed;
+  --rail-bg: #efe7d8;
   --panel: #f6f2e9;
-  --panel-soft: #eee8dc;
+  --panel-soft: #ece5d8;
   --panel-raised: #ffffff;
   --bg-secondary: #f4ecdc;
   --terminal: #fffdf9;
@@ -223,6 +227,7 @@
 /* Legacy themes remain available with their original appearance. */
 .app-shell[data-theme="Deep Blue"] {
   --bg: #04101f;
+  --rail-bg: #041224;
   --panel: #071a32;
   --panel-soft: #0b2648;
   --panel-raised: #123862;
@@ -251,6 +256,7 @@
 
 .app-shell[data-theme="Ember Terminal"] {
   --bg: #0a0b09;
+  --rail-bg: #0b0d09;
   --panel: #11140f;
   --panel-soft: #1a1f17;
   --panel-raised: #273022;
@@ -279,6 +285,7 @@
 
 .app-shell[data-theme="Twilight Amber"] {
   --bg: #120d09;
+  --rail-bg: #140d09;
   --panel: #1a120d;
   --panel-soft: #261a12;
   --panel-raised: #3a281c;
@@ -305,26 +312,29 @@
   --code-title: #f9a8d4;
 }
 
-/* Light — neutral surfaces, with blue reserved for actions and selection. */
+/* Light — neutral surfaces, with clear tonal stepping and crisp raised cards. */
 .app-shell[data-theme="Light"] {
-  --bg: #f5f6f8;
-  --panel: #f5f6f8;
-  --panel-soft: #eef0f3;
+  --bg: #eef1f6;
+  --rail-bg: #e7ebf2;
+  --panel: #f4f6fa;
+  --panel-soft: #eaeef5;
   --panel-raised: #ffffff;
   --bg-secondary: var(--panel-soft);
   --terminal: #fcfcfd;
-  --terminal-top: #f5f6f8;
-  --border: rgba(42, 50, 65, .13);
-  --border-strong: rgba(42, 50, 65, .24);
-  --text: #252a34;
-  --muted: #667080;
-  --muted-2: #818a98;
+  --terminal-top: #eef1f6;
+  --border: rgba(34, 43, 58, .11);
+  --border-strong: rgba(34, 43, 58, .22);
+  --text: #222834;
+  --muted: #626d7f;
+  --muted-2: #838d9c;
   --accent: #2563eb;
-  --accent-soft: rgba(37, 99, 235, .08);
+  --accent-soft: rgba(37, 99, 235, .09);
   --ok: #15803d;
   --warn: #b45309;
   --bad: #dc2626;
-  --shadow-color: rgba(30, 41, 66, 0.16);
+  --shadow-color: rgba(24, 34, 54, 0.12);
+  --shadow-sm: 0 1px 2px rgba(24, 34, 54, .06), 0 1px 3px rgba(24, 34, 54, .05);
+  --shadow-md: 0 1px 3px rgba(24, 34, 54, .06), 0 6px 14px -4px rgba(24, 34, 54, .08);
   --accent-contrast: #ffffff;
   --scrollbar-thumb: color-mix(in srgb, var(--muted) 36%, transparent);
   --scrollbar-thumb-strong: color-mix(in srgb, var(--accent) 48%, transparent);

@@ -13,6 +13,25 @@ import type { DocumentOutline } from "../../utils/documentPresentation";
 // off the startup path so the app only fetches them when a text file is opened.
 const MarkdownViewer = lazy(() => import("../MarkdownViewer/MarkdownViewer"));
 
+function TerminalHost({ tabId, isFloating, terminalHosts, ...props }: React.HTMLAttributes<HTMLDivElement> & {
+  tabId: string;
+  isFloating: boolean;
+  terminalHosts: React.MutableRefObject<Record<string, HTMLDivElement | null>>;
+}) {
+  const nodeRef = useRef<HTMLDivElement | null>(null);
+  const registerHost = useCallback((node: HTMLDivElement | null) => {
+    // The main placeholder remains available for docking, but only the actual
+    // owner may clear or replace a terminal's host while it is floating.
+    if (node) {
+      if (!isFloating) terminalHosts.current[tabId] = node;
+    } else if (terminalHosts.current[tabId] === nodeRef.current) {
+      delete terminalHosts.current[tabId];
+    }
+    nodeRef.current = node;
+  }, [isFloating, tabId, terminalHosts]);
+  return <div {...props} data-tab-id={tabId} ref={registerHost} />;
+}
+
 // The terminal surface only. The tab strip this component used to render moved
 // to the app-level top bar (AppTopBar), so what remains is: state banners, the
 // terminal stage with its split panes, the log-viewer overlay, the empty-state
@@ -189,12 +208,13 @@ export const TerminalArea = memo(function TerminalArea(props: {
           }
 
           return (
-            <div
+            <TerminalHost
               key={tab.id}
-              data-tab-id={tab.id}
+              tabId={tab.id}
+              isFloating={isFloating}
+              terminalHosts={props.terminalHosts}
               className={clsx(hostClass, tab.type === 'markdown' && 'document-host-pane')}
               style={hostStyle}
-              ref={(el) => { props.terminalHosts.current[tab.id] = el; }}
               onFocusCapture={isSplitTab && !isActive ? () => props.onActive(tab.id) : undefined}
               onClick={isSplitTab ? () => props.onActive(tab.id) : undefined}
             >
@@ -218,7 +238,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
                   />
                 </Suspense>
               )}
-            </div>
+            </TerminalHost>
           );
         })}
         <div

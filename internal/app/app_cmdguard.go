@@ -529,7 +529,8 @@ func privateSSHKeyReference(lower string) string {
 // needs to be safe as a standalone command with literal arguments. Every entry
 // here must be unable to mutate state OR execute another program even when
 // given arbitrary flags. Commands with a known mutating flag (date -s, ss -K,
-// dmesg -C, hostname NAME, sort -o, sed -i, find -exec) and command wrappers
+// dmesg -C, hostname NAME, sort -o, sed -i, find -exec, tree -o, file -C) and
+// command wrappers
 // (env, command, xargs, sudo, watch, timeout, awk, sed, sh, ...) are deliberately
 // excluded so they fall through to confirmation.
 var readOnlyCommands = map[string]struct{}{
@@ -540,8 +541,8 @@ var readOnlyCommands = map[string]struct{}{
 	// Read-only text search
 	"grep": {}, "egrep": {}, "fgrep": {}, "zgrep": {},
 	// Filesystem inspection
-	"ls": {}, "pwd": {}, "df": {}, "du": {}, "stat": {}, "file": {},
-	"realpath": {}, "readlink": {}, "basename": {}, "dirname": {}, "tree": {},
+	"ls": {}, "pwd": {}, "df": {}, "du": {}, "stat": {},
+	"realpath": {}, "readlink": {}, "basename": {}, "dirname": {},
 	// Process / network / environment inspection
 	"ps": {}, "pgrep": {}, "pstree": {}, "lsof": {}, "netstat": {}, "getent": {}, "printenv": {},
 	// System / identity info
