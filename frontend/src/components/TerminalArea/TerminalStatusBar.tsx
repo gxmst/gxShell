@@ -2,8 +2,8 @@ import { memo, useEffect, useState } from "react";
 import { Folder, Radio } from "lucide-react";
 import type { Tab } from "../../types";
 import type { types } from "../../../wailsjs/go/models";
-import { EventsOn } from "../../../wailsjs/runtime/runtime";
-import { GetLatestMetrics } from "../../../wailsjs/go/app/App";
+import { useSessionMetrics } from "../../hooks/useSessionMetrics";
+import { probeLatency } from "../../utils/format";
 import { t } from "../../i18n";
 
 type Dims = { cols: number; rows: number };
@@ -26,25 +26,9 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
 }) {
   const { language: propLanguage, tabId: propTabId, getDimensions: propGetDimensions, getCurrentDirectory: propGetCurrentDirectory, tab: propTab, profile: propProfile, onOpenCurrentDirectory: propOnOpenCurrentDirectory, broadcastInput: propBroadcastInput, broadcastCount: propBroadcastCount, sessionCount: propSessionCount } = props;
   const lang = propLanguage;
-  const [latency, setLatency] = useState<number | null>(null);
+  const probe = useSessionMetrics(propTab.local ? undefined : propTabId)?.probeHistory?.at(-1);
   const [dims, setDims] = useState<Dims | null>(null);
   const [currentDirectory, setCurrentDirectory] = useState("");
-
-  // Latency arrives on the shared monitor tick, keyed by session id (= tab id).
-  // Seed once from the cached metrics on mount so the bar isn't blank until the
-  // next tick (noticeable when the monitor interval is long); a stale tabId
-  // guard drops the async result if we switched tabs before it resolved.
-  useEffect(() => {
-    setLatency(null);
-    let stale = false;
-    GetLatestMetrics(propTabId)
-      .then((m) => { if (!stale && m && m.sessionId === propTabId) setLatency(m.online ? m.latencyMs : null); })
-      .catch(() => {});
-    const off = EventsOn("monitor:update", (data: types.Metrics) => {
-      if (data.sessionId === propTabId) setLatency(data.online ? data.latencyMs : null);
-    });
-    return () => { stale = true; off(); };
-  }, [propTabId]);
 
   // cols/rows live in a ref inside useTerminal; poll on a low-frequency tick
   // since dimensions only change on window resize or split drag.
@@ -103,11 +87,11 @@ export const TerminalStatusBar = memo(function TerminalStatusBar(props: {
         </>
       )}
 
-      {!local && state === "connected" && latency != null && (
+      {!local && state === "connected" && probe?.state === "reply" && (
         <>
           <span className="tsb-sep" />
-          <span className="tsb-seg tsb-latency" title={t(lang, "collectionTime")}>
-            {t(lang, "collectionTime")} {latency} ms
+          <span className="tsb-seg tsb-latency" title={probe.method.toUpperCase()}>
+            {t(lang, "latency")} {probeLatency(probe.rttMs)}
           </span>
         </>
       )}

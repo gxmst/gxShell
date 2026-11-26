@@ -9,25 +9,14 @@ import (
 
 	"gxShell/backend/types"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	runtime "gxShell/internal/desktop"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// The in-app approval panel is the review surface for requests that originate
-// outside the window: the gxshell-cli HTTP API and the AI assistant's tool
-// calls. It exists because the native MessageBox cannot carry a review:
-//
-//   - it has no scrollbar, so a batch of commands grows the dialog past the
-//     bottom of the screen and takes the buttons with it, and
-//   - on Windows it ignores the caller's button labels entirely (Wails always
-//     asks MB_YESNO there), so "Allow"/"Deny" could never be shown.
-//
-// The native dialog is NOT removed. It remains the entry point for the one case
-// the panel cannot serve — a renderer that has not finished loading. Once the
-// renderer has registered, the panel is authoritative and there is no fallback:
-// the dialog it would fall back to is the one that cannot show a long batch.
-//
-// One panel is on screen at a time, serialised by approvalGate, which is how
-// the native dialog behaved (it was gated by nativeDialogMu).
+// The workbench enables approval windows when the desktop is ready. Each
+// request then owns one native window, and the window pulls only its own items.
+// Before desktop readiness callers may use their existing native confirmation.
 
 // cliApprovalPanelTimeout bounds how long a panel may stay unanswered. It is a
 // safety net for a renderer that is wedged without reloading — a reload denies
@@ -74,7 +63,7 @@ func (item cliApprovalItem) nativeText() string {
 	return item.Text
 }
 
-// cliApprovalPanelRequest is emitted to the renderer as "cli:approval-panel".
+// cliApprovalPanelRequest holds the items a review window reads through GetWindowApproval.
 type cliApprovalPanelRequest struct {
 	ID       string            `json:"id"`
 	Source   string            `json:"source"`
@@ -110,27 +99,33 @@ func (r cliApprovalPanelResult) mask(items []cliApprovalItem) []bool {
 // cannot approve anything.
 type cliApprovalPanelRegistry struct {
 	mu      sync.Mutex
-	pending map[string]chan cliApprovalPanelResult
+	pending map[string]pendingApproval
+}
+
+type pendingApproval struct {
+	request cliApprovalPanelRequest
+	result  chan cliApprovalPanelResult
 }
 
 func newCliApprovalPanelRegistry() *cliApprovalPanelRegistry {
-	return &cliApprovalPanelRegistry{pending: map[string]chan cliApprovalPanelResult{}}
+	return &cliApprovalPanelRegistry{pending: map[string]pendingApproval{}}
 }
 
-func (r *cliApprovalPanelRegistry) register() (string, chan cliApprovalPanelResult) {
+func (r *cliApprovalPanelRegistry) register(req cliApprovalPanelRequest) (string, chan cliApprovalPanelResult) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	id := types.NewID("panel")
 	// Buffer of one so a resolve that races with a cancellation never blocks
 	// the renderer's binding call.
 	ch := make(chan cliApprovalPanelResult, 1)
-	r.pending[id] = ch
+	req.ID = id
+	r.pending[id] = pendingApproval{request: req, result: ch}
 	return id, ch
 }
 
 func (r *cliApprovalPanelRegistry) resolve(id string, result cliApprovalPanelResult) bool {
 	r.mu.Lock()
-	ch, ok := r.pending[id]
+	panel, ok := r.pending[id]
 	if ok {
 		delete(r.pending, id)
 	}
@@ -138,8 +133,8 @@ func (r *cliApprovalPanelRegistry) resolve(id string, result cliApprovalPanelRes
 	if !ok {
 		return false
 	}
-	ch <- result
-	close(ch)
+	panel.result <- result
+	close(panel.result)
 	return true
 }
 
@@ -158,12 +153,12 @@ func (r *cliApprovalPanelRegistry) discard(id string) {
 func (r *cliApprovalPanelRegistry) denyAll() {
 	r.mu.Lock()
 	pending := r.pending
-	r.pending = map[string]chan cliApprovalPanelResult{}
+	r.pending = map[string]pendingApproval{}
 	r.mu.Unlock()
-	for _, ch := range pending {
+	for _, panel := range pending {
 		// Buffered, so this never blocks on a caller that already gave up.
-		ch <- cliApprovalPanelResult{}
-		close(ch)
+		panel.result <- cliApprovalPanelResult{}
+		close(panel.result)
 	}
 }
 
@@ -180,7 +175,7 @@ func (a *App) approvalPanelAvailable() bool {
 	return a.ctx.Get() != nil && a.frontendReady.Load()
 }
 
-// requestCliApprovalPanel emits the review panel and blocks until the renderer
+// requestCliApprovalPanel opens the review window and blocks until the renderer
 // answers. Panels are serialised, so at most one is on screen at a time.
 //
 // ok distinguishes "the panel decided" from "the panel could not be used":
@@ -216,12 +211,28 @@ func (a *App) requestCliApprovalPanel(ctx context.Context, req cliApprovalPanelR
 		return cliApprovalPanelResult{}, true
 	}
 
-	panelID, ch := a.approvalPanel.register()
+	panelID, ch := a.approvalPanel.register(req)
 	req.ID = panelID
 
-	a.emitCliApprovalPanel(req)
-	a.raiseWindowForApproval()
-	defer a.clearApprovalAlwaysOnTop()
+	if a.cliApprovalPanelFn != nil {
+		a.cliApprovalPanelFn(req)
+	} else {
+		title := "Approval"
+		if a.store != nil {
+			if settings, err := a.store.GetSettings(); err == nil && settings.Language == "zh-CN" {
+				title = "审批"
+			}
+		}
+		err := a.openView(application.WebviewWindowOptions{
+			Name: "approval-" + panelID, Title: "gxShell · " + title, URL: "/?approval=1",
+			Width: 680, Height: 510, MinWidth: 380, MinHeight: 300, AlwaysOnTop: true,
+		}, false)
+		if err != nil {
+			a.approvalPanel.discard(panelID)
+			return cliApprovalPanelResult{}, true
+		}
+	}
+	defer a.closeApprovalView(panelID)
 
 	timeout := a.approvalPanelTimeout
 	if timeout <= 0 {
@@ -240,13 +251,11 @@ func (a *App) requestCliApprovalPanel(ctx context.Context, req cliApprovalPanelR
 		// The caller disconnected. Showing a native dialog now would prompt for
 		// a request nobody is waiting for, so this resolves as a denial.
 		a.approvalPanel.discard(panelID)
-		a.emitCliApprovalPanelClosed(panelID)
 		return cliApprovalPanelResult{}, true
 	case <-timer.C:
 		// The renderer never answered. Deny: falling back to the native dialog
 		// would hand the user the very prompt this panel exists to replace.
 		a.approvalPanel.discard(panelID)
-		a.emitCliApprovalPanelClosed(panelID)
 		if a.log != nil {
 			a.log.ErrorFields("Approval panel timed out; the request was denied",
 				LogFields{"panel": panelID, "items": fmt.Sprintf("%d", len(req.Items))})
@@ -329,7 +338,33 @@ func liveRequestsContext(callers []context.Context) (context.Context, context.Ca
 // ResolveCliApproval is called by the approval panel with the items the user
 // accepted. An empty list denies the whole request. Unknown or already-resolved
 // ids are ignored so a stale renderer cannot approve anything.
-func (a *App) ResolveCliApproval(requestID string, approvedItemIDs []string) error {
+func (a *App) ResolveCliApproval(ctx context.Context, requestID string, approvedItemIDs []string) error {
+	win := callerWindow(ctx)
+	if win == nil || win.Name() != "approval-"+requestID {
+		return fmt.Errorf("this window does not own the approval request")
+	}
+	return a.resolveCliApproval(requestID, approvedItemIDs)
+}
+
+func (a *App) GetWindowApproval(ctx context.Context) (*cliApprovalPanelRequest, error) {
+	win := callerWindow(ctx)
+	if win == nil {
+		return nil, fmt.Errorf("approval window required")
+	}
+	id, ok := strings.CutPrefix(win.Name(), "approval-")
+	if !ok {
+		return nil, fmt.Errorf("approval window required")
+	}
+	a.approvalPanel.mu.Lock()
+	defer a.approvalPanel.mu.Unlock()
+	panel, ok := a.approvalPanel.pending[id]
+	if !ok {
+		return nil, fmt.Errorf("approval request has ended")
+	}
+	return &panel.request, nil
+}
+
+func (a *App) resolveCliApproval(requestID string, approvedItemIDs []string) error {
 	requestID = strings.TrimSpace(requestID)
 	if requestID == "" {
 		return fmt.Errorf("approval request id is required")
@@ -340,74 +375,31 @@ func (a *App) ResolveCliApproval(requestID string, approvedItemIDs []string) err
 	return nil
 }
 
-// RegisterApprovalPanel is called by the renderer once its panel listener is
-// attached. Until then the panel is not authoritative and approvals use the
-// native dialog, so an event emitted before the listener exists can never leave
-// a request waiting on a panel nobody rendered.
-func (a *App) RegisterApprovalPanel() error {
-	a.frontendReady.Store(true)
-	// Re-registering means a fresh page: any panel still pending was rendered by
-	// a page that is gone, so the user will never see it. Deny them.
+// RegisterApprovalPanel marks the workbench ready to open independent approval windows.
+func (a *App) RegisterApprovalPanel(ctx context.Context) error {
+	if main := runtime.MainWindow(a.ctx.Get()); main == nil || callerWindow(ctx) != main {
+		return fmt.Errorf("workbench required")
+	}
+	return a.registerApprovalPanel()
+}
+
+func (a *App) registerApprovalPanel() error {
+	// A fresh workbench starts a new review generation. Retire old requests
+	// before enabling presentation for the first time.
 	a.approvalPanel.denyAll()
+	a.frontendReady.Store(true)
 	return nil
 }
 
-func (a *App) emitCliApprovalPanel(req cliApprovalPanelRequest) {
-	if a.cliApprovalPanelFn != nil {
-		a.cliApprovalPanelFn(req)
-		return
-	}
-	if ctx := a.ctx.Get(); ctx != nil {
-		runtime.EventsEmit(ctx, "cli:approval-panel", req)
-	}
-}
-
-func (a *App) emitCliApprovalPanelClosed(panelID string) {
+func (a *App) closeApprovalView(id string) {
 	if a.cliApprovalPanelClosedFn != nil {
-		a.cliApprovalPanelClosedFn(panelID)
+		a.cliApprovalPanelClosedFn(id)
 		return
 	}
-	if ctx := a.ctx.Get(); ctx != nil {
-		runtime.EventsEmit(ctx, "cli:approval-panel:closed", map[string]any{"id": panelID})
+	a.windowMu.Lock()
+	view := a.viewWindows["approval-"+id]
+	a.windowMu.Unlock()
+	if view != nil {
+		view.window.Close()
 	}
-}
-
-// raiseWindowForApproval brings the window forward while a request is pending.
-//
-// The user chose an interrupting prompt over a passive notification, so the
-// panel has to be visible even when the window was minimised or buried. Wails
-// exposes no SetForegroundWindow, so this restores and shows the window and
-// pins it above other windows until the panel closes; Windows flashes the
-// taskbar button for the activation attempt. Keyboard focus is not guaranteed
-// by this call alone — the frontend focuses the panel itself once it renders.
-//
-// Panels are serialised, so there is exactly one holder of this pin.
-func (a *App) raiseWindowForApproval() {
-	if a.windowRaiseFn != nil {
-		a.windowRaiseFn()
-		return
-	}
-	ctx := a.ctx.Get()
-	if ctx == nil {
-		return
-	}
-	if runtime.WindowIsMinimised(ctx) {
-		runtime.WindowUnminimise(ctx)
-	}
-	runtime.WindowShow(ctx)
-	runtime.WindowSetAlwaysOnTop(ctx, true)
-}
-
-// clearApprovalAlwaysOnTop drops the pin raiseWindowForApproval applied. It runs
-// on every exit path of requestCliApprovalPanel.
-func (a *App) clearApprovalAlwaysOnTop() {
-	if a.windowClearFn != nil {
-		a.windowClearFn()
-		return
-	}
-	ctx := a.ctx.Get()
-	if ctx == nil {
-		return
-	}
-	runtime.WindowSetAlwaysOnTop(ctx, false)
 }

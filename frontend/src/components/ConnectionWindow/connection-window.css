@@ -1,0 +1,42 @@
+.app-shell.connection-window {
+  display: block;
+  height: 100vh;
+  background: var(--panel-raised);
+}
+.connection-window .modal-backdrop:has(> .connection-form) {
+  padding: 0;
+  background: var(--panel-raised);
+  backdrop-filter: none;
+  animation: none;
+}
+.connection-window .modal.connection-form {
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  box-shadow: none;
+  animation: none;
+}
+.connection-window .connection-notice {
+  position: fixed;
+  bottom: 12px;
+  right: 12px;
+  z-index: 20000;
+  padding: 8px 12px;
+  background: var(--panel);
+  color: var(--text);
+}
+
+.profile-connection-test {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+}
+.profile-connection-test button { flex-shrink: 0; }
+.profile-connection-test [role="status"] { overflow-wrap: anywhere; }
+.profile-connection-test [data-state="success"] { color: var(--ok); }
+.profile-connection-test [data-state="failure"] { color: var(--bad); }

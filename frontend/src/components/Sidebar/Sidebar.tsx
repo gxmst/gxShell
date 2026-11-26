@@ -120,6 +120,7 @@ export function Sidebar(props: {
   onSaveSettings: (settings: types.AppSettings) => void | Promise<void>;
   onSettingsDirtyChange?: (dirty: boolean, save: () => Promise<boolean>) => void;
   onOpenData: () => void;
+  onPlayRecording: (name: string) => void;
   onOpenLog: (name: string, sessionLog?: boolean) => void;
   getTerminalLines: (id: string, lineCount: number) => string;
   activeTabId: string;
@@ -717,7 +718,7 @@ export function Sidebar(props: {
                 {props.drawer === "firewall" && <FirewallPanel active={props.active} locale={lang} onNotify={notifyForSession} />}
                 {props.drawer === "cron" && <CronPanel active={props.active} locale={lang} onNotify={notifyForSession} />}
                 {props.drawer === "websites" && <WebsitePanel active={props.active} locale={lang} onNotify={notifyForSession} />}
-                {props.drawer === "recordings" && <RecordingsPanel active={props.active} locale={lang} onNotify={notifyForSession} settings={props.settings} />}
+                {props.drawer === "recordings" && <RecordingsPanel locale={lang} onNotify={notifyForSession} onPlay={props.onPlayRecording} />}
               </div>
             </>
           )}

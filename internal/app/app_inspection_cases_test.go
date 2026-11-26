@@ -56,7 +56,7 @@ func TestSavedCaseEvaluationAsksBeforeSendingRealEvidence(t *testing.T) {
 	if len(req.Items) != 1 || req.Items[0].ID != id || !strings.Contains(req.Items[0].Text, "web-1") || !strings.Contains(req.Summary, "fixture-a") {
 		t.Fatalf("panel did not name the saved case, server and model: %+v", req)
 	}
-	if err := app.ResolveCliApproval(req.ID, nil); err != nil {
+	if err := app.resolveCliApproval(req.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-done; err == nil {
@@ -73,7 +73,7 @@ func TestSavedCaseEvaluationAsksBeforeSendingRealEvidence(t *testing.T) {
 	if len(req.Items) != 2 {
 		t.Fatalf("expected both real-server cases to be reviewed: %+v", req)
 	}
-	if err := app.ResolveCliApproval(req.ID, []string{id}); err != nil {
+	if err := app.resolveCliApproval(req.ID, []string{id}); err != nil {
 		t.Fatal(err)
 	}
 	if err := <-done; err == nil {
@@ -116,7 +116,7 @@ func TestInspectionConfirmationRequiresEveryRequestedItem(t *testing.T) {
 				}})
 			}()
 			req := panels.nextRequest(t)
-			if err := app.ResolveCliApproval(req.ID, test.ids); err != nil {
+			if err := app.resolveCliApproval(req.ID, test.ids); err != nil {
 				t.Fatal(err)
 			}
 			if got := <-done; got != test.want {

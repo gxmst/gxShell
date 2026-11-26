@@ -11,6 +11,9 @@ import {
   subscribeOverlays,
 } from "../../utils/overlayManager";
 
+import { RegisterConnectionWindow } from "../../../wailsjs/go/app/App";
+import { EventsOn } from "../../../wailsjs/runtime/runtime";
+
 let overlaySequence = 0;
 
 /**
@@ -26,6 +29,7 @@ export function ModalShell({
   priority = 0,
   dismissOnBackdrop = true,
   dismissOnEscape = true,
+  standalone = false,
   className,
 }: {
   children: React.ReactNode;
@@ -38,6 +42,7 @@ export function ModalShell({
   priority?: number;
   dismissOnBackdrop?: boolean;
   dismissOnEscape?: boolean;
+  standalone?: boolean;
   className?: string;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -54,6 +59,15 @@ export function ModalShell({
   useSyncExternalStore(subscribeOverlays, getOverlayRevision, getOverlayRevision);
   const activeOverlayId = getActiveOverlayId();
   const ownsFocus = !activeOverlayId || activeOverlayId === overlayId;
+
+  useEffect(() => {
+    if (!standalone) return;
+    const off = EventsOn("connection:close-requested", () => {
+      if (getActiveOverlayId() === overlayId) onCloseRef.current();
+    });
+    void RegisterConnectionWindow();
+    return off;
+  }, [standalone, overlayId]);
 
   useEffect(() => registerOverlay(overlayId, priority), [overlayId, priority]);
 
@@ -145,6 +159,7 @@ export function ModalShell({
         ref={dialogRef}
         className={clsx(
           "modal",
+          standalone && "connection-form",
           compact && "modal-compact",
           palette && "modal-palette",
           palette && compact && "modal-palette-compact",

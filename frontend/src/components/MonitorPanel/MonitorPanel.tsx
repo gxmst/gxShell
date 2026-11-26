@@ -1,9 +1,10 @@
 import { useState } from "react";
 import clsx from "clsx";
-import { Activity, AlertTriangle, ChevronDown, ChevronRight, Download, Gauge, HardDrive, MemoryStick, Upload, Wifi, Zap } from "lucide-react";
+import { Activity, AlertTriangle, ChevronDown, ChevronRight, Download, Gauge, HardDrive, MemoryStick, Upload, Wifi } from "lucide-react";
 import type { Tab } from "../../types";
 import { formatBytes, stateClass } from "../../utils/format";
 import { useSessionMetrics } from "../../hooks/useSessionMetrics";
+import { LoadAverages, ConnectionQuality } from "./MonitorReadings";
 import { t } from "../../i18n";
 
 export function MonitorPanel({
@@ -93,9 +94,9 @@ export function MonitorPanel({
           <MetricRow icon={<Gauge size={12} />} label={t(lang, "cpu")} value={metrics.cpuPercent} clickable onClick={onCpuClick} />
           <MetricRow icon={<MemoryStick size={12} />} label={t(lang, "mem")} value={metrics.memoryPercent} detail={`${metrics.memoryUsedMb || 0}/${metrics.memoryTotalMb || 0} MB`} clickable onClick={onMemClick} />
           <MetricRow icon={<HardDrive size={12} />} label={t(lang, "disk")} value={metrics.diskPercent} detail={`${metrics.diskUsed || "-"} / ${metrics.diskTotal || "-"}`} clickable onClick={onDiskClick} />
+          <LoadAverages metrics={metrics} lang={lang} onClick={onCpuClick} />
+          <ConnectionQuality metrics={active.state === "connected" ? metrics : undefined} lang={lang} />
           <div className="chip-grid compact-chip-grid">
-            <MiniMetric icon={<Zap size={11} />} label={t(lang, "load")} value={metrics.loadAverage || "-"} tone={loadTone(metrics.loadAverage)} clickable onClick={onCpuClick} />
-            <MiniMetric icon={<Activity size={11} />} label={t(lang, "collectionTime")} value={`${metrics.latencyMs || 0}ms`} />
             <MiniMetric icon={<Download size={11} />} label={t(lang, "down")} value={formatBytes(metrics.networkRxPerSec)} tone={speedTone(metrics.networkRxPerSec)} clickable onClick={onNetworkClick} />
             <MiniMetric icon={<Upload size={11} />} label={t(lang, "up")} value={formatBytes(metrics.networkTxPerSec)} tone={speedTone(metrics.networkTxPerSec)} clickable onClick={onNetworkClick} />
           </div>
@@ -113,14 +114,6 @@ export function MonitorPanel({
       )}
     </div>
   );
-}
-
-function loadTone(loadAvg: string): "ok" | "warn" | "bad" | undefined {
-  const v = parseFloat(loadAvg);
-  if (isNaN(v)) return undefined;
-  if (v >= 4) return "bad";
-  if (v >= 2) return "warn";
-  return "ok";
 }
 
 function speedTone(bps: number): "ok" | "warn" | "bad" | undefined {

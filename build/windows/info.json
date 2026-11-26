@@ -1,15 +1,17 @@
 {
 	"fixed": {
-		"file_version": "{{.Info.ProductVersion}}"
+		"file_version": "1.8.4",
+		"product_version": "1.8.4"
 	},
 	"info": {
-		"0000": {
-			"ProductVersion": "{{.Info.ProductVersion}}",
-			"CompanyName": "{{.Info.CompanyName}}",
-			"FileDescription": "{{.Info.ProductName}}",
-			"LegalCopyright": "{{.Info.Copyright}}",
-			"ProductName": "{{.Info.ProductName}}",
-			"Comments": "{{.Info.Comments}}"
+		"0409": {
+			"FileVersion": "1.8.4",
+			"ProductVersion": "1.8.4",
+			"CompanyName": "gxShell",
+			"FileDescription": "gxShell",
+			"LegalCopyright": "Copyright 2026",
+			"ProductName": "gxShell",
+			"Comments": "SSH Client with Document Viewer"
 		}
 	}
 }

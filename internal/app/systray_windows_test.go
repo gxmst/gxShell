@@ -4,15 +4,17 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"syscall"
 	"testing"
 	"time"
 	"unsafe"
 
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 	"golang.org/x/sys/windows"
 )
 
@@ -30,64 +32,88 @@ func TestWindowsTrayMessageLoop(t *testing.T) {
 		}
 		return
 	}
+	// testing runs each test in its own goroutine; the desktop entry point
+	// normally runs on Wails' initialized main apartment.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := windows.CoInitializeEx(0, windows.COINIT_APARTMENTTHREADED); err != nil {
+		t.Fatal(err)
+	}
+	defer windows.CoUninitialize()
+	const wndClass = "gxShellTrayIntegrationTest"
+	host := application.New(application.Options{Name: "gxShellTrayTest", Windows: application.WindowsOptions{WndClass: wndClass}})
 	a := NewApp()
-	icon, err := os.ReadFile(filepath.Join("..", "..", "build", "windows", "icon.ico"))
+	icon, err := os.ReadFile(filepath.Join("..", "..", "build", "windows", "icon.png"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	a.trayIcon = icon
-	a.setupSystemTray()
-	defer a.stopSystemTray()
 
-	u32 := windows.NewLazySystemDLL("user32.dll")
-	enum := u32.NewProc("EnumWindows")
-	owner := u32.NewProc("GetWindowThreadProcessId")
-	class := u32.NewProc("GetClassNameW")
-	probe := u32.NewProc("SendMessageTimeoutW")
-	find := func() uintptr {
-		var found uintptr
-		callback := syscall.NewCallback(func(hwnd, _ uintptr) uintptr {
-			var pid uint32
-			owner.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
-			if pid != uint32(os.Getpid()) {
-				return 1
+	probeTray := func() error {
+
+		u32 := windows.NewLazySystemDLL("user32.dll")
+		findWindow := u32.NewProc("FindWindowExW")
+		owner := u32.NewProc("GetWindowThreadProcessId")
+		class, _ := windows.UTF16PtrFromString(wndClass)
+		probe := u32.NewProc("SendMessageTimeoutW")
+		exclude := map[uintptr]bool{}
+		find := func() uintptr {
+			var after uintptr
+			for {
+				hwnd, _, _ := findWindow.Call(^uintptr(2), after, uintptr(unsafe.Pointer(class)), 0)
+				if hwnd == 0 {
+					return 0
+				}
+				var pid uint32
+				owner.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+				if pid == uint32(os.Getpid()) && !exclude[hwnd] {
+					return hwnd
+				}
+				after = hwnd
 			}
-			var name [256]uint16
-			class.Call(hwnd, uintptr(unsafe.Pointer(&name[0])), uintptr(len(name)))
-			if windows.UTF16ToString(name[:]) == "SystrayClass" {
-				found = hwnd
-				return 0
-			}
-			return 1
-		})
-		enum.Call(callback, 0)
-		return found
-	}
-	deadline := time.Now().Add(5 * time.Second)
-	var hwnd uintptr
-	for hwnd == 0 && time.Now().Before(deadline) {
-		hwnd = find()
-		time.Sleep(10 * time.Millisecond)
-	}
-	if hwnd == 0 {
-		t.Fatal("tray window was not created")
-	}
-	for i := 0; i < 10; i++ {
-		runtime.GC()
-		runtime.Gosched()
-		var result uintptr
-		// WM_NULL asks the owner thread to respond without changing the UI.
-		ok, _, _ := probe.Call(hwnd, 0, 0, 0, 2, 500, uintptr(unsafe.Pointer(&result)))
-		if ok == 0 {
-			t.Fatal("tray window owner is not pumping Windows messages")
 		}
+		for h := find(); h != 0; h = find() {
+			exclude[h] = true
+		}
+		var tray *application.SystemTray
+		application.InvokeSync(func() { tray = a.installTray(host, func() {}) })
+		deadline := time.Now().Add(5 * time.Second)
+		var hwnd uintptr
+		for hwnd == 0 && time.Now().Before(deadline) {
+			hwnd = find()
+			time.Sleep(10 * time.Millisecond)
+		}
+		if hwnd == 0 {
+			return fmt.Errorf("tray window was not created")
+		}
+		for i := 0; i < 10; i++ {
+			runtime.GC()
+			runtime.Gosched()
+			var result uintptr
+			// WM_NULL asks the owner thread to respond without changing the UI.
+			ok, _, _ := probe.Call(hwnd, 0, 0, 0, 2, 500, uintptr(unsafe.Pointer(&result)))
+			if ok == 0 {
+				return fmt.Errorf("tray window owner is not pumping Windows messages")
+			}
+		}
+		application.InvokeSync(tray.Destroy)
+		deadline = time.Now().Add(2 * time.Second)
+		for find() != 0 && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if find() != 0 {
+			return fmt.Errorf("tray window was not removed on shutdown")
+		}
+		return nil
 	}
-	a.stopSystemTray()
-	deadline = time.Now().Add(2 * time.Second)
-	for find() != 0 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if find() != 0 {
-		t.Fatal("tray window was not removed on shutdown")
+	host.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
+		if err := probeTray(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		host.Quit()
+	})
+	if err := host.Run(); err != nil {
+		t.Fatal(err)
 	}
 }

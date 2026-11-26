@@ -62,10 +62,11 @@ function RiskText({ item }: { item: CliApprovalPanelItem }) {
   );
 }
 
-export function CliApprovalPanel({ request, locale, onResolve }: {
+export function CliApprovalPanel({ request, locale, onResolve, standalone = false }: {
+  standalone?: boolean;
   request: CliApprovalPanelRequest;
   locale: string;
-  onResolve: (approvedIds: string[]) => void;
+  onResolve: (approvedIds: string[]) => void | Promise<void>;
 }) {
   const items = useMemo(() => request.items || [], [request.items]);
 
@@ -82,10 +83,13 @@ export function CliApprovalPanel({ request, locale, onResolve }: {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const resolvedRef = useRef(false);
 
-  const resolve = useCallback((ids: string[]) => {
+  const [resolveError, setResolveError] = useState("");
+  const resolve = useCallback(async (ids: string[]) => {
     if (resolvedRef.current) return;
     resolvedRef.current = true;
-    onResolve(ids);
+    setResolveError("");
+    try { await onResolve(ids); }
+    catch (error) { resolvedRef.current = false; setResolveError(String(error)); }
   }, [onResolve]);
 
   useEffect(() => {
@@ -111,7 +115,7 @@ export function CliApprovalPanel({ request, locale, onResolve }: {
         resolve([]);
         return;
       }
-      if (event.key === "Enter") {
+      if (event.key === "Enter" && !standalone) {
         // Enter approves the current selection, never the whole batch. If the
         // user unchecked something, one keystroke must not run it anyway.
         event.preventDefault();
@@ -121,7 +125,7 @@ export function CliApprovalPanel({ request, locale, onResolve }: {
     };
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [resolve]);
+  }, [resolve, standalone]);
 
   const groups = useMemo(() => {
     const buckets: Record<GroupKey, CliApprovalPanelItem[]> = {
@@ -262,6 +266,7 @@ export function CliApprovalPanel({ request, locale, onResolve }: {
           })}
         </div>
 
+        {resolveError && <p role="alert" className="cli-panel-critical-hint">{resolveError}</p>}
         <footer className="cli-panel-actions">
           <button type="button" className="cli-panel-btn" onClick={() => resolve([])}>
             {t(locale, "approvalPanelDeny")}

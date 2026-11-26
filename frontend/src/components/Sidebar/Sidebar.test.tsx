@@ -90,6 +90,7 @@ function renderSidebar(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
     onSaveSettings: vi.fn(),
     onOpenData: vi.fn(),
     onOpenLog: vi.fn(),
+    onPlayRecording: vi.fn(),
     getTerminalLines: vi.fn(() => ""),
     activeTabId: "",
     tabs: [],

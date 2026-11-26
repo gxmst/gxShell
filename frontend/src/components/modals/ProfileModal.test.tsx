@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { emptyProfile } from '../../constants';
 import { ProfileModal } from './ProfileModal';
@@ -216,5 +216,56 @@ describe('ProfileModal full CLI trust', () => {
     fireEvent.click(screen.getByLabelText('允许 CLI / MCP 访问'));
     fireEvent.keyDown(window, { key: 's', ctrlKey: true });
     expect(onSave.mock.calls[0][0]).toMatchObject({ cliEnabled: false, cliTrustMode: undefined, cliTrustUntil: undefined });
+  });
+});
+
+describe('ProfileModal connection test', () => {
+  function setup(onTest: NonNullable<Parameters<typeof ProfileModal>[0]['onTestConnection']>) {
+    const onSave = vi.fn();
+    render(<ProfileModal profile={emptyProfile()} profiles={[]} language="en" onClose={vi.fn()}
+      onSave={onSave} onTestConnection={onTest} onPickKey={async () => ''} onDelete={vi.fn()} onDuplicate={vi.fn()} />);
+    return { onSave, test: screen.getByRole('button', { name: 'Test connection' }), host: screen.getByLabelText('Host') };
+  }
+
+  it('validates the draft, reports failures and retries without saving', async () => {
+    const onTest = vi.fn().mockRejectedValueOnce(new Error('authentication refused')).mockResolvedValueOnce(undefined);
+    const { onSave, test, host } = setup(onTest);
+    fireEvent.click(test);
+    expect(screen.getByRole('status')).toHaveTextContent('Host is required');
+    expect(onTest).not.toHaveBeenCalled();
+    fireEvent.change(host, { target: { value: 'example.test' } });
+    fireEvent.click(test);
+    await screen.findByText('Connection failed: authentication refused');
+    fireEvent.click(test);
+    await screen.findByText('SSH authentication succeeded');
+    expect(onTest.mock.calls[1][0]).toMatchObject({ host: 'example.test', username: 'root', port: 22 });
+    fireEvent.change(screen.getByLabelText('Name', { exact: true }), { target: { value: 'My server' } });
+    expect(screen.getByRole('status')).toHaveTextContent('SSH authentication succeeded');
+    fireEvent.change(screen.getByLabelText('Port'), { target: { value: '2222' } });
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('cancels an outdated handshake and ignores its late result', async () => {
+    let finish!: () => void;
+    const onTest = vi.fn((_profile: ReturnType<typeof emptyProfile>, _signal: AbortSignal) =>
+      new Promise<void>(resolve => { finish = resolve; }));
+    const { test, host } = setup(onTest);
+    fireEvent.change(host, { target: { value: 'first.test' } });
+    fireEvent.click(test);
+    fireEvent.click(test);
+    expect(onTest).toHaveBeenCalledTimes(1);
+    expect(test).toBeDisabled();
+    expect(screen.getByRole('status')).toHaveTextContent('Testing SSH connection');
+    fireEvent.change(host, { target: { value: 'second.test' } });
+    expect(onTest.mock.calls[0][1].aborted).toBe(true);
+    await act(async () => { finish(); });
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    expect(test).toBeEnabled();
+    fireEvent.click(test);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onTest.mock.calls[1][1].aborted).toBe(true);
+    await act(async () => { finish(); });
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
   });
 });

@@ -61,19 +61,21 @@ type Manager struct {
 	stopEvict chan struct{}
 	stopOnce  sync.Once
 
+	journal      transferJournal
 	transferMu   sync.Mutex
 	transfers    map[string]*transferJob
 	partCleanups map[string]bool
 }
 
 type transferJob struct {
-	id         string
-	sessionID  string
-	runtimeID  string
-	profileID  string
-	generation uint64
-	path       string
-	direction  string
+	publishedSequence uint64 // guarded by journal.mu
+	id                string
+	sessionID         string
+	runtimeID         string
+	profileID         string
+	generation        uint64
+	path              string
+	direction         string
 	// sourcePath and targetPath are carried in lifecycle events so the UI can
 	// offer a retry after the transfer center has been reopened. They are kept
 	// in memory only; transfer history never persists these paths to disk.
@@ -647,7 +649,7 @@ func (m *Manager) emitTransferWithFields(job *transferJob, status string, done, 
 	for key, value := range extra {
 		event[key] = value
 	}
-	if m.emit != nil {
+	if m.journal.record(job, sequence, event) && m.emit != nil {
 		m.emit("sftp:progress", event)
 	}
 }

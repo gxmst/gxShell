@@ -32,8 +32,10 @@ import {
   RenameRemoteFile,
   SelectDownloadPath,
   SelectUploadFile,
+  OpenSessionPanel,
   UploadFileWithPolicy,
 } from "../../../wailsjs/go/app/App";
+import { EventsOn } from "../../../wailsjs/runtime/runtime";
 import type { Tab, Toast } from "../../types";
 import type { AppContextMenu } from "../../hooks/useTerminal";
 import { writeClipboardText } from "../../utils/clipboard";
@@ -375,6 +377,19 @@ export function SftpPanel(props: {
 
   const goUp = () => goTo(parentRemotePath(path));
 
+  useEffect(() => EventsOn("sftp:drop-result", (result: {sessionId: string; directory: string; uploaded: number; skipped: number; errors: string[]}) => {
+    if (transferContextRef.current.sessionId !== result.sessionId) return;
+    if (result.uploaded && transferContextRef.current.remoteDir === result.directory) onRefresh(result.directory);
+    const summary = t(lang, "dropUploadResult", { done: String(result.uploaded), skipped: String(result.skipped) });
+    onNotify([summary, ...(result.errors || [])].join("\n"), result.errors?.length ? "error" : "info");
+  }), [lang, onNotify, onRefresh]);
+
+  const openTransferWindow = () => {
+    if (!active) return;
+    void OpenSessionPanel("transfers", active.id, active.title + " · " + t(lang, "transferManager"))
+      .catch(err => onNotify(String(err), "error"));
+  };
+
   const upload = async () => {
     if (!active) return;
     const context = { sessionId: active.id, remoteDir: path };
@@ -546,16 +561,9 @@ export function SftpPanel(props: {
   const topPad = startRow * rowHeight;
   const bottomPad = Math.max(0, (totalRows - endRow) * rowHeight);
 
-  // Deliberately no HTML5 drag-and-drop upload here. A browser drop event only
-  // exposes File objects, never a local path, and UploadFileWithPolicy needs a
-  // real path — so the DOM route cannot upload at all. The window already has a
-  // trusted drop path (runtime.OnFileDrop in Go, gated by a native confirm
-  // dialog before a dropped path joins the local-file allowlist); adding a
-  // second handler here only competes with it for the same gesture. If drop-to-
-  // upload is wanted, extend that Go path and scope it with --wails-drop-target
-  // rather than reintroducing DOM handlers.
   return (
-    <div className="sftp-panel">
+    <div className="sftp-panel" data-file-drop-target="" data-gx-drop="sftp"
+      data-session={active.state === "connected" && !active.local ? active.id : ""} data-directory={path}>
       <header className="sftp-browser-header" ref={pathWrapRef}>
         <div className="sftp-browser-topline">
           <div className="sftp-browser-title">
@@ -568,7 +576,7 @@ export function SftpPanel(props: {
           <div className="sftp-quick-actions">
             <button onClick={upload} title={t(lang, "upload")}><Upload size={12} /></button>
             <button onClick={() => setDialog({ type: "mkdir" })} title={t(lang, "newFolder")}><FolderPlus size={12} /></button>
-            <button className={clsx(activeCount > 0 && "active")} onClick={() => setPanel("manager")} title={t(lang, "transferManager")}>
+            <button className={clsx(activeCount > 0 && "active")} onClick={openTransferWindow} title={t(lang, "transferManager")}>
               <ArrowUpDown size={12} />
               {activeCount > 0 && <span className="sftp-action-badge">{activeCount}</span>}
             </button>
@@ -793,6 +801,8 @@ export function SftpPanel(props: {
           locale={lang}
           sessionId={active.id}
           onClose={() => setPanel(null)}
+          onOpenWindow={openTransferWindow}
+          onError={message => onNotify(message, "error")}
           onOpenExplorer={() => setPanel("explorer")}
           onUpload={upload}
         />

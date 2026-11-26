@@ -13,6 +13,15 @@ import { installMarketingFixture } from './marketing-fixture.mjs';
 const { chromium } = createRequire(import.meta.url)('playwright');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const out = resolve(root, '../.tmp/terminal-resize-check');
+async function checkTerminalGutter(host) {
+  const colors = await host.evaluate(element => ({
+    host: window.getComputedStyle(element).backgroundColor,
+    viewport: window.getComputedStyle(element.querySelector('.xterm-viewport')).backgroundColor,
+  }));
+  assert(colors.viewport === 'rgba(0, 0, 0, 0)' || colors.viewport === colors.host,
+    `Terminal gutter paints ${colors.viewport} over the session background ${colors.host}`);
+}
+
 const compare = process.argv.includes('--compare-head');
 let previous;
 if (compare) {
@@ -44,7 +53,7 @@ try {
             const settings = window.marketingDemo.settings;
             settings.themeName = theme;
             settings.terminal.themeName = theme;
-            app.ResizeTerminal = (id, cols, rows) => window.resizeProbe?.bridge.push({ id, cols, rows });
+            app.ResizeTerminal = (id, cols, rows) => (window.resizeProbe?.bridge || (window.childPty ||= [])).push({ id, cols, rows });
           }, { theme });
           const page = await context.newPage();
           const errors = [];
@@ -97,50 +106,27 @@ try {
           if (mode === 'current') {
             const activeTab = page.locator('.tab-active');
             const id = await activeTab.getAttribute('data-tab-id');
-            const tabBounds = await activeTab.boundingBox();
-            assert(tabBounds, 'Active tab has no bounds');
-            await page.mouse.move(tabBounds.x + tabBounds.width / 2, tabBounds.y + tabBounds.height / 2);
-            await page.mouse.down();
-            await page.mouse.move(tabBounds.x + tabBounds.width / 2, 180, { steps: 5 });
-            await page.mouse.up();
-            const floating = page.locator(`[data-floating-tab="${id}"]`);
-            await floating.locator('.xterm').waitFor();
-            await page.waitForTimeout(200);
-            const readGrid = () => page.evaluate((id) => ({
-              fit: window.resizeProbe.fits.filter((item) => item.id === id).at(-1),
-              pty: window.resizeProbe.bridge.filter((item) => item.id === id).at(-1),
-            }), id);
-            const initialFloating = await readGrid();
-            assert(initialFloating.fit, 'Floating terminal was not fitted');
-            // Change active tabs to rerender TerminalArea while its floating
-            // placeholder is still mounted, then exercise real pointer resize.
-            await page.locator('.tab-main').last().click();
-            const handle = await floating.locator('.floating-terminal-resize').boundingBox();
-            assert(handle, 'Floating resize handle has no bounds');
-            await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2);
-            await page.mouse.down();
-            await page.mouse.move(handle.x + handle.width / 2 + 160, handle.y + handle.height / 2 + 80, { steps: 10 });
-            await page.mouse.up();
+            await checkTerminalGutter(page.locator(`.terminal-host[data-tab-id="${id}"]`));
+            await activeTab.locator('.tab-main').click({ button: 'right' });
+            await page.getByRole('menuitem', { name: 'Open in independent window', exact: true }).click();
+            await page.waitForFunction(() => window.marketingDemo.requests.includes('OpenTerminalWindow'));
+            // Give the detached renderer its own browsing context, just as the
+            // Wails host gives it a separate WebView in the desktop integration.
+            const child = await context.newPage();
+            await child.goto(origin + '?terminal=' + encodeURIComponent(id));
+            await child.locator('.native-terminal .xterm').waitFor();
+            await checkTerminalGutter(child.locator('.native-terminal-host'));
+            await child.setViewportSize({ width: 720, height: 480 });
+            await child.waitForTimeout(250);
+            const fitted = await child.evaluate(() => window.childPty?.at(-1));
+            assert(fitted && fitted.cols > 0 && fitted.rows > 0, 'Independent terminal did not resize its PTY');
+            await child.close();
+            await page.evaluate(id => window.marketingDemo.emit('terminal:window-closed', id), id);
+            await page.locator('.tab-active[data-tab-id="' + id + '"]').waitFor();
             await page.waitForTimeout(250);
-            const resizedFloating = await readGrid();
-            assert(resizedFloating.fit.cols > initialFloating.fit.cols, 'Floating columns did not resize after rerender');
-            assert(resizedFloating.fit.rows > initialFloating.fit.rows, 'Floating rows did not resize after rerender');
-            assert.equal(resizedFloating.pty.cols, resizedFloating.fit.cols);
-            assert.equal(resizedFloating.pty.rows, resizedFloating.fit.rows);
-            assert(await floating.locator('canvas').count() > 0, 'Floating WebGL renderer was lost');
-            await floating.getByTitle('Dock back').click();
-            await floating.waitFor({ state: 'detached' });
-            await page.locator(`.terminal-stage [data-tab-id="${id}"] .xterm`).waitFor();
-            await page.waitForTimeout(200);
-            const docked = await readGrid();
-            const viewport = page.viewportSize();
-            await page.setViewportSize({ width: viewport.width - 120, height: viewport.height - 60 });
-            await page.waitForTimeout(250);
-            const resizedDocked = await readGrid();
-            assert(resizedDocked.fit.cols < docked.fit.cols, 'Docked terminal did not resume host resize');
-            assert.equal(resizedDocked.pty.cols, resizedDocked.fit.cols);
-            assert.equal(resizedDocked.pty.rows, resizedDocked.fit.rows);
-            result.floatingLifecycle = { initial: initialFloating.fit, resized: resizedFloating.fit, docked: docked.fit, resizedDocked: resizedDocked.fit };
+            const docked = await page.evaluate(id => window.resizeProbe.bridge.filter(item => item.id === id).at(-1), id);
+            assert(docked && docked.cols !== fitted.cols, 'Workbench did not restore its PTY dimensions');
+            result.nativeWindowLifecycle = { detached: fitted, docked };
           }
           assert.equal(errors.length, 0, errors.join('\n'));
           await page.screenshot({ path: resolve(out, `${mode}-${theme.toLowerCase()}.png`) });

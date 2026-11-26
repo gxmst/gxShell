@@ -21,7 +21,7 @@ gxShell 是一个基于 Go、Wails 和 WebView2 构建的 Windows SSH 工作台�
 
 ## 下载
 
-当前版本：**1.8.3** — [版本说明](CHANGELOG.md#183---2026-11-14)。
+当前版本：**1.8.4** — [版本说明](CHANGELOG.md#184---2026-11-27)。
 
 前往 [Windows x64 最新版](https://github.com/gxmst/gxShell/releases/latest)。
 推荐下载 zip；桌面应用位于压缩包根目录，可选 CLI、中英文使用说明和 Agent 安全

@@ -7,7 +7,7 @@ import (
 
 	"gxShell/backend/ai"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	runtime "gxShell/internal/desktop"
 )
 
 // confirmInspection asks through the in-app approval panel, the same review

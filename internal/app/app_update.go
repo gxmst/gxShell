@@ -13,7 +13,7 @@ import (
 	"gxShell/backend/logger"
 	"gxShell/backend/version"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	runtime "gxShell/internal/desktop"
 )
 
 // updateCheckStartupDelay staggers the automatic check so it does not compete

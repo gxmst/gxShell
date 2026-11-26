@@ -25,7 +25,7 @@ to reject stale bundled references. Already published packages are unchanged.
 
 ## Local preparation
 
-1. Update `backend/version/version.go`, `wails.json`, `frontend/package.json`, and the root versions in `frontend/package-lock.json` to the same version.
+1. Update `backend/version/version.go`, `build/windows/info.json`, `frontend/package.json`, and the root versions in `frontend/package-lock.json` to the same version.
 2. Add the release section to `CHANGELOG.md` using `## [x.y.z] - YYYY-MM-DD`.
 3. Run the checks in [development.md](development.md).
 4. Review the staged file names and make sure local staging directories, credentials, and build caches are excluded.

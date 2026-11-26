@@ -86,8 +86,9 @@ func (a *App) touchProfile(id string) {
 			if time.Since(profiles[i].LastConnectedAt) < time.Minute {
 				return
 			}
+			// A connection updates activity, not the settings revision
+			// used to detect concurrent profile edits.
 			profiles[i].LastConnectedAt = time.Now()
-			profiles[i].UpdatedAt = time.Now()
 			_ = a.store.SaveProfiles(profiles)
 			return
 		}

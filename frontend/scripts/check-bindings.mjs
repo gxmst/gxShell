@@ -1,24 +1,4 @@
-// Zero-dependency guard for the hand-maintained Wails bindings.
-//
-// frontend/wailsjs/ is written by hand in this repository, not generated output.
-// CI builds with `-skipbindings`, but a local `wails build` (no flag) and
-// `wails generate module` both regenerate it and silently revert hand-written
-// corrections. Two regressions have happened this way:
-//
-//  1. The bound namespace. It is derived from the Go package name, so when the
-//     app moved from package main to internal/app the calls had to change from
-//     window.go.main.App to window.go.app.App. A stale namespace is invisible to
-//     go build, tsc and vitest, and fails at runtime on every backend call --
-//     the app opens and nothing works.
-//
-//  2. types.Profile.cliTrustUntil in models.ts. The generator cannot map
-//     time.Time, so it emits `any` plus a convertValues(..., null) call. The
-//     field is an RFC3339 string and the frontend parses it with Date.parse, so
-//     the hand-written declaration is `string`.
-//
-// Run via `npm run check:bindings` (chained into `npm run build`). If this fails
-// right after a local wails build, `git checkout -- frontend/wailsjs` and rerun.
-
+// Check the maintained runtime calls against the Go service and TypeScript declarations.
 import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -67,22 +47,11 @@ for (const [label, source] of [['App.js', appJs], ['App.d.ts', appDts]]) {
   }
 }
 
-// 1. Bound namespace must match the Go package that Wails binds (internal/app).
-if (appJs !== null) {
-  const namespaces = new Set(
-    [...appJs.matchAll(/window\['go'\]\['([^']+)'\]/g)].map((match) => match[1]),
-  );
-  if (namespaces.size === 0) {
-    failures.push('App.js has no window[\'go\'][...] calls; bindings look truncated');
-  }
-  for (const namespace of namespaces) {
-    if (namespace !== 'app') {
-      failures.push(
-        `App.js calls window['go']['${namespace}'] but the bound Go package is "app" ` +
-          '(internal/app). Every backend call would fail at runtime.',
-      );
-    }
-  }
+if (!appJs?.includes("Call.ByName('gxShell/internal/app.App.' + method")) {
+  failures.push('App.js must call the registered gxShell/internal/app.App service');
+}
+for (const method of goMethods) {
+  if (!appJs?.includes('invoke("' + method + '"')) failures.push('Missing runtime call for ' + method);
 }
 
 // 2. cliTrustUntil stays a string, not the generator's `any`.
@@ -131,14 +100,6 @@ if (failures.length > 0) {
   for (const failure of failures) {
     console.error(`check-bindings: ${failure}`);
   }
-  // The most common way to get here is a `wails build` without -skipbindings,
-  // which regenerates the bindings before this runs. Say so: whoever hits it is
-  // looking at a failed build and a modified file they did not edit.
-  console.error('');
-  console.error('check-bindings: if you just ran `wails build` without -skipbindings, it');
-  console.error('check-bindings: regenerated the hand-maintained bindings. Recover with:');
-  console.error('check-bindings:   git checkout -- frontend/wailsjs');
-  console.error('check-bindings: then rebuild as `wails build -clean -skipbindings`.');
   process.exit(1);
 }
 

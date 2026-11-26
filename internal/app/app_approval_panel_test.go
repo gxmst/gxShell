@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,8 +17,6 @@ import (
 type approvalPanelHarness struct {
 	requests chan cliApprovalPanelRequest
 	closed   chan string
-	raised   int32
-	cleared  int32
 }
 
 func newApprovalPanelHarness(app *App) *approvalPanelHarness {
@@ -30,9 +27,6 @@ func newApprovalPanelHarness(app *App) *approvalPanelHarness {
 	app.frontendReady.Store(true)
 	app.cliApprovalPanelFn = func(req cliApprovalPanelRequest) { h.requests <- req }
 	app.cliApprovalPanelClosedFn = func(id string) { h.closed <- id }
-	// The real window calls go through Wails and need the lifecycle context.
-	app.windowRaiseFn = func() { atomic.AddInt32(&h.raised, 1) }
-	app.windowClearFn = func() { atomic.AddInt32(&h.cleared, 1) }
 	return h
 }
 
@@ -70,12 +64,12 @@ func TestApprovalPanelUnavailableBeforeRendererRegisters(t *testing.T) {
 
 func TestResolveCliApprovalRejectsEmptyIDAndIgnoresUnknown(t *testing.T) {
 	app := NewApp()
-	if err := app.ResolveCliApproval("   ", []string{"cmd-0"}); err == nil {
+	if err := app.resolveCliApproval("   ", []string{"cmd-0"}); err == nil {
 		t.Fatal("an empty request id was accepted")
 	}
 	// A stale renderer replaying an id that was already answered, cancelled or
 	// timed out must not error and must not approve anything.
-	if err := app.ResolveCliApproval("panel-does-not-exist", []string{"cmd-0"}); err != nil {
+	if err := app.resolveCliApproval("panel-does-not-exist", []string{"cmd-0"}); err != nil {
 		t.Fatalf("resolving an unknown panel returned %v", err)
 	}
 }
@@ -124,7 +118,7 @@ func TestCliBatchPanelApprovesSubset(t *testing.T) {
 		byText[item.Text] = item.ID
 	}
 	// Approve the two harmless commands only; the destructive one must stay out.
-	if err := app.ResolveCliApproval(req.ID, []string{byText["uptime"], byText["mkdir -p /srv/app"]}); err != nil {
+	if err := app.resolveCliApproval(req.ID, []string{byText["uptime"], byText["mkdir -p /srv/app"]}); err != nil {
 		t.Fatal(err)
 	}
 	wg.Wait()
@@ -135,13 +129,13 @@ func TestCliBatchPanelApprovesSubset(t *testing.T) {
 			t.Fatalf("%q verdict = %v, want %v", command, results[i], want[command])
 		}
 	}
-	// The user chose an interrupting prompt, so the window is raised while the
-	// panel is up and the always-on-top pin is released once it resolves.
-	if got := atomic.LoadInt32(&h.raised); got != 1 {
-		t.Fatalf("the window was raised %d times, want 1", got)
-	}
-	if got := atomic.LoadInt32(&h.cleared); got != 1 {
-		t.Fatalf("the always-on-top pin was cleared %d times, want 1", got)
+	select {
+	case closed := <-h.closed:
+		if closed != req.ID {
+			t.Fatalf("closed %q instead of %q", closed, req.ID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("resolved approval window remained open")
 	}
 }
 
@@ -168,7 +162,7 @@ func TestApprovalPanelsAreSerialised(t *testing.T) {
 	}
 
 	// Denying the first releases the gate and lets the second through.
-	if err := app.ResolveCliApproval(first.ID, nil); err != nil {
+	if err := app.resolveCliApproval(first.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -188,7 +182,7 @@ func TestApprovalPanelsAreSerialised(t *testing.T) {
 	for _, item := range second.Items {
 		ids = append(ids, item.ID)
 	}
-	if err := app.ResolveCliApproval(second.ID, ids); err != nil {
+	if err := app.resolveCliApproval(second.ID, ids); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -230,7 +224,7 @@ func TestQueuedCallerDeniedWhenItDisconnects(t *testing.T) {
 	}
 
 	// The panel that was up is unaffected and still resolvable.
-	if err := app.ResolveCliApproval(first.ID, nil); err != nil {
+	if err := app.resolveCliApproval(first.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -283,7 +277,7 @@ func TestRendererReloadDeniesPendingPanels(t *testing.T) {
 	go func() { done <- app.confirmCliExecution("prod-web", "uptime") }()
 	h.nextRequest(t)
 
-	if err := app.RegisterApprovalPanel(); err != nil {
+	if err := app.registerApprovalPanel(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -363,7 +357,7 @@ func TestCliBatchPanelSurvivesOneDisconnectedCaller(t *testing.T) {
 	for _, item := range req.Items {
 		ids = append(ids, item.ID)
 	}
-	if err := app.ResolveCliApproval(req.ID, ids); err != nil {
+	if err := app.resolveCliApproval(req.ID, ids); err != nil {
 		t.Fatal(err)
 	}
 
@@ -422,7 +416,7 @@ func TestCliCriticalPanelCarriesRiskContext(t *testing.T) {
 		t.Fatalf("critical item dropped its explanation: %#v", item)
 	}
 
-	if err := app.ResolveCliApproval(req.ID, nil); err != nil {
+	if err := app.resolveCliApproval(req.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	select {

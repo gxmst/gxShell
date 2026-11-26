@@ -27,21 +27,21 @@ func TestAiApprovalsCarryRiskAndReviewCriticalPlansSeparately(t *testing.T) {
 			t.Fatalf("missing risk metadata: %#v", item)
 		}
 	}
-	if err := app.ResolveCliApproval(ordinary.ID, []string{ordinary.Items[1].ID}); err != nil {
+	if err := app.resolveCliApproval(ordinary.ID, []string{ordinary.Items[1].ID}); err != nil {
 		t.Fatal(err)
 	}
 	critical := h.nextRequest(t)
 	if !critical.Critical || len(critical.Items) != 1 || critical.Items[0].RiskTier != "T3" || len(critical.Items[0].Spans) == 0 || len(critical.Items[0].RiskLines) == 0 {
 		t.Fatalf("critical metadata missing: %#v", critical)
 	}
-	if err := app.ResolveCliApproval(critical.ID, nil); err != nil {
+	if err := app.resolveCliApproval(critical.ID, nil); err != nil {
 		t.Fatal(err)
 	}
 	credential := h.nextRequest(t)
 	if !credential.Critical || len(credential.Items) != 1 || credential.Items[0].RiskTier != "T3" || len(credential.Items[0].RiskLines) == 0 {
 		t.Fatalf("named credential risk missing: %#v", credential)
 	}
-	if err := app.ResolveCliApproval(credential.ID, []string{credential.Items[0].ID}); err != nil {
+	if err := app.resolveCliApproval(credential.ID, []string{credential.Items[0].ID}); err != nil {
 		t.Fatal(err)
 	}
 	select {

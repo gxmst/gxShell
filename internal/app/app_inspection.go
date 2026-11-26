@@ -12,7 +12,7 @@ import (
 	"gxShell/backend/types"
 	"gxShell/backend/workflow"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	runtime "gxShell/internal/desktop"
 )
 
 // StartAiInspection authorizes one immutable read-only workflow. The renderer

@@ -14,7 +14,7 @@ import (
 
 	"gxShell/backend/types"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	runtime "gxShell/internal/desktop"
 )
 
 const maxProfileImportSize = 10 * 1024 * 1024

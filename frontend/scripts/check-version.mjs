@@ -1,7 +1,7 @@
 // Zero-dependency version consistency checker.
 //
 // backend/version/version.go is the single source of truth for the release
-// version. wails.json, package.json and package-lock.json also need literals
+// version. build/windows/info.json, package.json and package-lock.json also need literals
 // because their build tools parse them as plain JSON. Those copies had
 // already drifted once — the desktop app reported 1.3.0 while gxshell-cli
 // reported 1.4.0 — which is the kind of mismatch nothing fails on and everyone
@@ -19,7 +19,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..');
 
 const versionGoPath = join(repoRoot, 'backend', 'version', 'version.go');
-const wailsJsonPath = join(repoRoot, 'wails.json');
+const windowsInfoPath = join(repoRoot, 'build/windows/info.json');
 const packageJsonPath = join(here, '..', 'package.json');
 const packageLockPath = join(here, '..', 'package-lock.json');
 
@@ -49,7 +49,10 @@ function readJsonField(path, field) {
 const goVersion = readGoVersion();
 
 const checks = [
-  { label: 'wails.json (info.productVersion)', value: readJsonField(wailsJsonPath, 'info.productVersion') },
+  { label: 'build/windows/info.json (fixed.file_version)', value: readJsonField(windowsInfoPath, 'fixed.file_version') },
+  { label: 'build/windows/info.json (fixed.product_version)', value: readJsonField(windowsInfoPath, 'fixed.product_version') },
+  { label: 'build/windows/info.json (info.0409.FileVersion)', value: readJsonField(windowsInfoPath, 'info.0409.FileVersion') },
+  { label: 'build/windows/info.json (info.0409.ProductVersion)', value: readJsonField(windowsInfoPath, 'info.0409.ProductVersion') },
   { label: 'frontend/package.json (version)', value: readJsonField(packageJsonPath, 'version') },
   { label: 'frontend/package-lock.json (version)', value: readJsonField(packageLockPath, 'version') },
   { label: 'frontend/package-lock.json (root package version)', value: readJsonField(packageLockPath, 'packages')?.['']?.version },
@@ -66,4 +69,4 @@ if (mismatches.length > 0) {
   process.exit(1);
 }
 
-console.log(`check-version: ${goVersion} consistent across version.go, wails.json, package.json and package-lock.json`);
+console.log(`check-version: ${goVersion} consistent across version.go, build/windows/info.json, package.json and package-lock.json`);

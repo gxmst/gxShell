@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Copy, MoreHorizontal, Plus, Save, Server, Trash2, X } from "lucide-react";
+import { AlertTriangle, Copy, MoreHorizontal, PlugZap, Plus, Save, Server, Trash2, X } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -15,12 +15,57 @@ function splitLines(value: string): string[] {
   return value.split("\n").filter((line) => line.trim() !== "");
 }
 
-export function ProfileModal(props: { profile: types.Profile; profiles: types.Profile[]; language: string; terminalDefaults?: types.TerminalSettings; sessionLogDefaults?: types.SessionLogSettings; onClose: () => void; onSave: (profile: types.Profile) => void | Promise<void>; onPickKey: () => Promise<string>; onDelete: (id: string) => void; onDuplicate: (id: string) => void | Promise<void>; onDirtyChange?: (dirty: boolean) => void }) {
+const connectionFields: (keyof types.Profile)[] = [
+  "host", "port", "username", "authType", "password", "privateKeyPath", "privateKeyPassphrase", "proxyJumpId",
+];
+
+function endpointError(profile: types.Profile, lang: string) {
+  if (!profile.host.trim()) return t(lang, "hostRequired");
+  if (!profile.username.trim()) return t(lang, "usernameRequired");
+  if (!Number.isInteger(profile.port) || profile.port < 1 || profile.port > 65535) return t(lang, "portRange");
+  return "";
+}
+
+function trustDuration(value: string): Partial<types.Profile> {
+  if (value === "off") return { cliTrustUntil: undefined, cliTrustMode: undefined };
+  const full = value === "full-1";
+  const hours = full ? 1 : Number(value);
+  if (!Number.isFinite(hours) || hours <= 0) return {};
+  return { cliTrustUntil: new Date(Date.now() + hours * 60 * 60 * 1000).toISOString(), cliTrustMode: full ? "full" : undefined };
+}
+
+type ProfileModalProps = {
+  standalone?: boolean;
+  profile: types.Profile;
+  profiles: types.Profile[];
+  language: string;
+  terminalDefaults?: types.TerminalSettings;
+  sessionLogDefaults?: types.SessionLogSettings;
+  onClose: () => void;
+  onSave: (profile: types.Profile) => void | Promise<void>;
+  onTestConnection?: (profile: types.Profile, signal: AbortSignal) => Promise<void>;
+  onPickKey: () => Promise<string>;
+  onDelete: (id: string) => void;
+  onDuplicate: (id: string) => void | Promise<void>;
+  onDirtyChange?: (dirty: boolean) => void;
+};
+
+export function ProfileModal(props: ProfileModalProps) {
   const lang = props.language;
   const [draft, setDraft] = useState(new types.Profile(props.profile));
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const savingRef = useRef(false);
+  const testController = useRef<AbortController | null>(null);
+  const [testState, setTestState] = useState<"idle" | "testing" | "success" | "failure">("idle");
+  const [testError, setTestError] = useState("");
+  useEffect(() => () => testController.current?.abort(), []);
+  const resetTest = () => {
+    testController.current?.abort();
+    testController.current = null;
+    setTestState("idle");
+    setTestError("");
+  };
   const [now, setNow] = useState(Date.now);
   // The two multi-line fields keep their raw text here. Deriving the textarea
   // value from the stored array instead would filter blank lines on every
@@ -31,7 +76,11 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const confirmDiscardRef = useRef(confirmDiscard);
   confirmDiscardRef.current = confirmDiscard;
-  const update = (patch: any) => { setError(""); setDraft(new types.Profile({ ...draft, ...patch })); };
+  const update = (patch: Partial<types.Profile>) => {
+    if (connectionFields.some(field => field in patch)) resetTest();
+    setError("");
+    setDraft(current => new types.Profile({ ...current, ...patch }));
+  };
   // The modal closes on Esc and on a backdrop click as well as the X, so the
   // guard lives in one handler that all three routes call.
   const dirty = useMemo(
@@ -62,17 +111,6 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
     return () => window.clearInterval(timer);
   }, [trustActive]);
   const usedAsJumpHost = (props.profiles || []).some((profile) => profile.id !== draft.id && profile.proxyJumpId === draft.id);
-  const setTrustDuration = (value: string) => {
-    if (value === "off") {
-      update({ cliTrustUntil: undefined, cliTrustMode: undefined });
-      return;
-    }
-    const full = value === "full-1";
-    const hours = full ? 1 : Number(value);
-    if (Number.isFinite(hours) && hours > 0) {
-      update({ cliTrustUntil: new Date(Date.now() + hours * 60 * 60 * 1000).toISOString(), cliTrustMode: full ? "full" : undefined });
-    }
-  };
 
   const addTunnel = () => {
     const rule = types.TunnelRule.createFrom({
@@ -97,22 +135,46 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
     update({ tunnels: list });
   };
 
+  const testConnection = async () => {
+    if (!props.onTestConnection || testController.current || savingRef.current) return;
+    const invalid = endpointError(draft, lang) || (draft.authType === "privateKey" && !draft.privateKeyPath?.trim() ? t(lang, "privateKeyRequired") : "");
+    if (invalid) {
+      setTestState("failure");
+      setTestError(invalid);
+      return;
+    }
+    const controller = new AbortController();
+    testController.current = controller;
+    setTestState("testing");
+    setTestError("");
+    try {
+      await props.onTestConnection(draft, controller.signal);
+      if (!controller.signal.aborted) setTestState("success");
+    } catch (err) {
+      if (!controller.signal.aborted) {
+        setTestState("failure");
+        setTestError(t(lang, "profileTestFailed", { error: err instanceof Error ? err.message : String(err) }));
+      }
+    } finally {
+      if (testController.current === controller) testController.current = null;
+    }
+  };
+
   const handleSave = async () => {
-    if (savingRef.current) return;
-    if (!draft.host.trim()) { setError(t(lang, "hostRequired")); return; }
-    if (!draft.username.trim()) { setError(t(lang, "usernameRequired")); return; }
+    if (savingRef.current || testController.current) return;
+    const invalid = endpointError(draft, lang);
+    if (invalid) { setError(invalid); return; }
     if (draft.cliEnabled && !(draft.cliAlias || "").trim()) { setError(t(lang, "cliAliasRequired")); return; }
     if (draft.cliEnabled) {
       const alias = (draft.cliAlias || "").trim().toLowerCase();
       const duplicate = (props.profiles || []).some((p) => p.id !== draft.id && p.cliEnabled && (p.cliAlias || "").trim().toLowerCase() === alias);
       if (duplicate) { setError(t(lang, "cliAliasDuplicate")); return; }
     }
-    if (draft.port < 1 || draft.port > 65535) { setError(t(lang, "portRange")); return; }
     savingRef.current = true;
     setBusy(true);
     setError("");
     try {
-      await props.onSave(draft);
+      await props.onSave(new types.Profile({ ...draft, host: draft.host.trim(), username: draft.username.trim() }));
     } catch (err) {
       setError(String(err));
     } finally {
@@ -141,7 +203,7 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
     return () => window.removeEventListener("keydown", onKey, true);
   }, []);
   return (
-    <ModalShell onClose={requestClose} ariaLabel={draft.id ? t(lang, "editServer") : t(lang, "newServer")}>
+    <ModalShell standalone={props.standalone} onClose={requestClose} ariaLabel={draft.id ? t(lang, "editServer") : t(lang, "newServer")}>
       <div className="profile-modal-header">
         <div className="profile-modal-heading"><span className="dialog-header-icon"><Server size={16} /></span><span><h2 className="profile-modal-title">{draft.id ? t(lang, "editServer") : t(lang, "newServer")}</h2><small>{dirty ? t(lang, "unsavedChangesHint") : t(lang, "profileModalSubtitle")}</small></span></div>
         <button className="icon-btn compact-icon" disabled={busy} onClick={requestClose} aria-label={t(lang, "close")}><X size={14} /></button>
@@ -191,6 +253,14 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
             <option value="linux">Generic Linux</option>
           </select>
         </Label>
+        {props.onTestConnection && <div className="profile-connection-test col-span-2">
+          <button type="button" className="btn-secondary" disabled={busy || testState === "testing"} onClick={testConnection}>
+            <PlugZap size={14} /> {t(lang, "profileTestConnection")}
+          </button>
+          <span role="status" data-state={testState}>{testState === "testing" ? t(lang, "profileTestPending")
+            : testState === "success" ? t(lang, "profileTestSuccess") : testState === "failure" ? testError : ""}</span>
+          {testState === "testing" && <button type="button" className="btn-secondary" onClick={resetTest}>{t(lang, "cancel")}</button>}
+        </div>}
         <div className="profile-modal-checks col-span-2">
           <label className="check"><input type="checkbox" checked={draft.favorite} onChange={(e) => update({ favorite: e.target.checked })} /> {t(lang, "favorite")}</label>
           <label className="check"><input type="checkbox" checked={draft.cliEnabled || false} onChange={(e) => update({ cliEnabled: e.target.checked, ...(!e.target.checked ? { cliTrustUntil: undefined, cliTrustMode: undefined } : {}) })} /> {t(lang, "cliServerAccess")}</label>
@@ -201,7 +271,7 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
         {draft.cliEnabled && (
           <div className="profile-cli-trust col-span-2">
             <div className="profile-cli-trust-heading"><AlertTriangle size={13} /> {t(lang, "cliTrustTitle")}</div>
-            <select className="input compact-input" aria-label={t(lang, "cliTrustTitle")} value={trustActive ? "active" : "off"} onChange={(event) => setTrustDuration(event.target.value)}>
+            <select className="input compact-input" aria-label={t(lang, "cliTrustTitle")} value={trustActive ? "active" : "off"} onChange={(event) => update(trustDuration(event.target.value))}>
               {trustActive && <option value="active" disabled>{t(lang, draft.cliTrustMode === "full" ? "cliFullTrustActiveUntil" : "cliTrustActiveUntil", { time: new Date(trustDeadline).toLocaleString() })}</option>}
               <option value="off">{t(lang, "cliTrustOff")}</option>
               <option value="1">{t(lang, "cliTrustOneHour")}</option>
@@ -278,8 +348,10 @@ export function ProfileModal(props: { profile: types.Profile; profiles: types.Pr
 
       {error && <div className="profile-modal-error" role="alert">{error}</div>}
       <div className="profile-modal-footer">
-        <div>{draft.id && <><button className="btn-danger" disabled={busy} onClick={() => props.onDelete(draft.id)}><Trash2 size={13} /> {t(lang, "delete")}</button><button className="btn-secondary ml-2" disabled={busy} onClick={() => props.onDuplicate(draft.id)}><Copy size={13} /> {t(lang, "duplicate")}</button></>}</div>
-        <button className="btn-primary" disabled={busy} onClick={handleSave} title="Ctrl+S"><Save size={13} /> {busy ? t(lang, "loading") : (dirty ? t(lang, "saveChanges") : t(lang, "save"))}</button>
+        <div>{draft.id && <><button className="btn-danger" disabled={busy} onClick={() => props.onDelete(draft.id)}><Trash2 size={13} /> {t(lang, "delete")}</button><button className="btn-secondary ml-2" disabled={busy} onClick={async () => {
+          try { await props.onDuplicate(draft.id); } catch (err) { setError(String(err)); }
+        }}><Copy size={13} /> {t(lang, "duplicate")}</button></>}</div>
+        <button className="btn-primary" disabled={busy || testState === "testing"} onClick={handleSave} title="Ctrl+S"><Save size={13} /> {busy ? t(lang, "loading") : (dirty ? t(lang, "saveChanges") : t(lang, "save"))}</button>
       </div>
       {confirmDiscard && (
         <ConfirmDialog

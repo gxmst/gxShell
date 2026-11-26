@@ -2,7 +2,7 @@ package app
 
 import (
 	"fmt"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	runtime "gxShell/internal/desktop"
 	"os"
 	"strings"
 

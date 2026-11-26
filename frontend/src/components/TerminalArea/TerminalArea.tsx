@@ -13,22 +13,22 @@ import type { DocumentOutline } from "../../utils/documentPresentation";
 // off the startup path so the app only fetches them when a text file is opened.
 const MarkdownViewer = lazy(() => import("../MarkdownViewer/MarkdownViewer"));
 
-function TerminalHost({ tabId, isFloating, terminalHosts, ...props }: React.HTMLAttributes<HTMLDivElement> & {
+const CastPlayer = lazy(() => import("../CastPlayer/CastPlayer").then(module => ({ default: module.CastPlayer })));
+
+function TerminalHost({ tabId, terminalHosts, ...props }: React.HTMLAttributes<HTMLDivElement> & {
   tabId: string;
-  isFloating: boolean;
   terminalHosts: React.MutableRefObject<Record<string, HTMLDivElement | null>>;
 }) {
   const nodeRef = useRef<HTMLDivElement | null>(null);
   const registerHost = useCallback((node: HTMLDivElement | null) => {
-    // The main placeholder remains available for docking, but only the actual
-    // owner may clear or replace a terminal's host while it is floating.
+    // Keep the workbench xterm mounted while its independent view is open.
     if (node) {
-      if (!isFloating) terminalHosts.current[tabId] = node;
+      terminalHosts.current[tabId] = node;
     } else if (terminalHosts.current[tabId] === nodeRef.current) {
       delete terminalHosts.current[tabId];
     }
     nodeRef.current = node;
-  }, [isFloating, tabId, terminalHosts]);
+  }, [tabId, terminalHosts]);
   return <div {...props} data-tab-id={tabId} ref={registerHost} />;
 }
 
@@ -47,6 +47,9 @@ export const TerminalArea = memo(function TerminalArea(props: {
   onNewConnection: () => void;
   onOpenMarkdownFile?: (target: MarkdownOpenTarget) => void;
   language: string;
+  replay?: string | null;
+  settings?: types.AppSettings | null;
+  onCloseReplay?: () => void;
   logViewer?: { name: string; content: string } | null;
   onCloseLogViewer?: () => void;
   floatingTabIds?: string[];
@@ -71,6 +74,9 @@ export const TerminalArea = memo(function TerminalArea(props: {
   const split = props.splitPane;
   const splitRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (stageRef.current) stageRef.current.inert = !!props.replay;
+  }, [props.replay]);
   const splitDragRef = useRef<{ pointerId: number; split: SplitPane; bounds: DOMRect; ratio: number; frame: number; row: boolean; horizontal: boolean } | null>(null);
   useEffect(() => () => { if (splitDragRef.current?.frame) cancelAnimationFrame(splitDragRef.current.frame); splitDragRef.current = null; }, [split]);
 
@@ -211,9 +217,8 @@ export const TerminalArea = memo(function TerminalArea(props: {
             <TerminalHost
               key={tab.id}
               tabId={tab.id}
-              isFloating={isFloating}
               terminalHosts={props.terminalHosts}
-              className={clsx(hostClass, tab.type === 'markdown' && 'document-host-pane')}
+              className={hostClass}
               style={hostStyle}
               onFocusCapture={isSplitTab && !isActive ? () => props.onActive(tab.id) : undefined}
               onClick={isSplitTab ? () => props.onActive(tab.id) : undefined}
@@ -228,7 +233,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
                     filePath={tab.filePath}
                     remotePath={tab.remotePath}
                     sessionId={tab.remoteSessionId}
-                    active={isActive && !isFloating}
+                    active={!props.replay && isActive && !isFloating}
                     visible={!!isSplitVisible && isSplitTab ? !isFloating : isActive && !isFloating}
                     locale={lang}
                     onClose={() => props.onClose(tab.id)}
@@ -269,7 +274,7 @@ export const TerminalArea = memo(function TerminalArea(props: {
             <pre className="log-viewer-content">{props.logViewer.content}</pre>
           </div>
         )}
-        {!visibleTabs.length && !props.logViewer && (
+        {!visibleTabs.length && !props.logViewer && !props.replay && (
           <div className="terminal-empty">
             <div className="terminal-empty-card">
               <TerminalSquare className="mx-auto mb-3 h-11 w-11 text-muted" />
@@ -295,6 +300,13 @@ export const TerminalArea = memo(function TerminalArea(props: {
           onOpenCurrentDirectory={props.onOpenCurrentDirectory}
           language={lang}
         />
+      )}
+      {props.replay && props.onCloseReplay && (
+        <div className="cast-workspace">
+          <Suspense fallback={<div className="empty compact">{t(lang, "loading")}</div>}>
+            <CastPlayer key={props.replay} name={props.replay} settings={props.settings ?? null} locale={lang} onClose={props.onCloseReplay} />
+          </Suspense>
+        </div>
       )}
     </section>
   );

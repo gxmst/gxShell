@@ -2,13 +2,13 @@
 
 ## 项目概述
 
-gxShell 是一款 Windows 桌面终端/SSH 客户端，集成了系统监控、文件管理、AI 辅助、Docker 管理、SSH 隧道等功能。采用 Go + React 架构，通过 Wails v2 框架将后端能力与前端界面桥接，打包为原生桌面应用。
+gxShell 是一款 Windows 桌面终端/SSH 客户端，集成了系统监控、文件管理、AI 辅助、Docker 管理、SSH 隧道等功能。采用 Go + React 架构，通过 Wails 3.1 框架将后端能力与前端界面桥接，打包为原生桌面应用。
 
 ### 平台支持
 
 正式发布目标目前只有 Windows。CI 另外在原生 Ubuntu 和 macOS runner 上执行实验性桌面编译，以尽早发现平台分支和原生依赖的编译退化；这些未签名产物不发布，也不代表非 Windows 平台已经得到运行支持。
 
-`backend/` 和 `cmd/` 下的包保持平台无关，平台相关实现拆成 `*_windows.go` / `*_other.go` 两份；CI 的 `verify-linux` job 单独编译这些目录，两个实验性 desktop job 则分别完整编译 Linux 和 macOS Wails 应用。部分 `_other.go` 仍是占位实现（例如文件关联返回不支持）；托盘、系统密钥环、本地 PTY、对话框和单实例行为仍需真机验证。macOS 构建暂时禁用 `getlantern/systray`，因为它与 Wails 都定义了 Objective-C `AppDelegate`，同时链接会产生重复符号。
+`backend/` 和 `cmd/` 下的包保持平台无关，平台相关实现拆成 `*_windows.go` / `*_other.go` 两份；CI 的 `verify-linux` job 单独编译这些目录，两个实验性 desktop job 则分别完整编译 Linux 和 macOS Wails 应用。部分 `_other.go` 仍是占位实现（例如文件关联返回不支持）；托盘、系统密钥环、本地 PTY、对话框和单实例行为仍需真机验证。系统托盘使用 Wails 原生菜单。
 
 ---
 
@@ -18,7 +18,7 @@ gxShell 是一款 Windows 桌面终端/SSH 客户端，集成了系统监控、�
 
 | 模块 | 技术 | 说明 |
 |------|------|------|
-| 框架 | Wails v2 | Go 桌面应用框架，提供 Go↔JS 桥接 |
+| 框架 | Wails 3.1 | Go 桌面应用框架，提供 Go↔JS 桥接 |
 | SSH | golang.org/x/crypto/ssh | SSH 连接、Shell 会话、命令执行 |
 | SFTP | github.com/pkg/sftp | 远程文件传输 |
 | 密钥存储 | github.com/zalando/go-keyring | 系统密钥环（Keyring）+ AES 加密回退 |
@@ -76,7 +76,7 @@ gxShell/
 │   │   │   ├── SftpPanel/       # SFTP 文件管理
 │   │   │   ├── TerminalArea/    # 终端区域
 │   │   │   ├── TunnelPanel/     # SSH 隧道面板
-│   │   │   ├── FloatingTerminal/ # 浮动终端窗口
+│   │   │   ├── NativeTerminal/   # 原生终端、SFTP 和监控窗口
 │   │   │   ├── SettingsPanel/   # 设置面板
 │   │   │   └── modals/          # 各种弹窗
 │   │   ├── hooks/           # 自定义 Hooks
@@ -209,15 +209,16 @@ AI 工具调用 → 前端显示 → 用户确认 → AiExecuteTool → SSH 执�
 - **独立 AI 配置**：AI 配置使用专用的 `SaveAiConfig`/`GetAiConfig` API，避免嵌套对象序列化问题
 - **本地文档授权**：后端在配置目录的 `document-access.dat` 中原子记录已授权路径；`RestoreTextFiles` 只恢复该记录中已授权且仍存在的文档。旧版本没有这份记录时，需要通过原生选择或确认重新打开一次。
 
-### 9. 浮动终端
+### 9. 原生独立窗口
 
-**架构**：DOM 移动 + 拖拽定位，模拟多窗口
+工作台和每个独立视图分别使用 Wails 的 `WebviewWindow`，一块显示器上就能并排使用。后端按会话和视图类型复用窗口。
 
-**关键实现**：
-- **标签拖出**：终端标签可拖出主区域，成为浮动面板
-- **DOM 移动**：xterm 终端元素在主区域和浮动窗口之间动态移动
-- **Wails v2 限制**：v2 不支持原生多窗口，采用浮动面板模拟独立窗口
-- **位置/大小持久化**：浮动窗口的位置和大小保存到 localStorage
+- 将 SSH 或本地终端标签拖出标签栏，或在标签右键菜单中选择独立窗口。子窗口接收工作台的 xterm 屏幕快照和后续输出，并直接向原有 PTY 发送输入与尺寸变化。
+- 关闭终端子窗口，或点击“放回工作台”，即可回到同一会话。存在其他视图时，关闭主窗口会隐藏工作台。关闭最后一个独立视图会再次显示工作台。
+- 已连接的 SSH 标签还可以分别打开 SFTP 和监控窗口。SFTP 文档编辑器按会话和文件路径复用原生窗口。传输窗口先订阅事件，再从后端取得带修订号的任务快照，以恢复打开前的进度和历史。
+- 新建服务器、编辑服务器、批量编辑和快速连接各自在原生窗口中打开。可以同时填写多个新建草稿，同一台服务器复用已有编辑窗口。配置写入后窗口间刷新服务器列表，已打开的草稿保留输入。
+- 每个审批窗口只能读取和处理分配给它的请求。关闭、超时或调用方取消会结束请求，后续请求按顺序显示。
+- 快速连接窗口由主工作台接管终端会话。窗口间的通知仅包含一次性请求编号，连接参数由工作台从后端内存领取。
 
 ### 10. 国际化
 
@@ -302,11 +303,11 @@ type App struct {
 ## 构建与部署
 
 ```bash
-# 开发模式（同样需要 -skipbindings）
-wails dev -skipbindings
+# 开发模式
+wails3 dev
 
-# 生产构建（-skipbindings 是必需的，见 development.md）
-wails build -clean -skipbindings
+# Windows 生产构建
+.\scripts\build.ps1
 
 # 输出
 build/bin/gxShell.exe
@@ -316,13 +317,13 @@ build/bin/gxShell.exe
 
 - Windows: `gxShell.exe`（内嵌前端资源）
 - 前端资源通过 `//go:embed all:frontend/dist` 嵌入 Go 二进制
-- `frontend/wailsjs/` 中的绑定由项目手工维护，所有 `wails build` / `wails dev` 必须传入 `-skipbindings`，构建时通过 `check-bindings.mjs` 检查。
+- `frontend/wailsjs/` 中的绑定由项目手工维护，通过 Wails 3 的 `Call.ByName` 访问 Go 服务，构建时通过 `check-bindings.mjs` 检查。
 
 ---
 
 ## 已知限制
 
-1. **Wails v2 不支持原生多窗口**：浮动终端通过 DOM 定位模拟，非真正独立窗口
+1. **文档编辑**：本地和远程文档统一在主工作台打开。
 2. **xterm WebGL 模式下 DOM 无文本**：终端内容抓取必须使用 buffer API
 3. **AI 工具调用需要用户确认**：出于安全考虑，每次执行命令都需用户点击 Run
 4. **Docker 管理依赖 SSH**：不支持本地 Docker socket 直连

@@ -1,90 +1,75 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"fmt"
+	"net/http"
 	"os"
+	"sync"
 
 	"gxShell/internal/app"
+	"gxShell/internal/desktop"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
-//go:embed build/windows/icon.ico
+//go:embed build/windows/icon.png
 var trayIcon []byte
 
 func main() {
-	// Create an instance of the app structure
 	a := app.NewApp()
-	app.SetTrayIcon(a, trayIcon)
-
-	// Check command line arguments
 	if len(os.Args) > 1 {
 		app.SetStartupFilePath(a, os.Args[1])
 	}
-
-	// Initialize system tray
-	app.SetupSystemTray(a)
-
-	// Lifecycle callbacks come from a package-level seam rather than exported
-	// App methods: Wails binds every exported method of a bound struct, so
-	// exporting these would also expose them to the webview. See
-	// internal/app/entrypoint.go.
 	hooks := app.NewHooks(a)
-
-	// Create application with options
-	err := wails.Run(&options.App{
-		Title:     "gxShell",
-		Width:     1180,
-		Height:    760,
-		MinWidth:  900,
-		MinHeight: 620,
-		AssetServer: &assetserver.Options{
-			Assets:  assets,
-			Handler: app.DocumentAssetHandler(a),
-		},
-		// BackgroundColour must match the default theme's --bg (#0e1217). The
-		// native window background shows during startup and when resize reveals
-		// untracked regions; a colour that belongs to no theme flashes as a
-		// foreign band. SetWindowBackgroundColour keeps it in sync once the
-		// frontend is up and the active theme is known.
-		BackgroundColour: &options.RGBA{R: 14, G: 18, B: 23, A: 1},
-		DragAndDrop: &options.DragAndDrop{
-			EnableFileDrop: true,
-		},
-		OnStartup:     hooks.Startup,
-		OnDomReady:    hooks.DomReady,
-		OnBeforeClose: hooks.BeforeClose,
-		OnShutdown:    hooks.Shutdown,
-		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId: "gxshell-2f6c1d8a-single-instance",
-			OnSecondInstanceLaunch: func(data options.SecondInstanceData) {
-				hooks.SecondInstanceLaunch(data.Args)
+	mux := http.NewServeMux()
+	mux.Handle("/__gxshell/document/", app.DocumentAssetHandler(a))
+	mux.Handle("/", application.BundledAssetFileServer(assets))
+	initialized := make(chan struct{})
+	host := application.New(application.Options{
+		Name:     "gxShell",
+		Windows:  app.DisplayChangeOptions(),
+		Services: []application.Service{application.NewService(a)},
+		Assets:   application.AssetOptions{Handler: mux},
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "gxshell-2f6c1d8a-single-instance",
+			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
+				<-initialized
+				if len(data.Args) > 0 {
+					hooks.SecondInstanceLaunch(data.Args[1:])
+				}
 			},
 		},
-		// Frameless: the app draws its own top bar (AppTopBar) so one strip
-		// spans the window instead of a native caption plus two app-level
-		// chrome bands. Drag regions and window buttons live in the frontend;
-		// see internal/app/app_window.go for the bound controls.
-		Frameless: true,
-		Bind: []interface{}{
-			a,
-		},
-		Windows: &windows.Options{
-			WebviewIsTransparent: false,
-			WindowIsTranslucent:  false,
-			DisableWindowIcon:    false,
-		},
 	})
-
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %s\n", err.Error())
+	mainWindow := host.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name: "main", Title: "gxShell", Width: 1180, Height: 760, MinWidth: 900, MinHeight: 620, Frameless: true,
+		BackgroundColour: application.NewRGB(14, 18, 23), EnableFileDrop: true,
+	})
+	ctx := desktop.WithWindow(host.Context(), mainWindow)
+	if err := hooks.Startup(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	app.SetTrayIcon(a, trayIcon)
+	app.SetupSystemTray(a)
+	hooks.PrepareWindow(ctx)
+	close(initialized)
+	mainWindow.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		if hooks.BeforeClose(ctx) {
+			e.Cancel()
+		}
+	})
+	shutdown := sync.OnceFunc(func() { hooks.Shutdown(context.Background()) })
+	host.OnShutdown(shutdown)
+	defer shutdown()
+	if err := host.Run(); err != nil {
+		shutdown()
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }

@@ -2,13 +2,17 @@ package sshmanager
 
 import (
 	"context"
+	"errors"
 	"net"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"gxShell/backend/types"
 )
 
 func TestFirstHopDialCancellationReachesProxy(t *testing.T) {
-	manager := &Manager{}
+	manager := NewManager(filepath.Join(t.TempDir(), "known_hosts"), nil, nil)
 	started := make(chan struct{})
 	manager.SetDialContext(func(ctx context.Context, network, address string) (net.Conn, error) {
 		if network != "tcp" || address != "jump.test:22" {
@@ -18,14 +22,19 @@ func TestFirstHopDialCancellationReachesProxy(t *testing.T) {
 		<-ctx.Done()
 		return nil, ctx.Err()
 	})
-	session := &Session{done: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, err := manager.dialFirstHop(session, "jump.test:22", time.Minute); done <- err }()
+	go func() {
+		target := types.Profile{Host: "target.test", Port: 22}
+		jump := types.Profile{ID: "jump", Host: "jump.test", Port: 22}
+		done <- manager.TestConnection(ctx, target, jump, 60, AuthenticationPrompts{})
+	}()
 	<-started
-	close(session.done)
+	cancel()
 	select {
 	case err := <-done:
-		if err != context.Canceled {
+		if !errors.Is(err, context.Canceled) {
 			t.Fatal(err)
 		}
 	case <-time.After(time.Second):

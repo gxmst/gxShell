@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { EventsOn } from "../../wailsjs/runtime/runtime";
 import { types } from "../../wailsjs/go/models";
 import { CreateProfile, DeleteProfile, DuplicateProfile, GetAppInfo, GetSettings, ListCommands, ListProfiles, UpdateProfile, UpdateSettings } from "../../wailsjs/go/app/App";
 import { appThemes } from "../constants";
@@ -15,9 +16,20 @@ export function useProfiles(notify: (text: string, tone?: "info" | "error" | "su
     return () => { mounted.current = false; };
   }, []);
 
+  const listRevision = useRef(0);
+  const refreshProfiles = useCallback(async () => {
+    const revision = ++listRevision.current;
+    const list = await ListProfiles();
+    if (mounted.current && revision === listRevision.current) setProfiles(list || []);
+  }, []);
+
+  useEffect(() => EventsOn("profiles:changed", () => {
+    void refreshProfiles().catch(err => notify(String(err), "error"));
+  }), [refreshProfiles, notify]);
+
   const reload = useCallback(async () => {
-    const [profileList, commandList, currentSettings, info] = await Promise.all([
-      ListProfiles(),
+    const [, commandList, currentSettings, info] = await Promise.all([
+      refreshProfiles(),
       ListCommands(),
       GetSettings(),
       GetAppInfo()
@@ -27,11 +39,10 @@ export function useProfiles(notify: (text: string, tone?: "info" | "error" | "su
     if (!currentSettings.terminal.themeName || currentSettings.terminal.themeName === "gx Dark") {
       currentSettings.terminal.themeName = currentSettings.themeName === "Light" ? "Light" : currentSettings.themeName;
     }
-    setProfiles(profileList);
     setCommands(commandList);
     setSettings(currentSettings);
     setAppInfo(info);
-  }, []);
+  }, [refreshProfiles]);
 
   useEffect(() => {
     reload().catch((err) => notify(String(err), "error"));

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { CancelTransfer, DownloadFileWithPolicy, PauseTransfer, ResumeTransfer, UploadFileWithPolicy } from "../../wailsjs/go/app/App";
+import { CancelTransfer, ClearTransferHistory, GetTransferSnapshot, DownloadFileWithPolicy, PauseTransfer, ResumeTransfer, UploadFileWithPolicy } from "../../wailsjs/go/app/App";
 import { EventsOn } from "../../wailsjs/runtime/runtime";
 import { TransfersContext, transferName, normalizeEvent, type Transfer, type TransferHistoryItem } from "./useTransfers";
 
@@ -16,7 +16,10 @@ export function TransfersProvider({ children, resolveSessionId }: TransfersProvi
   const terminalJobs = useRef(new Set<string>());
 
   useEffect(() => {
-    const off = EventsOn("sftp:progress", (raw: Partial<Transfer>) => {
+    let live = true;
+    let snapshotRevision = 0;
+    const cleared = new Map<string, number>();
+    const apply = (raw: Partial<Transfer>) => {
       const data = normalizeEvent(raw);
       if (!data) return;
       if (terminalJobs.current.has(data.jobId)) return;
@@ -66,6 +69,7 @@ export function TransfersProvider({ children, resolveSessionId }: TransfersProvi
         delete next[data.jobId];
         return next;
       });
+      if (data.revision && data.revision <= (Math.max(cleared.get("") || 0, cleared.get(data.sessionId) || 0))) return;
       setHistory((prev) => {
         // Terminal delivery is idempotent. This also protects React dev-mode
         // listener remounts from creating duplicate history rows.
@@ -82,17 +86,45 @@ export function TransfersProvider({ children, resolveSessionId }: TransfersProvi
           direction: data.direction,
           status: data.status as TransferHistoryItem["status"],
           error: data.error,
-          finishedAt: Date.now(),
+          finishedAt: data.finishedAt ?? Date.now(),
+          revision: data.revision,
           ok: data.status === "succeeded",
           sourcePath: data.sourcePath,
           targetPath: data.targetPath,
           overwrite: data.overwrite,
           retryable: data.retryable !== false && data.status !== "succeeded",
         };
-        return [item, ...prev].slice(0, 50);
+        return [item, ...prev].sort((a, b) => (b.revision || 0) - (a.revision || 0)).slice(0, 50);
       });
+    };
+    const clear = (sessionId: string, revision: number) => {
+      cleared.set(sessionId, Math.max(revision, cleared.get(sessionId) || 0));
+      setHistory(prev => prev.filter(item => (!!sessionId && item.sessionId !== sessionId) || (item.revision || 0) > revision));
+    };
+    // Subscribe before fetching. Replay only events newer than the snapshot,
+    // including history clears that raced a window opening.
+    let queued: Array<{revision: number; apply: () => void}> | null = [];
+    const receive = (revision: number, action: () => void) => {
+      if (revision && revision <= snapshotRevision) return;
+      if (queued && revision) queued.push({revision, apply: action});
+      else action();
+    };
+    const offClear = EventsOn("sftp:history-cleared", ({ sessionId, revision }: { sessionId: string; revision: number }) =>
+      receive(revision, () => clear(sessionId, revision)));
+    const off = EventsOn("sftp:progress", (raw: Partial<Transfer>) => receive(raw.revision || 0, () => apply(raw)));
+    void Promise.resolve().then(GetTransferSnapshot).then(snapshot => {
+      if (!live) return;
+      snapshotRevision = snapshot.revision;
+      snapshot.events.forEach(apply);
+    }).catch(() => { /* Live events can still populate the view. */ }).finally(() => {
+      if (!live) return;
+      queued?.sort((a, b) => a.revision - b.revision).forEach(event => {
+        if (event.revision > snapshotRevision) event.apply();
+      });
+      queued = null;
     });
-    return () => off();
+    return () => { live = false; off(); offClear(); };
+
   }, []);
 
   const activeCount = useMemo(() => Object.keys(transfers).length, [transfers]);
@@ -137,7 +169,7 @@ export function TransfersProvider({ children, resolveSessionId }: TransfersProvi
     return true;
   }, [resolveSessionId]);
 
-  const clearHistory = useCallback(() => setHistory([]), []);
+  const clearHistory = ClearTransferHistory;
 
   return (
     <TransfersContext.Provider value={{ transfers, history, activeCount, cancelTransfer, pauseTransfer, resumeTransfer, retryTransfer, clearHistory }}>

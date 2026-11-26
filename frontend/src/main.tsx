@@ -1,9 +1,8 @@
 import React from 'react'
 import {createRoot} from 'react-dom/client'
-import '@xterm/xterm/css/xterm.css'
 import './style.css'
-import App from './App'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import WindowRoot from './WindowRoot'
 
 const container = document.getElementById('root')
 
@@ -12,7 +11,7 @@ const root = createRoot(container!)
 root.render(
     <React.StrictMode>
         <ErrorBoundary>
-            <App/>
+            <React.Suspense fallback={null}><WindowRoot/></React.Suspense>
         </ErrorBoundary>
     </React.StrictMode>
 )

@@ -4,7 +4,7 @@
 
 - Go 1.26.11+ (pinned by the `go` directive in `go.mod`; a newer toolchain is downloaded automatically)
 - Node.js 20.19+ (or 22.13+) and npm
-- Wails CLI v2
+- Wails CLI v3.1.0 (install with `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0`)
 - Microsoft WebView2 Runtime for desktop execution
 
 ## Common checks
@@ -34,14 +34,9 @@ Build the Windows desktop app with:
 .\scripts\build.ps1 -Clean
 ```
 
-`-skipbindings` is required, not optional. `frontend/wailsjs` is hand-maintained
-(see below), and Wails regenerates it *before* compiling the frontend. Without
-the flag the build reverts the corrections in `models.ts`, then fails on the
-bindings check inside `npm run build` — and leaves the reverted file in your
-working tree. If that happens, run `git checkout -- frontend/wailsjs` and rebuild
-with the flag. Both CI workflows pass it for the same reason.
-
-The build script supplies the required binding flags and also builds the CLI.
+For live frontend reload on Windows, run `wails3 dev` from the repository root.
+The development executable is `build/bin/gxShell-dev.exe`. The production script
+builds the desktop application and CLI using the maintained bindings.
 It leaves the desktop executable in `build/bin/gxShell.exe`, the embedded
 frontend bundle in `frontend/dist`, and the CLI in `gxshell-cli.exe`. These are
 ordinary build outputs. Use `scripts/build-archive.ps1` only when preparing an
@@ -94,7 +89,7 @@ gxShell/
 |-- build/                     # Icons and Windows packaging metadata
 |-- docs/                      # User, security, architecture, and release docs
 |-- .github/                   # CI and release automation
-|-- wails.json                 # Desktop build configuration
+|-- Taskfile.yml               # Wails 3 build and development tasks
 ```
 
 The root `main.go` intentionally stays at the repository root because it
@@ -114,14 +109,10 @@ feeds `allowFile`, which is what authorizes a path for
 renderer read or overwrite any file with a supported text extension. Add new
 frontend APIs deliberately, not as a side effect of package structure.
 
-**`frontend/wailsjs/` is hand-maintained, not generated output.** Pass
-`-skipbindings` to every `wails build` and `wails dev`; both CI workflows do.
-Regenerating reverts local fixes — it regresses `Profile.cliTrustUntil` in
-`models.ts` from `string` back to `any` — and `check-bindings.mjs` fails the
-build when it happens. `wails generate module` has the same effect. If you do
-run one of them, diff the result and keep the hand-written corrections. When
-adding a backend method, hand-edit `App.d.ts`, `App.js`, and any new type in
-`models.ts`.
+**Keep the frontend bridge in sync with the Go service.** The maintained
+functions in `frontend/wailsjs/go/app` use Wails 3 `Call.ByName`. Keep their
+JS and TypeScript declarations in sync with exported methods and keep the
+handwritten model corrections. `npm run check:bindings` checks that surface.
 
 ## Further reading
 

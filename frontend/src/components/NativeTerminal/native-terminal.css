@@ -1,0 +1,20 @@
+.app-shell.native-terminal { display: flex; flex-direction: column; width: 100vw; height: 100vh; background: var(--bg); color: var(--text); }
+.native-terminal > header { display: flex; align-items: center; justify-content: space-between; padding: 4px 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
+.native-terminal > header button { display: inline-flex; align-items: center; gap: 5px; width: auto; }
+.native-terminal .native-terminal-host { position: relative; inset: auto; flex: 1; min-height: 0; }
+.native-terminal-notice { position: absolute; bottom: 12px; right: 12px; max-width: 80vw; background: var(--panel); }
+.app-shell.native-session-panel { display: flex; flex-direction: column; height: 100vh; overflow: auto; }
+
+.native-terminal > header > span { margin-right: auto; }
+
+.app-shell.native-workspace { display: block; height: 100vh; overflow: hidden; }
+.native-workspace .cli-panel-backdrop { display: block; padding: 0; background: var(--panel-raised); }
+.native-workspace .cli-panel { width: 100%; height: 100%; max-height: none; border: 0; border-radius: 0; box-shadow: none; }
+.native-session-panel > .xfer-center { padding: 14px; overflow: auto; }
+.native-session-panel > .xfer-center .xfer-center-list { max-height: none; }
+.native-workspace .native-terminal-notice, .native-session-panel .native-terminal-notice {
+  z-index: 130; max-width: 90vw; padding: 6px 10px; overflow-wrap: anywhere;
+  color: var(--text); border: 1px solid var(--border); border-radius: 5px;
+}
+
+.native-document-content { height: 100%; }

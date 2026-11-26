@@ -160,6 +160,27 @@ func TestTransferLifecycleEmitsOneTerminalEvent(t *testing.T) {
 	}
 }
 
+func TestTransferSnapshotSurvivesWindowCloseAndScopedHistoryClear(t *testing.T) {
+	m := &Manager{}
+	a := m.beginTransfer("A", "/a", "upload")
+	b := m.beginTransfer("B", "/b", "download")
+	m.emitTransfer(a, "paused", 3, 10, nil)
+	m.finishTransfer(b, nil, 5, 5)
+	first := m.TransferSnapshot()
+	if len(first.Events) != 2 || first.Events[0]["jobId"] != b.id || first.Events[1]["status"] != "paused" {
+		t.Fatalf("snapshot lost progress or history: %#v", first)
+	}
+	m.finishTransfer(a, nil, 10, 10)
+	m.ClearTransferHistory("A")
+	second := m.TransferSnapshot()
+	if second.Revision <= first.Revision || len(second.Events) != 1 || second.Events[0]["jobId"] != b.id {
+		t.Fatalf("clear crossed session boundaries: %#v", second)
+	}
+	if m.journal.record(a, 1, map[string]any{"status": "progress"}) {
+		t.Fatal("late progress revived a closed job")
+	}
+}
+
 func TestTerminalTransferRejectsLatePausedEvent(t *testing.T) {
 	var events []map[string]any
 	m := &Manager{emit: func(_ string, data any) {

@@ -19,14 +19,15 @@ export function useSessionMetrics(sessionId?: string): types.Metrics | undefined
     // Seed once from the backend's cached sample so panels are not blank until
     // the next collection tick; the stale guard drops the async result if the
     // session changed before it resolved.
+    let received = false;
     GetLatestMetrics(sessionId)
-      .then((data) => { if (!stale && data && data.sessionId === sessionId) setMetrics(data); })
+      .then((data) => { if (!stale && !received && data && data.sessionId === sessionId) setMetrics(data); })
       .catch(() => {});
     const off = EventsOn("monitor:update", (data: types.Metrics) => {
-      if (data.sessionId === sessionId) setMetrics(data);
+      if (!stale && data.sessionId === sessionId) { received = true; setMetrics(data); }
     });
     return () => { stale = true; off(); };
   }, [sessionId]);
 
-  return metrics;
+  return metrics?.sessionId === sessionId ? metrics : undefined;
 }

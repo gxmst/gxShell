@@ -6,17 +6,19 @@ package app
 // used by the settings panel.
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"time"
 
 	sshmanager "gxShell/backend/ssh"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	runtime "gxShell/internal/desktop"
 )
 
 // kiPromptTimeout bounds how long a handshake waits for the user to answer an
@@ -72,19 +74,26 @@ func (a *App) handleKeyboardInteractive(sessionID, name, instruction string, que
 	if ctx == nil {
 		return nil, errors.New("interactive authentication unavailable")
 	}
+	emit := func(event string, payload map[string]any) { runtime.EmitToWindow(ctx, "terminal:"+event, payload) }
+	return a.promptKeyboardInteractive(ctx, emit, a.terminalEventEnvelope(sessionID), name, instruction, questions, echos)
+}
+
+func (a *App) promptKeyboardInteractive(ctx context.Context, emit func(string, map[string]any), payload map[string]any, name, instruction string, questions []string, echos []bool) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	requestID := newKiRequestID()
 	ch := a.kiRequests.register(requestID)
 	defer a.kiRequests.remove(requestID)
-
-	payload := a.terminalEventEnvelope(sessionID)
 	payload["requestId"] = requestID
+	closed := maps.Clone(payload)
 	payload["name"] = name
 	payload["instruction"] = instruction
 	payload["prompts"] = questions
 	payload["echos"] = echos
-	runtime.EventsEmit(ctx, "terminal:keyboard-interactive", payload)
+	emit("keyboard-interactive", payload)
 	a.log.InfoFields("keyboard-interactive prompt raised", LogFields{
-		"session": sessionID, "prompts": len(questions),
+		"session": payload["sessionId"], "prompts": len(questions),
 	})
 
 	select {
@@ -97,10 +106,11 @@ func (a *App) handleKeyboardInteractive(sessionID, name, instruction string, que
 		}
 		return answer.answers, nil
 	case <-time.After(kiPromptTimeout):
-		closed := a.terminalEventEnvelope(sessionID)
-		closed["requestId"] = requestID
-		runtime.EventsEmit(ctx, "terminal:keyboard-interactive:closed", closed)
+		emit("keyboard-interactive:closed", closed)
 		return nil, errors.New("interactive authentication prompt timed out")
+	case <-ctx.Done():
+		emit("keyboard-interactive:closed", closed)
+		return nil, ctx.Err()
 	}
 }
 
@@ -116,16 +126,30 @@ func (a *App) AnswerKeyboardInteractive(requestID string, answers []string, canc
 	return nil
 }
 
+func (a *App) confirmHostKey(ctx context.Context, host, fingerprint string) bool {
+	a.nativeDialogMu.Lock()
+	defer a.nativeDialogMu.Unlock()
+	if ctx == nil || ctx.Err() != nil {
+		return false
+	}
+	res, _ := runtime.MessageDialog(ctx, runtime.MessageDialogOptions{
+		Type:          runtime.QuestionDialog,
+		Title:         "Unknown Host Key",
+		Message:       fmt.Sprintf("The host key for %s is unknown.\nFingerprint: %s\n\nDo you want to trust this host and continue connecting?", host, fingerprint),
+		DefaultButton: "No",
+	})
+	return res == "Yes"
+}
+
 // confirmHostKeyChange shows the native host-key-changed dialog. This is the
 // most security-sensitive prompt in the app, so the wording is explicit about
 // the interception possibility and defaults to rejecting.
-func (a *App) confirmHostKeyChange(host, oldFingerprint, newFingerprint string) bool {
-	ctx := a.ctx.Get()
-	if ctx == nil {
-		return false
-	}
+func (a *App) confirmHostKeyChange(ctx context.Context, host, oldFingerprint, newFingerprint string) bool {
 	a.nativeDialogMu.Lock()
 	defer a.nativeDialogMu.Unlock()
+	if ctx == nil || ctx.Err() != nil {
+		return false
+	}
 	message := fmt.Sprintf(
 		"WARNING: the host key for %s has CHANGED.\n\n"+
 			"Previously trusted: %s\n"+

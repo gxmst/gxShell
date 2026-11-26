@@ -101,7 +101,7 @@ export function NetworkPathCard({ sessionId, initialLeft, initialTop, locale, on
           </div>
           <div className="npc-stat">
             <WifiOff size={11} />
-            <span className="npc-stat-label">{t(lang, "loss")}</span>
+            <span className="npc-stat-label">{t(lang, "probeFailureRate")}</span>
             <span className={clsx("npc-stat-value", lossColor(path.pingLoss))}>{path.pingLoss > 0 ? `${path.pingLoss.toFixed(0)}%` : "0%"}</span>
           </div>
           <div className="npc-stat">

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"gxShell/backend/types"
+	"gxShell/internal/desktop"
 )
 
 // UpdateProfilesBatch applies explicit non-secret fields in one atomic store
@@ -69,5 +70,6 @@ func (a *App) UpdateProfilesBatch(ids []string, patch types.ProfileBatchPatch) (
 	if err := a.store.SaveProfiles(profiles); err != nil {
 		return nil, err
 	}
+	desktop.EventsEmit(a.ctx.Get(), "profiles:changed")
 	return sanitizeProfiles(profiles), nil
 }

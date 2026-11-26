@@ -1,5 +1,7 @@
+import "@xterm/xterm/css/xterm.css";
 import { useCallback, useEffect, useMemo, useReducer, useRef, type MutableRefObject } from "react";
 import { Terminal, type IDecoration } from "@xterm/xterm";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -77,7 +79,35 @@ const SEARCH_DECORATIONS = {
   activeMatchColorOverviewRuler: "#ff9632",
 };
 
-export function useTerminal(activeTab: string, activeIsTerminal: boolean, settings: types.AppSettings | null, notify: (text: string, tone?: "info" | "error" | "success") => void, splitPane?: SplitPane | null, broadcastRef?: MutableRefObject<{ enabled: boolean; targets: string[] }>, linkHandlersRef?: MutableRefObject<TerminalLinkAppHandlers>, setContextMenu?: (menu: AppContextMenu | null) => void, onSearchResults?: (id: string, index: number, count: number) => void, onPasteRequest?: (request: TerminalPasteRequest) => void, terminalOverrides?: Record<string, types.TerminalSettings>) {
+export type TerminalViewSettings = Pick<types.AppSettings,
+  "themeName" | "terminal" | "language" | "highlightLevel" | "highlightRules" | "smartHighlight">;
+
+export interface TerminalSnapshot { cols: number; rows: number; screen: string }
+const noDetachedTerminals: string[] = [];
+
+interface TerminalViewOptions {
+  splitPane?: SplitPane | null;
+  broadcastRef?: MutableRefObject<{ enabled: boolean; targets: string[] }>;
+  linkHandlersRef?: MutableRefObject<TerminalLinkAppHandlers>;
+  setContextMenu?: (menu: AppContextMenu | null) => void;
+  onSearchResults?: (id: string, index: number, count: number) => void;
+  onPasteRequest?: (request: TerminalPasteRequest) => void;
+  terminalOverrides?: Record<string, types.TerminalSettings>;
+  detachedIds?: string[];
+  onGridChange?: (cols: number, rows: number) => void;
+}
+
+export function useTerminal(
+  activeTab: string, activeIsTerminal: boolean, settings: TerminalViewSettings | null,
+  notify: (text: string, tone?: "info" | "error" | "success") => void,
+  { splitPane, broadcastRef, linkHandlersRef, setContextMenu, onSearchResults, onPasteRequest,
+    terminalOverrides, detachedIds = noDetachedTerminals, onGridChange }: TerminalViewOptions = {},
+) {
+  const mirrors = useRef(new Map<string, (data: string) => void>());
+  const detached = useRef(detachedIds);
+  detached.current = detachedIds;
+  const gridChanged = useRef(onGridChange);
+  gridChanged.current = onGridChange;
   const terminals = useRef<Record<string, Terminal>>({});
   const fits = useRef<Record<string, FitAddon>>({});
   const searches = useRef<Record<string, SearchAddon>>({});
@@ -305,13 +335,14 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         const fit = fits.current[id];
         const term = terminals.current[id];
         const host = terminalHosts.current[id];
-        if (!fit || !term || !host || host.clientWidth <= 0 || host.clientHeight <= 0 || host.classList.contains("terminal-hidden")) return null;
+        if (detached.current.includes(id) || !fit || !term || !host || host.clientWidth <= 0 || host.clientHeight <= 0 || host.classList.contains("terminal-hidden")) return null;
         fit.fit();
         const dimensions = { cols: term.cols, rows: term.rows };
         if (!Number.isInteger(dimensions.cols) || !Number.isInteger(dimensions.rows) || dimensions.cols <= 0 || dimensions.rows <= 0) return null;
         const previous = lastDimensions.current[id];
         if (previous?.cols !== dimensions.cols || previous?.rows !== dimensions.rows) {
           lastDimensions.current[id] = dimensions;
+          gridChanged.current?.(dimensions.cols, dimensions.rows);
           // Fits settle after the last window resize render. Refresh the grid
           // readout now instead of leaving the status bar at the old dimensions.
           renderDimensions();
@@ -371,7 +402,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   }, []);
 
   useEffect(() => {
-    if (!activeTab || !activeIsTerminal || !settingsRef.current) return;
+    if (!settingsRef.current) return;
     const focusedId = activeTab;
     const attach = (activeTab: string) => {
       if (!settingsRef.current) return;
@@ -579,6 +610,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
         searches.current[activeTab] = searchAddon;
 
         term.onData((data) => {
+          if (detached.current.includes(activeTab)) return;
           const send = (id: string) => enqueueTerminalInput(id, physicalKey
             ? terminalKeyData(physicalKey, overridesRef.current?.[id] || settingsRef.current?.terminal)
             : data);
@@ -629,10 +661,11 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     };
     const panes = splitPaneIds(splitPane);
     const ids = panes.includes(activeTab) ? panes : [activeTab];
-    const cleanups = ids.map(attach);
+    const visible = activeTab && activeIsTerminal ? ids : [];
+    const cleanups = [...new Set([...visible, ...detachedIds])].map(attach);
     return () => cleanups.forEach((cleanup) => cleanup?.());
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, activeIsTerminal, enqueueTerminalInput, settingsReady, scheduleDisplayHighlights, splitPane, attachWebgl, observeTerminalHost, refitTerminal]);
+  }, [activeTab, activeIsTerminal, detachedIds, enqueueTerminalInput, settingsReady, scheduleDisplayHighlights, splitPane, attachWebgl, observeTerminalHost, refitTerminal]);
 
   const flushPendingOutput = useCallback((sessionId: string) => {
     const chunks = pendingOutput.current[sessionId];
@@ -651,6 +684,8 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   }, [scheduleDisplayHighlights]);
 
   const writeOutput = useCallback((sessionId: string, data: string) => {
+    const mirror = mirrors.current.get(sessionId);
+    mirror?.(data);
     const term = terminals.current[sessionId];
     if (term) {
       // Track bytes/sec per session for adaptive highlight
@@ -663,7 +698,7 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       // rAF stops firing while the window is minimized/hidden, so cap the
       // pending queue: past the limit, cancel the frame and write through to
       // xterm immediately (it buffers internally, safe while hidden).
-      if (size >= MAX_PENDING_OUTPUT_BYTES) {
+      if (mirror || size >= MAX_PENDING_OUTPUT_BYTES) {
         const frame = pendingWriteFrames.current[sessionId];
         if (frame) {
           window.cancelAnimationFrame(frame);
@@ -690,6 +725,44 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
       bufferedOutputSizes.current[sessionId] = size;
     }
   }, [flushPendingOutput]);
+
+  // xterm writes are asynchronous. The empty write establishes a parser
+  // boundary. Output arriving after the boundary is sent behind the snapshot.
+  const mirrorTerminal = useCallback((id: string, start: (state: TerminalSnapshot) => void, append: (data: string) => void) => {
+    const term = terminals.current[id];
+    if (!term) return null;
+    flushPendingOutput(id);
+    const pending: string[] = [];
+    let ready = false;
+    const receive = (data: string) => { if (ready) append(data); else pending.push(data); };
+    mirrors.current.set(id, receive);
+    term.write("", () => {
+      if (mirrors.current.get(id) !== receive) return;
+      const serializer = new SerializeAddon();
+      term.loadAddon(serializer);
+      try { start({ cols: term.cols, rows: term.rows, screen: serializer.serialize() }); }
+      finally { serializer.dispose(); }
+      ready = true;
+      for (const chunk of pending) append(chunk);
+      pending.length = 0;
+    });
+    return () => { if (mirrors.current.get(id) === receive) mirrors.current.delete(id); };
+  }, [flushPendingOutput]);
+
+  const resizeMirror = useCallback((id: string, cols: number, rows: number) => {
+    // The next dock must send a PTY resize even when its grid matches the
+    // last size sent by this renderer before the window was detached.
+    resizeScheduler.current?.dispose(id);
+    terminals.current[id]?.resize(cols, rows);
+  }, []);
+
+  const restoreScreen = useCallback((id: string, state: TerminalSnapshot, done: () => void) => {
+    const term = terminals.current[id];
+    if (!term) return;
+    term.resize(state.cols, state.rows);
+    term.reset();
+    term.write(state.screen, () => { refitTerminal(id); done(); });
+  }, [refitTerminal]);
 
   const disposeTerminal = useCallback((id: string) => {
     cleanupFns.current[id]?.();
@@ -806,24 +879,6 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
     });
   }, [settings, terminalOverrides, refitTerminal, clearHighlightDecorations, scheduleDisplayHighlights]);
 
-  const reattachTerminal = useCallback((id: string, newHost: HTMLDivElement) => {
-    const term = terminals.current[id];
-    if (!term || !term.element) return;
-
-    // Move the terminal's root element (.xterm) to the new host
-    // without disposing WebGL. xterm.js WebGL renderer handles
-    // canvas resize automatically when the container changes.
-    if (term.element.parentElement !== newHost) {
-      newHost.appendChild(term.element);
-    }
-    terminalHosts.current[id] = newHost;
-    newHost.style.setProperty("--terminal", term.options.theme?.background || "");
-    newHost.style.backgroundColor = "var(--terminal)";
-
-    observeTerminalHost(id, newHost);
-    refitTerminal(id);
-  }, [observeTerminalHost, refitTerminal]);
-
   const focusTerminal = useCallback((id: string) => {
     if (!hasActiveOverlay()) terminals.current[id]?.focus();
   }, []);
@@ -867,20 +922,19 @@ export function useTerminal(activeTab: string, activeIsTerminal: boolean, settin
   }, []);
 
   const stable = useMemo(() => ({
-    terminalHosts,
+    terminalHosts, mirrorTerminal, resizeMirror, restoreScreen,
     writeOutput,
     disposeTerminal,
     findNext,
     findPrev,
     focusTerminal,
     refitTerminal,
-    reattachTerminal,
     getTerminalLines,
     getDimensions,
     getCurrentDirectory,
     adjustFontSize,
     resetFontSize,
-  }), [writeOutput, disposeTerminal, findNext, findPrev, focusTerminal, refitTerminal, reattachTerminal, getTerminalLines, getDimensions, getCurrentDirectory, adjustFontSize, resetFontSize]);
+  }), [mirrorTerminal, resizeMirror, restoreScreen, writeOutput, disposeTerminal, findNext, findPrev, focusTerminal, refitTerminal, getTerminalLines, getDimensions, getCurrentDirectory, adjustFontSize, resetFontSize]);
 
   return stable;
 }

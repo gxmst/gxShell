@@ -157,6 +157,19 @@ func (m *Manager) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 func (m *Manager) CloseIdleConnections() { m.snapshot().transport.CloseIdleConnections() }
 
+// Only a directly dialled SSH socket may also be probed locally with ICMP.
+type directSSHConn struct{ net.Conn }
+
+func (directSSHConn) DirectSSHPeer() bool { return true }
+
+func dialDirectSSH(ctx context.Context, network, address string) (net.Conn, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+	if err != nil {
+		return nil, err
+	}
+	return directSSHConn{conn}, nil
+}
+
 // DialContext applies the same policy to the first SSH hop. CONNECT preserves
 // the target hostname, and SOCKS5 resolves it at the proxy.
 func (m *Manager) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -169,7 +182,7 @@ func (m *Manager) DialContext(ctx context.Context, network, address string) (net
 	}
 	current := m.snapshot()
 	if !current.ssh || IsLocal(host) {
-		return (&net.Dialer{}).DialContext(ctx, network, address)
+		return dialDirectSSH(ctx, network, address)
 	}
 	req := (&http.Request{Method: http.MethodGet, URL: &url.URL{Scheme: "https", Host: address}}).WithContext(ctx)
 	u, err := current.resolve(req)
@@ -177,7 +190,7 @@ func (m *Manager) DialContext(ctx context.Context, network, address string) (net
 		return nil, err
 	}
 	if u == nil || IsLocal(host) {
-		return (&net.Dialer{}).DialContext(ctx, network, address)
+		return dialDirectSSH(ctx, network, address)
 	}
 	if u.Scheme == "socks5" || u.Scheme == "socks5h" {
 		dialer, err := proxy.FromURL(u, &net.Dialer{})

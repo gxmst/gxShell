@@ -139,8 +139,10 @@ func (m *Manager) Ping(client *ssh.Client, target string, count int) (*types.Net
 	}
 
 	var rtts []float64
+	attempted := 0
 	consecutiveFailures := 0
 	for i := 0; i < count; i++ {
+		attempted++
 		start := time.Now()
 		_, err := m.remoteExec(client, "echo ping")
 		elapsed := time.Since(start).Seconds() * 1000
@@ -160,12 +162,10 @@ func (m *Manager) Ping(client *ssh.Client, target string, count int) (*types.Net
 		m.logDebug("[Ping] SSH RTT #%d: %.3f ms", i+1, elapsed)
 	}
 
-	if len(rtts) == 0 {
-		return nil, fmt.Errorf("SSH RTT measurement failed: no successful samples")
-	}
-
 	var sum, minRtt, maxRtt float64
-	minRtt = math.MaxFloat64
+	if len(rtts) > 0 {
+		minRtt = math.MaxFloat64
+	}
 	for _, r := range rtts {
 		sum += r
 		if r < minRtt {
@@ -175,7 +175,10 @@ func (m *Manager) Ping(client *ssh.Client, target string, count int) (*types.Net
 			maxRtt = r
 		}
 	}
-	avg := sum / float64(len(rtts))
+	var avg float64
+	if len(rtts) > 0 {
+		avg = sum / float64(len(rtts))
+	}
 
 	var jitter float64
 	if len(rtts) > 1 {
@@ -195,7 +198,7 @@ func (m *Manager) Ping(client *ssh.Client, target string, count int) (*types.Net
 	path.PingAvg = avg
 	path.PingMin = minRtt
 	path.PingMax = maxRtt
-	path.PingLoss = 0
+	path.PingLoss = 100 * float64(attempted-len(rtts)) / float64(attempted)
 	path.Jitter = jitter
 	result := *path
 	m.mu.Unlock()

@@ -7,6 +7,7 @@ import { useSessionMetrics } from "../../hooks/useSessionMetrics";
 import { useMetricsHistory, type MetricsSample } from "../../hooks/useMetricsHistory";
 import { Sparkline } from "../Sparkline/Sparkline";
 import { t } from "../../i18n";
+import { LoadAverages, ConnectionQuality } from "../MonitorPanel/MonitorReadings";
 import { FloatingCard } from "../FloatingCard/FloatingCard";
 
 export type MonitorDetailKind = "cpu" | "disk" | "network";
@@ -66,15 +67,13 @@ export function MonitorDetailCard({ kind, sessionId, initialLeft, initialTop, lo
 
 function CpuDetail({ metrics, history, lang }: { metrics?: types.Metrics; history: MetricsSample[]; lang: string }) {
   const cpuPct = metrics?.cpuPercent || 0;
-  const load = metrics?.loadAverage || "-";
   const procs = [...(metrics?.topProcesses || [])].sort((a, b) => (b.cpu || 0) - (a.cpu || 0)).slice(0, 8);
   return (
     <>
       <DetailStatGrid>
         <DetailStat label={t(lang, "cpuUsage")} value={`${cpuPct.toFixed(0)}%`} tone={tone(cpuPct)} />
-        <DetailStat label={t(lang, "load")} value={load} />
-        <DetailStat label={t(lang, "collectionTime")} value={`${metrics?.latencyMs || 0}ms`} />
       </DetailStatGrid>
+      <LoadAverages metrics={metrics} lang={lang} />
       <HistoryChart
         values={history.map((s) => s.cpuPercent)}
         max={100}
@@ -113,14 +112,13 @@ function DiskDetail({ metrics, lang }: { metrics?: types.Metrics; lang: string }
 }
 
 function NetworkDetail({ metrics, history, lang }: { metrics?: types.Metrics; history: MetricsSample[]; lang: string }) {
-  const latency = metrics?.latencyMs || 0;
   return (
     <>
       <DetailStatGrid>
-        <DetailStat label={t(lang, "collectionTime")} value={`${latency}ms`} />
         <DetailStat label={t(lang, "down")} value={formatBytes(metrics?.networkRxPerSec || 0)} />
         <DetailStat label={t(lang, "up")} value={formatBytes(metrics?.networkTxPerSec || 0)} />
       </DetailStatGrid>
+      <ConnectionQuality metrics={metrics} lang={lang} />
       {/* Throughput auto-scales to its own peak (no max): unlike a percentage it
           has no ceiling, so a fixed scale would flatten every line on a link
           that is not saturated. The peak is labelled so the shape is readable. */}

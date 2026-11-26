@@ -6,6 +6,8 @@ import { TransfersProvider } from "./TransfersProvider";
 
 const mocks = vi.hoisted(() => ({
   listener: null as null | ((event: Partial<Transfer>) => void),
+  snapshot: vi.fn(),
+  clearListener: null as null | ((event: {sessionId: string; revision: number}) => void),
   pause: vi.fn(),
   resume: vi.fn(),
   cancel: vi.fn(),
@@ -15,12 +17,15 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../../wailsjs/runtime/runtime", () => ({
   EventsOn: vi.fn((_name: string, listener: (event: Partial<Transfer>) => void) => {
-    mocks.listener = listener;
+    if (_name === "sftp:progress") mocks.listener = listener;
+    else mocks.clearListener = listener;
     return vi.fn();
   }),
 }));
 
 vi.mock("../../wailsjs/go/app/App", () => ({
+  ClearTransferHistory: vi.fn(),
+  GetTransferSnapshot: mocks.snapshot,
   CancelTransfer: mocks.cancel,
   PauseTransfer: mocks.pause,
   ResumeTransfer: mocks.resume,
@@ -35,6 +40,8 @@ const wrapper = ({ children }: { children: ReactNode }) => (
 describe("TransfersProvider", () => {
   beforeEach(() => {
     mocks.listener = null;
+    mocks.clearListener = null;
+    mocks.snapshot.mockReset().mockResolvedValue({revision: 0, events: []});
     mocks.pause.mockReset().mockResolvedValue(true);
     mocks.resume.mockReset().mockResolvedValue(true);
     mocks.cancel.mockReset().mockResolvedValue(true);
@@ -67,6 +74,24 @@ describe("TransfersProvider", () => {
       sourcePath: "/remote/file.bin",
       targetPath: "C:/local/file.bin",
     });
+  });
+
+  it("hydrates an already-paused job and applies clears and completions that raced startup", async () => {
+    const job: Partial<Transfer> = { jobId: "a", sessionId: "one", path: "/a", direction: "download" };
+    let finish!: (snapshot: { revision: number; events: Partial<Transfer>[] }) => void;
+    mocks.snapshot.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const { result } = renderHook(() => useTransfers(), { wrapper });
+    await act(async () => {
+      mocks.clearListener?.({ sessionId: "one", revision: 5 });
+      mocks.listener?.({ ...job, sequence: 3, revision: 4, status: "succeeded" });
+      finish({ revision: 3, events: [{ ...job, status: "paused", sequence: 2, revision: 2 },
+        { ...job, jobId: "b", sessionId: "two", status: "paused", sequence: 1, revision: 3 }] });
+    });
+    expect(result.current.transfers.a).toBeUndefined();
+    expect(result.current.transfers.b.paused).toBe(true);
+    expect(result.current.history).toHaveLength(0);
+    act(() => mocks.listener?.({ ...job, jobId: "old", revision: 1, status: "succeeded" }));
+    expect(result.current.history).toHaveLength(0);
   });
 
   it("retries a failed transfer using the original direction and paths", async () => {

@@ -1,13 +1,14 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"time"
 
 	"gxShell/backend/logger"
 	"gxShell/backend/types"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	runtime "gxShell/internal/desktop"
 )
 
 // ListProfiles returns all server profiles with sanitized credentials.
@@ -35,6 +36,10 @@ func (a *App) GetProfile(id string) (types.Profile, error) {
 
 // CreateProfile creates a new server profile.
 func (a *App) CreateProfile(profile types.Profile) (types.Profile, error) {
+	return a.createProfile(a.ctx.Get(), profile)
+}
+
+func (a *App) createProfile(ctx context.Context, profile types.Profile) (types.Profile, error) {
 	a.profilesMu.Lock()
 	defer a.profilesMu.Unlock()
 	profiles, err := a.store.ListProfiles()
@@ -53,7 +58,7 @@ func (a *App) CreateProfile(profile types.Profile) (types.Profile, error) {
 		return types.Profile{}, err
 	}
 	trustChanged := cliTrustNeedsConfirmation(types.Profile{}, profile, now)
-	if trustChanged && !a.confirmCliProfileTrust(profile) {
+	if trustChanged && !a.confirmCliProfileTrust(ctx, profile) {
 		return types.Profile{}, errors.New("CLI full-trust activation was not confirmed")
 	}
 	if err := a.saveProfileSecrets(&profile); err != nil {
@@ -66,6 +71,7 @@ func (a *App) CreateProfile(profile types.Profile) (types.Profile, error) {
 	if trustChanged {
 		a.logCliTrustEnabled(profile)
 	}
+	runtime.EventsEmit(ctx, "profiles:changed")
 	return sanitizeProfile(profile), nil
 }
 
@@ -79,6 +85,22 @@ func (a *App) UpdateProfile(profile types.Profile) (types.Profile, error) {
 // updateProfileLocked is UpdateProfile's body for callers that already hold
 // profilesMu around a larger read-modify-write cycle (tunnel rule persistence).
 func (a *App) updateProfileLocked(profile types.Profile) (types.Profile, error) {
+	return a.updateProfileFrom(a.ctx.Get(), profile, false)
+}
+
+// SaveConnectionProfile attaches consent to the originating editor and detects
+// a stale draft before applying it over another window's changes.
+func (a *App) SaveConnectionProfile(caller context.Context, profile types.Profile) (types.Profile, error) {
+	ctx := runtime.CallerContext(caller, a.ctx.Get())
+	if profile.ID == "" {
+		return a.createProfile(ctx, profile)
+	}
+	a.profilesMu.Lock()
+	defer a.profilesMu.Unlock()
+	return a.updateProfileFrom(ctx, profile, true)
+}
+
+func (a *App) updateProfileFrom(ctx context.Context, profile types.Profile, checkVersion bool) (types.Profile, error) {
 	profiles, err := a.store.ListProfiles()
 	if err != nil {
 		return types.Profile{}, err
@@ -86,6 +108,10 @@ func (a *App) updateProfileLocked(profile types.Profile) (types.Profile, error) 
 	for i := range profiles {
 		if profiles[i].ID == profile.ID {
 			previous := profiles[i]
+			if checkVersion && !profile.UpdatedAt.Equal(previous.UpdatedAt) {
+				return types.Profile{}, errors.New("profile_changed")
+			}
+			profile.LastConnectedAt = previous.LastConnectedAt
 			if profile.RememberPassword && profile.Password == "" {
 				profile.Password = profiles[i].Password
 			}
@@ -102,7 +128,7 @@ func (a *App) updateProfileLocked(profile types.Profile) (types.Profile, error) 
 				return types.Profile{}, err
 			}
 			trustChanged := cliTrustNeedsConfirmation(previous, profile, time.Now())
-			if trustChanged && !a.confirmCliProfileTrust(profile) {
+			if trustChanged && !a.confirmCliProfileTrust(ctx, profile) {
 				return types.Profile{}, errors.New("CLI full-trust activation was not confirmed")
 			}
 			if err := a.saveProfileSecrets(&profile); err != nil {
@@ -115,6 +141,7 @@ func (a *App) updateProfileLocked(profile types.Profile) (types.Profile, error) 
 			if trustChanged {
 				a.logCliTrustEnabled(profile)
 			}
+			runtime.EventsEmit(ctx, "profiles:changed")
 			return sanitizeProfile(profile), nil
 		}
 	}
@@ -136,11 +163,10 @@ func (a *App) logCliTrustEnabled(profile types.Profile) {
 // confirmCliProfileTrust is the backend consent boundary for enabling or
 // extending prompt-free CLI access. Keeping it here means a compromised
 // renderer cannot bypass the warning by calling UpdateProfile directly.
-func (a *App) confirmCliProfileTrust(profile types.Profile) bool {
+func (a *App) confirmCliProfileTrust(ctx context.Context, profile types.Profile) bool {
 	if a.cliTrustConfirmFn != nil {
 		return a.cliTrustConfirmFn(profile)
 	}
-	ctx := a.ctx.Get()
 	if ctx == nil {
 		return false
 	}
@@ -235,7 +261,11 @@ func (a *App) DeleteProfile(id string) error {
 	if found {
 		a.secrets.Delete(id)
 	}
-	return a.store.SaveProfiles(next)
+	if err := a.store.SaveProfiles(next); err != nil {
+		return err
+	}
+	runtime.EventsEmit(a.ctx.Get(), "profiles:changed")
+	return nil
 }
 
 // DuplicateProfile creates a copy of an existing profile.
@@ -268,8 +298,8 @@ func (a *App) DuplicateProfile(id string) (types.Profile, error) {
 }
 
 // SelectPrivateKey opens a file dialog to select an SSH private key.
-func (a *App) SelectPrivateKey() (string, error) {
-	return runtime.OpenFileDialog(a.ctx.Get(), runtime.OpenDialogOptions{
+func (a *App) SelectPrivateKey(ctx context.Context) (string, error) {
+	return runtime.OpenFileDialog(runtime.CallerContext(ctx, a.ctx.Get()), runtime.OpenDialogOptions{
 		Title: "Select private key",
 	})
 }

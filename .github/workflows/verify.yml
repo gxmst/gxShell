@@ -134,17 +134,12 @@ jobs:
           npm ci
           npm run build
 
-      - name: Install matching Wails CLI
-        run: |
-          WAILS_VERSION="$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)"
-          go install "github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}"
-
       - name: Build experimental Linux desktop app
-        run: wails build -s -skipbindings -platform linux/amd64 -tags webkit2_41
+        run: go build -tags "production,gtk3" -o build/bin/gxShell .
 
       # Exercise symlink cases even when the Windows runner cannot create links.
       - name: Test document authorization and file safety
-        run: go test -race -tags webkit2_41 ./internal/app -run 'Test(Document|BinaryDocuments|TextDocument|NamedDocument)'
+        run: go test -race -tags gtk3 ./internal/app -run 'Test(Document|BinaryDocuments|TextDocument|NamedDocument)'
 
       - name: Package experimental Linux build
         run: |
@@ -199,13 +194,13 @@ jobs:
           npm ci
           npm run build
 
-      - name: Install matching Wails CLI
-        run: |
-          WAILS_VERSION="$(go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2)"
-          go install "github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}"
-
       - name: Build experimental macOS desktop app
-        run: wails build -s -skipbindings -platform darwin/arm64
+        run: |
+          mkdir -p build/bin/gxShell.app/Contents/{MacOS,Resources}
+          go build -tags production -o build/bin/gxShell.app/Contents/MacOS/gxShell .
+          cp build/darwin/Info.plist build/bin/gxShell.app/Contents/Info.plist
+          plutil -replace CFBundleShortVersionString -string "$(node -p "require('./frontend/package.json').version")" build/bin/gxShell.app/Contents/Info.plist
+          codesign --force --sign - build/bin/gxShell.app
 
       - name: Package experimental macOS build
         run: |

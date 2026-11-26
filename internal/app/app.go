@@ -30,7 +30,7 @@ import (
 	"gxShell/backend/websites"
 	"gxShell/backend/workflow"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	runtime "gxShell/internal/desktop"
 )
 
 // appContext publishes the Wails context to goroutines that may start before
@@ -85,18 +85,24 @@ type App struct {
 	// Alt+F4, taskbar) into an app:close-requested event so the renderer can
 	// confirm unsaved work; CloseWindow is the one path that already passed
 	// that confirmation and sets forceClose so Quit is not re-gated.
-	domReadyFired atomic.Bool
-	forceClose    atomic.Bool
-	ssh           *sshmanager.Manager
-	sessionLogs   *sessionlog.Manager
-	sftp          *sftpmanager.Manager
-	monitor       *monitor.Manager
-	secrets       secretStore
-	net           *network.Manager
-	tunnels       *tunnel.Manager
-	ai            *ai.Manager
-	inspections   *workflow.Manager
-	docker        *docker.Manager
+	openViewMu sync.Mutex
+
+	windowMu              sync.Mutex
+	layout                windowLayout
+	viewWindows           map[string]*desktopView
+	restoreMainAfterViews bool
+	quickRequest          *quickWindowRequest
+	forceClose            atomic.Bool
+	ssh                   *sshmanager.Manager
+	sessionLogs           *sessionlog.Manager
+	sftp                  *sftpmanager.Manager
+	monitor               *monitor.Manager
+	secrets               secretStore
+	net                   *network.Manager
+	tunnels               *tunnel.Manager
+	ai                    *ai.Manager
+	inspections           *workflow.Manager
+	docker                *docker.Manager
 	// services/firewall manage remote systemd units and the remote firewall
 	// over the same SSH exec channel as docker (no remote agent).
 	services  *services.Manager
@@ -118,23 +124,16 @@ type App struct {
 	// cliApprovalEventFn is the equivalent seam for the in-app risk card shown
 	// while the native dialog remains the authoritative approval boundary.
 	cliApprovalEventFn func(cliApprovalEvent)
-	// approvalPanel holds the in-app review panels awaiting the renderer's
+	// approvalPanel holds the independent review windows awaiting the user's
 	// answer. See app_approval_panel.go.
 	approvalPanel *cliApprovalPanelRegistry
-	// frontendReady flips once the renderer has mounted and registered its
-	// listeners. The panel is only authoritative while it is set: before that,
-	// and after a renderer crash, approval falls back to the native dialog so a
-	// missing renderer can never become an approval bypass.
+	// The main renderer registers on startup. Before that, approval callers
+	// use native confirmation and the main close hook can finish immediately.
 	frontendReady atomic.Bool
 	// cliApprovalPanelFn and cliApprovalPanelClosedFn are test seams for the
 	// panel lifecycle, mirroring cliApprovalEventFn.
 	cliApprovalPanelFn       func(cliApprovalPanelRequest)
 	cliApprovalPanelClosedFn func(string)
-	// windowRaiseFn and windowClearFn are test seams for the window attention
-	// calls the panel makes. The real implementations go through Wails, which
-	// requires the lifecycle context and therefore cannot run under `go test`.
-	windowRaiseFn func()
-	windowClearFn func()
 	// approvalGate serialises panels so only one is on screen at a time, the
 	// way the native dialog was serialised by nativeDialogMu. It is a channel
 	// rather than a mutex because acquiring it must respect the caller's
@@ -191,12 +190,12 @@ type App struct {
 	cliServer   atomic.Pointer[http.Server]
 	rateLimiter *connectionRateLimiter
 	trayIcon    []byte
-	trayStarted atomic.Bool
 	// profilesMu serializes every read-modify-write cycle on profiles.json
 	// (profile CRUD, touchProfile, tunnel rule persistence, imports).
 	// config.Store only locks the individual read and write, so without this a
 	// CLI-triggered touchProfile and a UI profile edit can interleave and one
 	// silently overwrites the other.
+	documentSaveMu      sync.Mutex
 	profilesMu          sync.Mutex
 	backupMu            sync.Mutex
 	credentialContextMu sync.Mutex
@@ -275,17 +274,20 @@ func NewApp() *App {
 // for why exporting them as App methods is a security regression.
 
 // startup initializes all managers and loads configuration.
-func (a *App) startup(ctx context.Context) {
+func (a *App) startup(ctx context.Context) error {
 	a.ctx.Set(ctx)
 	a.startedAt = time.Now()
 	store, err := config.NewStore()
 	if err != nil {
-		runtime.LogError(ctx, "failed to create config store: "+err.Error())
-		runtime.Quit(ctx)
-		return
+		return fmt.Errorf("failed to create config store: %w", err)
 	}
 	a.store = store
 	a.log = logger.New(store.DataDir())
+	if layout, err := store.WindowLayout(); err == nil {
+		a.layout.saved = layout
+	} else {
+		a.log.ErrorFields("Could not read window layout", LogFields{"error": err.Error()})
+	}
 	if err := a.allowedFiles.loadHistory(filepath.Join(store.DataDir(), documentAuthorizationFilename)); err != nil {
 		a.log.ErrorFields("Document restore authorization unavailable", LogFields{"error": err.Error()})
 	}
@@ -293,24 +295,17 @@ func (a *App) startup(ctx context.Context) {
 
 	emit := func(event string, data any) {
 		if emitCtx := a.ctx.Get(); emitCtx != nil {
+			// The workbench mirrors each detached terminal to its own window.
+			if event == "terminal:data" {
+				runtime.EmitToWindow(emitCtx, event, data)
+				return
+			}
 			runtime.EventsEmit(emitCtx, event, data)
 		}
 	}
 
-	confirm := func(host string, fingerprint string) bool {
-		dialogCtx := a.ctx.Get()
-		if dialogCtx == nil {
-			return false
-		}
-		a.nativeDialogMu.Lock()
-		defer a.nativeDialogMu.Unlock()
-		res, _ := runtime.MessageDialog(dialogCtx, runtime.MessageDialogOptions{
-			Type:          runtime.QuestionDialog,
-			Title:         "Unknown Host Key",
-			Message:       fmt.Sprintf("The host key for %s is unknown.\nFingerprint: %s\n\nDo you want to trust this host and continue connecting?", host, fingerprint),
-			DefaultButton: "No",
-		})
-		return res == "Yes"
+	confirm := func(host, fingerprint string) bool {
+		return a.confirmHostKey(a.ctx.Get(), host, fingerprint)
 	}
 
 	a.ssh = sshmanager.NewManager(filepath.Join(a.store.DataDir(), "known_hosts"), emit, confirm)
@@ -394,7 +389,9 @@ func (a *App) startup(ctx context.Context) {
 		a.forgetCliSession(sessionID)
 	})
 	a.ssh.SetKeyboardInteractivePrompt(a.handleKeyboardInteractive)
-	a.ssh.SetHostKeyChangeConfirm(a.confirmHostKeyChange)
+	a.ssh.SetHostKeyChangeConfirm(func(host, oldKey, newKey string) bool {
+		return a.confirmHostKeyChange(a.ctx.Get(), host, oldKey, newKey)
+	})
 
 	if settings, err := a.store.GetSettings(); err == nil {
 		apiKey := settings.Ai.APIKey
@@ -435,38 +432,17 @@ func (a *App) startup(ctx context.Context) {
 	// The update check is the app's only unprompted outbound request. It reads
 	// its own setting and returns immediately when disabled.
 	a.startUpdateCheck()
+	return nil
 }
 
-// domReady is called when the frontend is ready.
-func (a *App) domReady(ctx context.Context) {
+// prepareWindow installs native file drop and records the startup document before React mounts.
+func (a *App) prepareWindow(ctx context.Context) {
 	a.ctx.Set(ctx)
-	a.domReadyFired.Store(true)
-	runtime.WindowCenter(ctx)
-
-	runtime.OnFileDrop(ctx, func(_ int, _ int, paths []string) {
-		documentPaths := make([]string, 0, len(paths))
-		for _, path := range paths {
-			if isSupportedDocumentPath(path) {
-				documentPaths = append(documentPaths, path)
-			}
-		}
-		if len(documentPaths) == 0 {
-			return
-		}
-		if !a.confirmOpenDroppedTextFiles(documentPaths) {
-			a.log.Info("User cancelled dropped document open")
-			return
-		}
-		a.log.InfoFields("Documents dropped, opening after confirm", logger.LogFields{"count": len(documentPaths)})
-		for _, path := range documentPaths {
-			if allowed := a.allowFile(path); allowed != "" {
-				a.log.InfoFields("Emitting file:open", logger.LogFields{"fileName": filepath.Base(allowed)})
-				runtime.EventsEmit(ctx, "file:open", allowed)
-			} else {
-				a.log.ErrorFields("Failed to allow file", logger.LogFields{"fileName": filepath.Base(path)})
-			}
-		}
-	})
+	if win := runtime.MainWindow(ctx); win != nil {
+		win.SetZoom(a.windowZoom())
+		a.trackWindowLayout(win, 900, 620)
+		a.watchFileDrops(win)
+	}
 
 	if a.startupFilePath != "" {
 		if !isSupportedDocumentPath(a.startupFilePath) {
@@ -503,10 +479,12 @@ func (a *App) beforeClose(_ context.Context) bool {
 	if a.forceClose.Load() {
 		return false
 	}
-	if !a.domReadyFired.Load() {
+	if !a.frontendReady.Load() {
 		return false
 	}
-	a.requestFrontendClose()
+	if !a.hideMainWithViews() {
+		a.requestFrontendClose()
+	}
 	return true
 }
 
@@ -532,7 +510,7 @@ func (a *App) GetStartupFile() string {
 
 // shutdown cleans up resources before application exit.
 func (a *App) shutdown(ctx context.Context) {
-	a.stopSystemTray()
+	a.flushWindowLayout()
 	if a.inspections != nil {
 		a.inspections.Close()
 	}
@@ -601,7 +579,32 @@ func (a *App) handleSecondInstanceLaunch(args []string) {
 		// Keep Explorer/Open With launches separate from drag-and-drop so the
 		// frontend can enter its document-focused layout without collapsing the
 		// sidebar for every in-app file open.
-		runtime.EventsEmit(ctx, "file:open-external", allowed)
+		runtime.EmitToWindow(ctx, "file:open-external", allowed)
+	}
+}
+
+func (a *App) openDroppedDocuments(ctx context.Context, paths []string) {
+	documentPaths := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if isSupportedDocumentPath(path) {
+			documentPaths = append(documentPaths, path)
+		}
+	}
+	if len(documentPaths) == 0 {
+		return
+	}
+	if !a.confirmOpenDroppedTextFiles(documentPaths) {
+		a.log.Info("User cancelled dropped document open")
+		return
+	}
+	a.log.InfoFields("Documents dropped, opening after confirm", logger.LogFields{"count": len(documentPaths)})
+	for _, path := range documentPaths {
+		if allowed := a.allowFile(path); allowed != "" {
+			a.log.InfoFields("Emitting file:open", logger.LogFields{"fileName": filepath.Base(allowed)})
+			runtime.EmitToWindow(ctx, "file:open", allowed)
+		} else {
+			a.log.ErrorFields("Failed to allow file", logger.LogFields{"fileName": filepath.Base(path)})
+		}
 	}
 }
 

@@ -242,6 +242,11 @@ const (
 // heights and cursor styles, while an extreme scrollback value can make a new
 // terminal unusable or consume excessive memory.
 func NormalizeSettings(settings types.AppSettings) types.AppSettings {
+	switch settings.UIScale {
+	case 90, 100, 110, 125:
+	default:
+		settings.UIScale = 100
+	}
 	settings.Proxy = networkproxy.Normalize(settings.Proxy)
 	settings.Terminal = NormalizeTerminalSettings(settings.Terminal)
 	settings.SessionLog = NormalizeSessionLog(settings.SessionLog)
@@ -395,6 +400,7 @@ func DefaultSettings() types.AppSettings {
 		MonitorEnabled:         true,
 		MonitorIntervalSec:     5,
 		ConnectionTimeout:      15,
+		UIScale:                100,
 		SidebarWidth:           328,
 		SavePasswords:          false,
 		SmartHighlight:         true,

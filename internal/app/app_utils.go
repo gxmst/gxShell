@@ -22,7 +22,7 @@ import (
 	"gxShell/backend/version"
 	"gxShell/backend/websites"
 
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	wailsruntime "gxShell/internal/desktop"
 )
 
 const logViewerTailBytes int64 = 1024 * 1024
@@ -213,6 +213,9 @@ func (a *App) UpdateSettings(settings types.AppSettings) (types.AppSettings, err
 		if err := a.networkProxy.Apply(settings.Proxy); err != nil {
 			return settings, err
 		}
+	}
+	if previousErr != nil || previous.UIScale != settings.UIScale {
+		a.applyWindowZoom(settings.UIScale)
 	}
 	if a.sessionLogs != nil {
 		if err := a.sessionLogs.UpdateRetention(settings.SessionLogRetention); err != nil {

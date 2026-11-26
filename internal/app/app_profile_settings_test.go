@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -341,4 +342,32 @@ func TestMonitorIntervalUpdateRestartsActiveCollectors(t *testing.T) {
 	// Restarting a poller collects immediately, so this verifies that the new
 	// interval was applied without waiting for the old one-hour ticker.
 	waitForAppMonitorCall(t, executor.calls)
+}
+
+func TestConnectionEditorDetectsConcurrentEditsAndPreservesConnectionActivity(t *testing.T) {
+	a := newProfileTestApp(t)
+	ctx := context.Background()
+	draft, err := a.SaveConnectionProfile(ctx, types.Profile{Name: "server", Host: "example.test", Username: "test", Port: 22, AuthType: types.AuthAgent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.touchProfile(draft.ID)
+	draft.Group = "edited"
+	saved, err := a.SaveConnectionProfile(ctx, draft)
+	if err != nil || saved.LastConnectedAt.IsZero() {
+		t.Fatalf("save after connection: %v, last connected %v", err, saved.LastConnectedAt)
+	}
+
+	favorite := true
+	if _, err = a.UpdateProfilesBatch([]string{saved.ID}, types.ProfileBatchPatch{Favorite: &favorite}); err != nil {
+		t.Fatal(err)
+	}
+	saved.Group = "stale"
+	if _, err = a.SaveConnectionProfile(ctx, saved); err == nil {
+		t.Fatal("stale editor overwrote the batch change")
+	}
+	current, err := a.GetProfile(saved.ID)
+	if err != nil || !current.Favorite || current.Group != "edited" {
+		t.Fatalf("stored profile changed: favorite=%v group=%q err=%v", current.Favorite, current.Group, err)
+	}
 }

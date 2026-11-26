@@ -13,7 +13,7 @@ import (
 	"gxShell/backend/logger"
 	"gxShell/backend/types"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	runtime "gxShell/internal/desktop"
 )
 
 // LogFields is an alias for structured logging.

@@ -7,11 +7,11 @@ discussions, and pull requests are all welcome.
 
 - Windows 10/11 x64 with the WebView2 Runtime is the supported desktop target;
   Linux/macOS builds are experimental CI artifacts.
-- Go 1.26.8+ (see the `go` directive in `go.mod`), Node.js 20.19+ (CI pins 22), and the
-  [Wails v2 CLI](https://wails.io) for desktop builds.
+- Go 1.26.11+ (see the `go` directive in `go.mod`), Node.js 20.19+ (CI pins 22), and the
+  [Wails 3.1.0 CLI](https://v3.wails.io/) for desktop builds.
 
 Read [docs/development.md](docs/development.md) first — it explains the build
-flags (notably why `wails build -clean -skipbindings` is required) and the
+commands for Wails 3 development and production builds and the
 project layout. [docs/architecture.md](docs/architecture.md) covers how the
 backend modules and the React frontend fit together.
 
@@ -42,7 +42,7 @@ go vet ./...
 - User-visible strings go through `frontend/src/i18n.ts` with zh/en parity;
   `check:i18n` enforces it. Avoid inline `lang === "zh-CN"` ternaries.
 - `backend/version/version.go` is the single source of truth for the version.
-  `wails.json` and `frontend/package.json` carry literals that
+  `build/windows/info.json` and `frontend/package.json` carry literals that
   `check:version` compares against it; bump all three and the root versions
   in `frontend/package-lock.json` together (plus a CHANGELOG entry).
 - Commits follow conventional style with optional scopes, e.g.

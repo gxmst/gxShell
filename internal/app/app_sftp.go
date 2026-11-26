@@ -1,15 +1,25 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"path"
 	"path/filepath"
 	"strings"
 
+	sftpmanager "gxShell/backend/sftp"
 	"gxShell/backend/types"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	runtime "gxShell/internal/desktop"
 )
+
+func (a *App) GetTransferSnapshot() sftpmanager.TransferSnapshot {
+	return a.sftp.TransferSnapshot()
+}
+
+func (a *App) ClearTransferHistory(sessionID string) {
+	a.sftp.ClearTransferHistory(sessionID)
+}
 
 // ListRemoteDir lists files in a remote directory via SFTP.
 func (a *App) ListRemoteDir(sessionID string, remotePath string) ([]types.RemoteFile, error) {
@@ -74,6 +84,9 @@ func (a *App) WriteRemoteTextFile(sessionID, remotePath, content, expectedVersio
 	if err := validateTextDocument([]byte(content)); err != nil {
 		return types.DocumentSaveResult{}, err
 	}
+	// Compare and write as one operation across workbench and native editors.
+	a.documentSaveMu.Lock()
+	defer a.documentSaveMu.Unlock()
 	current, err := a.sftp.ReadRemoteFile(sessionID, remotePath, maxTextFileSize)
 	if err != nil {
 		return types.DocumentSaveResult{}, err
@@ -194,15 +207,15 @@ func (a *App) CreateRemoteDir(sessionID, remotePath string) error {
 }
 
 // SelectUploadFile opens a file dialog to select a file for upload.
-func (a *App) SelectUploadFile() (string, error) {
-	return runtime.OpenFileDialog(a.ctx.Get(), runtime.OpenDialogOptions{
+func (a *App) SelectUploadFile(ctx context.Context) (string, error) {
+	return runtime.OpenFileDialog(runtime.CallerContext(ctx, a.ctx.Get()), runtime.OpenDialogOptions{
 		Title: "Select file to upload",
 	})
 }
 
 // SelectDownloadPath opens a save dialog to choose where to save a downloaded file.
-func (a *App) SelectDownloadPath(defaultName string) (string, error) {
-	return runtime.SaveFileDialog(a.ctx.Get(), runtime.SaveDialogOptions{
+func (a *App) SelectDownloadPath(ctx context.Context, defaultName string) (string, error) {
+	return runtime.SaveFileDialog(runtime.CallerContext(ctx, a.ctx.Get()), runtime.SaveDialogOptions{
 		Title:           "Save downloaded file",
 		DefaultFilename: filepath.Base(defaultName),
 	})

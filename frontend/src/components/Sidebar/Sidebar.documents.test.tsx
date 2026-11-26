@@ -54,6 +54,7 @@ function sidebarProps(overrides: Partial<ComponentProps<typeof Sidebar>> = {}): 
     onSaveSettings: noOp,
     onOpenData: noOp,
     onOpenLog: noOp,
+    onPlayRecording: noOp,
     getTerminalLines: () => '',
     activeTabId: 'document-1',
     tabs: [],

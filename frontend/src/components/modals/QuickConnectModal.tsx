@@ -2,10 +2,12 @@ import { useMemo, useRef, useState } from "react";
 import { KeyRound, MoreHorizontal, PlugZap } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { DialogHeader, Label, ModalShell } from "./ModalShell";
 import { isImeComposing } from "../../utils/ime";
 
 export function QuickConnectModal(props: {
+  standalone?: boolean;
   language: string;
   onClose: () => void;
   onPickKey: () => Promise<string>;
@@ -29,6 +31,13 @@ export function QuickConnectModal(props: {
   const [error, setError] = useState("");
   const [savedProfile, setSavedProfile] = useState<types.Profile | null>(null);
   const submittingRef = useRef(false);
+  const [discard, setDiscard] = useState(false);
+  const close = () => {
+    if (submittingRef.current) return;
+    if (props.standalone && (host || port !== 22 || username !== rememberedUser || authType !== "password" || password || privateKeyPath || passphrase || saveProfile)) {
+      setDiscard(true);
+    } else props.onClose();
+  };
 
   const submit = async () => {
     if (submittingRef.current) return;
@@ -41,6 +50,7 @@ export function QuickConnectModal(props: {
     if (authType === "privateKey" && !privateKeyPath.trim()) { setError(t(lang, "privateKeyRequired")); return; }
     const profile = new types.Profile({
       id: saveProfile ? (savedProfile?.id || "") : `quick-${crypto.randomUUID()}`,
+      updatedAt: saveProfile ? savedProfile?.updatedAt : undefined,
       name: `${cleanUser}@${cleanHost}`,
       group: saveProfile ? "Quick" : "",
       host: cleanHost,
@@ -91,7 +101,7 @@ export function QuickConnectModal(props: {
   };
 
   return (
-    <ModalShell onClose={() => { if (!busy) props.onClose(); }} compact ariaLabel={t(lang, "quickConnect")}>
+    <ModalShell standalone={props.standalone} onClose={close} compact ariaLabel={t(lang, "quickConnect")}>
       <DialogHeader
         icon={<PlugZap size={16} />}
         title={t(lang, "quickConnect")}
@@ -122,9 +132,11 @@ export function QuickConnectModal(props: {
       </div>
       {error && <div className="profile-modal-error" role="alert">{error}</div>}
       <div className="profile-modal-footer">
-        <button className="btn-secondary" disabled={busy} onClick={props.onClose}>{t(lang, "cancel")}</button>
+        <button className="btn-secondary" disabled={busy} onClick={close}>{t(lang, "cancel")}</button>
         <button className="btn-primary" disabled={busy} onClick={submit}><PlugZap size={13} /> {busy ? t(lang, "connecting") : (saveProfile ? t(lang, "saveAndConnect") : t(lang, "connectOnce"))}</button>
       </div>
+      {discard && <ConfirmDialog locale={lang} title={t(lang, "discardEdits")} body={t(lang, "unsavedChangesHint")}
+        confirmText={t(lang, "discardNoSave")} onClose={() => setDiscard(false)} onConfirm={props.onClose}/>}
     </ModalShell>
   );
 }

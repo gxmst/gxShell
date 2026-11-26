@@ -6,6 +6,8 @@ import {sshmanager} from '../models';
 import type {InspectionRun} from '../workflow';
 import type {InspectionBatch} from '../workflow';
 
+export function TestProfileConnection(profile: types.Profile): import('@wailsio/runtime').CancellablePromise<void>;
+
 export type NamedSecret = {alias:string; reference:string};
 export function ListNamedSecrets():Promise<NamedSecret[]>;
 export function SaveNamedSecret(alias:string,value:string,replace:boolean):Promise<void>;
@@ -347,3 +349,22 @@ export function ToggleMaximiseWindow():Promise<boolean>;
 export function ListSessionLogFiles(): Promise<Array<types.LogFile>>;
 export function ReadSessionLogFile(name: string): Promise<string>;
 export function UpdateProfilesBatch(ids: string[], patch: types.ProfileBatchPatch): Promise<Array<types.Profile>>;
+
+export function OpenTerminalWindow(id: string, title: string): Promise<void>;
+export function CloseTerminalWindow(id: string): Promise<void>;
+export function DockTerminalWindow(): Promise<void>;
+
+export function OpenSessionPanel(kind: "sftp" | "monitor" | "transfers", id: string, title: string): Promise<void>;
+export function OpenPanelDocument(path: string): Promise<void>;
+export function OpenConnectionWindow(kind: string, id: string, title: string): Promise<void>;
+export function RegisterConnectionWindow(): Promise<void>;
+export function CloseConnectionWindow(): Promise<void>;
+export function SaveConnectionProfile(profile: types.Profile): Promise<types.Profile>;
+export function SubmitQuickConnection(profile: types.Profile): Promise<void>;
+export function TakeQuickConnection(id: string): Promise<types.Profile>;
+export function FinishQuickConnection(id: string, message: string): Promise<void>;
+
+export function GetWindowApproval():Promise<import("../../../src/types").CliApprovalPanelRequest>;
+export function OpenRemoteDocumentWindow(id:string,path:string):Promise<void>;
+export function GetTransferSnapshot():Promise<{revision:number;events:Partial<import("../../../src/hooks/useTransfers").Transfer>[]}>;
+export function ClearTransferHistory(sessionID:string):Promise<void>;

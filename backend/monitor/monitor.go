@@ -205,6 +205,13 @@ func (m *Manager) collectAndEmit(sessionID string, run *poller) {
 		m.retire(sessionID, run)
 		return
 	}
+	var probeResult chan *types.ProbeSample
+	if prober, ok := m.exec.(interface {
+		ProbeConnection(string) *types.ProbeSample
+	}); ok {
+		probeResult = make(chan *types.ProbeSample, 1)
+		go func() { probeResult <- prober.ProbeConnection(sessionID) }()
+	}
 	start := time.Now()
 	script := `gx_section() { printf 'GX_BEGIN_%s_9b7c2d\n' "$1"; sh -c "$2"; printf 'GX_END_%s_9b7c2d\n' "$1"; }
 	gx_section OS 'LC_ALL=C cat /etc/os-release 2>/dev/null || LC_ALL=C uname -s 2>/dev/null'
@@ -213,6 +220,7 @@ func (m *Manager) collectAndEmit(sessionID string, run *poller) {
 	gx_section MEM 'LC_ALL=C cat /proc/meminfo 2>/dev/null'
 	gx_section DISK 'LC_ALL=C df -kP / 2>/dev/null | tail -n 1'
 	gx_section CPU 'LC_ALL=C head -n 1 /proc/stat 2>/dev/null'
+	gx_section CPUS 'LC_ALL=C grep -c "^cpu[0-9]" /proc/stat 2>/dev/null'
 	gx_section DEFAULT_IFACE "LC_ALL=C ip route get 1.1.1.1 2>/dev/null | awk '\''{for(i=1;i<=NF;i++) if(\$i==\"dev\") {print \$(i+1); exit}}'\''"
 	gx_section NET 'LC_ALL=C cat /proc/net/dev 2>/dev/null'
 	gx_section PROC 'LC_ALL=C ps aux --sort=-%mem 2>/dev/null | head -n 6 || LC_ALL=C ps -eo user,pid,%cpu,%mem,vsz,rss,tty,stat,start,time,args --sort=-%mem 2>/dev/null | head -n 6'`
@@ -223,6 +231,15 @@ func (m *Manager) collectAndEmit(sessionID string, run *poller) {
 	metrics.UpdatedAt = time.Now()
 	if err != nil {
 		metrics.Error = err.Error()
+	}
+
+	var sample *types.ProbeSample
+	if probeResult != nil {
+		select {
+		case sample = <-probeResult:
+		case <-run.stop:
+			return
+		}
 	}
 
 	m.mu.Lock()
@@ -254,6 +271,13 @@ func (m *Manager) collectAndEmit(sessionID string, run *poller) {
 		}
 		m.lastNet[sessionID] = netNow
 	}
+	history := m.latest[sessionID].ProbeHistory
+	if sample != nil {
+		const limit = 20
+		// Published metrics can still be read by other windows.
+		history = append(append([]types.ProbeSample(nil), history[max(0, len(history)-limit+1):]...), *sample)
+	}
+	metrics.ProbeHistory = history
 	m.latest[sessionID] = metrics
 	m.mu.Unlock()
 	if m.emit != nil {
@@ -298,6 +322,7 @@ func parseOS(text string) string {
 
 func parseMetrics(sessionID, out string) types.Metrics {
 	metrics := types.Metrics{SessionID: sessionID}
+	metrics.CPUCount, _ = strconv.Atoi(section(out, "CPUS"))
 	metrics.OS = parseOS(section(out, "OS"))
 	metrics.Uptime = strings.TrimSpace(section(out, "UPTIME"))
 	load := strings.Fields(section(out, "LOAD"))

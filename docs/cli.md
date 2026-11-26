@@ -144,7 +144,7 @@ ProxyJump support is one level deep. A jump host profile cannot itself use anoth
 
 ## Build
 
-`gxshell-cli` is not produced by `wails build`; it is a separate Go command and must be built explicitly:
+The Windows build script builds both executables. To build only the CLI, run the following from the repository root.
 
 ```powershell
 cd <repo-root>

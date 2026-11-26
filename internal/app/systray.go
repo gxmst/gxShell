@@ -1,108 +1,50 @@
-//go:build !darwin
-
 package app
 
 import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	goruntime "runtime"
 
-	"github.com/getlantern/systray"
-	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"gxShell/internal/desktop"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// setupSystemTray initializes the system tray
-func (a *App) setupSystemTray() {
-	if !a.trayStarted.CompareAndSwap(false, true) {
-		return
+func (a *App) setupSystemTray() *application.SystemTray {
+	w := desktop.MainWindow(a.ctx.Get())
+	if w == nil {
+		return nil
 	}
-	go func() {
-		// systray locks the importing main goroutine, but this goroutine is
-		// separate. Windows associates its hidden tray window and message
-		// queue with the creating OS thread: both Run phases must stay there.
-		goruntime.LockOSThread()
-		defer goruntime.UnlockOSThread()
-		defer a.trayStarted.Store(false)
-		systray.Run(a.onTrayReady, a.onTrayExit)
-	}()
-}
-
-func (a *App) stopSystemTray() {
-	if a.trayStarted.Swap(false) {
-		systray.Quit()
-	}
-}
-
-// onTrayReady is called when the system tray is ready
-func (a *App) onTrayReady() {
-	labels := loadTrayLabels()
-	systray.SetIcon(a.trayIcon)
-	systray.SetTitle("gxShell")
-	systray.SetTooltip(labels.tooltip)
-
-	// Create menu items
-	mShow := systray.AddMenuItem(labels.showWindow, labels.showWindowTip)
-	systray.AddSeparator()
-	mNewConnection := systray.AddMenuItem(labels.newConnection, labels.newConnectionTip)
-	mOpenMarkdown := systray.AddMenuItem(labels.openTextFile, labels.openTextFileTip)
-	systray.AddSeparator()
-	mSettings := systray.AddMenuItem(labels.settings, labels.settingsTip)
-	systray.AddSeparator()
-	mQuit := systray.AddMenuItem(labels.quit, labels.quitTip)
-
-	// Handle menu clicks. This goroutine starts before wails.Run publishes the
-	// app context, so every read goes through a.ctx.Get() at the moment of the
-	// click; a click that lands before startup is ignored, as before.
-	go func() {
-		for {
-			var done <-chan struct{}
-			if ctx := a.ctx.Get(); ctx != nil {
-				done = ctx.Done()
-			}
-			select {
-			case <-done:
-				return
-			case <-mShow.ClickedCh:
-				if ctx := a.ctx.Get(); ctx != nil {
-					runtime.WindowShow(ctx)
-					runtime.WindowUnminimise(ctx)
-				}
-			case <-mNewConnection.ClickedCh:
-				if ctx := a.ctx.Get(); ctx != nil {
-					runtime.WindowShow(ctx)
-					runtime.WindowUnminimise(ctx)
-					runtime.EventsEmit(ctx, "tray:new-connection")
-				}
-			case <-mOpenMarkdown.ClickedCh:
-				if ctx := a.ctx.Get(); ctx != nil {
-					runtime.WindowShow(ctx)
-					runtime.WindowUnminimise(ctx)
-					runtime.EventsEmit(ctx, "tray:open-markdown")
-				}
-			case <-mSettings.ClickedCh:
-				if ctx := a.ctx.Get(); ctx != nil {
-					runtime.WindowShow(ctx)
-					runtime.WindowUnminimise(ctx)
-					runtime.EventsEmit(ctx, "tray:settings")
-				}
-			case <-mQuit.ClickedCh:
-				if ctx := a.ctx.Get(); ctx != nil {
-					// Quit consults the unsaved-work gate. Keep the tray and
-					// handler alive if the user cancels; shutdown removes it
-					// only after the application actually agrees to close.
-					runtime.WindowShow(ctx)
-					runtime.WindowUnminimise(ctx)
-					runtime.Quit(ctx)
-				}
-			}
+	host := application.Get()
+	show := func() {
+		w.Show()
+		if w.IsMinimised() {
+			w.UnMinimise()
 		}
-	}()
+		w.Focus()
+	}
+	return a.installTray(host, show)
 }
 
-// onTrayExit is called when the system tray is exiting
-func (a *App) onTrayExit() {
-	// Cleanup
+func (a *App) installTray(host *application.App, show func()) *application.SystemTray {
+	labels := loadTrayLabels()
+	tray := host.SystemTray.New()
+	tray.SetIcon(a.trayIcon).SetTooltip(labels.tooltip)
+	menu := host.NewMenu()
+	add := func(label string, action func()) {
+		menu.Add(label).OnClick(func(*application.Context) { show(); action() })
+	}
+	add(labels.showWindow, func() {})
+	menu.AddSeparator()
+	add(labels.newConnection, func() { host.Event.Emit("tray:new-connection") })
+	add(labels.openTextFile, func() { host.Event.Emit("tray:open-markdown") })
+	menu.AddSeparator()
+	add(labels.settings, func() { host.Event.Emit("tray:settings") })
+	menu.AddSeparator()
+	add(labels.quit, a.requestFrontendClose)
+	tray.SetMenu(menu)
+	tray.OnClick(show)
+	return tray
 }
 
 type trayLabels struct {

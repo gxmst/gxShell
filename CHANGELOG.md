@@ -5,12 +5,22 @@ from the version section in this file.
 
 ## [Unreleased]
 
+## [1.8.4] - 2026-11-27
+
 ### English
 
+- Open terminals, server forms, SFTP, transfers, monitoring, remote documents and approvals in independent Wails 3.1 windows. Windows remember their size and position and recover when a display is disconnected.
+- Test the SSH connection before saving a new server. Drop files into the current remote directory from either SFTP view and confirm before overwriting.
+- Play session recordings in the workbench. Monitoring now labels 1-, 5- and 15-minute load averages and shows connection latency and loss.
+- Adjust interface scale independently of terminal font size. Windows load their own components on demand, and terminal margins follow the session theme.
 - Ship a portable gxshell skill for Claude Code and Codex, with a shared installer, current CLI guidance and CI checks that keep bundled references synchronized with project documentation.
 
 ### 中文
 
+- 升级到 Wails 3.1。终端、服务器表单、SFTP、传输、监控、远程文档和审批支持独立窗口，可记住窗口位置和大小，显示器断开后能回到可见区域。
+- 新建服务器时可先测试 SSH 连接。主界面和独立 SFTP 窗口都支持拖放上传，覆盖同名文件前会询问。
+- 会话录制在工作台主区域播放。监控明确标注 1、5、15 分钟平均负载，并显示连接延迟及丢包情况。
+- 界面缩放和终端字号可单独设置，各窗口按需加载组件，终端四周留白跟随会话主题。
 - 提供 Claude Code 和 Codex 可安装的 gxshell Skill，附统一安装脚本和当前 CLI 指引；通过 CI 校验保证随 Skill 提供的参考文档与项目规范同步。
 
 ## [1.8.3] - 2026-11-14
@@ -317,6 +327,7 @@ from the version section in this file.
 - 全局搜索覆盖连接、已打开标签、命令和工作区操作；终端搜索增加清晰的匹配计数与导航。
 - 工作区恢复改为显式开关，并增加顶层错误兜底、辅助功能和键盘交互改进。
 
+[1.8.4]: https://github.com/gxmst/gxShell/releases/tag/v1.8.4
 [1.8.3]: https://github.com/gxmst/gxShell/releases/tag/v1.8.3
 [1.6.0]: https://github.com/gxmst/gxShell/releases/tag/v1.6.0
 [1.5.6]: https://github.com/gxmst/gxShell/releases/tag/v1.5.6

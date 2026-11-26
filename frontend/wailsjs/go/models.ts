@@ -278,6 +278,7 @@ export namespace types {
 	    highlightRules?: HighlightRule[];
 	    sessionLog?: SessionLogSettings;
 	    sessionLogRetention?: SessionLogRetentionSettings;
+	    uiScale: number;
 	    sidebarWidth: number;
 	    sidebarSplitPct: number;
 	    savePasswords: boolean;
@@ -308,6 +309,7 @@ export namespace types {
 	        this.highlightRules = source["highlightRules"];
 	        this.sessionLog = source["sessionLog"];
 	        this.sessionLogRetention = source["sessionLogRetention"];
+	        this.uiScale = source["uiScale"] ?? 100;
 	        this.sidebarWidth = source["sidebarWidth"];
 	        this.sidebarSplitPct = source["sidebarSplitPct"];
 	        this.savePasswords = source["savePasswords"];
@@ -772,6 +774,8 @@ export namespace types {
 	    diskPercent: number;
 	    networkRxPerSec: number;
 	    networkTxPerSec: number;
+	    cpuCount?: number;
+	    probeHistory?: { at: string; method: "icmp" | "ssh"; state: "reply" | "lost" | "unavailable"; rttMs: number }[];
 	    latencyMs: number;
 	    topProcesses: ProcessInfo[];
 	    // Go type: time
@@ -802,6 +806,8 @@ export namespace types {
 	        this.networkRxPerSec = source["networkRxPerSec"];
 	        this.networkTxPerSec = source["networkTxPerSec"];
 	        this.latencyMs = source["latencyMs"];
+	        this.cpuCount = source["cpuCount"];
+	        this.probeHistory = source["probeHistory"];
 	        this.topProcesses = this.convertValues(source["topProcesses"], ProcessInfo);
 	        this.updatedAt = this.convertValues(source["updatedAt"], null);
 	        this.error = source["error"];

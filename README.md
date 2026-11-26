@@ -24,7 +24,7 @@ commands, metrics, and documents. No personal server data is used.*
 
 ## Download
 
-Current version: **1.8.3** — [release notes](CHANGELOG.md#183---2026-11-14).
+Current version: **1.8.4** — [release notes](CHANGELOG.md#184---2026-11-27).
 
 Download the latest [Windows x64 release](https://github.com/gxmst/gxShell/releases/latest).
 The recommended zip keeps the desktop app at its root. The optional CLI,

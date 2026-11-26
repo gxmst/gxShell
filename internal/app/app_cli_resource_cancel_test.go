@@ -60,7 +60,7 @@ func TestCliResourceApprovalsCloseWhenCallerDisconnects(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("cancelled approval stayed open")
 			}
-			if err := app.ResolveCliApproval(panel.ID, []string{panel.Items[0].ID}); err != nil {
+			if err := app.resolveCliApproval(panel.ID, []string{panel.Items[0].ID}); err != nil {
 				t.Fatal(err)
 			}
 			if app.approvalPanel.len() != 0 {

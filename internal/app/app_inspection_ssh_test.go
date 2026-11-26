@@ -295,7 +295,7 @@ func TestInspectionConsentIsRememberedPerModel(t *testing.T) {
 			if approve {
 				approved = []string{req.Items[0].ID}
 			}
-			if err := app.ResolveCliApproval(req.ID, approved); err != nil {
+			if err := app.resolveCliApproval(req.ID, approved); err != nil {
 				t.Fatal(err)
 			}
 			r := <-done

@@ -34,6 +34,25 @@ func TestDefaultSettingsDoesNotRestoreWorkspace(t *testing.T) {
 	}
 }
 
+func TestInterfaceScalePreservesTerminalFontSize(t *testing.T) {
+	store := newTestStore(t)
+	writeSettingsJSON(t, store, `{"terminal":{"fontSize":17}}`)
+	old, err := store.GetSettings()
+	if err != nil || old.UIScale != 100 || old.Terminal.FontSize != 17 {
+		t.Fatalf("legacy settings: scale=%d font=%d err=%v", old.UIScale, old.Terminal.FontSize, err)
+	}
+	for input, want := range map[int]int{90: 90, 100: 100, 110: 110, 125: 125, -1: 100, 10000: 100} {
+		old.UIScale = input
+		if err := store.SaveSettings(old); err != nil {
+			t.Fatal(err)
+		}
+		got, err := store.GetSettings()
+		if err != nil || got.UIScale != want || got.Terminal.FontSize != 17 {
+			t.Errorf("input %d: scale=%d font=%d err=%v", input, got.UIScale, got.Terminal.FontSize, err)
+		}
+	}
+}
+
 func TestDefaultSettingsRequireNetworkAndCliOptIn(t *testing.T) {
 	settings := DefaultSettings()
 	if settings.CliServerEnabled {

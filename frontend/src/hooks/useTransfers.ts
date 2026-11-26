@@ -9,6 +9,8 @@ export type Transfer = {
   profileId?: string;
   generation?: number;
   sequence?: number;
+  revision?: number;
+  finishedAt?: number;
   path: string;
   done: number;
   total: number;
@@ -47,6 +49,7 @@ export type TransferHistoryItem = {
   status: "succeeded" | "failed" | "cancelled";
   error?: string;
   finishedAt: number;
+  revision?: number;
   ok: boolean;
   sourcePath?: string;
   targetPath?: string;
@@ -62,7 +65,7 @@ type TransfersState = {
   pauseTransfer: (jobId: string) => Promise<boolean>;
   resumeTransfer: (jobId: string) => Promise<boolean>;
   retryTransfer: (item: Pick<TransferHistoryItem, "sessionId" | "runtimeId" | "profileId" | "sourcePath" | "targetPath" | "direction" | "overwrite" | "retryable">) => Promise<boolean>;
-  clearHistory: () => void;
+  clearHistory: (sessionId: string) => Promise<void>;
 };
 
 export const TransfersContext = createContext<TransfersState>({
@@ -73,7 +76,7 @@ export const TransfersContext = createContext<TransfersState>({
   pauseTransfer: async () => false,
   resumeTransfer: async () => false,
   retryTransfer: async () => false,
-  clearHistory: () => {},
+  clearHistory: async () => {},
 });
 
 export function transferName(path: string) {
@@ -94,6 +97,8 @@ export function normalizeEvent(data: Partial<Transfer>): Transfer | null {
     runtimeId: data.runtimeId,
     profileId: data.profileId,
     generation: data.generation == null ? undefined : Number(data.generation),
+    revision: data.revision,
+    finishedAt: data.finishedAt,
     sequence: data.sequence == null ? undefined : Number(data.sequence),
     path: data.path,
     done: Number(data.done) || 0,

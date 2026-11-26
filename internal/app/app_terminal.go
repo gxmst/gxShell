@@ -52,25 +52,9 @@ func (a *App) ConnectTerminal(profileID string, instanceID string, password stri
 		fullProfile.PrivateKeyPassphrase = ""
 	}()
 
-	// Handle ProxyJump if configured
-	var jumpProfile types.Profile
-	if fullProfile.ProxyJumpID != "" {
-		jumpProfile, err = a.getProfileForConnect(fullProfile.ProxyJumpID)
-		if err != nil {
-			return types.SessionInfo{}, fmt.Errorf("jump host profile not found: %w", err)
-		}
-		if jumpProfile.RememberPassword {
-			if err := a.loadProfileSecrets(&jumpProfile); err != nil {
-				return types.SessionInfo{}, fmt.Errorf("jump host secrets load failed: %w", err)
-			}
-		}
-		defer func() {
-			jumpProfile.Password = ""
-			jumpProfile.PrivateKeyPassphrase = ""
-		}()
-		if jumpProfile.ProxyJumpID != "" {
-			return types.SessionInfo{}, errors.New("nested proxy jump is not supported")
-		}
+	jumpProfile, err := a.connectionJumpProfile(fullProfile.ProxyJumpID)
+	if err != nil {
+		return types.SessionInfo{}, err
 	}
 
 	settings, settingsErr := a.store.GetSettings()
@@ -124,6 +108,25 @@ func (a *App) ConnectTerminal(profileID string, instanceID string, password stri
 	a.runPostConnectActions(info.ID, fullProfile)
 
 	return info, nil
+}
+
+func (a *App) connectionJumpProfile(id string) (types.Profile, error) {
+	if id == "" {
+		return types.Profile{}, nil
+	}
+	jump, err := a.getProfileForConnect(id)
+	if err != nil {
+		return types.Profile{}, fmt.Errorf("jump host profile not found: %w", err)
+	}
+	if jump.ProxyJumpID != "" {
+		return types.Profile{}, errors.New("nested proxy jump is not supported")
+	}
+	if jump.RememberPassword {
+		if err := a.loadProfileSecrets(&jump); err != nil {
+			return types.Profile{}, fmt.Errorf("jump host secrets load failed: %w", err)
+		}
+	}
+	return jump, nil
 }
 
 // Disconnect closes an SSH or local terminal session. Cross-subsystem cleanup

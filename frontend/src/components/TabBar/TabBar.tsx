@@ -2,7 +2,7 @@ import clsx from "clsx";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, Circle, Columns2, CopyPlus, FileText, List, Pin, PinOff, Plus, Radio, RefreshCw, Rows2, Search, Server, Terminal, X } from "lucide-react";
 import type { AutomationIndicator, SplitDirection, Tab } from "../../types";
-import { Grid2X2 } from "lucide-react";
+import { Grid2X2, PanelsTopLeft } from "lucide-react";
 import { stateClass } from "../../utils/format";
 import { types } from "../../../wailsjs/go/models";
 import { t } from "../../i18n";
@@ -18,7 +18,7 @@ function tabContext(tab: Tab, profile?: types.Profile) {
 // The tab strip. It is mounted inside AppTopBar, so it owns no window chrome
 // and no sidebar affordance: the activity rail is always visible and carries
 // the only panel toggle.
-export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onCloseMany, closingTabs, onReconnect, onTearOff, onReorder, onSplitToggle, onNewConnection, onNewLocal, onNewTerminal, onOpenMarkdown, onRename, onTogglePin, rightAccessory, broadcastInput, broadcastAvailable, onToggleBroadcast, recording, onToggleRecording, automationActivity, dirtyTabIds, language }: { tabs: Tab[]; activeTab: string; profiles: types.Profile[]; onActive: (id: string, options?: { keepFocus?: boolean }) => void; onClose: (id: string) => void; onCloseMany?: (ids: string[]) => void | Promise<unknown>; closingTabs?: boolean; onReconnect: (tab: Tab) => void; onTearOff?: (tab: Tab) => void; onReorder?: (draggedId: string, targetId: string) => void; onSplitToggle?: (tabId: string, direction: SplitDirection) => void; onNewConnection?: () => void; onNewLocal?: () => void; onNewTerminal?: (tab: Tab) => void; onOpenMarkdown?: () => void; onRename?: (tab: Tab) => void; onTogglePin?: (tab: Tab) => void; rightAccessory?: ReactNode; broadcastInput?: boolean; broadcastAvailable?: boolean; onToggleBroadcast?: () => void; recording?: boolean; onToggleRecording?: (id: string) => void; automationActivity?: Record<string, AutomationIndicator>; dirtyTabIds?: string[]; language?: string }) {
+export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onCloseMany, closingTabs, onReconnect, onTearOff, onOpenPanel, onReorder, onSplitToggle, onNewConnection, onNewLocal, onNewTerminal, onOpenMarkdown, onRename, onTogglePin, rightAccessory, broadcastInput, broadcastAvailable, onToggleBroadcast, recording, onToggleRecording, automationActivity, dirtyTabIds, language }: { tabs: Tab[]; activeTab: string; profiles: types.Profile[]; onActive: (id: string, options?: { keepFocus?: boolean }) => void; onClose: (id: string) => void; onCloseMany?: (ids: string[]) => void | Promise<unknown>; closingTabs?: boolean; onReconnect: (tab: Tab) => void; onTearOff?: (tab: Tab) => void; onOpenPanel?: (kind: "sftp" | "monitor", tab: Tab) => void; onReorder?: (draggedId: string, targetId: string) => void; onSplitToggle?: (tabId: string, direction: SplitDirection) => void; onNewConnection?: () => void; onNewLocal?: () => void; onNewTerminal?: (tab: Tab) => void; onOpenMarkdown?: () => void; onRename?: (tab: Tab) => void; onTogglePin?: (tab: Tab) => void; rightAccessory?: ReactNode; broadcastInput?: boolean; broadcastAvailable?: boolean; onToggleBroadcast?: () => void; recording?: boolean; onToggleRecording?: (id: string) => void; automationActivity?: Record<string, AutomationIndicator>; dirtyTabIds?: string[]; language?: string }) {
   const orderedTabs = useMemo(() => orderTabs(tabs), [tabs]);
   const active = orderedTabs.find((tab) => tab.id === activeTab);
   const labelsRef = useRef(new TerminalLabels());
@@ -437,6 +437,9 @@ export function TabBar({ tabs, activeTab, profiles, onActive, onClose, onCloseMa
         {rightAccessory}
       </div>
       {contextTab && <div className="tab-context-menu" ref={contextMenuRef} role="menu" style={contextPosition} onClick={(event) => event.stopPropagation()}>
+        {onTearOff && contextTab.type !== "markdown" && <button role="menuitem" onClick={() => { setContextTabId(""); onTearOff(contextTab); }}><PanelsTopLeft size={12} />{t(lang, "detachTerminal")}</button>}
+        {onOpenPanel && !contextTab.local && contextTab.type !== "markdown" && contextTab.state === "connected" && (["sftp", "monitor"] as const).map(kind =>
+          <button key={kind} role="menuitem" onClick={() => { setContextTabId(""); onOpenPanel(kind, contextTab); }}><PanelsTopLeft size={12}/>{t(lang, kind === "sftp" ? "detachSftp" : "detachMonitor")}</button>)}
         {onNewTerminal && contextTab.type !== "markdown" && profileByID.has(contextTab.profileId) && <button role="menuitem" onClick={() => { setContextTabId(""); onNewTerminal(contextTab); }}><CopyPlus size={12} />{t(lang, "openInNewTerminal")}</button>}
         {onRename && <button role="menuitem" onClick={() => { setContextTabId(""); onRename(contextTab); }}>{t(lang, "renameTab")}</button>}
         {onTogglePin && <button role="menuitem" onClick={() => { setContextTabId(""); onTogglePin(contextTab); }}>{contextTab.pinned ? <PinOff size={12} /> : <Pin size={12} />}{t(lang, contextTab.pinned ? "unpinTab" : "pinTab")}</button>}

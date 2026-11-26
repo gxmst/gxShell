@@ -5,7 +5,7 @@ import { t } from "../../i18n";
 import { ModalShell } from "./ModalShell";
 import { ConfirmDialog } from "./ConfirmDialog";
 
-export function BulkProfilesModal({ profiles, language, onClose, onSave }: { profiles: types.Profile[]; language: string; onClose: () => void; onSave: (ids: string[], patch: types.ProfileBatchPatch) => Promise<void> }) {
+export function BulkProfilesModal({ profiles, language, onClose, onSave, standalone }: { standalone?: boolean; profiles: types.Profile[]; language: string; onClose: () => void; onSave: (ids: string[], patch: types.ProfileBatchPatch) => Promise<void> }) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [patch, setPatch] = useState<types.ProfileBatchPatch>({ inheritTerminal: false });
@@ -21,7 +21,7 @@ export function BulkProfilesModal({ profiles, language, onClose, onSave }: { pro
     saving.current = true; setBusy(true); setError("");
     try { await onSave(selected, patch); onClose(); } catch (err) { setError(String(err)); } finally { saving.current = false; setBusy(false); }
   };
-  return <ModalShell onClose={close} ariaLabel={t(language, "bulkEditServers")}>
+  return <ModalShell standalone={standalone} onClose={close} ariaLabel={t(language, "bulkEditServers")}>
     <div className="profile-modal-header"><h2 className="profile-modal-title flex items-center gap-2"><ListChecks size={16} />{t(language, "bulkEditServers")}</h2><button className="icon-btn compact-icon" onClick={close} disabled={busy} title={t(language, "close")}><X size={14} /></button></div>
     <input className="input compact-input" aria-label={t(language, "bulkFilterServers")} placeholder={t(language, "bulkFilterServers")} value={query} onChange={(e) => setQuery(e.target.value)} />
     <div className="flex items-center justify-between py-2 text-xs"><label className="check"><input type="checkbox" checked={filtered.length > 0 && filtered.every((p) => selected.includes(p.id))} ref={(el) => { if (el) el.indeterminate = filtered.some((p) => selected.includes(p.id)) && !filtered.every((p) => selected.includes(p.id)); }} onChange={(e) => setSelected(e.target.checked ? [...new Set([...selected, ...filtered.map((p) => p.id)])] : selected.filter((id) => !filtered.some((p) => p.id === id)))} />{t(language, "bulkSelectFiltered")}</label><span>{t(language, "bulkSelectedCount", { count: String(selected.length) })}</span></div>

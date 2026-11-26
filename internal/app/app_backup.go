@@ -21,8 +21,8 @@ import (
 	sshmanager "gxShell/backend/ssh"
 	"gxShell/backend/types"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"golang.org/x/crypto/pbkdf2"
+	runtime "gxShell/internal/desktop"
 )
 
 const (
@@ -348,6 +348,7 @@ func (a *App) ApplyBackup(token, previousWorkspaces string) error {
 		return err
 	}
 	if plan.preview.Settings {
+		a.applyWindowZoom(plan.settings.UIScale)
 		if a.ai != nil {
 			cfg := plan.settings.Ai
 			a.ai.UpdateConfig(ai.Config{Provider: ai.Provider(cfg.Provider), Endpoint: cfg.Endpoint, Model: cfg.Model, APIKey: plan.aiKey})

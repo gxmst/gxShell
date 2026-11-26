@@ -399,3 +399,30 @@ func TestParseOS(t *testing.T) {
 		})
 	}
 }
+
+type probeExecutor struct{ count int }
+
+func (*probeExecutor) Exec(string, string, time.Duration) (string, error) { return "", nil }
+func (p *probeExecutor) ProbeConnection(string) *types.ProbeSample {
+	p.count++
+	return &types.ProbeSample{Method: "icmp", State: "reply", RTTMs: float64(p.count)}
+}
+
+func TestProbeHistoryFollowsSessionAndDoesNotMutatePublishedFrames(t *testing.T) {
+	m := NewManager(&probeExecutor{}, nil)
+	run := &poller{stop: make(chan struct{})}
+	m.running["s"] = run
+	for i := 0; i < 20; i++ {
+		m.collectAndEmit("s", run)
+	}
+	previous := m.Latest("s")
+	m.collectAndEmit("s", run)
+	history := m.Latest("s").ProbeHistory
+	if len(history) != 20 || history[0].RTTMs != 2 || history[19].RTTMs != 21 || previous.ProbeHistory[0].RTTMs != 1 {
+		t.Fatalf("invalid rolling history: %#v", history)
+	}
+	m.Stop("s")
+	if len(m.Latest("s").ProbeHistory) != 0 {
+		t.Fatal("stopped session retained probes")
+	}
+}

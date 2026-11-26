@@ -2,9 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Clock, FolderOpen, Play, RefreshCw, Trash2, Video } from "lucide-react";
 import { types } from "../../../wailsjs/go/models";
 import { ListRecordings, DeleteRecording, OpenRecordingsDir } from "../../../wailsjs/go/app/App";
-import type { Tab } from "../../types";
 import { t } from "../../i18n";
-import { CastPlayer } from "../CastPlayer/CastPlayer";
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -21,14 +19,12 @@ function formatTime(d: unknown): string {
 }
 
 export function RecordingsPanel(props: {
-  active?: Tab;
   locale: string;
-  settings: types.AppSettings | null;
+  onPlay: (name: string) => void;
   onNotify?: (text: string, tone?: "info" | "error" | "success") => void;
 }) {
   const lang = props.locale;
   const [recordings, setRecordings] = useState<types.Recording[]>([]);
-  const [playing, setPlaying] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -66,21 +62,18 @@ export function RecordingsPanel(props: {
         {recordings.map((rec) => (
           <div key={rec.name} className="recording-row panel-item">
             <span className="panel-item-icon"><Video size={13} /></span>
-            <div className="panel-item-copy" onClick={() => setPlaying(rec.name)} role="button">
+            <button type="button" className="panel-item-copy text-left" onClick={() => props.onPlay(rec.name)}>
               <div className="panel-item-title">{rec.name}</div>
               <div className="panel-item-meta flex items-center gap-1">
                 <Clock size={8} /> {formatTime(rec.modTime)} · {formatSize(rec.size)}
               </div>
-            </div>
-            <div className="panel-item-actions"><button className="mini-btn" onClick={() => setPlaying(rec.name)} title={t(lang, "playRecording")}><Play size={11} /></button>
+            </button>
+            <div className="panel-item-actions"><button className="mini-btn" onClick={() => props.onPlay(rec.name)} title={t(lang, "playRecording")}><Play size={11} /></button>
             <button className="mini-btn danger" onClick={() => remove(rec.name)} title={t(lang, "deleteRecording")}><Trash2 size={11} /></button></div>
           </div>
         ))}
         {!recordings.length && <div className="panel-empty"><Video size={20} /><span>{t(lang, "noRecordings")}</span></div>}
       </div>
-      {playing && (
-        <CastPlayer name={playing} settings={props.settings} locale={lang} onClose={() => setPlaying(null)} />
-      )}
     </div>
   );
 }

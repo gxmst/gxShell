@@ -571,7 +571,6 @@
 
 .floating-card,
 .floating-terminal,
-.cast-player,
 .transfer-modal {
   border-color: color-mix(in srgb, var(--border-strong) 88%, transparent);
   background: linear-gradient(145deg, color-mix(in srgb, var(--panel-raised) 96%, black), color-mix(in srgb, var(--panel) 96%, black));

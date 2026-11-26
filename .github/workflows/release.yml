@@ -41,8 +41,8 @@ jobs:
             throw 'Could not read backend/version/version.go version'
           }
           $version = $Matches[1]
-          if ("v$version" -ne "${{ github.ref_name }}") {
-            throw "Tag ${{ github.ref_name }} does not match application version $version"
+          if ("v$version" -ne $env:GITHUB_REF_NAME) {
+            throw "Tag $env:GITHUB_REF_NAME does not match application version $version"
           }
           Write-Output "Releasing gxShell v$version"
 
@@ -82,15 +82,20 @@ jobs:
       - name: Install matching Wails CLI
         shell: pwsh
         run: |
-          $wailsVersion = go list -m -f '{{.Version}}' github.com/wailsapp/wails/v2
-          go install "github.com/wailsapp/wails/v2/cmd/wails@$wailsVersion"
+          $wailsVersion = go list -m -f '{{.Version}}' github.com/wailsapp/wails/v3
+          go install "github.com/wailsapp/wails/v3/cmd/wails3@$wailsVersion"
 
-      # -skipbindings, as in verify.yml: frontend/wailsjs is hand-maintained, and
-      # regenerating it reverts the corrections check-bindings.mjs asserts. Wails
-      # regenerates before compiling the frontend, so without this flag the
-      # bindings check inside npm run build fails the release build every time.
       - name: Build Windows desktop app
         run: pwsh -File scripts/build.ps1 -Clean -DesktopOnly
+
+      - name: Check desktop version resource
+        shell: pwsh
+        run: |
+          $expected = $env:GITHUB_REF_NAME.Substring(1)
+          $info = (Get-Item -LiteralPath 'build/bin/gxShell.exe').VersionInfo
+          if ($info.FileVersion -ne $expected -or $info.ProductVersion -ne $expected) {
+            throw "Windows reported file version '$($info.FileVersion)' and product version '$($info.ProductVersion)', expected '$expected'."
+          }
 
       - name: Build CLI
         run: go build -o gxshell-cli.exe ./cmd/gxshell-cli
@@ -212,8 +217,8 @@ jobs:
           $notes = Join-Path $env:RUNNER_TEMP 'gxshell-release-notes.md'
           $body | Set-Content $notes -Encoding utf8
           $package = "gxShell-v$version-windows-amd64.zip"
-          gh release create "${{ github.ref_name }}" $package SHA256SUMS.txt `
-            --repo "${{ github.repository }}" `
+          gh release create $env:GITHUB_REF_NAME $package SHA256SUMS.txt `
+            --repo $env:GITHUB_REPOSITORY `
             --title "gxShell v$version" `
             --notes-file $notes `
             --verify-tag `

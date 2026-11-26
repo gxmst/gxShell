@@ -51,7 +51,7 @@ describe("terminal keyboard routing", () => {
     const settings = new types.AppSettings({ themeName: "Light", highlightLevel: "off", terminal: { themeName: "Light", fontFamily: "monospace", fontSize: 14, lineHeight: 1.25, scrollbackLines: 5000 } });
     let overrides = { a: settings.terminal, b: new types.TerminalSettings({ ...settings.terminal, fontSize: 18 }) };
     const frames = vi.spyOn(window, "requestAnimationFrame");
-    const { result, rerender, unmount } = renderHook(({ active, id }) => useTerminal(id, active, settings, vi.fn(), null, undefined, undefined, undefined, undefined, undefined, overrides), { initialProps: { active: false, id: "a" } });
+    const { result, rerender, unmount } = renderHook(({ active, id }) => useTerminal(id, active, settings, vi.fn(), { terminalOverrides: overrides }), { initialProps: { active: false, id: "a" } });
     result.current.terminalHosts.current.a = document.createElement("div");
     result.current.terminalHosts.current.b = document.createElement("div");
     rerender({ active: true, id: "a" });
@@ -82,7 +82,7 @@ describe("terminal keyboard routing", () => {
     const settings = new types.AppSettings({ themeName: "Light", highlightLevel: "off", terminal: { themeName: "Light", fontSize: 14, lineHeight: 1.25, scrollbackLines: 5000 } });
     const broadcast = { current: { enabled: true, targets: ["a", "b"] } };
     let overrides = { b: new types.TerminalSettings({ backspaceKey: "ctrl-h", deleteKey: "del" }) };
-    const { result, rerender, unmount } = renderHook(({ active }) => useTerminal("a", active, settings, vi.fn(), null, broadcast, undefined, undefined, undefined, undefined, overrides), { initialProps: { active: false } });
+    const { result, rerender, unmount } = renderHook(({ active }) => useTerminal("a", active, settings, vi.fn(), { broadcastRef: broadcast, terminalOverrides: overrides }), { initialProps: { active: false } });
     result.current.terminalHosts.current.a = document.createElement("div");
     rerender({ active: true });
     const term = mocks.instances[0];

@@ -1,9 +1,9 @@
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { types } from "../wailsjs/go/models";
-import { AnswerKeyboardInteractive, ApplyBackup, CloseWindow, CreateCommand, DeleteCommand, ExportProfiles, ImportOpenSSHConfig, ImportProfiles, IsRecording, ListCommands, OpenDataDir, ReadLogFile, RegisterApprovalPanel, ResolveCliApproval, RevokeCliTrust, SelectPrivateKey, SendCommandToTerminal, SetWindowBackgroundColour, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/app/App";
-import { emptyProfile } from "./constants";
-import type { AutomationActivityEvent, AutomationActivityRecord, AutomationIndicator, CliApprovalEvent, CliApprovalPanelRequest, Drawer, SplitDirection, SplitPane, Tab } from "./types";
+import { OpenConnectionWindow, FinishQuickConnection, TakeQuickConnection, OpenSessionPanel, OpenRemoteDocumentWindow, AnswerKeyboardInteractive, ApplyBackup, CloseWindow, CreateCommand, DeleteCommand, ExportProfiles, ImportOpenSSHConfig, ImportProfiles, IsRecording, ListCommands, OpenDataDir, ReadLogFile, RegisterApprovalPanel, RevokeCliTrust, SendCommandToTerminal, SetWindowBackgroundColour, StartMonitor, StartRecording, StopRecording, UpdateCommand } from "../wailsjs/go/app/App";
+import type { ConnectionForm } from "./components/ConnectionWindow/ConnectionWindow";
+import type { AutomationActivityEvent, AutomationActivityRecord, AutomationIndicator, CliApprovalEvent, Drawer, SplitDirection, SplitPane, Tab } from "./types";
 import { normalizeAppTheme, parseRgbColor } from "./utils/format";
 import { useToasts } from "./hooks/useToasts";
 import { useProfiles } from "./hooks/useProfiles";
@@ -23,13 +23,11 @@ import { AppTopBar } from "./components/AppTopBar/AppTopBar";
 import { TabBar } from "./components/TabBar/TabBar";
 import { orderTabs } from "./components/TabBar/tabLayout";
 import { TerminalArea } from "./components/TerminalArea/TerminalArea";
-import { FloatingTerminal } from "./components/FloatingTerminal/FloatingTerminal";
-import { ProfileModal } from "./components/modals/ProfileModal";
+import { NativeTerminalHost } from "./components/NativeTerminal/NativeTerminalHost";
 import { CommandModal } from "./components/modals/CommandModal";
 import { CommandVarsDialog } from "./components/modals/CommandVarsDialog";
 import { extractPlaceholders } from "./utils/commandVars";
 import { SecretModal } from "./components/modals/SecretModal";
-import { QuickConnectModal } from "./components/modals/QuickConnectModal";
 import { UnsavedChangesDialog } from "./components/modals/UnsavedChangesDialog";
 import { KeyboardInteractiveDialog, type KiRequest } from "./components/modals/KeyboardInteractiveDialog";
 import { GlobalSearchModal, TerminalSearchModal } from "./components/modals/SearchModals";
@@ -40,8 +38,7 @@ import { ToastStack } from "./components/ToastStack";
 import type { TransferHistoryItem } from "./hooks/useTransfers";
 import { TransfersProvider } from "./hooks/TransfersProvider";
 import { BrowserOpenURL, EventsOn } from "../wailsjs/runtime/runtime";
-import { ReadSessionLogFile, UpdateProfilesBatch } from "../wailsjs/go/app/App";
-import { BulkProfilesModal } from "./components/modals/BulkProfilesModal";
+import { ReadSessionLogFile } from "../wailsjs/go/app/App";
 import { reconcileSplit, replaceSplitIds, splitPaneIds } from "./utils/splitPane";
 import { useNamedWorkspaces } from "./hooks/useNamedWorkspaces";
 import { WorkspacesModal } from "./components/modals/WorkspacesModal";
@@ -52,7 +49,6 @@ import { shellQuote } from "./utils/shellQuote";
 import { t, type LangKey } from "./i18n";
 import { formatAutomationTerminalEvent } from "./utils/automation";
 import { CliApprovalQueue } from "./components/CliApprovalQueue/CliApprovalQueue";
-import { CliApprovalPanel } from "./components/CliApprovalPanel/CliApprovalPanel";
 import { PasteConfirmDialog } from "./components/modals/PasteConfirmDialog";
 import { sameTerminalPasteTargets, terminalPasteTargets } from "./utils/terminalPaste";
 import { TextInputDialog } from "./components/modals/TextInputDialog";
@@ -85,6 +81,12 @@ function App() {
   // of repeating the `settings?.language === "zh-CN"` ternary inline.
   const lang = profileSettings?.language || "en";
   const tr = useCallback((key: LangKey, params?: Record<string, string>) => t(lang, key, params), [lang]);
+  const openConnectionForm = useCallback((kind: ConnectionForm, profile?: types.Profile) => {
+    const label = { new: "newServer", edit: "editServer", quick: "quickConnect", bulk: "bulkEditServers" } as const;
+    const title = profile ? tr(label[kind]) + " · " + (profile.name || profile.host) : tr(label[kind]);
+    void OpenConnectionWindow(kind, profile?.id || "", title).catch(err => notify(String(err), "error"));
+  }, [notify, tr]);
+  const handleNewConnection = useCallback(() => openConnectionForm("new"), [openConnectionForm]);
   const updateCheck = useUpdateCheck();
   const [drawer, setDrawer] = usePersistedState<Drawer>("gx:drawer", "monitor");
   // Preferences only take effect on save, and leaving the drawer unmounts the
@@ -102,16 +104,13 @@ function App() {
     }
     setDrawer(next);
   }, [setDrawer]);
-  const [profileModal, setProfileModal] = useState<types.Profile | null>(null);
-  const [bulkProfilesOpen, setBulkProfilesOpen] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [backupMode, setBackupMode] = useState<"export" | "import" | null>(null);
   const backupBusyRef = useRef(false);
   const handleBackupBusyChange = useCallback((busy: boolean) => { backupBusyRef.current = busy; }, []);
   const [revokingCliTrustID, setRevokingCliTrustID] = useState("");
-  const [quickConnectOpen, setQuickConnectOpen] = useState(false);
   const [commandModal, setCommandModal] = useState<types.CommandTemplate | null>(null);
-  const [deleteProfileRequest, setDeleteProfileRequest] = useState<{ id: string; name: string; closeEditor: boolean } | null>(null);
+  const [deleteProfileRequest, setDeleteProfileRequest] = useState<{ id: string; name: string } | null>(null);
   const [deleteCommandRequest, setDeleteCommandRequest] = useState<{ id: string; name: string } | null>(null);
   const [commandVars, setCommandVars] = useState<{ commandName: string; template: string; placeholders: string[]; send: (command: string) => void } | null>(null);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
@@ -123,6 +122,7 @@ function App() {
   const [terminalSearchTab, setTerminalSearchTab] = useState("");
   const [terminalSearchResult, setTerminalSearchResult] = useState<{ id: string; index: number; count: number } | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = usePersistedState("gx:sidebarCollapsed", false);
+  const [replay, setReplay] = useState<string | null>(null);
   const [logViewer, setLogViewer] = useState<{ name: string; content: string } | null>(null);
   const [floatingTabIds, setFloatingTabIds] = usePersistedState<string[]>("gx:floatingTabIds", []);
   const [splitPane, setSplitPane] = useState<SplitPane | null>(null);
@@ -149,11 +149,6 @@ function App() {
   const [automationActivity, setAutomationActivity] = useState<Record<string, AutomationIndicator>>({});
   const [activityHistory, setActivityHistory] = useState<AutomationActivityRecord[]>([]);
   const [cliApprovals, setCliApprovals] = useState<CliApprovalEvent[]>([]);
-  // The interactive approval panel. The backend serialises panels, so exactly
-  // one is ever pending — this is a single slot, not a queue.
-  const [cliApprovalPanel, setCliApprovalPanel] = useState<CliApprovalPanelRequest | null>(null);
-  const cliApprovalPanelRef = useRef<CliApprovalPanelRequest | null>(null);
-  cliApprovalPanelRef.current = cliApprovalPanel;
   const automationRunningRef = useRef<Record<string, Map<string, AutomationIndicator["source"]>>>({});
   const automationClearTimers = useRef<Record<string, number>>({});
   const dirtyDocumentsRef = useRef<Record<string, { save: () => Promise<boolean> }>>({});
@@ -374,9 +369,12 @@ function App() {
     const terminal = terminalPreferences.get(tab.profileId);
     return terminal ? [[tab.id, terminal]] : [];
   })), [sessionTabs, terminalPreferences]);
-  const activeTerminal = useTerminal(sessionActiveTab, activeIsTerminal, profileSettings, notify, splitPane, broadcastRef, linkHandlersRef, setCtxMenu, handleTerminalSearchResults, setPasteRequest, terminalOverrides);
+  const activeTerminal = useTerminal(sessionActiveTab, activeIsTerminal, profileSettings, notify, {
+    splitPane, broadcastRef, linkHandlersRef, setContextMenu: setCtxMenu, onSearchResults: handleTerminalSearchResults,
+    onPasteRequest: setPasteRequest, terminalOverrides, detachedIds: floatingTabIds,
+  });
   const { adjustFontSize: terminalAdjustFontSize, resetFontSize: terminalResetFontSize, getCurrentDirectory: terminalGetCurrentDirectory } = activeTerminal;
-  const { writeOutput, disposeTerminal, findNext, findPrev, focusTerminal, refitTerminal, reattachTerminal } = activeTerminal;
+  const { writeOutput, disposeTerminal, findNext, findPrev, focusTerminal, refitTerminal } = activeTerminal;
   terminalBridge.current.disposeTerminal = disposeTerminal;
   const {
     effectiveSidebarWidth, sidebarResizing, beginSidebarResize, resetSidebarResize,
@@ -390,7 +388,7 @@ function App() {
     refreshMarkdownSiblings,
     recentMarkdown,
     openMarkdownFile,
-    openRemoteMarkdownFile,
+    rememberRemote,
     openMarkdownTarget,
     handleOpenMarkdown,
     handleOpenRecentMarkdown,
@@ -410,18 +408,36 @@ function App() {
 
   // Language for toasts fired from long-lived event listeners; a ref avoids
   // resubscribing those listeners whenever the language setting changes.
+  useEffect(() => EventsOn("connection:submit", async (id: string) => {
+    let profile: types.Profile;
+    try { profile = await TakeQuickConnection(id); }
+    catch { return; } // The window closed or this request was already claimed.
+    let message = "";
+    try {
+      if (profile.id.startsWith("quick-")) await sessionConnectQuick(profile);
+      else await sessionConnectProfileWithSecrets(profile, profile.password || "", profile.privateKeyPassphrase || "");
+    } catch (error) {
+      message = String(error);
+    }
+    await FinishQuickConnection(id, message);
+  }), [sessionConnectQuick, sessionConnectProfileWithSecrets]);
+
   const langRef = useRef(profileSettings?.language || "en");
   langRef.current = profileSettings?.language || "en";
 
   const { kiRequests, setKiRequests } = useAppFileEvents({
-    openMarkdownFile, handleOpenMarkdown, setDrawer, setProfileModal, notify,
+    openMarkdownFile, handleOpenMarkdown, setDrawer, handleNewConnection, notify,
     sessionIsCurrentRuntimeEvent, sessionTabs, language: lang,
   });
+
+  useEffect(() => EventsOn("workspace:remote-opened", ({ id, path }: { id: string; path: string }) => {
+    rememberRemote(id, path);
+  }), [rememberRemote]);
 
   const handleTearOff = useCallback((tab: Tab) => {
     setFloatingTabIds((prev) => prev.includes(tab.id) ? prev : [...prev, tab.id]);
     if (sessionActiveTab === tab.id) {
-      const remaining = sessionTabs.filter((t) => t.id !== tab.id);
+      const remaining = sessionTabs.filter((t) => t.id !== tab.id && !floatingTabIdsRef.current.includes(t.id));
       if (remaining.length > 0) {
         sessionSetActiveTab(remaining[0].id);
       }
@@ -432,8 +448,6 @@ function App() {
   const handleDockFloating = useCallback((id: string) => {
     setFloatingTabIds((prev) => prev.filter((fid) => fid !== id));
     sessionSetActiveTab(id);
-    // reattachTerminal is called from FloatingTerminal's cleanup effect,
-    // which includes a delayed refitTerminal, so no extra call is needed here.
   }, [sessionSetActiveTab, setFloatingTabIds]);
 
   // Closing a tab that is floating must also clear its floating flag, and only
@@ -445,9 +459,6 @@ function App() {
     if (await sessionCloseTab(id)) setFloatingTabIds((prev) => prev.filter((fid) => fid !== id));
   }, [sessionCloseTab, setFloatingTabIds]);
 
-  const handleCloseFloating = useCallback(async (id: string) => {
-    await closeTabForgettingFloating(id);
-  }, [closeTabForgettingFloating]);
 
   useEffect(() => {
     const tabIds = new Set(sessionTabs.map((t) => t.id));
@@ -630,21 +641,7 @@ function App() {
     return () => offApproval();
   }, []);
 
-  // The interactive approval panel. RegisterApprovalPanel tells the backend the
-  // listener below is attached: until it is, approvals fall back to the native
-  // dialog, so an event emitted during startup can never leave a request
-  // waiting on a panel nobody rendered.
-  useEffect(() => {
-    void RegisterApprovalPanel();
-    const offPanel = EventsOn("cli:approval-panel", (payload: CliApprovalPanelRequest) => {
-      if (!payload?.id || !payload.items?.length) return;
-      setCliApprovalPanel(payload);
-    });
-    const offPanelClosed = EventsOn("cli:approval-panel:closed", (payload: { id?: string }) => {
-      setCliApprovalPanel((current) => (current && current.id === payload?.id ? null : current));
-    });
-    return () => { offPanel(); offPanelClosed(); };
-  }, []);
+  useEffect(() => { void RegisterApprovalPanel(); }, []);
 
   // Rendered HTML — the Markdown preview, the AI assistant's replies, tool
   // output — can carry links, and the window is frameless, so following one
@@ -656,12 +653,6 @@ function App() {
   }, [notify]);
   useRenderedLinkGuard(handleBlockedRenderedLink);
 
-  const handleCliApprovalResolve = useCallback((approvedIds: string[]) => {
-    const current = cliApprovalPanelRef.current;
-    setCliApprovalPanel(null);
-    if (current) void ResolveCliApproval(current.id, approvedIds);
-  }, []);
-
   useEffect(() => () => {
     Object.values(automationClearTimers.current).forEach((timer) => window.clearTimeout(timer));
   }, []);
@@ -669,18 +660,15 @@ function App() {
   // The close gate. Wails routes every close path — the top-bar button,
   // Alt+F4, the taskbar — through app:close-requested, because a DOM
   // beforeunload cannot reliably intercept a native quit; the confirmed path
-  // finishes with CloseWindow, which quits without re-entering the gate. The
-  // Both modal editors report their actual dirty state; merely opening an
-  // editor is not unsaved work, while a command-template draft is protected in
-  // the same way as a profile draft.
+  // finishes with CloseWindow. A tray quit also checks for open native
+  // connection forms, whose drafts belong to their own renderers.
   const [quitConfirmOpen, setQuitConfirmOpen] = useState(false);
   const quitConfirmOpenRef = useRef(false);
-  const profileDirtyRef = useRef(false);
+  const [quitWithEditors, setQuitWithEditors] = useState(false);
   const commandDirtyRef = useRef(false);
-  const handleProfileDirtyChange = useCallback((dirty: boolean) => { profileDirtyRef.current = dirty; }, []);
   const handleCommandDirtyChange = useCallback((dirty: boolean) => { commandDirtyRef.current = dirty; }, []);
   useEffect(() => {
-    const offCloseRequest = EventsOn("app:close-requested", () => {
+    const offCloseRequest = EventsOn("app:close-requested", (hasEditors = false) => {
       if (backupBusyRef.current) {
         notify(tr("waitForBackupBeforeClose"), "info");
         return;
@@ -688,7 +676,7 @@ function App() {
       const hasUnsavedWork =
         Object.keys(dirtyDocumentsRef.current).length > 0 ||
         settingsDirtyRef.current.dirty ||
-        profileDirtyRef.current ||
+        hasEditors ||
         commandDirtyRef.current;
       if (!hasUnsavedWork) {
         CloseWindow();
@@ -697,6 +685,7 @@ function App() {
       // Repeated requests while the dialog is up (a second Alt+F4) must not
       // stack prompts or quit behind the user's back.
       if (quitConfirmOpenRef.current) return;
+      setQuitWithEditors(hasEditors);
       quitConfirmOpenRef.current = true;
       setQuitConfirmOpen(true);
     });
@@ -709,6 +698,7 @@ function App() {
   const activateTab = useCallback((id: string, options: { keepFocus?: boolean } = {}) => {
     const target = tabsRef.current.find((tab) => tab.id === id);
     if (!target) return;
+    setReplay(null);
     setSplitPane((current) => {
       if (!current || target.type === "markdown" || splitPaneIds(current).includes(id)) return current;
       const ids = splitPaneIds(current);
@@ -949,7 +939,7 @@ function App() {
   }, [activityCenterOpen, activateTabByIndex, activateTabByOffset, adjustTerminalFontSize, closeTabForgettingFloating, lang, tr, renameActiveTab, reopenClosedTab, resetTerminalFontSize, setActivityCenterOpen, zenMode]);
 
   useHotkeys({
-    activeTab: sessionActiveTab,
+    activeTab: replay ? "" : sessionActiveTab,
     activeIsMarkdown: sessionActive?.type === "markdown",
     registry: appActionRegistry,
   });
@@ -991,17 +981,6 @@ function App() {
     }
     return states;
   }, [sessionTabs]);
-
-  const saveProfile = async (profile: types.Profile) => {
-    try {
-      await profileState.saveProfile(profile);
-      setProfileModal(null);
-      notify(t(profileSettings?.language || "en", "profileSaved"), "success");
-    } catch (err) {
-      notify(String(err), "error");
-      throw err;
-    }
-  };
 
   const importProfiles = useCallback(async (openSSH = false) => {
     try {
@@ -1175,7 +1154,6 @@ function App() {
 
   useEffect(() => () => batchCommandAbort.current?.abort(), []);
 
-  const handleNewConnection = useCallback(() => setProfileModal(emptyProfile()), []);
   // From SFTP: jump the session terminal into the browsed directory and focus it.
   // OSC 7 is an enhancement here, not a prerequisite: a default server bash
   // never reports it, so requiring it would disable this action almost
@@ -1211,6 +1189,12 @@ function App() {
   // boundary and re-render the whole terminal/markdown subtree. (Metrics no
   // longer live in App state; monitor:update consumers subscribe individually
   // via useSessionMetrics.)
+  const playRecording = useCallback((name: string) => {
+    setLogViewer(null);
+    setReplay(name);
+  }, []);
+  const closeReplay = useCallback(() => setReplay(null), []);
+  useEffect(() => setReplay(null), [sessionActiveTab]);
   const handleCloseLogViewer = useCallback(() => setLogViewer(null), []);
   const handleToggleBroadcast = useCallback(() => setBroadcastInput((v) => !v), []);
   const activeKiRequest = kiRequests[0] || null;
@@ -1259,8 +1243,8 @@ function App() {
         action: () => action.run({ ...paletteContext, event: new KeyboardEvent("keydown") }),
       }));
     const actionResults = [
-      { type: "action", title: t(lang, "newConnection"), subtitle: tr("paletteNewConnection"), keywords: "new connection server ssh 新建 连接 服务器", action: () => setProfileModal(emptyProfile()) },
-      { type: "action", title: t(lang, "quickConnect"), subtitle: t(lang, "quickConnectHint"), keywords: "quick connect temporary 快速 临时 连接", action: () => setQuickConnectOpen(true) },
+      { type: "action", title: t(lang, "newConnection"), subtitle: tr("paletteNewConnection"), keywords: "new connection server ssh 新建 连接 服务器", action: handleNewConnection },
+      { type: "action", title: t(lang, "quickConnect"), subtitle: t(lang, "quickConnectHint"), keywords: "quick connect temporary 快速 临时 连接", action: () => openConnectionForm("quick") },
       { type: "action", title: t(lang, "localTerminal"), subtitle: tr("paletteLocalTerminal"), keywords: "local terminal shell 本地 终端", action: () => { searchConnectLocal().catch((err) => notify(String(err), "error")); } },
       { type: "action", title: t(lang, "openDocument"), subtitle: tr("paletteOpenDocument"), keywords: "open document pdf text markdown file 打开 文档 PDF 文本 文件", action: handleOpenMarkdown },
     ];
@@ -1317,7 +1301,7 @@ function App() {
     })) : [];
 
     return [...registeredActionResults, ...actionResults, ...tabResults, ...serverResults, ...commandResults, ...areaResults];
-  }, [appActionRegistry, globalQuery, handleOpenMarkdown, notify, lang, tr, requestDrawer, runOnActive, searchConnectLocal, searchConnectProfile, searchSetActiveTab, searchTabs, sessionActive?.type, sessionActiveTab]);
+  }, [appActionRegistry, globalQuery, openConnectionForm, handleNewConnection, handleOpenMarkdown, notify, lang, tr, requestDrawer, runOnActive, searchConnectLocal, searchConnectProfile, searchSetActiveTab, searchTabs, sessionActive?.type, sessionActiveTab]);
 
   const resolveTransferSession = (item: Pick<TransferHistoryItem, "sessionId" | "runtimeId" | "profileId">) => {
     const current = connectedSshTabs.find((tab) => (
@@ -1372,6 +1356,7 @@ function App() {
           onReconnect={sessionReconnectTab}
           onNewTerminal={(tab) => { const profile = profileState.profiles.find((p) => p.id === tab.profileId); if (profile) void sessionConnectProfile(profile, { instanceId: crypto.randomUUID() }); }}
           onTearOff={handleTearOff}
+          onOpenPanel={(kind, tab) => void OpenSessionPanel(kind, tab.id, tab.title + " · " + (kind === "sftp" ? "SFTP" : tr("monitor"))).catch(error => notify(String(error), "error"))}
           onReorder={sessionReorderTabs}
           onSplitToggle={handleSplitToggle}
           onNewConnection={handleNewConnection}
@@ -1428,14 +1413,14 @@ function App() {
           onRefreshMarkdownSiblings={refreshMarkdownSiblings}
           recentMarkdown={recentMarkdown}
           onOpenMarkdownFile={handleOpenMarkdownSibling}
-          onOpenRemoteMarkdownFile={openRemoteMarkdownFile}
+          onOpenRemoteMarkdownFile={(id, path) => void OpenRemoteDocumentWindow(id, path).catch(err => notify(String(err), "error"))}
           onPickTextFile={handleOpenMarkdown}
           onOpenRecentMarkdown={handleOpenRecentMarkdown}
           onRemoveRecentMarkdown={handleRemoveRecentMarkdown}
-          onNewProfile={() => setProfileModal(emptyProfile())}
-          onBulkProfiles={() => setBulkProfilesOpen(true)}
-          onQuickConnect={() => setQuickConnectOpen(true)}
-          onEditProfile={(profile) => setProfileModal(new types.Profile(profile))}
+          onNewProfile={handleNewConnection}
+          onBulkProfiles={() => openConnectionForm("bulk")}
+          onQuickConnect={() => openConnectionForm("quick")}
+          onEditProfile={(profile) => openConnectionForm("edit", profile)}
           onConnectProfile={sessionConnectProfile}
           onToggleFavorite={async (profile) => {
             try { await profileState.saveProfile(new types.Profile({ ...profile, favorite: !profile.favorite })); }
@@ -1456,7 +1441,7 @@ function App() {
           }}
           onDeleteProfile={(id) => {
             const profile = profileState.profiles.find((item) => item.id === id);
-            if (profile) setDeleteProfileRequest({ id, name: profile.name || profile.host, closeEditor: false });
+            if (profile) setDeleteProfileRequest({ id, name: profile.name || profile.host });
           }}
           onImportProfiles={() => importProfiles(false)}
           onImportOpenSSH={() => importProfiles(true)}
@@ -1484,9 +1469,11 @@ function App() {
             notify(t(profileSettings?.language || "en", "settingsSaved"), "success");
           }}
           onOpenData={OpenDataDir}
+          onPlayRecording={playRecording}
           onOpenLog={async (name, sessionLog) => {
             try {
               const content = await (sessionLog ? ReadSessionLogFile(name) : ReadLogFile(name));
+              setReplay(null);
               setLogViewer({ name, content });
             } catch { notify(t(profileSettings?.language || "en", "logReadFailed"), "error"); }
           }}
@@ -1513,6 +1500,9 @@ function App() {
           onOpenMarkdownFile={openMarkdownTarget}
           onNotify={notify}
           language={profileSettings?.language || "en"}
+          replay={replay}
+          settings={profileSettings}
+          onCloseReplay={closeReplay}
           logViewer={logViewer}
           onCloseLogViewer={handleCloseLogViewer}
           floatingTabIds={floatingTabIds}
@@ -1527,20 +1517,11 @@ function App() {
         />
       </main>
       <CliApprovalQueue approvals={cliApprovals} locale={profileSettings?.language || "en"} />
-      {cliApprovalPanel && (
-        <CliApprovalPanel
-          // Keyed by request id so a replacement request mounts with a fresh
-          // selection instead of inheriting the previous request's checkboxes.
-          key={cliApprovalPanel.id}
-          request={cliApprovalPanel}
-          locale={profileSettings?.language || "en"}
-          onResolve={handleCliApprovalResolve}
-        />
-      )}
       {floatingTabIds.map((id) => {
         const tab = sessionTabs.find((t) => t.id === id);
         if (!tab) return null;
-        return <FloatingTerminal key={id} tab={tab} terminalHosts={activeTerminal.terminalHosts} onDock={handleDockFloating} onClose={handleCloseFloating} refitTerminal={refitTerminal} reattachTerminal={reattachTerminal} />;
+        if (!profileSettings) return null;
+        return <NativeTerminalHost key={id} tab={tab} settings={profileSettings} override={terminalOverrides[id]} terminal={activeTerminal} onDock={handleDockFloating} notify={notify} />;
       })}
       {globalSearchOpen && <GlobalSearchModal query={globalQuery} onQuery={setGlobalQuery} results={globalResults} onClose={() => setGlobalSearchOpen(false)} locale={profileSettings?.language || "en"} />}
       {terminalSearchOpen && <TerminalSearchModal
@@ -1604,8 +1585,6 @@ function App() {
           setRenameTabRequest(null);
         }}
       />}
-      {profileModal && <ProfileModal profile={profileModal} profiles={profileState.profiles} language={profileSettings?.language || "en"} terminalDefaults={profileSettings?.terminal} sessionLogDefaults={profileSettings?.sessionLog} onClose={() => setProfileModal(null)} onSave={saveProfile} onPickKey={SelectPrivateKey} onDelete={(id) => setDeleteProfileRequest({ id, name: profileModal.name || profileModal.host, closeEditor: true })} onDuplicate={async (id) => { await profileState.duplicateProfile(id); notify(t(profileSettings?.language || "en", "profileCopied"), "info"); }} onDirtyChange={handleProfileDirtyChange} />}
-      {bulkProfilesOpen && <BulkProfilesModal profiles={profileState.profiles} language={profileSettings?.language || "en"} onClose={() => setBulkProfilesOpen(false)} onSave={async (ids, patch) => { await UpdateProfilesBatch(ids, patch); await profileReload(); notify(tr("batchChangesSaved"), "success"); }} />}
       {workspacesOpen && <WorkspacesModal manager={namedWorkspaces} language={profileSettings?.language || "en"} eligible={workspaceEligible} excluded={visibleTabs.length - workspaceEligible} onClose={() => setWorkspacesOpen(false)} />}
       {backupMode && <BackupModal
         mode={backupMode}
@@ -1619,20 +1598,6 @@ function App() {
         }}
         onExported={(path) => notify(tr("backupExported", { path }), "success")}
       />}
-      {quickConnectOpen && <QuickConnectModal
-        language={profileSettings?.language || "en"}
-        onClose={() => setQuickConnectOpen(false)}
-        onPickKey={SelectPrivateKey}
-        onSave={async (profile) => {
-          const saved = await profileState.saveProfile(profile);
-          notify(t(profileSettings?.language || "en", "profileSaved"), "success");
-          return saved;
-        }}
-        onConnect={async (profile) => {
-          if (profile.id.startsWith("quick-")) await sessionConnectQuick(profile);
-          else await sessionConnectProfileWithSecrets(profile, profile.password || "", profile.privateKeyPassphrase || "");
-        }}
-      />}
       {commandModal && <CommandModal command={commandModal} language={profileSettings?.language || "en"} onClose={() => setCommandModal(null)} onSave={saveCommand} onDirtyChange={handleCommandDirtyChange} />}
       {deleteProfileRequest && <ConfirmDialog
         locale={profileSettings?.language || "en"}
@@ -1642,7 +1607,6 @@ function App() {
         onClose={() => setDeleteProfileRequest(null)}
         onConfirm={async () => {
           await profileState.deleteProfile(deleteProfileRequest.id);
-          if (deleteProfileRequest.closeEditor) setProfileModal(null);
           setDeleteProfileRequest(null);
           notify(tr("profileDeleted"), "success");
         }}
@@ -1663,7 +1627,7 @@ function App() {
       {quitConfirmOpen && <ConfirmDialog
         locale={profileSettings?.language || "en"}
         title={tr("quitConfirm")}
-        body={tr("quitConfirmBody")}
+        body={tr(quitWithEditors ? "quitWithEditors" : "quitConfirmBody")}
         confirmText={tr("quitAction")}
         onClose={() => { quitConfirmOpenRef.current = false; setQuitConfirmOpen(false); }}
         onConfirm={() => CloseWindow()}

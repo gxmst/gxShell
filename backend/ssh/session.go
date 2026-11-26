@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -39,7 +40,6 @@ type Manager struct {
 	connecting     map[string]*connectCall
 	emit           func(event string, data any)
 	knownHostsPath string
-	confirm        func(host, fingerprint string) bool
 	// onClosed runs after a session is fully torn down, on EVERY disconnect
 	// path: user close, keepalive failure, shell exit, shutdown. The app wires
 	// cross-subsystem cleanup (monitor, tunnels, SFTP cache, ping, AI tools)
@@ -47,13 +47,7 @@ type Manager struct {
 	// keeps tunnel listeners bound, so a later auto-reconnect cannot rebind its
 	// tunnels (address already in use).
 	onClosed func(sessionID string)
-	// kiPrompt surfaces keyboard-interactive challenges (2FA / OTP prompts) to
-	// the user mid-handshake. Nil means such challenges fail with an error.
-	kiPrompt KeyboardInteractivePrompt
-	// confirmHostKeyChange is asked when a server presents a DIFFERENT key than
-	// the trusted one — possibly a reinstall, possibly an interception. Nil (or
-	// answering false) rejects the connection; true replaces the stored key.
-	confirmHostKeyChange func(host, oldFingerprint, newFingerprint string) bool
+	prompts  AuthenticationPrompts
 }
 
 // KeyboardInteractivePrompt asks the user to answer server authentication
@@ -67,19 +61,21 @@ type Session struct {
 	info      types.SessionInfo
 	// port is the remote SSH port from the connecting profile. It is immutable
 	// after Connect, and exposed via SessionPort for firewall lockout guards.
-	port         int
-	client       *ssh.Client
-	jumpClient   *ssh.Client
-	shell        *ssh.Session
-	stdin        io.WriteCloser
-	writer       *termio.WriteQueue
-	pendingConn  net.Conn
-	done         chan struct{}
-	closeOnce    sync.Once
-	mu           sync.RWMutex
-	recorder     *castRecorder
-	encodingName string
-	terminalType string
+	port          int
+	client        *ssh.Client
+	jumpClient    *ssh.Client
+	shell         *ssh.Session
+	stdin         io.WriteCloser
+	writer        *termio.WriteQueue
+	cancelConnect context.CancelFunc
+	done          chan struct{}
+	closeOnce     sync.Once
+	mu            sync.RWMutex
+	probeMu       sync.Mutex
+	probeIP       netip.Addr
+	recorder      *castRecorder
+	encodingName  string
+	terminalType  string
 }
 
 type OutputLog interface {
@@ -98,23 +94,6 @@ func (m *Manager) SetDialContext(dial func(context.Context, string, string) (net
 	m.dialContext = dial
 }
 
-func (m *Manager) dialFirstHop(session *Session, address string, timeout time.Duration) (net.Conn, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-	go func() {
-		select {
-		case <-session.done:
-			cancel()
-		case <-ctx.Done():
-		}
-	}()
-	dial := m.dialContext
-	if dial == nil {
-		dial = (&net.Dialer{}).DialContext
-	}
-	return dial(ctx, "tcp", address)
-}
-
 func NewManager(knownHostsPath string, emit func(event string, data any), confirm func(host, fingerprint string) bool) *Manager {
 	return &Manager{
 		sessions:       map[string]*Session{},
@@ -122,7 +101,7 @@ func NewManager(knownHostsPath string, emit func(event string, data any), confir
 		connecting:     map[string]*connectCall{},
 		emit:           emit,
 		knownHostsPath: knownHostsPath,
-		confirm:        confirm,
+		prompts:        AuthenticationPrompts{ConfirmHostKey: confirm},
 	}
 }
 
@@ -135,13 +114,13 @@ func (m *Manager) SetOnClosed(fn func(sessionID string)) {
 // SetKeyboardInteractivePrompt registers the UI bridge for interactive auth
 // challenges. Must be set during app startup, before any session can connect.
 func (m *Manager) SetKeyboardInteractivePrompt(fn KeyboardInteractivePrompt) {
-	m.kiPrompt = fn
+	m.prompts.KeyboardInteractive = fn
 }
 
 // SetHostKeyChangeConfirm registers the UI bridge for the host-key-changed
 // decision. Must be set during app startup, before any session can connect.
 func (m *Manager) SetHostKeyChangeConfirm(fn func(host, oldFingerprint, newFingerprint string) bool) {
-	m.confirmHostKeyChange = fn
+	m.prompts.ConfirmHostKeyChange = fn
 }
 
 const maxSessions = 20
@@ -197,9 +176,6 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 	if rows <= 0 {
 		rows = 34
 	}
-	if timeoutSec <= 0 {
-		timeoutSec = 15
-	}
 
 	id := newSessionID()
 	info := types.SessionInfo{
@@ -219,7 +195,9 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 		encodingName = profile.Terminal.Encoding
 		terminalType = types.NormalizeTerminalType(profile.Terminal.TerminalType)
 	}
-	session := &Session{info: info, port: profile.Port, done: make(chan struct{}), encodingName: types.NormalizeTerminalEncoding(encodingName), terminalType: terminalType}
+	connectCtx, cancelConnect := context.WithCancel(context.Background())
+	defer cancelConnect()
+	session := &Session{info: info, cancelConnect: cancelConnect, port: profile.Port, done: make(chan struct{}), encodingName: types.NormalizeTerminalEncoding(encodingName), terminalType: terminalType}
 	// The limit check and the insert share one critical section: a separate
 	// count check would let concurrent connects race past the limit together.
 	// Inserting before the (slow) handshake reserves the slot; failConnect
@@ -238,121 +216,10 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 	// important than reusing an identity after a stale event escaped the bridge.
 	m.emit("terminal:connecting", info)
 
-	// Each connection gets its own pause controller: the target and the jump
-	// host have separate handshakes and separate prompts.
-	targetPause := &handshakePause{}
-	config, closeAuth, err := m.clientConfig(profile, id, timeoutSec, targetPause)
-	defer closeAuth()
+	client, jumpClient, probeIP, err := m.dialAuthenticated(connectCtx, profile, jumpProfile, id, timeoutSec, m.prompts)
 	if err != nil {
-		m.failConnect(id, err, nil, nil, nil)
+		m.failConnect(id, err, nil, nil)
 		return info, err
-	}
-
-	var client *ssh.Client
-	var jumpClient *ssh.Client
-
-	if jumpProfile.ID != "" {
-		jumpPause := &handshakePause{}
-		jumpConfig, closeJumpAuth, err := m.clientConfig(jumpProfile, id, timeoutSec, jumpPause)
-		defer closeJumpAuth()
-		if err != nil {
-			m.failConnect(id, fmt.Errorf("jump host config error: %w", err), nil, nil, nil)
-			return info, err
-		}
-		jumpAddr := sshAddress(jumpProfile.Host, jumpProfile.Port)
-		jumpConn, err := m.dialFirstHop(session, jumpAddr, time.Duration(timeoutSec)*time.Second)
-		if err != nil {
-			m.failConnect(id, fmt.Errorf("jump host connection failed: %w", err), nil, nil, nil)
-			return info, err
-		}
-		if !session.trackPendingConn(jumpConn) {
-			_ = jumpConn.Close()
-			return info, errors.New("connection cancelled")
-		}
-		// ssh.ClientConfig.Timeout is only honoured by ssh.Dial. We establish the
-		// socket ourselves, so protect the SSH banner/key-exchange phase with an
-		// explicit deadline as well; a peer that accepts TCP and then stays silent
-		// must not leave Connect blocked forever.
-		_ = jumpConn.SetDeadline(time.Now().Add(time.Duration(timeoutSec) * time.Second))
-		jumpPause.attach(jumpConn, time.Duration(timeoutSec)*time.Second)
-		jumpClientConn, chans, reqs, err := ssh.NewClientConn(jumpConn, jumpAddr, jumpConfig)
-		if err != nil {
-			_ = jumpConn.Close()
-			m.failConnect(id, fmt.Errorf("jump host SSH handshake failed: %w", err), nil, nil, nil)
-			return info, err
-		}
-		session.clearPendingConn(jumpConn)
-		_ = jumpConn.SetDeadline(time.Time{})
-		jumpClient = ssh.NewClient(jumpClientConn, chans, reqs)
-		session.mu.Lock()
-		select {
-		case <-session.done:
-			session.mu.Unlock()
-			_ = jumpClient.Close()
-			return info, errors.New("connection cancelled")
-		default:
-			session.jumpClient = jumpClient
-		}
-		session.mu.Unlock()
-
-		targetAddr := sshAddress(profile.Host, profile.Port)
-		dialCtx, dialCancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
-		targetConn, err := jumpClient.DialContext(dialCtx, "tcp", targetAddr)
-		if err != nil {
-			dialCancel()
-			m.failConnect(id, fmt.Errorf("jump host cannot reach target %s: %w", targetAddr, err), nil, jumpClient, nil)
-			return info, err
-		}
-		// The connection a jump host returns is channel-backed and cannot hold a
-		// deadline of its own, so it is wrapped: without that, the target
-		// handshake had no timeout at all and a silent peer kept Connect blocked
-		// forever.
-		guarded := withDeadline(targetConn)
-		if !session.trackPendingConn(guarded) {
-			dialCancel()
-			_ = guarded.Close()
-			_ = jumpClient.Close()
-			return info, errors.New("connection cancelled")
-		}
-		targetTimeout := time.Duration(timeoutSec) * time.Second
-		_ = guarded.SetDeadline(time.Now().Add(targetTimeout))
-		targetPause.attach(guarded, targetTimeout)
-		targetClientConn, chans, reqs, err := ssh.NewClientConn(guarded, targetAddr, config)
-		dialCancel()
-		if err != nil {
-			timedOut := guarded.timedOut()
-			_ = guarded.Close()
-			if timedOut {
-				err = fmt.Errorf("target SSH handshake via jump timed out after %ds", timeoutSec)
-			}
-			m.failConnect(id, fmt.Errorf("target SSH handshake via jump failed: %w", err), nil, jumpClient, nil)
-			return info, err
-		}
-		session.clearPendingConn(guarded)
-		_ = guarded.SetDeadline(time.Time{})
-		client = ssh.NewClient(targetClientConn, chans, reqs)
-	} else {
-		addr := sshAddress(profile.Host, profile.Port)
-		conn, err := m.dialFirstHop(session, addr, time.Duration(timeoutSec)*time.Second)
-		if err != nil {
-			m.failConnect(id, err, nil, nil, nil)
-			return info, err
-		}
-		if !session.trackPendingConn(conn) {
-			_ = conn.Close()
-			return info, errors.New("connection cancelled")
-		}
-		targetTimeout := time.Duration(timeoutSec) * time.Second
-		_ = conn.SetDeadline(time.Now().Add(targetTimeout))
-		targetPause.attach(conn, targetTimeout)
-		clientConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
-		if err != nil {
-			m.failConnect(id, err, nil, nil, conn)
-			return info, err
-		}
-		session.clearPendingConn(conn)
-		_ = conn.SetDeadline(time.Time{})
-		client = ssh.NewClient(clientConn, chans, reqs)
 	}
 	session.mu.Lock()
 	select {
@@ -365,11 +232,13 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 		return info, errors.New("connection cancelled")
 	default:
 		session.client = client
+		session.jumpClient = jumpClient
+		session.probeIP = probeIP
 	}
 	session.mu.Unlock()
 	shell, err := client.NewSession()
 	if err != nil {
-		m.failConnect(id, err, client, jumpClient, nil)
+		m.failConnect(id, err, client, jumpClient)
 		return info, err
 	}
 
@@ -380,31 +249,31 @@ func (m *Manager) connectViaJumpOwned(profile types.Profile, jumpProfile types.P
 	}
 	if err := shell.RequestPty(terminalType, rows, cols, modes); err != nil {
 		_ = shell.Close()
-		m.failConnect(id, err, client, jumpClient, nil)
+		m.failConnect(id, err, client, jumpClient)
 		return info, err
 	}
 
 	stdin, err := shell.StdinPipe()
 	if err != nil {
 		_ = shell.Close()
-		m.failConnect(id, err, client, jumpClient, nil)
+		m.failConnect(id, err, client, jumpClient)
 		return info, err
 	}
 	stdout, err := shell.StdoutPipe()
 	if err != nil {
 		_ = shell.Close()
-		m.failConnect(id, err, client, jumpClient, nil)
+		m.failConnect(id, err, client, jumpClient)
 		return info, err
 	}
 	stderr, err := shell.StderrPipe()
 	if err != nil {
 		_ = shell.Close()
-		m.failConnect(id, err, client, jumpClient, nil)
+		m.failConnect(id, err, client, jumpClient)
 		return info, err
 	}
 	if err := shell.Shell(); err != nil {
 		_ = shell.Close()
-		m.failConnect(id, err, client, jumpClient, nil)
+		m.failConnect(id, err, client, jumpClient)
 		return info, err
 	}
 
@@ -674,8 +543,7 @@ func (m *Manager) Disconnect(id string) error {
 		shell := session.shell
 		client := session.client
 		jumpClient := session.jumpClient
-		pendingConn := session.pendingConn
-		session.pendingConn = nil
+		cancelConnect := session.cancelConnect
 		// Take the recorder under the lock but flush/close it after unlocking:
 		// most disconnects (shell.Wait returning, keepalive failure, user close)
 		// go through here rather than StopRecording, so without this an in-progress
@@ -701,8 +569,8 @@ func (m *Manager) Disconnect(id string) error {
 		if client != nil {
 			_ = client.Close()
 		}
-		if pendingConn != nil {
-			_ = pendingConn.Close()
+		if cancelConnect != nil {
+			cancelConnect()
 		}
 		if jumpClient != nil {
 			_ = jumpClient.Close()
@@ -861,29 +729,6 @@ func (m *Manager) get(id string) (*Session, error) {
 		return nil, errors.New("session not found")
 	}
 	return session, nil
-}
-
-// trackPendingConn makes an in-flight TCP/forwarded connection reachable from
-// Disconnect. This lets the user cancel during the SSH banner/key-exchange
-// phase instead of merely hiding the tab and waiting for the handshake deadline.
-func (s *Session) trackPendingConn(conn net.Conn) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	select {
-	case <-s.done:
-		return false
-	default:
-		s.pendingConn = conn
-		return true
-	}
-}
-
-func (s *Session) clearPendingConn(conn net.Conn) {
-	s.mu.Lock()
-	if s.pendingConn == conn {
-		s.pendingConn = nil
-	}
-	s.mu.Unlock()
 }
 
 type CommandExecutionResult struct {
@@ -1117,15 +962,12 @@ func (m *Manager) remove(id string) {
 	m.mu.Unlock()
 }
 
-func (m *Manager) failConnect(id string, err error, client *ssh.Client, jumpClient *ssh.Client, conn net.Conn) {
+func (m *Manager) failConnect(id string, err error, client *ssh.Client, jumpClient *ssh.Client) {
 	if client != nil {
 		_ = client.Close()
 	}
 	if jumpClient != nil {
 		_ = jumpClient.Close()
-	}
-	if conn != nil {
-		_ = conn.Close()
 	}
 	m.setError(id, err)
 	m.remove(id)
@@ -1272,7 +1114,7 @@ func askUserAnswers(pause *handshakePause, ask func() ([]string, error)) ([]stri
 // handshake signs with agent-held keys. sessionID routes keyboard-interactive
 // prompts to the right UI surface; pause suspends the connect timeout while
 // such a prompt is on screen.
-func (m *Manager) clientConfig(profile types.Profile, sessionID string, timeoutSec int, pause *handshakePause) (*ssh.ClientConfig, func(), error) {
+func (m *Manager) clientConfig(profile types.Profile, sessionID string, timeoutSec int, pause *handshakePause, prompts AuthenticationPrompts) (*ssh.ClientConfig, func(), error) {
 	cleanup := func() {}
 	var auth []ssh.AuthMethod
 	switch profile.AuthType {
@@ -1316,11 +1158,11 @@ func (m *Manager) clientConfig(profile types.Profile, sessionID string, timeoutS
 	// keyboard-interactive is offered for every auth type: hardened servers
 	// often disable plain password auth in favour of PAM keyboard-interactive,
 	// and 2FA/OTP servers require it on top of key auth.
-	auth = append(auth, ssh.KeyboardInteractive(m.kiChallenge(sessionID, profile.Password, pause)))
+	auth = append(auth, ssh.KeyboardInteractive(prompts.kiChallenge(sessionID, profile.Password, pause)))
 	return &ssh.ClientConfig{
 		User:            profile.Username,
 		Auth:            auth,
-		HostKeyCallback: m.hostKeyCallback(profile, pause),
+		HostKeyCallback: m.hostKeyCallback(profile, pause, prompts),
 		Timeout:         time.Duration(timeoutSec) * time.Second,
 		ClientVersion:   "SSH-2.0-gxShell",
 	}, cleanup, nil
@@ -1331,7 +1173,7 @@ func (m *Manager) clientConfig(profile types.Profile, sessionID string, timeoutS
 // (PAM password-over-KI, so the user is not re-prompted for a secret the app
 // already holds); everything else — OTP codes, multi-prompt 2FA — goes to the
 // user through the registered prompt bridge.
-func (m *Manager) kiChallenge(sessionID string, password string, pause *handshakePause) ssh.KeyboardInteractiveChallenge {
+func (prompts AuthenticationPrompts) kiChallenge(sessionID string, password string, pause *handshakePause) ssh.KeyboardInteractiveChallenge {
 	return func(name, instruction string, questions []string, echos []bool) ([]string, error) {
 		if len(questions) == 0 {
 			return []string{}, nil
@@ -1339,12 +1181,12 @@ func (m *Manager) kiChallenge(sessionID string, password string, pause *handshak
 		if password != "" && len(questions) == 1 && len(echos) == 1 && !echos[0] && looksLikePasswordPrompt(questions[0]) {
 			return []string{password}, nil
 		}
-		if m.kiPrompt == nil {
+		if prompts.KeyboardInteractive == nil {
 			return nil, errors.New("server requires interactive authentication")
 		}
 		// Typing a one-time code is not network progress.
 		return askUserAnswers(pause, func() ([]string, error) {
-			return m.kiPrompt(sessionID, name, instruction, questions, echos)
+			return prompts.KeyboardInteractive(sessionID, name, instruction, questions, echos)
 		})
 	}
 }
@@ -1354,8 +1196,8 @@ func looksLikePasswordPrompt(q string) bool {
 	return strings.Contains(q, "password") || strings.Contains(q, "密码")
 }
 
-func (m *Manager) hostKeyCallback(profile types.Profile, pause *handshakePause) ssh.HostKeyCallback {
-	knownHostsPath, emit, confirm := m.knownHostsPath, m.emit, m.confirm
+func (m *Manager) hostKeyCallback(profile types.Profile, pause *handshakePause, prompts AuthenticationPrompts) ssh.HostKeyCallback {
+	knownHostsPath, emit, confirm := m.knownHostsPath, m.emit, prompts.ConfirmHostKey
 	if err := os.MkdirAll(filepath.Dir(knownHostsPath), 0700); err != nil {
 		return func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			return fmt.Errorf("cannot create known_hosts dir: %w", err)
@@ -1407,8 +1249,8 @@ func (m *Manager) hostKeyCallback(profile types.Profile, pause *handshakePause) 
 		// Surface both fingerprints and let the user decide instead of dumping
 		// the raw knownhosts mismatch error.
 		oldFingerprint := fingerprintOfWanted(keyErr)
-		accept := m.confirmHostKeyChange != nil && askUserYesNo(pause, func() bool {
-			return m.confirmHostKeyChange(hostname, oldFingerprint, fingerprint)
+		accept := prompts.ConfirmHostKeyChange != nil && askUserYesNo(pause, func() bool {
+			return prompts.ConfirmHostKeyChange(hostname, oldFingerprint, fingerprint)
 		})
 		if !accept {
 			return fmt.Errorf("host key for %s has changed and was not accepted (stored %s, server now presents %s)", hostname, oldFingerprint, fingerprint)

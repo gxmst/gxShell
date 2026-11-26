@@ -78,3 +78,7 @@ export function formatFileSize(value: number) {
   if (value > 1024) return `${(value / 1024).toFixed(1)}K`;
   return `${value}B`;
 }
+
+export function probeLatency(ms: number) {
+  return ms < 1 ? "<1 ms" : Math.round(ms) + " ms";
+}

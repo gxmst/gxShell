@@ -7,8 +7,7 @@ import "context"
 // readable.
 //
 // Everything below is a PACKAGE-LEVEL FUNCTION on purpose, and that choice is
-// load-bearing rather than stylistic. main.go passes *App to wails.Run's Bind
-// list, and Wails binds every exported method of a bound struct as a callable
+// load-bearing rather than stylistic. main.go registers *App as a Wails service, and Wails binds every exported method of a bound struct as a callable
 // the webview can invoke by name. Exporting lifecycle plumbing as App methods
 // so main.go could reach it would therefore also hand it to the renderer.
 //
@@ -26,8 +25,8 @@ import "context"
 // funcs rather than methods so that handing them to options.App never widens
 // the bound surface.
 type Hooks struct {
-	Startup              func(ctx context.Context)
-	DomReady             func(ctx context.Context)
+	Startup              func(ctx context.Context) error
+	PrepareWindow        func(ctx context.Context)
 	BeforeClose          func(ctx context.Context) (prevent bool)
 	Shutdown             func(ctx context.Context)
 	SecondInstanceLaunch func(args []string)
@@ -38,7 +37,7 @@ type Hooks struct {
 func NewHooks(a *App) Hooks {
 	return Hooks{
 		Startup:              a.startup,
-		DomReady:             a.domReady,
+		PrepareWindow:        a.prepareWindow,
 		BeforeClose:          a.beforeClose,
 		Shutdown:             a.shutdown,
 		SecondInstanceLaunch: a.handleSecondInstanceLaunch,
@@ -47,23 +46,22 @@ func NewHooks(a *App) Hooks {
 
 // SetTrayIcon supplies the tray icon bytes. The icon is embedded in main.go
 // because //go:embed cannot reference a parent directory, so internal/app
-// cannot reach build/windows/icon.ico on its own.
+// cannot reach build/windows/icon.png on its own.
 func SetTrayIcon(a *App, icon []byte) {
 	a.trayIcon = append([]byte(nil), icon...)
 }
 
 // SetStartupFilePath records a document the OS passed on the command line (an
-// "Open with" or double-click launch). domReady authorizes and stashes it.
+// "Open with" or double-click launch). prepareWindow authorizes and stashes it.
 //
 // Never expose this to the frontend: it is an input to the allowFile decision
-// in domReady, and a renderer that could set it would be choosing what the app
+// in prepareWindow, and a renderer that could set it would be choosing what the app
 // treats as a genuine user file choice.
 func SetStartupFilePath(a *App, path string) {
 	a.startupFilePath = path
 }
 
-// SetupSystemTray starts the platform tray integration. On darwin the
-// underlying implementation is a no-op; see systray_darwin.go.
+// SetupSystemTray installs the Wails tray menu for the workbench.
 func SetupSystemTray(a *App) {
 	a.setupSystemTray()
 }

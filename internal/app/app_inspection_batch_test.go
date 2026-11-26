@@ -62,7 +62,7 @@ func TestBatchApprovalRequiresEveryHostAndPinsModel(t *testing.T) {
 		if len(allowed) == 2 {
 			app.ai.UpdateConfig(ai.Config{Provider: "openai", Model: "replacement-model"})
 		}
-		if err := app.ResolveCliApproval(request.ID, allowed); err != nil {
+		if err := app.resolveCliApproval(request.ID, allowed); err != nil {
 			t.Fatal(err)
 		}
 		result := <-done

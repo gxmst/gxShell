@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
+import { CastScreen } from "./castScreen";
 import { Pause, Play, RotateCcw, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import { types } from "../../../wailsjs/go/models";
@@ -13,9 +13,16 @@ import { parseCast, type CastEvent } from "./castParser";
 const SPEEDS = [1, 2, 4, 8];
 
 export function CastPlayer({ name, settings, locale, onClose }: { name: string; settings: types.AppSettings | null; locale: string; onClose: () => void }) {
+  const playerRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement;
+    playerRef.current?.focus({ preventScroll: true });
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus({ preventScroll: true }); };
+  }, []);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
+  const screenRef = useRef<CastScreen | null>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const eventsRef = useRef<CastEvent[]>([]);
   const timerRef = useRef<number | null>(null);
   const idxRef = useRef(0);
@@ -53,16 +60,9 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
     const playhead = ((now - anchorRef.current) / 1000) * speedFactor;
 
     while (idxRef.current < events.length && events[idxRef.current].time <= playhead) {
-      const ev = events[idxRef.current];
-      if (ev.code === "o") term.write(ev.data);
-      if (ev.code === "r") {
-        const [cols, rows] = ev.data.split("x").map((n) => Number.parseInt(n, 10));
-        if (Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0) {
-          term.resize(cols, rows);
-        }
-      }
       idxRef.current += 1;
     }
+    screenRef.current?.show(idxRef.current);
     setElapsed(Math.min(playhead, duration));
     elapsedRef.current = Math.min(playhead, duration);
 
@@ -74,21 +74,26 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
     }
     const nextAt = events[idxRef.current].time;
     const waitMs = Math.max(0, ((nextAt - playhead) / speedFactor) * 1000);
-    timerRef.current = window.setTimeout(step, waitMs);
+    timerRef.current = window.setTimeout(step, Math.min(150, waitMs));
   }, [duration]);
 
   const pause = useCallback(() => {
     clearTimer();
+    if (playing) {
+      elapsedRef.current = Math.min(duration, (performance.now() - anchorRef.current) / 1000 * speedRef.current);
+      setElapsed(elapsedRef.current);
+    }
     setPlaying(false);
-  }, []);
+  }, [duration, playing]);
 
   const play = useCallback(() => {
     const events = eventsRef.current;
     if (!events.length) return;
     if (idxRef.current >= events.length) {
       // Restart from the beginning if we're at the end.
-      termRef.current?.reset();
+      screenRef.current?.show(0, true);
       idxRef.current = 0;
+      elapsedRef.current = 0;
       setElapsed(0);
     }
     const playedSeconds = elapsedRef.current;
@@ -100,7 +105,7 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
 
   const restart = useCallback(() => {
     clearTimer();
-    termRef.current?.reset();
+    screenRef.current?.show(0, true);
     idxRef.current = 0;
     setElapsed(0);
     elapsedRef.current = 0;
@@ -114,26 +119,9 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
     const target = Math.max(0, Math.min(duration, requested));
     clearTimer();
     setPlaying(false);
-    term.reset();
-    let output = "";
     let index = 0;
-    const flush = () => {
-      if (output) term.write(output);
-      output = "";
-    };
-    while (index < events.length && events[index].time <= target) {
-      const event = events[index];
-      if (event.code === "o") {
-        output += event.data;
-        if (output.length >= 64 * 1024) flush();
-      } else if (event.code === "r") {
-        flush();
-        const [cols, rows] = event.data.split("x").map((value) => Number.parseInt(value, 10));
-        if (cols > 0 && rows > 0) term.resize(cols, rows);
-      }
-      index += 1;
-    }
-    flush();
+    while (index < events.length && events[index].time <= target) index++;
+    screenRef.current?.show(index, true);
     idxRef.current = index;
     elapsedRef.current = target;
     setElapsed(target);
@@ -158,14 +146,12 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
         lineHeight: normalizeLineHeight(settings?.terminal.lineHeight),
         cols: header.width,
         rows: header.height,
-        scrollback: 5000,
+        scrollback: 0,
         theme: settings ? getTerminalTheme(settings) : undefined,
         minimumContrastRatio: settings ? getTerminalContrastRatio(settings) : 1,
         disableStdin: true,
         cursorBlink: false,
       });
-      const fit = new FitAddon();
-      term.loadAddon(fit);
       try {
         term.open(host);
       } catch (openError) {
@@ -174,12 +160,8 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
         return;
       }
       termRef.current = term;
-      fitRef.current = fit;
-      requestAnimationFrame(() => {
-        if (disposed || termRef.current !== term) return;
-        try { fit.fit(); } catch {}
-        setReady(true);
-      });
+      screenRef.current = new CastScreen(term, header, events);
+      setReady(true);
       if (!events.length) setError(t(locale, "recordingEmpty"));
       else if (truncated) setError(t(locale, "recordingTooManyEvents"));
     }).catch((err) => {
@@ -188,6 +170,7 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
     return () => {
       disposed = true;
       clearTimer();
+      screenRef.current?.dispose();
       termRef.current?.dispose();
       termRef.current = null;
     };
@@ -196,24 +179,22 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
 
   useEffect(() => {
     const host = hostRef.current;
-    const fit = fitRef.current;
-    if (!host || !fit || !ready) return;
-    let frame = 0;
+    const stage = stageRef.current;
+    const screen = host?.querySelector<HTMLElement>(".xterm-screen");
+    if (!host || !stage || !screen || !ready) return;
     const resize = () => {
-      window.cancelAnimationFrame(frame);
-      frame = window.requestAnimationFrame(() => {
-        try { fit.fit(); } catch {}
-      });
+      const width = screen.offsetWidth, height = screen.offsetHeight;
+      if (!width || !height) return;
+      const scale = Math.min(1, stage.clientWidth / width, stage.clientHeight / height);
+      host.style.width = width + "px";
+      host.style.height = height + "px";
+      host.style.setProperty("--cast-scale", String(scale));
     };
     const observer = new ResizeObserver(resize);
-    observer.observe(host);
-    window.addEventListener('resize', resize);
+    observer.observe(stage);
+    observer.observe(screen);
     resize();
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('resize', resize);
-      window.cancelAnimationFrame(frame);
-    };
+    return () => observer.disconnect();
   }, [ready]);
 
   // Auto-play once ready.
@@ -251,7 +232,9 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
     // playing, re-anchor at the current position under the new speed; while
     // paused, play() builds the anchor when playback resumes.
     if (playing) {
-      anchorRef.current = performance.now() - (elapsedRef.current / next) * 1000;
+      const now = performance.now();
+      elapsedRef.current = Math.min(duration, (now - anchorRef.current) / 1000 * speedRef.current);
+      anchorRef.current = now - (elapsedRef.current / next) * 1000;
     }
     // Set the ref directly too: step() may fire from its timer before React
     // re-renders, and it would then pair the new anchor with the old speed.
@@ -260,38 +243,43 @@ export function CastPlayer({ name, settings, locale, onClose }: { name: string; 
   };
 
   return (
-    <div className="modal-backdrop" onMouseDown={onClose}>
-      <div className="cast-player" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="cast-player-header">
-          <span className="cast-player-title" title={name}>{title}</span>
-          <button className="mini-btn" onClick={onClose} title={t(locale, "close")}><X size={13} /></button>
-        </div>
-        <div className="cast-player-stage">
-          <div ref={hostRef} className="cast-player-term" />
-          {error && <div className="cast-player-error">{error}</div>}
-        </div>
-        <div className="cast-player-controls">
-          <button className="mini-btn" onClick={playing ? pause : play} title={t(locale, playing ? "pause" : "play")}>
-            {playing ? <Pause size={14} /> : <Play size={14} />}
-          </button>
-          <button className="mini-btn" onClick={restart} title={t(locale, "restart")}><RotateCcw size={13} /></button>
-          <input
-            className="cast-progress cast-progress-input"
-            type="range"
-            min={0}
-            max={Math.max(duration, 0.01)}
-            step={0.1}
-            value={Math.min(elapsed, Math.max(duration, 0.01))}
-            onPointerDown={pause}
-            onChange={(event) => { const value = Number(event.target.value); elapsedRef.current = value; setElapsed(value); }}
-            onPointerUp={(event) => seekTo(Number(event.currentTarget.value))}
-            onKeyUp={(event) => seekTo(Number(event.currentTarget.value))}
-            aria-label={t(locale, "playbackPosition")}
-          />
-          <span className="cast-time">{fmt(elapsed)} / {fmt(duration)}</span>
-          <button className="cast-speed" onClick={cycleSpeed} title={t(locale, "playbackSpeed")}>{speed}x</button>
-        </div>
+    <section ref={playerRef} tabIndex={-1} className="cast-player" aria-label={t(locale, "recordings")} onKeyDown={event => {
+      if (event.key === "Escape" || ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "w")) {
+        event.preventDefault(); event.stopPropagation(); onClose();
+      } else if (event.key === " " && event.target === event.currentTarget) {
+        event.preventDefault();
+        if (playing) pause(); else play();
+      }
+    }}>
+      <div className="cast-player-header">
+        <span className="cast-player-title" title={name}>{title}</span>
+        <button className="mini-btn" onClick={onClose} title={t(locale, "close")}><X size={13} /></button>
       </div>
-    </div>
+      <div ref={stageRef} className="cast-player-stage">
+        <div ref={hostRef} className="cast-player-term" />
+        {error && <div className="cast-player-error">{error}</div>}
+      </div>
+      <div className="cast-player-controls">
+        <button className="mini-btn" onClick={playing ? pause : play} title={t(locale, playing ? "pause" : "play")}>
+          {playing ? <Pause size={14} /> : <Play size={14} />}
+        </button>
+        <button className="mini-btn" onClick={restart} title={t(locale, "restart")}><RotateCcw size={13} /></button>
+        <input
+          className="cast-progress cast-progress-input"
+          type="range"
+          min={0}
+          max={Math.max(duration, 0.01)}
+          step={0.1}
+          value={Math.min(elapsed, Math.max(duration, 0.01))}
+          onPointerDown={pause}
+          onChange={(event) => { const value = Number(event.target.value); elapsedRef.current = value; setElapsed(value); }}
+          onPointerUp={(event) => seekTo(Number(event.currentTarget.value))}
+          onKeyUp={(event) => seekTo(Number(event.currentTarget.value))}
+          aria-label={t(locale, "playbackPosition")}
+        />
+        <span className="cast-time">{fmt(elapsed)} / {fmt(duration)}</span>
+        <button className="cast-speed" onClick={cycleSpeed} title={t(locale, "playbackSpeed")}>{speed}x</button>
+      </div>
+    </section>
   );
 }

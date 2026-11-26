@@ -20,6 +20,15 @@ function request(overrides: Partial<CliApprovalPanelRequest> = {}): CliApprovalP
 }
 
 describe("CliApprovalPanel", () => {
+  it("requires an explicit decision after an independent window takes focus", () => {
+    const decide = vi.fn();
+    render(<CliApprovalPanel standalone request={request()} locale="en" onResolve={decide}/>);
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
+    expect(decide).not.toHaveBeenCalled();
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(decide).toHaveBeenCalledWith([]);
+  });
+
   it("groups by risk tier and starts with only the read-only bucket collapsed", () => {
     render(<CliApprovalPanel request={request()} locale="en" onResolve={vi.fn()} />);
 

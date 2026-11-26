@@ -1,0 +1,19 @@
+version: '3'
+tasks:
+  build:
+    desc: Build the Windows desktop application
+    platforms: [windows]
+    cmds:
+      - powershell -NoProfile -File scripts/build.ps1 -DesktopOnly
+  dev:build:
+    platforms: [windows]
+    cmds:
+      - powershell -NoProfile -File scripts/build.ps1 -DesktopOnly -Development
+  dev:frontend:
+    dir: frontend
+    cmds:
+      - npm run dev -- --host 127.0.0.1 --port {{.WAILS_VITE_PORT}} --strictPort
+  dev:run:
+    platforms: [windows]
+    cmds:
+      - ./build/bin/gxShell-dev.exe

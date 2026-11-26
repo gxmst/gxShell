@@ -87,6 +87,7 @@ type AppSettings struct {
 	HighlightRules      []HighlightRule             `json:"highlightRules,omitempty"`
 	SessionLog          SessionLogSettings          `json:"sessionLog"`
 	SessionLogRetention SessionLogRetentionSettings `json:"sessionLogRetention"`
+	UIScale             int                         `json:"uiScale"`
 	SidebarWidth        int                         `json:"sidebarWidth"`
 	SidebarSplitPct     int                         `json:"sidebarSplitPct"`
 	SavePasswords       bool                        `json:"savePasswords"`
@@ -276,6 +277,14 @@ type FolderDownloadResult struct {
 	Skipped     []FolderDownloadSkip `json:"skipped"`
 }
 
+// ProbeSample describes one measurement along the current session's route.
+type ProbeSample struct {
+	At     time.Time `json:"at"`
+	Method string    `json:"method"`
+	State  string    `json:"state"`
+	RTTMs  float64   `json:"rttMs"`
+}
+
 type Metrics struct {
 	SessionID       string        `json:"sessionId"`
 	Online          bool          `json:"online"`
@@ -283,6 +292,7 @@ type Metrics struct {
 	OS              string        `json:"os,omitempty"`
 	Uptime          string        `json:"uptime"`
 	LoadAverage     string        `json:"loadAverage"`
+	CPUCount        int           `json:"cpuCount,omitempty"`
 	CPUPercent      float64       `json:"cpuPercent"`
 	MemoryUsedMB    int64         `json:"memoryUsedMb"`
 	MemoryTotalMB   int64         `json:"memoryTotalMb"`
@@ -295,6 +305,7 @@ type Metrics struct {
 	NetworkRxPerSec int64         `json:"networkRxPerSec"`
 	NetworkTxPerSec int64         `json:"networkTxPerSec"`
 	LatencyMs       int64         `json:"latencyMs"`
+	ProbeHistory    []ProbeSample `json:"probeHistory,omitempty"`
 	TopProcesses    []ProcessInfo `json:"topProcesses"`
 	UpdatedAt       time.Time     `json:"updatedAt"`
 	Error           string        `json:"error,omitempty"`

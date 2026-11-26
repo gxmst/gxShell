@@ -5,6 +5,7 @@ import {
   ListRemoteTextFilesInDir,
   ListTextFilesInDir,
   OpenRecentTextFile,
+  OpenRemoteDocumentWindow,
   RestoreTextFiles,
   SelectTextFile,
 } from "../../wailsjs/go/app/App";
@@ -57,6 +58,7 @@ export interface MarkdownTabs {
   markdownSiblingsError: string;
   refreshMarkdownSiblings: () => Promise<void>;
   recentMarkdown: RecentMarkdownItem[];
+  rememberRemote: (sessionID: string, path: string) => void;
   openMarkdownFile: (filePath: string) => Promise<void>;
   openRemoteMarkdownFile: (sessionID: string, remotePath: string) => Promise<void>;
   openMarkdownTarget: (target: MarkdownOpenTarget) => void;
@@ -182,16 +184,9 @@ export function useMarkdownTabs({
     setDrawer("documents");
   }, [rememberMarkdown, setActiveTab, setTabs, setDrawer]);
 
-  const openRemoteMarkdownFile = useCallback(async (sessionID: string, remotePath: string) => {
-    documentOpened.current = true;
+  const rememberRemote = useCallback((sessionID: string, remotePath: string) => {
     const sessionTab = tabsRef.current.find((tab) => tab.id === sessionID);
     const profile = sessionTab ? profilesRef.current.find((item) => item.id === sessionTab.profileId) : undefined;
-    const existing = tabsRef.current.find((tab) => (
-      tab.type === "markdown" &&
-      tab.markdownSource === "remote" &&
-      tab.remoteSessionId === sessionID &&
-      tab.remotePath === remotePath
-    ));
     rememberMarkdown({
       source: "remote",
       path: remotePath,
@@ -200,6 +195,18 @@ export function useMarkdownTabs({
       profileId: sessionTab?.profileId,
       host: profile ? `${profile.username}@${profile.host}` : sessionTab?.title,
     });
+  }, [rememberMarkdown]);
+
+  const openRemoteMarkdownFile = useCallback(async (sessionID: string, remotePath: string) => {
+    documentOpened.current = true;
+    const sessionTab = tabsRef.current.find((tab) => tab.id === sessionID);
+    const existing = tabsRef.current.find((tab) => (
+      tab.type === "markdown" &&
+      tab.markdownSource === "remote" &&
+      tab.remoteSessionId === sessionID &&
+      tab.remotePath === remotePath
+    ));
+    rememberRemote(sessionID, remotePath);
     if (existing) {
       setActiveTab(existing.id);
       setDrawer("documents");
@@ -220,7 +227,7 @@ export function useMarkdownTabs({
     setTabs(prev => [...prev, newTab]);
     setActiveTab(newTab.id);
     setDrawer("documents");
-  }, [rememberMarkdown, setActiveTab, setTabs, setDrawer]);
+  }, [rememberRemote, setActiveTab, setTabs, setDrawer]);
 
   const openMarkdownTarget = useCallback((target: MarkdownOpenTarget) => {
     if (target.source === "remote") {
@@ -258,11 +265,11 @@ export function useMarkdownTabs({
         notify(t(language, "connectServerFirstTextFile"), "info");
         return;
       }
-      openRemoteMarkdownFile(liveSession.id, item.path);
+      await OpenRemoteDocumentWindow(liveSession.id, item.path);
     } catch (err) {
       notify(String(err), "error");
     }
-  }, [notify, openMarkdownFile, openRemoteMarkdownFile, language]);
+  }, [notify, openMarkdownFile, language]);
 
   const handleRemoveRecentMarkdown = useCallback((id: string) => {
     setRecentMarkdown((prev) => prev.filter((item) => item.id !== id));
@@ -324,6 +331,7 @@ export function useMarkdownTabs({
     markdownSiblingsError: activeMarkdownKey ? currentListing?.error || "" : "",
     refreshMarkdownSiblings,
     recentMarkdown,
+    rememberRemote,
     openMarkdownFile,
     openRemoteMarkdownFile,
     openMarkdownTarget,

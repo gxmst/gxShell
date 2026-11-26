@@ -242,6 +242,11 @@ export function SettingsPanel({ settings, language, onSave, onOpenData, dataDir,
             <SettingsField label={t(lang, "lang")}>
               <select className="input compact-input" value={draft.language || "en"} onChange={(event) => update({ language: event.target.value })}><option value="en">English</option><option value="zh-CN">简体中文</option></select>
             </SettingsField>
+            <SettingsField label={t(lang, "interfaceScale")}>
+              <select className="input compact-input" value={draft.uiScale || 100} onChange={event => update({ uiScale: Number(event.target.value) })}>
+                {[90, 100, 110, 125].map(value => <option key={value} value={value}>{value}%</option>)}
+              </select>
+            </SettingsField>
             <SettingsField label={t(lang, "theme")}>
               <select className="input compact-input" value={normalizeAppTheme(draft.themeName)} onChange={(event) => setAppTheme(event.target.value)}>{appThemes.map((theme) => <option key={theme} value={theme}>{themeDisplayName(theme, lang)}</option>)}</select>
             </SettingsField>

@@ -1,4 +1,4 @@
-import { ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Columns2, Download, Pause, Play, RefreshCw, Upload, X } from "lucide-react";
+import { ArrowDownToLine, ArrowUpFromLine, CheckCircle2, Columns2, Download, ExternalLink, FolderOpen, Pause, Play, RefreshCw, Upload, X } from "lucide-react";
 import { useTransfers } from "../../hooks/useTransfers";
 import { t } from "../../i18n";
 import { formatBytes, formatFileSize } from "../../utils/format";
@@ -19,10 +19,12 @@ export function TransferCenter(props: {
   sessionId?: string;
   initialLeft?: number;
   initialTop?: number;
-  onClose: () => void;
-  onOpenExplorer: () => void;
-  onUpload: () => void;
-}) {
+  onOpenWindow?: () => void;
+  onOpenFiles?: () => void;
+  onError?: (message: string) => void;
+  onOpenExplorer?: () => void;
+  onUpload?: () => void;
+} & ({ standalone: true } | { standalone?: false; onClose: () => void })) {
   const lang = props.locale;
   const { transfers, history, activeCount, cancelTransfer, pauseTransfer, resumeTransfer, retryTransfer, clearHistory } = useTransfers();
 
@@ -30,14 +32,10 @@ export function TransferCenter(props: {
   const recent = history.filter((h) => !props.sessionId || h.sessionId === props.sessionId).slice(0, 20);
   const visibleActiveCount = props.sessionId ? active.length : activeCount;
 
-  return (
-    <FloatingCard
-      center
-      initialLeft={props.initialLeft}
-      initialTop={props.initialTop}
-      width={420}
-      onClose={props.onClose}
-    >
+  const control = async (operation: Promise<boolean>) => {
+    if (!await operation) props.onError?.(t(lang, "transferActionFailed"));
+  };
+  const content = (
       <div className="xfer-center">
         <div className="xfer-center-header">
           <div>
@@ -48,15 +46,17 @@ export function TransferCenter(props: {
                 : t(lang, "noActiveTransfer")}
             </div>
           </div>
+          {props.onOpenWindow && <button className="mini-btn" title={t(lang, "detachTerminal")} onClick={props.onOpenWindow}><ExternalLink size={14}/></button>}
         </div>
 
         <div className="xfer-center-actions">
-          <button className="btn-secondary xfer-action" onClick={props.onUpload}>
+          {props.onUpload && <button className="btn-secondary xfer-action" onClick={props.onUpload}>
             <Upload size={13} /> {t(lang, "upload")}
-          </button>
-          <button className="btn-secondary xfer-action" onClick={props.onOpenExplorer}>
+          </button>}
+          {props.onOpenExplorer && <button className="btn-secondary xfer-action" onClick={props.onOpenExplorer}>
             <Columns2 size={13} /> {t(lang, "dualPaneTransfer")}
-          </button>
+          </button>}
+          {props.onOpenFiles && <button className="btn-secondary xfer-action" onClick={props.onOpenFiles}><FolderOpen size={13}/> {t(lang, "remoteFiles")}</button>}
         </div>
 
         <div className="xfer-center-section">
@@ -84,12 +84,12 @@ export function TransferCenter(props: {
                       <span className="xfer-center-item-pct">{pct}%</span>
                       <button
                         className="mini-btn"
-                        onClick={() => void (tr.paused ? resumeTransfer(tr.jobId) : pauseTransfer(tr.jobId))}
+                        onClick={() => void control(tr.paused ? resumeTransfer(tr.jobId) : pauseTransfer(tr.jobId))}
                         title={tr.paused ? t(lang, "resume") : t(lang, "pause")}
                       >
                         {tr.paused ? <Play size={11} /> : <Pause size={11} />}
                       </button>
-                      <button className="mini-btn" onClick={() => void cancelTransfer(tr.jobId)} title={t(lang, "cancel")}>
+                      <button className="mini-btn" onClick={() => void control(cancelTransfer(tr.jobId))} title={t(lang, "cancel")}>
                         <X size={11} />
                       </button>
                     </div>
@@ -116,7 +116,7 @@ export function TransferCenter(props: {
           <div className="xfer-center-section-title">
             <span>{t(lang, "transferHistory")}</span>
             {recent.length > 0 && (
-              <button className="text-button" onClick={clearHistory}>{t(lang, "clearHistory")}</button>
+              <button className="text-button" onClick={() => void clearHistory(props.sessionId || "").catch(err => props.onError?.(String(err)))}>{t(lang, "clearHistory")}</button>
             )}
           </div>
           {recent.length === 0 ? (
@@ -138,7 +138,7 @@ export function TransferCenter(props: {
                     {h.ok ? t(lang, "transferComplete") : h.status === "cancelled" ? t(lang, "transferCancelled") : t(lang, "transferFailed")}
                   </span>
                   {!h.ok && h.retryable && h.sourcePath && h.targetPath && (
-                    <button className="mini-btn" onClick={() => void retryTransfer(h)} title={t(lang, "retry")}>
+                    <button className="mini-btn" onClick={() => void control(retryTransfer(h))} title={t(lang, "retry")}>
                       <RefreshCw size={11} />
                     </button>
                   )}
@@ -148,6 +148,7 @@ export function TransferCenter(props: {
           )}
         </div>
       </div>
-    </FloatingCard>
   );
+  if (props.standalone) return content;
+  return <FloatingCard center initialLeft={props.initialLeft} initialTop={props.initialTop} width={420} onClose={props.onClose}>{content}</FloatingCard>;
 }

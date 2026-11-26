@@ -239,3 +239,27 @@
   background: color-mix(in srgb, var(--panel-raised) 56%, transparent);
   color: var(--text);
 }
+
+.monitor-reading {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  padding: 6px 7px;
+  border-top: 1px solid var(--border);
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+}
+button.monitor-reading:hover { background: var(--panel-soft); }
+.monitor-reading-title, .load-windows, .probe-values, .probe-strip { display: flex; align-items: center; }
+.monitor-reading-title { gap: 5px; font-size: 11px; font-weight: 600; }
+.monitor-reading-title small { margin-left: auto; }
+.monitor-reading small, .probe-values { color: var(--muted); font-size: 10px; font-weight: 400; }
+.load-windows, .probe-values { justify-content: space-between; gap: 6px; flex-wrap: wrap; }
+.load-windows > span, .probe-values > span { display: inline-flex; align-items: baseline; gap: 4px; }
+.monitor-reading strong { color: var(--text); font-size: 11px; font-weight: 600; }
+.monitor-reading strong.text-warn { color: var(--warn); }
+.probe-strip { gap: 2px; }
+.probe-strip i { flex: 1; min-width: 0; height: 7px; border-radius: 2px; background: var(--border); }
+.probe-strip .reply { background: var(--ok); }
+.probe-strip .lost { background: var(--bad); }
+.probe-strip .unavailable { background: repeating-linear-gradient(135deg, var(--muted) 0 1px, transparent 1px 3px); }

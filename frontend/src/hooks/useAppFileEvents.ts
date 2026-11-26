@@ -1,20 +1,19 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { GetStartupFile } from "../../wailsjs/go/app/App";
-import { EventsOn, OnFileDrop, OnFileDropOff } from "../../wailsjs/runtime/runtime";
+import { EventsOn } from "../../wailsjs/runtime/runtime";
 import type { Drawer, Tab } from "../types";
 import type { KiRequest } from "../components/modals/KeyboardInteractiveDialog";
 import type { useMarkdownTabs } from "./useMarkdownTabs";
 import type { useSessions } from "./useSessions";
 import type { useToasts } from "./useToasts";
 import { isSupportedDocumentPath } from "../utils/textFiles";
-import { emptyProfile } from "../constants";
 import { t } from "../i18n";
 
 type FileEventsOptions = {
   openMarkdownFile: ReturnType<typeof useMarkdownTabs>["openMarkdownFile"];
   handleOpenMarkdown: ReturnType<typeof useMarkdownTabs>["handleOpenMarkdown"];
   setDrawer: Dispatch<SetStateAction<Drawer>>;
-  setProfileModal: Dispatch<SetStateAction<import("../../wailsjs/go/models").types.Profile | null>>;
+  handleNewConnection: () => void;
   notify: ReturnType<typeof useToasts>["notify"];
   sessionIsCurrentRuntimeEvent: ReturnType<typeof useSessions>["isCurrentRuntimeEvent"];
   sessionTabs: Tab[];
@@ -22,7 +21,7 @@ type FileEventsOptions = {
 };
 
 export function useAppFileEvents({
-  openMarkdownFile, handleOpenMarkdown, setDrawer, setProfileModal, notify,
+  openMarkdownFile, handleOpenMarkdown, setDrawer, handleNewConnection, notify,
   sessionIsCurrentRuntimeEvent, sessionTabs, language,
 }: FileEventsOptions) {
   const [kiRequests, setKiRequests] = useState<KiRequest[]>([]);
@@ -30,11 +29,6 @@ export function useAppFileEvents({
   langRef.current = language;
 
   useEffect(() => {
-    OnFileDrop((_x, _y, _paths) => {
-      // The browser-side callback only installs Wails' drop listener. The
-      // trusted open path is handled in Go, where dropped paths are confirmed
-      // with a native dialog before they are added to the local-file allowlist.
-    }, false);
 
     const unsubFileOpen = EventsOn("file:open", (filePath: string) => {
       if (isSupportedDocumentPath(filePath)) {
@@ -89,9 +83,7 @@ export function useAppFileEvents({
     }).catch(() => undefined);
 
     // 托盘菜单事件监听
-    const unsubTrayNewConnection = EventsOn("tray:new-connection", () => {
-      setProfileModal(emptyProfile());
-    });
+    const unsubTrayNewConnection = EventsOn("tray:new-connection", handleNewConnection);
 
     const unsubTrayOpenMarkdown = EventsOn("tray:open-markdown", () => {
       handleOpenMarkdown();
@@ -112,9 +104,8 @@ export function useAppFileEvents({
       if (unsubTraySettings) unsubTraySettings();
       if (unsubKi) unsubKi();
       if (unsubKiClosed) unsubKiClosed();
-      OnFileDropOff();
     };
-  }, [openMarkdownFile, handleOpenMarkdown, setDrawer, setProfileModal, notify, sessionIsCurrentRuntimeEvent]);
+  }, [openMarkdownFile, handleOpenMarkdown, setDrawer, handleNewConnection, notify, sessionIsCurrentRuntimeEvent]);
 
   // A prompt can be queued while its connection is current and become stale
   // when a reconnect advances the runtime generation before the timeout event

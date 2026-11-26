@@ -1,8 +1,10 @@
 package sshmanager
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"io"
 	"net"
 	"os"
@@ -28,6 +30,11 @@ type echoSSHObservation struct {
 
 func echoSSHServer(t *testing.T, observations ...echoSSHObservation) (types.Profile, string, func(string)) {
 	t.Helper()
+	return echoSSHServerWithAuth(t, &ssh.ServerConfig{NoClientAuth: true}, observations...)
+}
+
+func echoSSHServerWithAuth(t *testing.T, config *ssh.ServerConfig, observations ...echoSSHObservation) (types.Profile, string, func(string)) {
+	t.Helper()
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +43,6 @@ func echoSSHServer(t *testing.T, observations ...echoSSHObservation) (types.Prof
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := &ssh.ServerConfig{NoClientAuth: true}
 	config.AddHostKey(signer)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -124,6 +130,61 @@ func echoSSHServer(t *testing.T, observations ...echoSSHObservation) (types.Prof
 		if conn := connections[address]; conn != nil {
 			_ = conn.Close()
 		}
+	}
+}
+
+func TestConnectionAuthenticatesWithoutOpeningSessionChannels(t *testing.T) {
+	config := &ssh.ServerConfig{PasswordCallback: func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+		if conn.User() != "test" || string(password) != "test-only" {
+			return nil, errors.New("authentication failed")
+		}
+		return nil, nil
+	}}
+	profile, known, _ := echoSSHServerWithAuth(t, config, echoSSHObservation{openChannel: func() {
+		t.Error("connection test opened a channel")
+	}})
+	m := NewManager(known, func(event string, _ any) { t.Errorf("unexpected event %s", event) }, nil)
+	profile.LoginCommands = []string{"unused"}
+	if err := m.TestConnection(context.Background(), profile, types.Profile{}, 3, AuthenticationPrompts{}); err != nil {
+		t.Fatal(err)
+	}
+	profile.Password = "incorrect"
+	if err := m.TestConnection(context.Background(), profile, types.Profile{}, 3, AuthenticationPrompts{}); err == nil {
+		t.Fatal("invalid credentials reported success")
+	}
+	if len(m.List()) != 0 || len(m.runtimes) != 0 {
+		t.Fatal("connection test registered a terminal")
+	}
+}
+
+func TestConnectionUsesOriginatingWindowForHostKeyDecisions(t *testing.T) {
+	profile, _, _ := echoSSHServer(t)
+	known := filepath.Join(t.TempDir(), "known_hosts")
+	m := NewManager(known, nil, func(string, string) bool {
+		t.Error("draft prompted through the terminal window")
+		return false
+	})
+	accepted := false
+	prompts := AuthenticationPrompts{ConfirmHostKey: func(host, fingerprint string) bool {
+		if host != sshAddress(profile.Host, profile.Port) || fingerprint == "" {
+			t.Errorf("unexpected host or fingerprint: %q %q", host, fingerprint)
+		}
+		return accepted
+	}}
+	if err := m.TestConnection(context.Background(), profile, types.Profile{}, 3, prompts); err == nil {
+		t.Fatal("rejected host key reported success")
+	}
+	entries, err := m.ListKnownHosts()
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("rejected host key persisted: %v, %v", entries, err)
+	}
+	accepted = true
+	if err := m.TestConnection(context.Background(), profile, types.Profile{}, 3, prompts); err != nil {
+		t.Fatal(err)
+	}
+	entries, err = m.ListKnownHosts()
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("accepted host key missing: %v, %v", entries, err)
 	}
 }
 
@@ -276,5 +337,21 @@ func TestCloseDuringSSHHandshakeReleasesSocketAndSlot(t *testing.T) {
 	}
 	if len(m.List()) != 0 || len(m.connecting) != 0 {
 		t.Fatal("cancelled connection retained a slot")
+	}
+}
+
+func TestProbeUsesSSHOnCustomRoute(t *testing.T) {
+	profile, known, _ := echoSSHServer(t)
+	m := NewManager(known, func(string, any) {}, nil)
+	// A custom dialer can reach a name that is private to a proxy.
+	m.SetDialContext((&net.Dialer{}).DialContext)
+	defer m.Shutdown()
+	info, err := m.Connect(profile, 3, 80, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sample := m.ProbeConnection(info.ID)
+	if sample == nil || sample.Method != "ssh" || sample.State != "reply" {
+		t.Fatalf("expected SSH reply through the session: %#v", sample)
 	}
 }
