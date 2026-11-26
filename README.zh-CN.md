@@ -14,7 +14,7 @@ gxShell 是一个基于 Go、Wails 和 WebView2 构建的 Windows SSH 工作台�
 
 [下载](#下载) · [演示](#演示) · [Agent 使用规范](docs/agent-guide.md) · [English](README.md)
 
-[![gxShell 英文界面：四个 SSH 终端与服务器侧栏](docs/marketing/assets/readme/workspace.webp)](docs/marketing/assets/01-workspace.png)
+[![gxShell 浅色工作台中的 SSH 终端、连接质量监控和独立 SFTP 文件窗口](docs/assets/workbench-light.zh-CN.webp)](docs/assets/workbench-light.zh-CN.webp)
 
 *以下图片和视频均使用真实界面，服务器、命令、指标与文档都是虚构演示数据，
 不包含个人服务器信息。*

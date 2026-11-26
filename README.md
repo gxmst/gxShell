@@ -17,7 +17,7 @@ remote operations; external CLI / MCP access is disabled by default.
 
 [Download](#download) · [Demo](#demo) · [Agent guide](docs/agent-guide.md) · [中文说明](README.zh-CN.md)
 
-[![gxShell's English interface with four SSH terminals and a server sidebar](docs/marketing/assets/readme/workspace.webp)](docs/marketing/assets/01-workspace.png)
+[![gxShell in light mode with an SSH terminal, connection quality readings, and a separate SFTP window](docs/assets/workbench-light.en.webp)](docs/assets/workbench-light.en.webp)
 
 *The images and video below show the real interface with fictional servers,
 commands, metrics, and documents. No personal server data is used.*
